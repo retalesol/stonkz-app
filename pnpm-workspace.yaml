@@ -1,0 +1,7 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Vite needs the esbuild binary; Playwright installs browsers on demand.
+onlyBuiltDependencies:
+  - esbuild

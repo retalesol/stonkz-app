@@ -1,0 +1,45 @@
+{
+  "name": "stonkz",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stonkz launchpad monorepo — web terminal, API, indexer, shared math, on-chain programs.",
+  "packageManager": "pnpm@10.12.1",
+  "engines": {
+    "node": ">=20.19",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @stonkz/web dev",
+    "build": "pnpm -r run build",
+    "preview": "pnpm --filter @stonkz/web preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^20.19.9",
+    "@vitest/coverage-v8": "^3.2.4",
+    "eslint": "^9.34.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.3.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.41.0",
+    "vitest": "^3.2.4"
+  }
+}

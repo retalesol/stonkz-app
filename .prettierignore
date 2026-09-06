@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+playwright-report
+test-results
+pnpm-lock.yaml
+
+# The visual oracle, its permanent copy, and the guide they came with.
+index.html
+legacy/
+FULL_BUILDOUT_GUIDE.md
+
+# The Vite entry mirrors the oracle's markup layout line for line so the two
+# stay diffable. Prettier must not re-wrap it.
+apps/web/index.html

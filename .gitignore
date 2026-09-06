@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# env — never commit real values, only .env.example
+.env
+.env.*
+!.env.example
+
+# anchor / solana / evm build artifacts
+target/
+.anchor/
+programs/**/target/
+artifacts/
+cache/
+out/
+*.keypair.json
+!programs/**/Anchor.toml
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# caches
+.vite/
+.turbo/
+.eslintcache

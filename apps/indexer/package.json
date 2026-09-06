@@ -1,0 +1,19 @@
+{
+  "name": "@stonkz/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PLACEHOLDER — Phase 1.C owns this. Dual-chain event indexer with two replay cursors.",
+  "scripts": {
+    "dev": "echo \"@stonkz/indexer is a Phase 1.C placeholder\" && exit 0",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stonkz/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.9",
+    "typescript": "^5.9.2"
+  }
+}

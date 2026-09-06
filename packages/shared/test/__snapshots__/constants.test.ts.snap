@@ -1,0 +1,680 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`achievements > snapshots all ten 1`] = `
+[
+  {
+    "d": "Make your first trade.",
+    "k": "first",
+    "n": "FIRST BLOOD",
+    "xp": 50,
+  },
+  {
+    "d": "Buy five or more in a single fill.",
+    "k": "whale",
+    "n": "WHALE",
+    "xp": 120,
+  },
+  {
+    "d": "Launch a coin.",
+    "k": "deploy",
+    "n": "DEPLOYER",
+    "xp": 100,
+  },
+  {
+    "d": "Launch with cashback instead of a dev buy.",
+    "k": "cashback",
+    "n": "CASHBACK KING",
+    "xp": 150,
+  },
+  {
+    "d": "Stake any token.",
+    "k": "stake",
+    "n": "STAKER",
+    "xp": 60,
+  },
+  {
+    "d": "Open a Stonkdrop.",
+    "k": "crate",
+    "n": "CRATE OPENER",
+    "xp": 40,
+  },
+  {
+    "d": "Hold a position through minus 25%.",
+    "k": "diamond",
+    "n": "DIAMOND HANDS",
+    "xp": 200,
+  },
+  {
+    "d": "Hold a coin the moment it graduates.",
+    "k": "grad",
+    "n": "GRADUATE",
+    "xp": 250,
+  },
+  {
+    "d": "Follow someone or post on a wall.",
+    "k": "social",
+    "n": "SOCIAL DEGEN",
+    "xp": 40,
+  },
+  {
+    "d": "Show up seven days in a row.",
+    "k": "streak7",
+    "n": "SEVEN DAYS",
+    "xp": 300,
+  },
+]
+`;
+
+exports[`base mints > snapshots the majors for both networks 1`] = `
+{
+  "RH": [
+    [
+      "ETH",
+      "Ethereum",
+    ],
+    [
+      "USDC",
+      "USD Coin",
+    ],
+    [
+      "BTC",
+      "Bitcoin",
+    ],
+    [
+      "XRP",
+      "XRP",
+    ],
+    [
+      "SOL",
+      "Solana",
+    ],
+    [
+      "DOGE",
+      "Dogecoin",
+    ],
+    [
+      "ADA",
+      "Cardano",
+    ],
+    [
+      "AVAX",
+      "Avalanche",
+    ],
+    [
+      "LINK",
+      "Chainlink",
+    ],
+    [
+      "LTC",
+      "Litecoin",
+    ],
+  ],
+  "SOL": [
+    [
+      "SOL",
+      "Solana",
+    ],
+    [
+      "USDC",
+      "USD Coin",
+    ],
+    [
+      "USDT",
+      "Tether",
+    ],
+    [
+      "JUP",
+      "Jupiter",
+    ],
+    [
+      "JITOSOL",
+      "Jito Staked SOL",
+    ],
+    [
+      "BONK",
+      "Bonk",
+    ],
+    [
+      "WIF",
+      "dogwifhat",
+    ],
+    [
+      "JTO",
+      "Jito",
+    ],
+    [
+      "RAY",
+      "Raydium",
+    ],
+    [
+      "PYTH",
+      "Pyth Network",
+    ],
+  ],
+}
+`;
+
+exports[`base mints > snapshots the tokenized stock list (2026-09-06 snapshot) 1`] = `
+[
+  [
+    "MCDx",
+    "McDonalds xStock",
+  ],
+  [
+    "SPYx",
+    "SP500 xStock",
+  ],
+  [
+    "PLTRx",
+    "Palantir xStock",
+  ],
+  [
+    "CRCLx",
+    "Circle xStock",
+  ],
+  [
+    "MSTRx",
+    "MicroStrategy xStock",
+  ],
+  [
+    "AAPLx",
+    "Apple xStock",
+  ],
+  [
+    "GLDx",
+    "Gold xStock",
+  ],
+  [
+    "QQQx",
+    "Nasdaq xStock",
+  ],
+  [
+    "NVDAx",
+    "NVIDIA xStock",
+  ],
+  [
+    "HOODx",
+    "Robinhood xStock",
+  ],
+  [
+    "TSLAx",
+    "Tesla xStock",
+  ],
+  [
+    "MSFTx",
+    "Microsoft xStock",
+  ],
+  [
+    "GOOGLx",
+    "Alphabet xStock",
+  ],
+  [
+    "KOx",
+    "Coca-Cola xStock",
+  ],
+  [
+    "AMZNx",
+    "Amazon xStock",
+  ],
+  [
+    "COINx",
+    "Coinbase xStock",
+  ],
+  [
+    "METAx",
+    "Meta xStock",
+  ],
+  [
+    "GMEx",
+    "Gamestop xStock",
+  ],
+  [
+    "INTCx",
+    "Intel xStock",
+  ],
+  [
+    "STRCx",
+    "Strategy PP xStock",
+  ],
+]
+`;
+
+exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
+[
+  {
+    "cd": 1,
+    "col": "#c07434",
+    "drops": [
+      [
+        58,
+        "S",
+        50,
+        150,
+      ],
+      [
+        26,
+        "S",
+        150,
+        400,
+      ],
+      [
+        11,
+        "S",
+        400,
+        900,
+      ],
+      [
+        4,
+        "S",
+        1000,
+        2500,
+      ],
+      [
+        1,
+        "I",
+        "FEE REBATE 24H",
+      ],
+    ],
+    "k": "BRONZE",
+  },
+  {
+    "cd": 2,
+    "col": "#98a4b0",
+    "drops": [
+      [
+        52,
+        "S",
+        150,
+        400,
+      ],
+      [
+        28,
+        "S",
+        400,
+        900,
+      ],
+      [
+        14,
+        "S",
+        900,
+        2000,
+      ],
+      [
+        5,
+        "S",
+        2000,
+        5000,
+      ],
+      [
+        1,
+        "I",
+        "XP BOOST 2X 1H",
+      ],
+    ],
+    "k": "IRON",
+  },
+  {
+    "cd": 4,
+    "col": "#d7dde3",
+    "drops": [
+      [
+        48,
+        "S",
+        400,
+        1000,
+      ],
+      [
+        30,
+        "S",
+        1000,
+        2500,
+      ],
+      [
+        15,
+        "S",
+        2500,
+        6000,
+      ],
+      [
+        6,
+        "S",
+        6000,
+        12000,
+      ],
+      [
+        1,
+        "I",
+        "PRIORITY LANE PASS",
+      ],
+    ],
+    "k": "SILVER",
+  },
+  {
+    "cd": 6,
+    "col": "#ffd23f",
+    "drops": [
+      [
+        44,
+        "S",
+        1000,
+        3000,
+      ],
+      [
+        31,
+        "S",
+        3000,
+        7000,
+      ],
+      [
+        17,
+        "S",
+        7000,
+        15000,
+      ],
+      [
+        7,
+        "S",
+        15000,
+        30000,
+      ],
+      [
+        1,
+        "I",
+        "SNIPER ALERT PASS 7D",
+      ],
+    ],
+    "k": "GOLD",
+  },
+  {
+    "cd": 12,
+    "col": "#a9e0e8",
+    "drops": [
+      [
+        40,
+        "S",
+        3000,
+        8000,
+      ],
+      [
+        32,
+        "S",
+        8000,
+        18000,
+      ],
+      [
+        19,
+        "S",
+        18000,
+        40000,
+      ],
+      [
+        8,
+        "S",
+        40000,
+        80000,
+      ],
+      [
+        1,
+        "I",
+        "EARLY MINT ACCESS",
+      ],
+    ],
+    "k": "PLATINUM",
+  },
+  {
+    "cd": 24,
+    "col": "#c9b6ff",
+    "drops": [
+      [
+        36,
+        "S",
+        8000,
+        20000,
+      ],
+      [
+        33,
+        "S",
+        20000,
+        45000,
+      ],
+      [
+        21,
+        "S",
+        45000,
+        100000,
+      ],
+      [
+        9,
+        "S",
+        100000,
+        200000,
+      ],
+      [
+        1,
+        "I",
+        "IRIDIUM TICKER BADGE",
+      ],
+    ],
+    "k": "IRIDIUM",
+  },
+  {
+    "cd": 72,
+    "col": "#7ef0c0",
+    "drops": [
+      [
+        32,
+        "S",
+        25000,
+        60000,
+      ],
+      [
+        34,
+        "S",
+        60000,
+        140000,
+      ],
+      [
+        23,
+        "S",
+        140000,
+        300000,
+      ],
+      [
+        10,
+        "S",
+        300000,
+        650000,
+      ],
+      [
+        1,
+        "I",
+        "FEE FREE WEEK",
+      ],
+    ],
+    "k": "PALLADIUM",
+  },
+  {
+    "cd": 168,
+    "col": "#ff9ad5",
+    "drops": [
+      [
+        28,
+        "S",
+        80000,
+        200000,
+      ],
+      [
+        33,
+        "S",
+        200000,
+        500000,
+      ],
+      [
+        25,
+        "S",
+        500000,
+        1200000,
+      ],
+      [
+        12,
+        "S",
+        1200000,
+        3000000,
+      ],
+      [
+        2,
+        "I",
+        "RHODIUM KEY · INSTANT CRATE",
+      ],
+    ],
+    "k": "RHODIUM",
+  },
+]
+`;
+
+exports[`crate tables > snapshots the rarity ladder 1`] = `
+[
+  [
+    "COMMON",
+    "c",
+  ],
+  [
+    "UNCOMMON",
+    "u",
+  ],
+  [
+    "RARE",
+    "r",
+  ],
+  [
+    "EPIC",
+    "e",
+  ],
+  [
+    "LEGENDARY",
+    "l",
+  ],
+]
+`;
+
+exports[`fee constants > snapshots the 20 / 70 / 10 curve split 1`] = `
+{
+  "creatorBucket": 0.7,
+  "protocol": 0.2,
+  "stonkzOps": 0.1,
+}
+`;
+
+exports[`fee constants > snapshots the 50 / 25 / 25 $STONKZ ops recipe 1`] = `
+{
+  "burnBuy": 0.5,
+  "lpNative": 0.25,
+  "lpTokenBuy": 0.25,
+}
+`;
+
+exports[`lock grid > snapshots the seven lock tiers 1`] = `
+[
+  [
+    0,
+    1,
+    "FLEX",
+  ],
+  [
+    1,
+    1.1,
+    "1D",
+  ],
+  [
+    7,
+    1.25,
+    "7D",
+  ],
+  [
+    30,
+    1.5,
+    "30D",
+  ],
+  [
+    90,
+    2.5,
+    "90D",
+  ],
+  [
+    180,
+    5,
+    "180D",
+  ],
+  [
+    365,
+    8,
+    "1Y",
+  ],
+]
+`;
+
+exports[`rank ladder > snapshots the ten ranks 1`] = `
+[
+  [
+    "LURKER",
+    0,
+  ],
+  [
+    "BAG HOLDER",
+    250,
+  ],
+  [
+    "DEGEN",
+    700,
+  ],
+  [
+    "TRENCH RAT",
+    1500,
+  ],
+  [
+    "SNIPER",
+    3000,
+  ],
+  [
+    "WHALE WATCHER",
+    6000,
+  ],
+  [
+    "MARKET MAKER",
+    11000,
+  ],
+  [
+    "CURVE BENDER",
+    19000,
+  ],
+  [
+    "LIQUIDITY LORD",
+    32000,
+  ],
+  [
+    "STONK LORD",
+    55000,
+  ],
+]
+`;
+
+exports[`supplies > snapshots the four fixed supplies 1`] = `
+[
+  [
+    1000000,
+    "1M",
+  ],
+  [
+    500000000,
+    "500M",
+  ],
+  [
+    1000000000,
+    "1B",
+  ],
+  [
+    1000000000000,
+    "1T",
+  ],
+]
+`;

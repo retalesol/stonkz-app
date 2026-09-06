@@ -1,0 +1,229 @@
+/* ---------- shell placeholder ----------
+   Phase 0.C cuts the real <style> block out of index.html into
+   layout.css / board.css / token.css / rewards.css / profile.css / modals.css
+   / chat.css / fx.css. Until then this file only keeps the skeleton legible so
+   the boot check has something to look at. It carries no visual authority —
+   index.html does.
+----------------------------------------- */
+
+#fx {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 95;
+}
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(180deg, #1b1204, #100b03);
+  border-bottom: 1px solid var(--amber2);
+}
+
+/* Copied verbatim from index.html lines 55-68 so the header is not a pile of
+   full-size canvases before the real split lands. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 9px;
+  background: var(--amber);
+  color: #150d00;
+  cursor: pointer;
+}
+.brand canvas {
+  width: 32px;
+  height: 32px;
+  image-rendering: pixelated;
+  display: block;
+  flex: 0 0 auto;
+}
+.brand .mark {
+  font-family: 'Silkscreen', 'IBM Plex Mono', monospace;
+  font-weight: 700;
+  font-size: 17px;
+}
+.brand .dom {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  opacity: 0.72;
+  padding-top: 3px;
+}
+.search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  min-width: 0;
+}
+.search label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--amber);
+}
+.search input {
+  flex: 1;
+  min-width: 60px;
+  max-width: 420px;
+  background: var(--input);
+  border: 1px solid #f0a943;
+  color: #120b00;
+  font-weight: 600;
+  padding: 3px 7px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.search input::placeholder {
+  color: #5f3e02;
+}
+.top-act {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.pill {
+  border: 1px solid var(--line2);
+  background: #141922;
+  padding: 3px 9px;
+  color: var(--txt2);
+  letter-spacing: 0.06em;
+}
+.led {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--up);
+  margin-right: 5px;
+  vertical-align: 1px;
+}
+
+.tape {
+  display: flex;
+  align-items: stretch;
+  height: 24px;
+  background: #050608;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+.tape-lbl {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  background: var(--hd);
+  color: var(--amber);
+  font-family: 'IBM Plex Sans Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 0 9px;
+  border-right: 1px solid var(--line);
+}
+.tape-vp {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+}
+
+/* Keep the wallet chrome collapsed until Phase 0.D wires it. */
+.netmenu,
+.wmenu,
+.rk-tip {
+  display: none;
+}
+.wchip canvas,
+.net-item canvas {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+}
+
+.wrap {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 10px 12px;
+}
+
+.foot {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.scrim,
+.chat-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: none;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  z-index: 70;
+  display: none;
+  background: var(--pnl);
+  border-left: 1px solid var(--line);
+}
+
+.chat-tab {
+  position: fixed;
+  right: 0;
+  bottom: 84px;
+  z-index: 50;
+  padding: 8px 10px;
+  background: var(--hd);
+  border: 1px solid var(--line2);
+  border-right: 0;
+  color: var(--amber);
+  letter-spacing: 0.12em;
+  font-size: 10px;
+}
+
+.toasts {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 90;
+  display: grid;
+  gap: 6px;
+}
+
+.rankup {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  display: none;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* Boot marker so the shell is visibly alive before any view is ported. */
+.boot-note {
+  padding: 24px 12px;
+  color: var(--dim);
+  letter-spacing: 0.12em;
+  font-size: 10px;
+}
+.boot-note b {
+  color: var(--amber);
+}
