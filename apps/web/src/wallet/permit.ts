@@ -34,7 +34,7 @@ export interface SellPermit {
   s: string;
 }
 
-interface ServerPermitTypedData {
+export interface ServerPermitTypedData {
   domain: { name: string; version: string; chainId: number; verifyingContract: string };
   types: Record<string, { name: string; type: string }[]>;
   primaryType: string;
@@ -64,7 +64,7 @@ function rpc(): PublicClient {
   return client;
 }
 
-function assertShape(raw: unknown): ServerPermitTypedData {
+export function assertPermitShape(raw: unknown): ServerPermitTypedData {
   const td = raw as Partial<ServerPermitTypedData> | null;
   const ok =
     td !== null &&
@@ -95,7 +95,29 @@ export async function readPermitNonce(token: string, owner: string): Promise<big
   }
 }
 
-function splitSignature(signature: string): { v: number; r: string; s: string } {
+/**
+ * The payload `eth_signTypedData_v4` actually accepts, from the API's
+ * response plus the freshly-read nonce.
+ *
+ * Two corrections the API cannot make for us: `EIP712Domain` has to be
+ * present in `types` (wallets reject typed data without it, even though the
+ * domain fields are given), and the API's `note` sibling is dropped by only
+ * copying the four members that belong in a typed-data payload — a wallet
+ * rejects a payload carrying members that are not in `types`.
+ */
+export function buildPermitPayload(
+  td: ServerPermitTypedData,
+  nonce: bigint,
+): { domain: unknown; types: Record<string, { name: string; type: string }[]>; primaryType: string; message: Record<string, unknown> } {
+  return {
+    domain: td.domain,
+    types: { EIP712Domain: EIP712_DOMAIN, ...td.types },
+    primaryType: td.primaryType,
+    message: { ...td.message, nonce: nonce.toString() },
+  };
+}
+
+export function splitSignature(signature: string): { v: number; r: string; s: string } {
   const hex = signature.replace(/^0x/, '');
   if (hex.length !== 130 || !/^[0-9a-fA-F]+$/.test(hex)) {
     throw new WalletError('unknown', 'The wallet returned a permit signature of the wrong length.');
@@ -109,11 +131,18 @@ function splitSignature(signature: string): { v: number; r: string; s: string } 
   return { v, r: '0x' + hex.slice(0, 64), s: '0x' + hex.slice(64, 128) };
 }
 
+/** How the nonce is obtained. Overridden only by tests. */
+export type PermitNonceReader = (token: string, owner: string) => Promise<bigint>;
+
 /**
  * Fill in the nonce, get the wallet to sign, and split the result into the
  * `PermitData` struct `POST /trade/prepare` wants echoed back.
  */
-export async function signSellPermit(wallet: ConnectedWallet, rawTypedData: unknown): Promise<SellPermit> {
+export async function signSellPermit(
+  wallet: ConnectedWallet,
+  rawTypedData: unknown,
+  readNonce: PermitNonceReader = readPermitNonce,
+): Promise<SellPermit> {
   if (!wallet.signTypedData) {
     throw new WalletError(
       'unsupported_method',
@@ -121,7 +150,7 @@ export async function signSellPermit(wallet: ConnectedWallet, rawTypedData: unkn
         'Approve the router on this token manually, or use another wallet.',
     );
   }
-  const td = assertShape(rawTypedData);
+  const td = assertPermitShape(rawTypedData);
   const owner = td.message.owner;
   if (owner.toLowerCase() !== wallet.address.toLowerCase()) {
     throw new WalletError(
@@ -129,15 +158,10 @@ export async function signSellPermit(wallet: ConnectedWallet, rawTypedData: unkn
       'The permit names a different owner than the connected wallet. Reconnect and try again.',
     );
   }
-  const nonce = await readPermitNonce(td.domain.verifyingContract, owner);
-
-  const payload = {
-    domain: td.domain,
-    types: { EIP712Domain: EIP712_DOMAIN, ...td.types },
-    primaryType: td.primaryType,
-    message: { ...td.message, nonce: nonce.toString() },
-  };
-  const signature = await wallet.signTypedData(payload);
+  // Read from the token named in the permit domain (EIP-2612 domains are the
+  // token itself), now, not from the response — see the header.
+  const nonce = await readNonce(td.domain.verifyingContract, owner);
+  const signature = await wallet.signTypedData(buildPermitPayload(td, nonce));
   const { v, r, s } = splitSignature(signature);
   return { value: td.message.value, deadline: td.message.deadline, v, r, s };
 }

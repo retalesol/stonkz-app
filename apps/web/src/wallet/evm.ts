@@ -168,7 +168,7 @@ function utf8ToHex(text: string): string {
   return out;
 }
 
-function toHexWei(decimalWei: string): string {
+export function toHexWei(decimalWei: string): string {
   const trimmed = decimalWei.trim();
   if (trimmed === '' || trimmed === '0') return '0x0';
   if (trimmed.startsWith('0x')) return trimmed;
@@ -176,6 +176,81 @@ function toHexWei(decimalWei: string): string {
     throw new WalletError('unknown', 'The API returned a transaction value this wallet cannot encode: ' + decimalWei);
   }
   return '0x' + BigInt(trimmed).toString(16);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Chain enforcement                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** The three EIP-1193 calls chain enforcement needs, and nothing else. */
+export type ChainRequest = (method: string, params?: unknown[]) => Promise<unknown>;
+
+function toChainId(raw: unknown): number {
+  if (typeof raw === 'string') return raw.startsWith('0x') ? Number(hexToBigInt(raw as `0x${string}`)) : Number(raw);
+  return Number(raw);
+}
+
+/**
+ * Get a wallet onto chain 4663, or fail with copy that says what to do next.
+ *
+ * Sequence, and why each step is there:
+ *
+ * 1. Read `eth_chainId`. Already on 4663 and there is nothing to do — no
+ *    prompt, which matters because a needless switch prompt on every trade
+ *    trains people to click through them.
+ * 2. `wallet_switchEthereumChain`. The normal case for an extension that has
+ *    4663 configured.
+ * 3. On `4902` / "unrecognized chain", `wallet_addEthereumChain` with the
+ *    parameters from `docs/robinhood-chain.md` §2.2, then switch again.
+ * 4. On `4200` (method not supported — many mobile wallets), stop and say
+ *    *switch it yourself in the wallet*, because retrying cannot help.
+ * 5. Re-read `eth_chainId` and refuse to continue unless it is really 4663.
+ *    A wallet answering the switch with a silent no-op is a real behaviour,
+ *    and signing after it would broadcast to the wrong chain.
+ *
+ * Taking a bare `request` rather than a provider keeps this unit-testable
+ * against scripted responses, with no browser and no extension.
+ */
+export async function enforceRhChain(request: ChainRequest): Promise<void> {
+  let current: number;
+  try {
+    current = toChainId(await request('eth_chainId'));
+  } catch (err) {
+    throw mapWalletError(err, 'Could not read the wallet\u2019s current chain.');
+  }
+  if (current === RH_CHAIN_ID) return;
+
+  try {
+    await request('wallet_switchEthereumChain', [{ chainId: RH_CHAIN_ID_HEX }]);
+  } catch (err) {
+    const mapped = mapWalletError(err);
+    if (mapped.kind === 'chain_unsupported') {
+      try {
+        await request('wallet_addEthereumChain', [RH_ADD_CHAIN_PARAMS]);
+        await request('wallet_switchEthereumChain', [{ chainId: RH_CHAIN_ID_HEX }]);
+      } catch (addErr) {
+        throw mapWalletError(addErr, `Could not add ${RH_ADD_CHAIN_PARAMS.chainName} to this wallet.`);
+      }
+    } else if (mapped.kind === 'unsupported_method') {
+      throw new WalletError(
+        'wrong_chain',
+        `This wallet is on chain ${current} and cannot be switched from a site. Select ` +
+          `${RH_ADD_CHAIN_PARAMS.chainName} (${RH_CHAIN_ID}) in the wallet itself, then try again.`,
+        { cause: err },
+      );
+    } else {
+      throw mapped;
+    }
+  }
+
+  const after = await request('eth_chainId').then(toChainId, () => -1);
+  if (after !== RH_CHAIN_ID) {
+    throw new WalletError(
+      'wrong_chain',
+      `The wallet is still on chain ${after === -1 ? 'unknown' : after}. ` +
+        `Switch it to ${RH_ADD_CHAIN_PARAMS.chainName} (${RH_CHAIN_ID}) to trade.`,
+    );
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -206,63 +281,20 @@ class EvmWallet implements ConnectedWallet {
     return (await this.provider.request(params === undefined ? { method } : { method, params })) as T;
   }
 
-  async chainId(): Promise<number> {
-    const raw = await this.request<string>('eth_chainId');
-    return typeof raw === 'string' ? Number(hexToBigInt(raw as `0x${string}`)) : Number(raw);
-  }
-
   /**
-   * Get the wallet onto chain 4663, or fail with copy that says what to do.
+   * Get the wallet onto chain 4663 — see `enforceRhChain`.
    *
    * Deliberately *not* called before signing in: `docs/robinhood-chain.md`
    * §6.1 is explicit that `personal_sign` is chain-agnostic and that gating
    * connect on a chain switch breaks mobile wallets which have no switch
-   * method at all. The chain is enforced here, at transaction time, which is
-   * the only point it actually matters.
+   * method at all. The chain is enforced at transaction time, which is the
+   * only point it actually matters.
    */
   async ensureChain(): Promise<void> {
+    // WalletConnect pins `eip155:4663` in the session namespace, so the
+    // wallet cannot be anywhere else and the switch prompt is pure noise.
     if (this.chainPinnedBySession) return;
-    let current: number;
-    try {
-      current = await this.chainId();
-    } catch (err) {
-      throw mapWalletError(err, 'Could not read the wallet\u2019s current chain.');
-    }
-    if (current === RH_CHAIN_ID) return;
-
-    try {
-      await this.request('wallet_switchEthereumChain', [{ chainId: RH_CHAIN_ID_HEX }]);
-    } catch (err) {
-      const mapped = mapWalletError(err);
-      if (mapped.kind === 'chain_unsupported') {
-        // The wallet has never seen 4663. Add it from the documented config,
-        // then switch again — `docs/robinhood-chain.md` §2.2.
-        try {
-          await this.request('wallet_addEthereumChain', [RH_ADD_CHAIN_PARAMS]);
-          await this.request('wallet_switchEthereumChain', [{ chainId: RH_CHAIN_ID_HEX }]);
-        } catch (addErr) {
-          throw mapWalletError(addErr, `Could not add ${RH_ADD_CHAIN_PARAMS.chainName} to this wallet.`);
-        }
-      } else if (mapped.kind === 'unsupported_method') {
-        throw new WalletError(
-          'wrong_chain',
-          `This wallet is on chain ${current} and cannot be switched from a site. Select ` +
-            `${RH_ADD_CHAIN_PARAMS.chainName} (${RH_CHAIN_ID}) in the wallet itself, then try again.`,
-          { cause: err },
-        );
-      } else {
-        throw mapped;
-      }
-    }
-
-    const after = await this.chainId().catch(() => -1);
-    if (after !== RH_CHAIN_ID) {
-      throw new WalletError(
-        'wrong_chain',
-        `The wallet is still on chain ${after === -1 ? 'unknown' : after}. ` +
-          `Switch it to ${RH_ADD_CHAIN_PARAMS.chainName} (${RH_CHAIN_ID}) to trade.`,
-      );
-    }
+    await enforceRhChain((method, params) => this.request(method, params));
   }
 
   async signInMessage(message: string): Promise<string> {

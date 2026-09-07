@@ -103,19 +103,31 @@ function registeredWallets(): Wallet[] {
   }
 }
 
+/**
+ * The picker row for one registered wallet, or null if it cannot do the job.
+ *
+ * Split out from `listSolanaWallets()` so the selection rule — right cluster,
+ * connectable, can sign a message, can get a transaction on chain — is
+ * testable against hand-built `Wallet` objects with no browser registry.
+ */
+export function solanaWalletChoice(wallet: Wallet): WalletChoice | null {
+  if (readFeatures(wallet) === null) return null;
+  return {
+    id: wallet.name,
+    net: 'SOL',
+    kind: 'solana-standard',
+    name: wallet.name,
+    // Wallet Standard icons are `data:` URIs by spec, so this never reaches
+    // out to a third-party host from the wallet picker.
+    ...(wallet.icon ? { icon: wallet.icon } : {}),
+  };
+}
+
 /** Every installed wallet that can actually sign for the configured cluster. */
 export function listSolanaWallets(): WalletChoice[] {
   return registeredWallets()
-    .filter((w) => readFeatures(w) !== null)
-    .map((w) => ({
-      id: w.name,
-      net: 'SOL' as const,
-      kind: 'solana-standard' as const,
-      name: w.name,
-      // Wallet Standard icons are `data:` URIs by spec, so this never reaches
-      // out to a third-party host from the wallet picker.
-      ...(w.icon ? { icon: w.icon } : {}),
-    }));
+    .map(solanaWalletChoice)
+    .filter((c): c is WalletChoice => c !== null);
 }
 
 /** Fires when a wallet registers or unregisters, so an open picker can re-render. */
@@ -305,6 +317,11 @@ export async function connectSolanaWallet(id: string): Promise<ConnectedWallet> 
   if (!wallet) {
     throw new WalletError('no_wallet', `${id} is no longer available. Is the extension still enabled?`);
   }
+  return openSolanaWallet(wallet);
+}
+
+/** The connect half, against an already-resolved registry entry. */
+export async function openSolanaWallet(wallet: Wallet): Promise<ConnectedWallet> {
   const features = readFeatures(wallet);
   if (!features) {
     throw new WalletError(

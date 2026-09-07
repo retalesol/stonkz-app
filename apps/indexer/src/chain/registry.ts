@@ -27,6 +27,20 @@ export interface TokenMeta {
   supplyAtoms: bigint;
   tokensForSale: bigint;
   feeBps: number;
+  /**
+   * Tokens sold off the curve so far, i.e. `tokensForSale - realToken`.
+   *
+   * Tracked because `Staked` needs it and does not carry it on either chain:
+   * `xpForStake` weights the stake against *circulating* supply, and the
+   * closest thing the stake events do carry (Solana's `eligible_staked`) is
+   * total staked, which would score every staker as if they held the entire
+   * float. Refreshed from each fill via {@link TokenRegistry.observeFill}.
+   */
+  circulatingAtoms: bigint;
+}
+
+function max0(v: bigint): bigint {
+  return v > 0n ? v : 0n;
 }
 
 export function mintKey(net: Net, mint: string): string {
@@ -54,6 +68,17 @@ export class TokenRegistry {
     this.cache.set(mintKey(meta.net, meta.mint), meta);
   }
 
+  /**
+   * Records the circulating supply a fill left behind, so a `Staked` later in
+   * the same batch weights against the float as of that moment rather than as
+   * of the last batch.
+   */
+  observeFill(net: Net, mint: string, circulatingAtoms: bigint): void {
+    const key = mintKey(net, mint);
+    const hit = this.cache.get(key);
+    if (hit) this.cache.set(key, { ...hit, circulatingAtoms });
+  }
+
   async resolve(net: Net, mint: string): Promise<TokenMeta | null> {
     const key = mintKey(net, mint);
     const hit = this.cache.get(key);
@@ -71,6 +96,7 @@ export class TokenRegistry {
     // unresolved rather than dividing by zero.
     if (row.basePriceUsd1e6 === '0') return null;
 
+    const tokensForSale = BigInt(row.curveTokensForSale);
     const meta: TokenMeta = {
       net,
       mint: normalised,
@@ -81,8 +107,9 @@ export class TokenRegistry {
       tokenDecimals: row.tokenDecimals || TOKEN_DECIMALS[net],
       basePrice1e6: BigInt(row.basePriceUsd1e6),
       supplyAtoms: BigInt(Math.round(row.supply * 10 ** (row.tokenDecimals || TOKEN_DECIMALS[net]))),
-      tokensForSale: BigInt(row.curveTokensForSale),
+      tokensForSale,
       feeBps: row.feeBps,
+      circulatingAtoms: max0(tokensForSale - BigInt(row.curveRealToken)),
     };
     this.cache.set(key, meta);
     return meta;

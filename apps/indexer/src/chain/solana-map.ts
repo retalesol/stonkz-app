@@ -104,6 +104,7 @@ export async function mapSolanaTransaction(
           supplyAtoms: record.supply,
           tokensForSale: record.tokensForSale,
           feeBps: record.feeBps,
+          circulatingAtoms: 0n,
         };
         ctx.registry.remember(meta);
 
@@ -161,6 +162,7 @@ export async function mapSolanaTransaction(
           record.feeCreatorBucket,
         );
         const usdValue = baseAtomsToUsd(record.baseAmount, meta.basePrice1e6, meta.baseDecimals);
+        ctx.registry.observeFill('SOL', record.mint, record.circulating);
         out.push({
           ...base,
           kind: 'Trade',
@@ -287,7 +289,10 @@ export async function mapSolanaTransaction(
           // the lock multiplier the read tables display.
           mult: record.amount > 0n ? Number(record.weight) / Number(record.amount) : 1,
           untilMs: Number(record.lockUntil) * 1000,
-          circulating: toWhole(record.eligibleStaked, meta.tokenDecimals),
+          // Not `record.eligibleStaked`: that is total staked, and weighting a
+          // stake against it would score every staker as holding the whole
+          // float. The registry tracks the curve's real circulating supply.
+          circulating: toWhole(meta.circulatingAtoms, meta.tokenDecimals),
         });
         break;
       }
