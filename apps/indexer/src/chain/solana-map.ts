@@ -10,7 +10,8 @@ import {
   toWhole,
   TOKEN_DECIMALS,
 } from './market.js';
-import { TokenRegistry, UnknownMintError, type TokenMeta } from './registry.js';
+import type { TokenRegistry} from './registry.js';
+import { UnknownMintError, type TokenMeta } from './registry.js';
 import type { SolanaLaunchpadEvent } from './solana-events.js';
 
 /**

@@ -20,14 +20,24 @@ import type { EvmBlockRef, EvmIndexRpc, EvmLogFilter } from '../chain/evm-rpc.js
  * the fixtures agree with the ABI, and the ABI was checked against
  * `programs/evm/src/*.sol` by eye.
  */
-export const LAUNCHPAD = '0x000000000000000000000000000000000000dec0';
-export const ROUTER = '0x0000000000000000000000000000000000000d0e5';
+/** A readable 20-byte address, right-padded so the suffix is the identity. */
+function address(suffix: string): string {
+  return `0x${suffix.toLowerCase().padStart(40, '0')}`;
+}
+
+export const LAUNCHPAD = address('dec0');
+export const ROUTER = address('d0e5');
 /** aeWETH, the configured RH native wrapper — `router/base-mints.ts`. */
 export const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
-export const USDC_RH = '0x00000000000000000000000000000000000005dc0';
-export const CREATOR = '0x000000000000000000000000000000000000c4ea7';
-export const TRADER = '0x000000000000000000000000000000000000f4ade';
-export const DOGGO = '0x0000000000000000000000000000000000d066001';
+export const USDC_RH = address('05dc');
+export const CREATOR = address('c4ea7');
+export const TRADER = address('f4ade');
+export const DOGGO = address('d0660');
+
+/** A readable 32-byte hash, same trick. */
+export function hash32(suffix: string): string {
+  return `0x${suffix.toLowerCase().padStart(64, '0')}`;
+}
 
 function eventAbi(name: EvmEventName): AbiEvent {
   const found = STONKZ_EVENTS_ABI.find((e) => e.name === name);
