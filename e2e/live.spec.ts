@@ -400,7 +400,18 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     const descriptions = ['Wrap ETH', 'Approve WETH spend', 'Buy RHDOG on StonkzLaunchpad'];
     await mockTradePrepareSteps(page, quote, descriptions, warning);
 
-    await page.goto(`/t/${sym}`);
+    // RHDOG only exists on the Robinhood board — `GET /tokens?net=SOL` (the
+    // default) never has it, and `bySym()` only ever searches whatever `net`
+    // is currently loaded into `COINS`. A client-side net switch reloads
+    // that in place; a cold `page.goto('/t/RHDOG')` would instead boot fresh
+    // on the default SOL net and 404. Click into it the same way a trader
+    // actually would: switch chains, then click the card.
+    await page.click('#connectBtn');
+    await page.click('[data-net="RH"]');
+    await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
+    const card = page.locator(`.coin[data-sym="${sym}"]`).first();
+    await expect(card).toBeVisible();
+    await card.click();
     await expect(page.locator('#tokenView')).toBeVisible();
 
     await page.click('#t-go');
@@ -414,7 +425,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     for (let i = 1; i <= descriptions.length; i++) {
       await expect(page.locator('#steps-go')).toHaveText(`SIGN STEP ${i} OF ${descriptions.length}`);
       await expect(page.locator('#txBody')).toContainText(`STEP ${i} OF ${descriptions.length}`);
-      await expect(page.locator('#txBody')).toContainText((descriptions[i - 1] as string).toUpperCase());
+      await expect(page.locator('#txBody')).toContainText(descriptions[i - 1] as string);
       await page.click('#steps-go');
     }
 
@@ -509,7 +520,11 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await page.click('[data-net="SOL"]');
     await expect(page.locator('#wchip')).toBeVisible();
 
-    await page.goto('/me');
+    // A cold `page.goto('/me')` would boot fresh with the wallet
+    // disconnected again (`openProfile()` requires `WALLET.on`) — get there
+    // the way a connected trader actually would, through the wallet menu.
+    await page.click('#wchip');
+    await page.click('[data-w="profile"]');
     await expect(page.locator('#profileView')).toBeVisible();
     await page.click('#claimBtn');
     await expect(page.locator('#claimScrim')).toBeVisible();
