@@ -278,7 +278,9 @@ describe('achievements and ranks', () => {
   });
 
   it('reports a rank-up and publishes it', async () => {
-    const target = RANKS[1]?.min ?? 500;
+    // RANKS rows are `[name, xpRequired]` tuples.
+    const target = RANKS[1]?.[1] ?? 250;
+    expect(target).toBe(250);
     // The cap is 500/day, so climb across days.
     let banked = 0;
     let day = 6;

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { indexerCursors } from '../db/schema.js';
+import { readMigrations } from '../db/migrate.js';
 import { API_CSP } from '../app/security.js';
 import { createTestApp, TEST_ORIGIN, type TestApp } from '../test/app.js';
 import type { HealthReport } from './health.js';
@@ -27,7 +28,9 @@ describe('GET /health', () => {
 
     const { status, body } = await health();
     expect(status).toBe(200);
-    expect(body.api.migrations).toBe(4);
+    // Reports the whole applied history, so adding a migration is not a
+    // reason to edit this test.
+    expect(body.api.migrations).toBe(readMigrations().length);
     expect(body.db.status).toBe('ok');
     expect(body.redis.status).toBe('ok');
 

@@ -17,6 +17,8 @@ const STATUS: Record<AuthError['code'], 400 | 401 | 409> = {
   net_mismatch: 400,
   message_mismatch: 400,
   bad_signature: 401,
+  // A client-supplied chain id this deployment does not accept.
+  chain_mismatch: 400,
   session_revoked: 401,
   bad_token: 401,
 };

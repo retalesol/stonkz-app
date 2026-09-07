@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { authed, createTestApp, TEST_ORIGIN, type TestApp } from '../test/app.js';
-import { evmWallet, solanaWallet } from '../test/wallets.js';
+import { contractWallet, evmWallet, solanaWallet } from '../test/wallets.js';
+import { recoverSiweAddress } from '../auth/siwe.js';
 
 let h: TestApp;
 
@@ -12,6 +13,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await h.db.reset();
+  await h.clearRateLimits();
 });
 
 interface Challenge {
@@ -163,6 +165,128 @@ describe('SIWE — Robinhood', () => {
       signature: attacker.sign(challenge.message),
     });
     expect(res.status).toBe(401);
+  });
+
+  it('names the confirmed mainnet chain id in the challenge', async () => {
+    const challenge = await nonce('RH', evmWallet('rh-chainid').address);
+    expect(challenge.chainId).toBe('4663');
+    expect(challenge.message).toContain('Chain ID: 4663');
+  });
+
+  it('logs in an ERC-4337 smart account through the EIP-1271 fallback', async () => {
+    // Robinhood Chain treats account abstraction as first-class, so a
+    // contract account is an ordinary user. Its signature does not recover to
+    // its own address, so ecrecover alone would reject it as "invalid".
+    const account = contractWallet('route-1271');
+    h.rpcs.RH.setContract(account.address, (data) => account.ethCall(account.address, data));
+
+    const challenge = await nonce('RH', account.address);
+    const signature = account.sign(challenge.message);
+    expect(recoverSiweAddress(challenge.message, signature)).toBe(account.ownerAddress);
+
+    const res = await post('/auth/siwe', {
+      address: account.address,
+      message: challenge.message,
+      signature,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { net: string; wallet: string };
+    // The session binds to the account, never to the owner key behind it.
+    expect(body.wallet).toBe(account.address);
+    expect(body.wallet).not.toBe(account.ownerAddress);
+    expect(body.net).toBe('RH');
+  });
+
+  it('still refuses a contract account when the owner did not sign', async () => {
+    const account = contractWallet('route-1271-bad');
+    const impostor = evmWallet('route-1271-impostor');
+    h.rpcs.RH.setContract(account.address, (data) => account.ethCall(account.address, data));
+
+    const challenge = await nonce('RH', account.address);
+    const res = await post('/auth/siwe', {
+      address: account.address,
+      message: challenge.message,
+      signature: impostor.sign(challenge.message),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('refuses an address with no code behind it', async () => {
+    // No `setContract`, so the fake returns empty data the way a node does.
+    const account = contractWallet('route-1271-nocode');
+    const challenge = await nonce('RH', account.address);
+    const res = await post('/auth/siwe', {
+      address: account.address,
+      message: challenge.message,
+      signature: account.sign(challenge.message),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('does not let an RPC outage admit a contract account', async () => {
+    const account = contractWallet('route-1271-outage');
+    h.rpcs.RH.setContract(account.address, (data) => account.ethCall(account.address, data));
+    const challenge = await nonce('RH', account.address);
+    h.rpcs.RH.setFailing(true);
+
+    const res = await post('/auth/siwe', {
+      address: account.address,
+      message: challenge.message,
+      signature: account.sign(challenge.message),
+    });
+    // Fail closed: an unreachable chain is not evidence of a valid signature.
+    expect(res.status).toBe(401);
+    h.rpcs.RH.setFailing(false);
+  });
+});
+
+describe('cross-environment replay', () => {
+  it('refuses a staging challenge presented to production', async () => {
+    // A signature minted against the staging chain id must not buy a
+    // production session. Two guards stand in the way and this exercises the
+    // outer one: nonces live in each environment's own database, so the
+    // challenge is unknown here before its chain id is ever considered.
+    const staging = await createTestApp({ env: { RH_CHAIN_ID: '46630' } });
+    try {
+      const w = evmWallet('replayer');
+      const stagingRes = await staging.app.request(
+        `/auth/nonce?net=RH&address=${encodeURIComponent(w.address)}`,
+      );
+      const challenge = (await stagingRes.json()) as { message: string; chainId: string };
+      expect(challenge.chainId).toBe('46630');
+      expect(challenge.message).toContain('Chain ID: 46630');
+
+      const res = await h.app.request('/auth/siwe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: TEST_ORIGIN },
+        body: JSON.stringify({
+          address: w.address,
+          message: challenge.message,
+          signature: w.sign(challenge.message),
+        }),
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()) as { error: string }).toMatchObject({ error: 'bad_nonce' });
+    } finally {
+      await staging.close();
+    }
+  });
+
+  it('accepts a login when the environment allows several chain ids', async () => {
+    const multi = await createTestApp({
+      env: { RH_CHAIN_ID: '4663', RH_ALLOWED_CHAIN_IDS: '4663,46630' },
+    });
+    try {
+      expect(multi.deps.env.allowedRhChainIds).toEqual([4663, 46630]);
+      const { address } = await multi.login('RH', evmWallet('multi-chain'));
+      expect(address).toBe(evmWallet('multi-chain').address);
+    } finally {
+      await multi.close();
+    }
+  });
+
+  it('defaults the allow-list to the single configured id', () => {
+    expect(h.deps.env.allowedRhChainIds).toEqual([4663]);
   });
 });
 

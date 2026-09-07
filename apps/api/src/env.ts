@@ -1,4 +1,5 @@
 import type { Net } from '@stonkz/shared';
+import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL } from './chain/evm.js';
 
 /**
  * Every knob the API reads, resolved once at boot. Defaults target
@@ -28,6 +29,8 @@ export interface ApiEnv {
   solanaRpcUrl: string;
   rhRpcUrl: string;
   rhChainId: number;
+  /** Chain ids a SIWE message may name. See `AuthServiceOptions`. */
+  allowedRhChainIds: readonly number[];
   rhNetworkLabel: string;
   maxChainLagSeconds: number;
   chainTickMs: Record<Net, number>;
@@ -87,6 +90,22 @@ function list(src: EnvSource, key: string, fallback: readonly string[]): string[
     .filter(Boolean);
 }
 
+function ints(src: EnvSource, key: string, fallback: readonly number[]): number[] {
+  const raw = src[key];
+  if (raw === undefined || raw.trim() === '') return [...fallback];
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const n = Number.parseInt(s, 10);
+      if (!Number.isInteger(n)) {
+        throw new Error(`env ${key} must be a comma-separated integer list, got ${JSON.stringify(raw)}`);
+      }
+      return n;
+    });
+}
+
 function oneOf<T extends string>(src: EnvSource, key: string, allowed: readonly T[], fallback: T): T {
   const v = str(src, key, fallback);
   if (!(allowed as readonly string[]).includes(v)) {
@@ -118,8 +137,11 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     corsOrigins: list(src, 'CORS_ORIGINS', DEFAULT_CORS),
 
     solanaRpcUrl: str(src, 'SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
-    rhRpcUrl: str(src, 'RH_RPC_URL', 'http://localhost:8545'),
-    rhChainId: int(src, 'RH_CHAIN_ID', 1),
+    rhRpcUrl: str(src, 'RH_RPC_URL', RH_PUBLIC_RPC_URL),
+    rhChainId: int(src, 'RH_CHAIN_ID', RH_CHAIN_ID),
+    allowedRhChainIds: ints(src, 'RH_ALLOWED_CHAIN_IDS', [
+      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID),
+    ]),
     rhNetworkLabel: str(src, 'RH_NETWORK_LABEL', 'ROBINHOOD'),
     maxChainLagSeconds: int(src, 'MAX_CHAIN_LAG_SECONDS', 30),
     chainTickMs: {
@@ -149,6 +171,13 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     if (env.jwtSecret === DEV_JWT_SECRET) throw new Error('JWT_SECRET must be set in production');
     if (env.crateHmacSecret === DEV_CRATE_SECRET) throw new Error('CRATE_HMAC_SECRET must be set in production');
     if (env.jwtSecret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
+    // Robinhood documents the public endpoint as rate-limited and not for
+    // production use, and a wallet render reads a balance.
+    if (env.rhRpcUrl === RH_PUBLIC_RPC_URL) {
+      throw new Error(
+        'RH_RPC_URL must be a provider endpoint in production; the public RPC is rate-limited and unsupported',
+      );
+    }
   }
 
   return env;

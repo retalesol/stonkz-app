@@ -164,7 +164,7 @@ describe('pub/sub', () => {
 describe('subscriber isolation', () => {
   it('does not let one throwing handler starve the others', async () => {
     const errors: string[] = [];
-    const isolated = new MemoryRedis(() => now, (err, channel) => errors.push(`${channel}`));
+    const isolated = new MemoryRedis(() => now, (_err, channel) => errors.push(channel));
     const seen: string[] = [];
     await isolated.subscribe(CHANNELS.tape(), () => {
       throw new Error('socket already closed');

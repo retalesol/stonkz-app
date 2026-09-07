@@ -12,7 +12,7 @@ import {
   chainLabel,
   parseSignInMessage,
 } from './message.js';
-import { isEvmAddress, toChecksumAddress, verifySiwe } from './siwe.js';
+import { isEvmAddress, toChecksumAddress, verifySiweFull, type EthCaller } from './siwe.js';
 import { isSolanaAddress, verifySiws } from './siws.js';
 
 export class AuthError extends Error {
@@ -25,6 +25,7 @@ export class AuthError extends Error {
       | 'net_mismatch'
       | 'message_mismatch'
       | 'bad_signature'
+      | 'chain_mismatch'
       | 'session_revoked'
       | 'bad_token',
     message: string,
@@ -42,9 +43,22 @@ export interface AuthServiceOptions {
   /** The `URI` line of the signed message. */
   uri: string;
   rhChainId: number;
+  /**
+   * Chain ids a signed message may name, checked server-side. A client that
+   * sends any other value is refused rather than trusted, because a
+   * mismatched chain id is the classic replay vector between an operator's
+   * environments — a staging signature accepted in production.
+   */
+  allowedRhChainIds?: readonly number[];
   nonceTtlSeconds: number;
   accessTtlSeconds: number;
   refreshTtlSeconds: number;
+  /**
+   * Lets the SIWE verifier fall back to ERC-1271 for smart-contract accounts.
+   * Optional: without it EOAs still log in, and contract accounts are refused
+   * the same way they were before the fallback existed.
+   */
+  ethCaller?: EthCaller;
   now?: () => number;
 }
 
@@ -138,6 +152,24 @@ export class AuthService {
     return this.opts.db;
   }
 
+  /** The allow-list defaults to the single configured chain id. */
+  private allowedChainIds(): readonly number[] {
+    return this.opts.allowedRhChainIds ?? [this.opts.rhChainId];
+  }
+
+  private assertChainAllowed(net: Net, chainId: string): void {
+    if (net === 'SOL') {
+      if (chainId !== chainLabel('SOL', this.opts.rhChainId)) {
+        throw new AuthError('chain_mismatch', 'unexpected chain id for a Solana sign-in');
+      }
+      return;
+    }
+    const parsed = Number.parseInt(chainId, 10);
+    if (!Number.isInteger(parsed) || !this.allowedChainIds().includes(parsed)) {
+      throw new AuthError('chain_mismatch', `chain id ${chainId} is not accepted here`);
+    }
+  }
+
   private normaliseAddress(net: Net, address: string): string {
     if (net === 'SOL') {
       if (!isSolanaAddress(address)) throw new AuthError('bad_address', 'not a Solana address');
@@ -177,11 +209,18 @@ export class AuthService {
     if (parsed.issuedAt !== row.issuedAt.toISOString()) {
       throw new AuthError('message_mismatch', 'issuedAt does not match the challenge');
     }
+    // Redundant while the expected message is rebuilt from `rhChainId`, but it
+    // is the check that has to survive any future relaxing of that equality,
+    // and it produces a diagnosable error instead of `message_mismatch`.
+    this.assertChainAllowed(input.net, parsed.chainId);
 
     const ok =
       input.net === 'SOL'
         ? verifySiws({ message: input.message, signature: input.signature, address: input.address })
-        : verifySiwe({ message: input.message, signature: input.signature, address: input.address });
+        : await verifySiweFull(
+            { message: input.message, signature: input.signature, address: input.address },
+            this.opts.ethCaller,
+          );
     if (!ok) throw new AuthError('bad_signature', 'signature does not verify');
 
     // Single-use: the UPDATE only lands if nobody else consumed it first.

@@ -4,6 +4,21 @@ import { RpcError, type ChainRpc, type FetchLike } from './types.js';
 
 export const WEI_PER_ETH = 1e18;
 
+/**
+ * Confirmed in `docs/robinhood-chain.md`: mainnet is 4663 (`0x1237`), testnet
+ * is 46630, and the gas token is ETH with the usual 18 decimals.
+ */
+export const RH_CHAIN_ID = 4663;
+export const RH_TESTNET_CHAIN_ID = 46630;
+
+/**
+ * Robinhood documents the public RPC as rate-limited and explicitly not for
+ * production; a balance read on every wallet render will hit those limits.
+ * It is the default only so a fresh checkout works — set `RH_RPC_URL` to a
+ * provider endpoint for anything real.
+ */
+export const RH_PUBLIC_RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
+
 export interface EvmRpcOptions {
   url: string;
   chainId: number;
@@ -15,10 +30,9 @@ export interface EvmRpcOptions {
 /**
  * Robinhood Chain, treated as a standard EVM.
  *
- * Plan step 51 is still open: the chain id, gas token and token standard are
- * unconfirmed. `RH_RPC_URL` therefore points at a documented test chain by
- * default and `verifyChainId()` refuses to run against the wrong network
- * rather than silently indexing someone else's blocks.
+ * `verifyChainId()` refuses to run against the wrong network rather than
+ * silently indexing someone else's blocks — worth keeping now that the id is
+ * confirmed, because 4663 and testnet 46630 are a plausible typo apart.
  */
 export class EvmRpc implements ChainRpc {
   readonly net: Net = 'RH';
@@ -59,6 +73,14 @@ export class EvmRpc implements ChainRpc {
     const hex = await this.call<string>('eth_getBalance', [address, 'latest']);
     // Parse as BigInt first: 1e18 wei overflows float precision on the way in.
     return Number(BigInt(hex)) / WEI_PER_ETH;
+  }
+
+  /**
+   * `eth_call` at head. Used by the SIWE verifier's ERC-1271 fallback, which
+   * is why it is read-only and takes raw calldata rather than an ABI.
+   */
+  async ethCall(to: string, data: string): Promise<string> {
+    return this.call<string>('eth_call', [{ to, data }, 'latest']);
   }
 
   /** Guards against pointing the indexer at the wrong EVM network. */

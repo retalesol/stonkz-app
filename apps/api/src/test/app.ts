@@ -32,6 +32,15 @@ export interface TestApp {
   now(): number;
   /** Every `user:` event published during the test, in order. */
   userEvents: { channel: string; event: UserEvent }[];
+  /**
+   * Drops every rate-limit counter.
+   *
+   * The limiter windows on wall-clock time, but the test clock is frozen, so
+   * counters accumulate across an entire file and an unrelated test
+   * eventually trips the limit. Tests that assert limiter behaviour call this
+   * to isolate themselves; everything else gets it from `beforeEach`.
+   */
+  clearRateLimits(): Promise<void>;
   login(net: Net, wallet?: TestWallet): Promise<{ token: string; address: string; refreshToken: string }>;
   close(): Promise<void>;
 }
@@ -80,9 +89,10 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
 
   const login: TestApp['login'] = async (net, wallet) => {
     const w = wallet ?? (net === 'SOL' ? solanaWallet() : evmWallet());
-    const challenge = await app
-      .request(`/auth/nonce?net=${net}&address=${encodeURIComponent(w.address)}`)
-      .then((r) => r.json() as Promise<{ message: string }>);
+    const nonceRes = await app.request(
+      `/auth/nonce?net=${net}&address=${encodeURIComponent(w.address)}`,
+    );
+    const challenge = (await nonceRes.json()) as { message: string };
 
     const path = net === 'SOL' ? '/auth/siws' : '/auth/siwe';
     const res = await app.request(path, {
@@ -115,6 +125,10 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
     },
     userEvents,
     login,
+    async clearRateLimits() {
+      const keys = await redis.keys('rl:*');
+      if (keys.length > 0) await redis.del(...keys);
+    },
     async close() {
       await built.close();
       await db.close();

@@ -5,9 +5,12 @@ import { RpcError, type ChainRpc, type ChainRpcs, type PriceOracle } from './typ
  * The stand-in every test and the fixture producer run against. No real API
  * keys exist yet, so this is also what `pnpm dev` uses until they do.
  */
+export type FakeEthCallHandler = (data: string) => Promise<string> | string;
+
 export class FakeChainRpc implements ChainRpc {
   private slot: number;
   private readonly balances = new Map<string, number>();
+  private readonly contracts = new Map<string, FakeEthCallHandler>();
   private failing = false;
 
   constructor(
@@ -34,6 +37,23 @@ export class FakeChainRpc implements ChainRpc {
   /** Simulates an RPC outage so `/health` and the error-rate metric can be tested. */
   setFailing(failing: boolean): void {
     this.failing = failing;
+  }
+
+  /**
+   * Puts code at an address. Only the SIWE verifier's ERC-1271 fallback uses
+   * this, so the handler takes raw calldata rather than an ABI.
+   */
+  setContract(address: string, handler: FakeEthCallHandler): void {
+    this.contracts.set(address.toLowerCase(), handler);
+  }
+
+  async ethCall(to: string, data: string): Promise<string> {
+    if (this.failing) throw new RpcError(this.net, 'eth_call', 'simulated outage');
+    const handler = this.contracts.get(to.toLowerCase());
+    // A real node returns empty data for a codeless address, and the caller
+    // must read that as a refusal rather than a success.
+    if (!handler) return '0x';
+    return handler(data);
   }
 
   async head(): Promise<number> {

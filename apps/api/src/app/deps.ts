@@ -1,6 +1,8 @@
 import { JwtService } from '../auth/jwt.js';
 import { AuthService } from '../auth/service.js';
+import type { EthCaller } from '../auth/siwe.js';
 import { EvmRpc } from '../chain/evm.js';
+import type { ChainRpc } from '../chain/types.js';
 import { CachedPriceOracle, HttpPriceOracle } from '../chain/oracle.js';
 import { SolanaRpc } from '../chain/solana.js';
 import type { ChainRpcs, PriceOracle } from '../chain/types.js';
@@ -16,6 +18,16 @@ import { QuoteCache } from '../redis/quote-cache.js';
 import type { RedisLike } from '../redis/types.js';
 import { Publisher } from '../ws/publisher.js';
 import type { AppDeps } from './context.js';
+
+/**
+ * The RH slot of `ChainRpcs` is typed as the generic `ChainRpc`, so a test can
+ * swap in a fake. Only the real EVM client can answer `eth_call`; a fake that
+ * cannot simply leaves contract-account logins refused.
+ */
+function asEthCaller(rpc: ChainRpc): EthCaller | undefined {
+  const candidate = rpc as Partial<EthCaller>;
+  return typeof candidate.ethCall === 'function' ? (candidate as EthCaller) : undefined;
+}
 
 /**
  * Anything a caller wants to substitute. Production overrides nothing; tests
@@ -52,7 +64,9 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
 
   let redis = overrides.redis;
   if (!redis) {
-    redis = await createRedis(env.redisUrl);
+    redis = await createRedis(env.redisUrl, (err, channel) =>
+      logger.error('redis subscriber threw', { channel, err: String(err) }),
+    );
     closers.push(() => (redis as RedisLike).close());
   }
 
@@ -78,6 +92,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       env.priceOracleTtlSeconds,
     );
 
+  const ethCaller = asEthCaller(rpcs.RH);
   const publisher = new Publisher(redis, now);
   const jwt = new JwtService(
     {
@@ -96,9 +111,13 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     domain: env.siwsDomain,
     uri: `https://${env.siwsDomain}`,
     rhChainId: env.rhChainId,
+    allowedRhChainIds: env.allowedRhChainIds,
     nonceTtlSeconds: env.nonceTtlSeconds,
     accessTtlSeconds: env.accessTokenTtlSeconds,
     refreshTtlSeconds: env.refreshTokenTtlSeconds,
+    // Smart-contract accounts are first-class on Robinhood Chain, so the
+    // verifier needs an `eth_call` to fall back to ERC-1271.
+    ...(ethCaller ? { ethCaller } : {}),
     now,
   });
 

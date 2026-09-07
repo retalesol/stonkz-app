@@ -81,8 +81,82 @@ export interface SiweVerifyInput {
   address: string;
 }
 
+/** ECDSA only. Sufficient for an EOA, and wrong for a smart account. */
 export function verifySiwe({ message, signature, address }: SiweVerifyInput): boolean {
   if (!isEvmAddress(address) || !isChecksumValid(address)) return false;
   const recovered = recoverSiweAddress(message, signature);
   return recovered !== null && recovered.toLowerCase() === address.toLowerCase();
+}
+
+/**
+ * ERC-1271 `isValidSignature(bytes32,bytes)`.
+ *
+ * The 4-byte selector and the success value are the same word — that is the
+ * standard's design, not a coincidence here.
+ */
+export const EIP1271_SELECTOR = '1626ba7e';
+export const EIP1271_MAGIC = `0x${EIP1271_SELECTOR}`;
+
+function padTo32(n: number): string {
+  return n.toString(16).padStart(64, '0');
+}
+
+/** ABI-encodes the `isValidSignature` call. `bytes` is dynamic, so it is passed by offset. */
+export function encodeIsValidSignature(hash: Uint8Array, signature: string): string {
+  const sig = signature.replace(/^0x/, '');
+  const bytes = sig.length / 2;
+  // The tail is padded to a whole word; an unpadded tail is a decode revert.
+  const padded = sig.padEnd(Math.ceil(bytes / 32) * 64, '0');
+  return (
+    '0x' +
+    EIP1271_SELECTOR +
+    Buffer.from(hash).toString('hex') +
+    padTo32(0x40) +
+    padTo32(bytes) +
+    padded
+  );
+}
+
+export function isEip1271Success(returnData: string): boolean {
+  const hex = returnData.replace(/^0x/, '').toLowerCase();
+  // A conforming account returns the magic value left-aligned in one word.
+  return hex.length >= 8 && hex.slice(0, 8) === EIP1271_SELECTOR;
+}
+
+/** The one RPC capability the contract path needs. Keeps SIWE off a full client. */
+export interface EthCaller {
+  ethCall(to: string, data: string): Promise<string>;
+}
+
+/**
+ * Full SIWE verification: ECDSA, then ERC-1271.
+ *
+ * Robinhood Chain treats ERC-4337 as first-class, so smart-contract accounts
+ * will log in, and `ecrecover` alone rejects them with "signature invalid"
+ * rather than anything a user could act on. The contract call runs only after
+ * ECDSA has failed, so an EOA login stays a pure local computation and costs
+ * no RPC round trip.
+ *
+ * Deliberately not gated on signature length: an ERC-4337 account's signature
+ * is whatever its validation logic accepts, frequently far longer than 65
+ * bytes. Pre-deployment (ERC-6492) signatures are out of scope for Phase 1;
+ * they would slot in as a third branch here, which is why this returns a
+ * promise even though the ECDSA path is synchronous.
+ */
+export async function verifySiweFull(
+  { message, signature, address }: SiweVerifyInput,
+  caller?: EthCaller,
+): Promise<boolean> {
+  if (!isEvmAddress(address) || !isChecksumValid(address)) return false;
+  if (verifySiwe({ message, signature, address })) return true;
+  if (!caller) return false;
+
+  try {
+    const data = encodeIsValidSignature(personalSignHash(message), signature);
+    return isEip1271Success(await caller.ethCall(address, data));
+  } catch {
+    // A plain EOA has no code, so the call reverts. Indistinguishable from a
+    // refusal here, and both mean the same thing: not signed by this address.
+    return false;
+  }
 }
