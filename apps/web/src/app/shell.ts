@@ -1,10 +1,9 @@
 import { GRAD, usd } from '@stonkz/shared';
-import { api, SIMULATED } from '../api/index.js';
+import { api, DISCLOSURE } from '../api/index.js';
 import { drawFace } from '../canvas/face.js';
 import { initFx } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
-import { DOT } from '../lib/fmt.js';
 import { closeClaim, initClaim, isClaimOpen } from '../modals/claim.js';
 import { closeEdit, initEdit, isEditOpen } from '../modals/edit.js';
 import { closeLaunch, initLaunch, isLaunchOpen, openLaunch } from '../modals/launch.js';
@@ -111,8 +110,7 @@ export async function boot(): Promise<void> {
   renderRank();
 
   must('#gradCap').textContent = usd(GRAD);
-  // The oracle hard-coded the disclosure because it was always simulated.
-  must('.foot .demo').textContent = SIMULATED ? 'SIMULATED DATA ' + DOT + ' NOT FINANCIAL ADVICE' : 'NOT FINANCIAL ADVICE';
+  must('.foot .demo').textContent = DISCLOSURE;
 
   await api.ready();
 

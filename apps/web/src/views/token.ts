@@ -22,6 +22,7 @@ import {
 } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { navigate, retitle } from '../app/route.js';
+import { SignerCancelledError } from '../app/signer.js';
 import { showView } from '../app/view.js';
 import { drawTokenChart } from '../canvas/chart.js';
 import { pix } from '../canvas/pix.js';
@@ -106,7 +107,7 @@ function tokenHTML(c: SimCoin): Html {
       </section>
 
       <section class="pnl" id="tradePnl">
-        <div class="pnl-hd"><h2>Trade</h2><span class="sub">MARKET ${DOT} SIMULATED</span></div>
+        <div class="pnl-hd"><h2>Trade</h2><span class="sub">MARKET ${DOT} ${api.mode === 'live' ? 'LIVE CURVE' : 'SIMULATED'}</span></div>
         <div class="pnl-bd">
           <div class="seg" id="t-side"><button type="button" data-s="BUY" class="on">BUY</button
             ><button type="button" data-s="SELL">SELL</button></div>
@@ -117,7 +118,11 @@ function tokenHTML(c: SimCoin): Html {
           <button class="big" id="t-go">BUY ${c.sym}</button>
           <div class="bal" id="t-bal"></div>
           <div class="pos" id="t-pos" hidden></div>
-          <p class="hint">ORDERS ARE SIMULATED. NOTHING IS SIGNED, SENT OR SETTLED.</p>
+          <p class="hint">${
+            api.mode === 'live'
+              ? 'QUOTES AND ORDERS HIT THE REAL API. SIGNING USES A LOCAL PRACTICE KEY, NOT A BROADCAST TO A LIVE CHAIN.'
+              : 'ORDERS ARE SIMULATED. NOTHING IS SIGNED, SENT OR SETTLED.'
+          }</p>
         </div>
       </section>
 
@@ -601,12 +606,34 @@ async function submitTrade(c: SimCoin): Promise<void> {
     const sold = Math.min(hb.tok, (amount * NATIVE_PRICE.usd) / price(c));
     realized = sold * (price(c) - avg);
   }
-  const q = await api.quote({ coin: c, side: buy ? 'buy' : 'sell', amountIn: amount });
-  await api.trade(q);
+
+  const go = must<HTMLButtonElement>('#t-go');
+  const restoreLabel = go.textContent ?? '';
+  go.disabled = true;
+  go.textContent = 'SIGN IN WALLET\u2026';
+  try {
+    const q = await api.quote({ coin: c, side: buy ? 'buy' : 'sell', amountIn: amount });
+    // The fill only renders below once this resolves — a real confirmed
+    // Solana signature or every step of a Robinhood plan, never the instant
+    // local mutation the sim used to do. `plan step 95`
+    await api.trade(q);
+  } catch (err) {
+    go.disabled = false;
+    go.textContent = restoreLabel;
+    if (err instanceof SignerCancelledError) {
+      toast('SIGNING CANCELLED');
+    } else {
+      toast(String(err instanceof Error ? err.message : err).toUpperCase(), 'red');
+    }
+    return;
+  }
+  go.disabled = false;
+  go.textContent = restoreLabel;
+
   toast(TV.side + ' ' + amount.toFixed(2) + ' ' + (c.base || nativeUnit()) + ' ' + DOT + ' ' + c.sym + ' ' + DOT + ' FILLED');
   if (realized !== null) toast((realized >= 0 ? '+' : '-') + usd(Math.abs(realized)) + ' REALIZED', realized >= 0 ? 'gold' : 'red');
   const tp = $('#tradePnl');
-  const gb = must('#t-go').getBoundingClientRect();
+  const gb = go.getBoundingClientRect();
   if (tp && !reducedMotion()) {
     tp.classList.remove('filled');
     reflow(tp);

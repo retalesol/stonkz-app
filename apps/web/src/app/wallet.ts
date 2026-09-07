@@ -14,10 +14,15 @@ import { addChat } from '../views/chat.js';
 /**
  * The wallet chip, its menu, and the connect flow.
  *
- * Phase 1.B replaces `connect()` inside the adapter with SIWS / SIWE; this file
- * only ever renders what the adapter reports, which is why the fake 460ms
- * "CONNECTING" pause lives here and the fake address does not.
- * `index.html:2498`
+ * `live.ts`'s `connect()` now does a real SIWS/SIWE handshake against a
+ * local practice keypair (`app/keys.ts`, `app/session.ts` — Phase 2.C
+ * needed a real JWT to call any authenticated endpoint, so it took on that
+ * much of Phase 1.B early) and reports the real derived address; the sim
+ * adapter still fakes both. This file only ever renders what the adapter
+ * reports, which is why the 460ms "CONNECTING" pause lives here (theatre in
+ * both modes — this is the wallet-picker UX delay, not the sign-in round
+ * trip, which happens inside `api.connect()` below it) and the address does
+ * not. `index.html:2498`
  */
 
 let afterChange: () => void = () => undefined;
@@ -89,7 +94,7 @@ export async function connectWallet(netKey: Net): Promise<void> {
       l.removeEventListener('animationend', done);
     });
   }
-  toast(n.name + ' CONNECTED ' + DOT + ' ' + WALLET.addr + ' ' + DOT + ' SIMULATED');
+  toast(n.name + ' CONNECTED ' + DOT + ' ' + WALLET.addr + (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'));
   addChat('GLOBAL', { sys: true, who: '', text: 'WALLET CONNECTED ' + DOT + ' ' + n.name + ' ' + DOT + ' ' + WALLET.addr }, true);
 }
 

@@ -46,6 +46,7 @@ test('the shell renders the oracle element order', async ({ page }) => {
     'editScrim',
     'stakeScrim',
     'claimScrim',
+    'txScrim',
     'toasts',
     'rankup',
   ]);

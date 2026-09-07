@@ -14,6 +14,7 @@ import {
 } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
+import { SignerCancelledError } from '../app/signer.js';
 import { drawLaunchChart } from '../canvas/chart.js';
 import { pix } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
@@ -319,24 +320,44 @@ async function doLaunch(): Promise<void> {
   let xh = (NEW.x || '@' + sym.toLowerCase()).trim();
   if (xh[0] !== '@') xh = '@' + xh.replace(/^@+/, '');
   const cashback = NEW.cashback && buy <= 0;
-  const c = await api.launch({
-    sym,
-    name: NEW.name || 'Untitled Coin',
-    desc: NEW.desc || 'no description. pure vibes.',
-    supply: NEW.supply as SupplyOption,
-    tfee: Number(NEW.fee),
-    buy,
-    base: NEW.base,
-    cashback,
-    x: xh,
-    web: NEW.web,
-    tg: NEW.tg,
-  });
+
+  const go = must<HTMLButtonElement>('#nc-next');
+  const restoreLabel = go.textContent ?? 'LAUNCH';
+  go.disabled = true;
+  go.textContent = 'DEPLOYING\u2026';
+  let c;
+  try {
+    c = await api.launch({
+      sym,
+      name: NEW.name || 'Untitled Coin',
+      desc: NEW.desc || 'no description. pure vibes.',
+      supply: NEW.supply as SupplyOption,
+      tfee: Number(NEW.fee),
+      buy,
+      base: NEW.base,
+      cashback,
+      x: xh,
+      web: NEW.web,
+      tg: NEW.tg,
+    });
+  } catch (err) {
+    go.disabled = false;
+    go.textContent = restoreLabel;
+    if (err instanceof SignerCancelledError) toast('LAUNCH CANCELLED');
+    else toast(String(err instanceof Error ? err.message : err).toUpperCase(), 'red');
+    return;
+  }
+
   closeLaunch();
   toast(
     cashback
       ? 'DEPLOYED ' + sym + '/' + NEW.base + ' ' + DOT + ' CASHBACK LIVE FOR 5 MINUTES'
-      : 'DEPLOYED ' + sym + '/' + NEW.base + ' ' + DOT + ' DEV BUY ' + buy.toFixed(2) + ' ' + DOT + ' SIMULATED',
+      : 'DEPLOYED ' +
+          sym +
+          '/' +
+          NEW.base +
+          (buy > 0 ? ' ' + DOT + ' DEV BUY ' + buy.toFixed(2) : '') +
+          (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
   );
   addChat('GLOBAL', { sys: true, who: '', text: 'NEW MINT ' + DOT + ' $' + sym + ' / ' + NEW.base + ' ' + DOT + ' DEPLOYED BY YOU' }, true);
   navigate({ view: 'token', sym: c.sym });

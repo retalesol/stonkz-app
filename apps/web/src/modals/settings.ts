@@ -58,7 +58,7 @@ function formHTML(): ReturnType<typeof html> {
           <button type="button" class="chipm${SET.confirm ? ' on' : ''}" data-cf="1">ON</button>
           <button type="button" class="chipm${SET.confirm ? '' : ' on'}" data-cf="0">OFF</button></span></div>
     </div>
-    <p class="hint">SETTINGS APPLY TO EVERY QUOTE ON THIS DEVICE. SIMULATED &#8212; NOTHING IS SIGNED OR SENT.</p>
+    <p class="hint">SETTINGS APPLY TO EVERY QUOTE ON THIS DEVICE.</p>
     <div class="set-foot"><button type="submit" class="big">SAVE SETTINGS</button>
       <button type="button" class="chipm" id="st-reset" style="padding:8px 14px">RESET</button></div>`;
 }
