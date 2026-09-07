@@ -182,7 +182,14 @@ export function renderProfile(addr?: string): void {
   const holdings = own ? HOLD : memHold(m as SimMember, price);
   const acts = own ? MYTRADES : memTrades(m as SimMember);
   const mine = own ? myCoins() : coinsBy(PF.addr);
+  // Sim mode's `.fee` is a live client-side accrual, so gating the button on
+  // it is honest. Live mode's `SimCoin.fee` is never touched by the real
+  // `creator_vaults` ledger — `GET /fees` is the only source of truth, and
+  // that only gets fetched once the claim modal itself opens — so the
+  // button always opens it there and lets `claim.ts` say "nothing to claim"
+  // rather than guessing wrong from stale local state.
   const fees = feeTotal();
+  const canClaim = api.mode === 'live' || fees >= 0.01;
 
   render(
     must('#profileView'),
@@ -230,7 +237,7 @@ export function renderProfile(addr?: string): void {
         </div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <section class="pnl"><div class="pnl-hd"><h2>${own ? 'Coins You Launched' : 'Coins Launched'}</h2
-            >${own ? html`<button class="hdbtn" id="claimBtn"${fees >= 0.01 ? '' : ' disabled'}>CLAIM FEES</button>` : ''}</div
+            >${own ? html`<button class="hdbtn" id="claimBtn"${canClaim ? '' : ' disabled'}>CLAIM FEES</button>` : ''}</div
             ><div id="pfMine">${minedHTML(mine)}</div
             >${own ? html`<div class="pnl-note">DEPLOYING A COIN PAYS 150 XP ${DOT} LP BURNS AT ${usd(GRAD)}</div>` : ''}</section
           ><section class="pnl"><div class="pnl-hd"><h2>Most Profitable Friends</h2
@@ -351,7 +358,7 @@ export function syncProfile(): void {
     const cb = $('#claimBtn') as HTMLButtonElement | null;
     if (e) e.textContent = fees.toFixed(3);
     if (es) es.textContent = usd(fees * NATIVE_PRICE.usd) + ' UNCLAIMED';
-    if (cb) cb.disabled = fees < 0.01;
+    if (cb) cb.disabled = api.mode === 'sim' && fees < 0.01;
   }
 }
 

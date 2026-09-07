@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
  * Phase 1.D live-mode journeys (plan steps 62-70).
@@ -160,4 +160,364 @@ test('a net switch reloads the board from the other chain', async ({ page }) => 
   expect(rhSyms.length).toBeGreaterThan(0);
   expect(rhSyms).not.toEqual(solSyms);
   for (const sym of rhSyms) expect(solSyms).not.toContain(sym);
+});
+
+/**
+ * Phase 2.C write-path journeys (plan steps 95-99).
+ *
+ * `POST /trade/prepare`, `/launch/prepare`, `/launch/confirm` and
+ * `/fees/claim/prepare` all need a wallet with real balance and, on
+ * Robinhood, a deployed `StonkzRouter` to exercise for real — neither exists
+ * in this harness (`apps/api/src/chain/fake.ts`'s practice wallets start at
+ * zero native balance). Rather than skip the write path entirely, these
+ * mock just those endpoints with `page.route()`, in the exact shape a real
+ * response takes (`apps/api/src/routes/trade.ts` et al — read from disk, not
+ * assumed), while everything else — the board, the token page, `GET
+ * .../quote`, and the real SIWS/SIWE handshake `ensureSession()` runs before
+ * every one of these calls — stays wired to the real fixture stack above.
+ * That keeps these deterministic without faking the one thing actually
+ * being tested: that the UI walks a real response shape correctly.
+ */
+test.describe('trade box, launch and claim — live adapter wiring', () => {
+  interface MockHop {
+    venue: 'CURVE' | 'JUPITER' | 'UNISWAP';
+    inSymbol: string;
+    outSymbol: string;
+    inAmount: number;
+    outAmount: number;
+    impactPct: number;
+    feeBps: number;
+    feeAmount: number;
+  }
+
+  interface MockQuote {
+    sym: string;
+    net: 'SOL' | 'RH';
+    side: 'buy' | 'sell';
+    nativeUnit: string;
+    amountIn: number;
+    amountOut: number;
+    minOut: number;
+    hops: MockHop[];
+    routeLabel: string;
+    effFeePct: number;
+    impactPct: number;
+    expiresAt: number;
+  }
+
+  const FAKE_SOL_TX =
+    'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+  function nativePairedQuote(sym: string, side: 'buy' | 'sell', amountIn: number): MockQuote {
+    const amountOut = side === 'buy' ? amountIn * 1_000_000 : amountIn;
+    return {
+      sym,
+      net: 'SOL',
+      side,
+      nativeUnit: 'SOL',
+      amountIn,
+      amountOut,
+      minOut: amountOut * 0.985,
+      hops: [
+        {
+          venue: 'CURVE',
+          inSymbol: side === 'buy' ? 'SOL' : sym,
+          outSymbol: side === 'buy' ? sym : 'SOL',
+          inAmount: side === 'buy' ? amountIn : amountIn * 900_000,
+          outAmount: amountOut,
+          impactPct: 1.1,
+          feeBps: 250,
+          feeAmount: amountIn * 0.025,
+        },
+      ],
+      routeLabel: 'CURVE',
+      effFeePct: 2.5,
+      impactPct: 1.1,
+      expiresAt: Date.now() + 8000,
+    };
+  }
+
+  /** A base-hop quote — no fixture token is paired against anything but the native unit, so this is fabricated end to end (`hopRow` only renders when `hops.length > 1`). */
+  function baseHopBuyQuote(sym: string, amountIn: number): MockQuote {
+    const baseOut = amountIn * 150;
+    const amountOut = baseOut * 1000;
+    return {
+      sym,
+      net: 'SOL',
+      side: 'buy',
+      nativeUnit: 'SOL',
+      amountIn,
+      amountOut,
+      minOut: amountOut * 0.985,
+      hops: [
+        {
+          venue: 'JUPITER',
+          inSymbol: 'SOL',
+          outSymbol: 'USDC',
+          inAmount: amountIn,
+          outAmount: baseOut,
+          impactPct: 0.05,
+          feeBps: 0,
+          feeAmount: 0,
+        },
+        {
+          venue: 'CURVE',
+          inSymbol: 'USDC',
+          outSymbol: sym,
+          inAmount: baseOut,
+          outAmount: amountOut,
+          impactPct: 1.0,
+          feeBps: 250,
+          feeAmount: baseOut * 0.025,
+        },
+      ],
+      routeLabel: 'JUPITER \u203A CURVE',
+      effFeePct: 2.5,
+      impactPct: 1.05,
+      expiresAt: Date.now() + 8000,
+    };
+  }
+
+  /** Intercepts `GET .../quote` for one symbol+side with a fabricated response — only the base-hop case needs this; every other test lets the real fixture curve answer. */
+  async function mockQuote(page: Page, sym: string, side: 'buy' | 'sell', quote: MockQuote): Promise<void> {
+    await page.route(`**/tokens/${sym}/quote*`, async (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() !== 'GET' || url.searchParams.get('side') !== side) return route.fallback();
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(quote) });
+    });
+  }
+
+  async function mockTradePrepareAtomicSol(page: Page, quote: MockQuote): Promise<void> {
+    await page.route('**/trade/prepare', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          net: 'SOL',
+          atomic: true,
+          transaction: FAKE_SOL_TX,
+          lastValidBlockHeight: 999_999,
+          quote,
+          expiresAt: Date.now() + 30_000,
+        }),
+      });
+    });
+  }
+
+  /** The `docs/rh-trade-atomicity-gap.md` fallback — no `StonkzRouter` for this base asset, an ordered `EvmStep[]`. */
+  async function mockTradePrepareSteps(
+    page: Page,
+    quote: MockQuote,
+    descriptions: string[],
+    warning: string,
+  ): Promise<void> {
+    await page.route('**/trade/prepare', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          net: 'RH',
+          atomic: false,
+          steps: descriptions.map((description) => ({
+            to: '0x2222222222222222222222222222222222222222',
+            data: '0x',
+            value: '0',
+            description,
+          })),
+          warning,
+          quote,
+          expiresAt: Date.now() + 30_000,
+        }),
+      });
+    });
+  }
+
+  test('SOL buy — native-paired quote is a single curve hop, and the fill only renders after the signed prepare response resolves', async ({
+    page,
+  }) => {
+    const sym = 'DOGGO';
+    const quote = nativePairedQuote(sym, 'buy', 0.5);
+    await mockTradePrepareAtomicSol(page, quote);
+
+    await page.goto(`/t/${sym}`);
+    await expect(page.locator('#tokenView')).toBeVisible();
+    // The real `GET .../quote` answers this — a native-paired coin is one
+    // curve hop, so the aggregator hop row never renders.
+    await expect(page.locator('#t-quote')).toContainText('PRICE IMPACT');
+    await expect(page.locator('#t-quote')).not.toContainText('HOP 1');
+
+    const go = page.locator('#t-go');
+    await go.click();
+    await expect(go).toBeDisabled();
+    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+    await expect(go).toBeEnabled();
+  });
+
+  test('SOL buy — a base-hop quote shows the aggregator leg and still fills atomically', async ({ page }) => {
+    const sym = 'DOGGO';
+    const amount = 0.5;
+    const quote = baseHopBuyQuote(sym, amount);
+    await mockQuote(page, sym, 'buy', quote);
+    await mockTradePrepareAtomicSol(page, quote);
+
+    await page.goto(`/t/${sym}`);
+    await expect(page.locator('#tokenView')).toBeVisible();
+    await expect(page.locator('#t-quote')).toContainText('HOP 1');
+    await expect(page.locator('#t-quote')).toContainText('HOP 2');
+    await expect(page.locator('#t-quote')).toContainText('JUP');
+
+    await page.click('#t-go');
+    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('SOL sell fills after the signed prepare response resolves', async ({ page }) => {
+    const sym = 'DOGGO';
+    const quote = nativePairedQuote(sym, 'sell', 0.5);
+    await mockTradePrepareAtomicSol(page, quote);
+
+    await page.goto(`/t/${sym}`);
+    await expect(page.locator('#tokenView')).toBeVisible();
+    await page.click('#t-side [data-s="SELL"]');
+    await expect(page.locator('#t-quote')).toContainText('YOU SELL');
+
+    await page.click('#t-go');
+    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('Robinhood non-atomic EvmStep[] plan walks every step in order with the multi-signature notice visible', async ({
+    page,
+  }) => {
+    const sym = 'RHDOG';
+    const amount = 0.2;
+    const quote = nativePairedQuote(sym, 'buy', amount);
+    quote.net = 'RH';
+    quote.nativeUnit = 'ETH';
+    const warning =
+      'ROBINHOOD CHAIN HAS NO ATOMIC ROUTER CONFIGURED FOR THIS BASE ASSET YET. THIS TRADE REQUIRES 3 SEPARATE ' +
+      'SIGNATURES. STOPPING PARTWAY LEAVES YOU HOLDING AN INTERMEDIATE ASSET, NOT ETH.';
+    const descriptions = ['Wrap ETH', 'Approve WETH spend', 'Buy RHDOG on StonkzLaunchpad'];
+    await mockTradePrepareSteps(page, quote, descriptions, warning);
+
+    await page.goto(`/t/${sym}`);
+    await expect(page.locator('#tokenView')).toBeVisible();
+
+    await page.click('#t-go');
+    // Never collapsed into the one-signature Solana path: the modal opens,
+    // the warning is pinned and visible, and the header counts signatures,
+    // not "confirm".
+    await expect(page.locator('#txScrim')).toBeVisible();
+    await expect(page.locator('#txBody')).toContainText('3 SEPARATE');
+    await expect(page.locator('#txBody')).toContainText('intermediate asset'.toUpperCase());
+
+    for (let i = 1; i <= descriptions.length; i++) {
+      await expect(page.locator('#steps-go')).toHaveText(`SIGN STEP ${i} OF ${descriptions.length}`);
+      await expect(page.locator('#txBody')).toContainText(`STEP ${i} OF ${descriptions.length}`);
+      await expect(page.locator('#txBody')).toContainText((descriptions[i - 1] as string).toUpperCase());
+      await page.click('#steps-go');
+    }
+
+    await expect(page.locator('#txScrim')).toBeHidden({ timeout: 15_000 });
+    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible();
+  });
+
+  test('launching a coin with a dev buy runs the prepare -> sign -> confirm stepper and lands on the new token', async ({
+    page,
+  }) => {
+    const sym = 'ZZZE2E';
+    const mint = 'MintE2ELaunch11111111111111111111111111111';
+
+    await page.route('**/launch/prepare', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = route.request().postDataJSON() as { ticker?: string; devBuyNative?: number };
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          net: 'SOL',
+          intentId: 'intent-e2e-launch',
+          ticker: body.ticker ?? sym,
+          predictedMint: mint,
+          transaction: FAKE_SOL_TX,
+          lastValidBlockHeight: 999_999,
+          devBuy: (body.devBuyNative ?? 0) > 0 ? { native: body.devBuyNative, atomic: true } : null,
+          expiresAt: Date.now() + 30_000,
+        }),
+      });
+    });
+    await page.route('**/launch/confirm', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ net: 'SOL', sym, mint, mc: 4_200 }),
+      });
+    });
+
+    await page.click('#connectBtn');
+    await page.click('[data-net="SOL"]');
+    await expect(page.locator('#wchip')).toBeVisible();
+
+    await page.click('#createBtn');
+    await expect(page.locator('#newScrim')).toBeVisible();
+    await page.fill('#f-tick', sym);
+    await page.click('#nc-next'); // step 1 -> 2
+    await page.click('#nc-next'); // step 2 -> 3 (defaults: native base, default supply/fee)
+    await page.fill('#f-buy', '0.50');
+    await page.click('#nc-next'); // launch
+
+    await expect(page.locator('.toast', { hasText: 'DEPLOYED ' + sym })).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(new RegExp(`/t/${sym}$`));
+    await expect(page.locator('.tk-id h1')).toContainText(sym);
+  });
+
+  test('claiming creator fees fetches GET /fees, signs the prepared claim, and reports the claimed amount', async ({
+    page,
+  }) => {
+    await page.route('**/fees', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          net: 'SOL',
+          nativeUnit: 'SOL',
+          vaults: [
+            {
+              sym: 'DOGGO',
+              unclaimedNative: 0.42,
+              unclaimedTokens: 0,
+              stakerPoolNative: 0.1,
+              lifetimeNative: 1.2,
+              claimedNative: 0.3,
+            },
+          ],
+        }),
+      });
+    });
+    await page.route('**/fees/claim/prepare', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ net: 'SOL', sym: 'DOGGO', transaction: FAKE_SOL_TX, lastValidBlockHeight: 999_999 }),
+      });
+    });
+
+    await page.click('#connectBtn');
+    await page.click('[data-net="SOL"]');
+    await expect(page.locator('#wchip')).toBeVisible();
+
+    await page.goto('/me');
+    await expect(page.locator('#profileView')).toBeVisible();
+    await page.click('#claimBtn');
+    await expect(page.locator('#claimScrim')).toBeVisible();
+    await expect(page.locator('#claimBody')).toContainText('DOGGO');
+    await expect(page.locator('#claimBody')).toContainText('0.420 SOL');
+
+    await page.click('#claim-go');
+    await expect(page.locator('.toast', { hasText: 'CLAIMED 0.420 SOL' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('#claimScrim')).toBeHidden();
+  });
 });
