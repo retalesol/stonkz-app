@@ -58,7 +58,8 @@ user would see today traces back to a fixture scenario, not to chain state.
 | EVM launchpad + Uniswap v2 migrator + LP burn | **REAL** | `programs/evm`, Foundry tests. |
 | `StonkzRouter` (atomic RH native-in trades) | **REAL** | `programs/evm/src/StonkzRouter.sol`, 20 passing tests, plus one fork test skipped unless `RH_RPC_URL` is set. |
 | 20/70/10 fee split | **REAL, asserted on every fill** | `require!`/`require` identity checks in both chains' buy/sell paths, not just tests. |
-| Any deployment (devnet/testnet/mainnet) | **MISSING** | Nothing in this repo records a deployed program ID or contract address for either chain. |
+| Deployment tooling | **REAL** | `programs/evm/script/Deploy.s.sol` (chain-guarded, verifies pinned dependencies hold code, authorities required with no defaults) and `programs/solana/scripts/init-deployment.ts` (`initialize` + Raydium config, with the `AmmConfig` derivation cross-checked). Runbook: [`deployment.md`](deployment.md). |
+| Any actual deployment (devnet/testnet/mainnet) | **MISSING** | Nothing in this repo records a deployed program ID or contract address for either chain. The tooling above has never been run against a live cluster. |
 | Third-party audit | **MISSING** | Internal review only (`docs/security-review-findings.md`). |
 
 ## 4. Trade routing

@@ -35,6 +35,26 @@ library RobinhoodChain {
     address internal constant UNIVERSAL_ROUTER = 0x8876789976dEcBfCbBbe364623C63652db8C0904;
     address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
+    /* -------------------------------------------------------------- oracle */
+
+    /// @dev Chainlink `AggregatorV3Interface` proxies, USD-denominated, 8
+    /// decimals. Sourced from `docs/robinhood-chain.md` rows 40/60 and the
+    /// Chainlink reference-data directory for chain 4663.
+    address internal constant CHAINLINK_ETH_USD = 0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9;
+    address internal constant CHAINLINK_USDG_USD = 0x61B7e5650328764B076A108EFF5fa7282a1B9aD2;
+    address internal constant CHAINLINK_USDC_USD = 0x9e6f4605992a899eE2999999F3Ec80C41F452546;
+
+    /// @dev **86400 seconds.** These feeds have a 24h heartbeat, not the
+    /// minute-scale one a mainnet-Ethereum instinct would assume. Every
+    /// staleness bound derived from this must be heartbeat + grace, or
+    /// graduation becomes permanently unreachable — the bug this constant
+    /// exists to stop recurring. See `docs/robinhood-chain.md` row 40.
+    uint64 internal constant CHAINLINK_HEARTBEAT_SECS = 86_400;
+
+    /// @dev Heartbeat plus a one-hour grace window, the value the launchpad
+    /// and `ChainlinkPriceSource` should both be configured with.
+    uint64 internal constant ORACLE_MAX_AGE_SECS = CHAINLINK_HEARTBEAT_SECS + 3_600;
+
     /* -------------------------------------------------------------- ArbOS */
 
     /// @dev This is an Arbitrum Orbit rollup, so `block.number` returns an
