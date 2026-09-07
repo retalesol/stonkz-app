@@ -1,0 +1,57 @@
+/*
+ * Touch affordances. The only stylesheet in src/styles that is not a byte-for-
+ * byte slice of the oracle, which is why it is imported from main.ts rather
+ * than index.css: `css:check` keeps guarding the pixel lock.
+ *
+ * The oracle is a Bloomberg pastiche and its controls are 17-25px tall. That
+ * is the look, so nothing here changes a painted pixel. Instead every control
+ * gets an invisible 44px hit area on devices with no hover, which is the WCAG
+ * 2.5.5 target size, and hover-only decoration is switched off so a tap does
+ * not leave a stuck highlight.
+ *
+ * Guarded by `hover: none` so desktop rendering — and the 1440/1120/680 visual
+ * QA against legacy/index.html — is untouched.
+ *
+ * @see plan step 37
+ */
+@media (hover: none) {
+  .pill,
+  .chip,
+  .chipm,
+  .tab,
+  .qa,
+  .back,
+  .send,
+  .wmi,
+  .room,
+  .wiz-btn,
+  .win-hd .x,
+  .drawer-hd .x {
+    position: relative;
+  }
+  .pill::after,
+  .chip::after,
+  .chipm::after,
+  .tab::after,
+  .qa::after,
+  .back::after,
+  .send::after,
+  .wmi::after,
+  .room::after,
+  .wiz-btn::after,
+  .win-hd .x::after,
+  .drawer-hd .x::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+  /* The rank tooltip is a hover surface with no tap equivalent; the button it
+     hangs off already opens the rewards page, which says the same things. */
+  .rk-tip {
+    display: none;
+  }
+}

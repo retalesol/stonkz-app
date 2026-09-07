@@ -1,4 +1,7 @@
 import './styles/index.css';
+// Imported here, not from index.css: that file is the oracle's cascade, locked
+// byte-for-byte by `css:check`. Touch affordances are additive. `plan step 37`
+import './styles/touch.css';
 
 import { boot } from './app/shell.js';
 

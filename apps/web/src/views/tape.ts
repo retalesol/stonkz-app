@@ -7,6 +7,7 @@ import { $, must, reflow } from '../lib/dom.js';
 import { DOT, fakeAddr, ud } from '../lib/fmt.js';
 import { attr, html, node, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
+import { canHover } from '../lib/pointer.js';
 import { COINS, bySym, seedSeries, type SimCoin } from '../state/coins.js';
 
 /**
@@ -179,8 +180,9 @@ export function initTape(): void {
   vp = run.parentNode as HTMLElement;
   tape = vp.parentNode as HTMLElement;
 
+  // Hover-only. A tap on a touch device goes straight to the token below.
   vp.addEventListener('mouseover', (e) => {
-    if (pinned) return;
+    if (pinned || !canHover()) return;
     const el = (e.target as Element | null)?.closest<HTMLElement>('.tx') ?? null;
     if (el && !el.classList.contains('pinned')) pin(el);
   });

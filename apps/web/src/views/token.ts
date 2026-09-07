@@ -32,6 +32,7 @@ import { ARR, DOT, MID, clockSec, fmtSupply, ud } from '../lib/fmt.js';
 import { type Html, attr, html, raw, render } from '../lib/html.js';
 import { copyText } from '../lib/clipboard.js';
 import { reducedMotion } from '../lib/motion.js';
+import { canHover } from '../lib/pointer.js';
 import { type SimCoin, holdersOf, seedComments, seedSeries, seedTrades } from '../state/coins.js';
 import { holdOf } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
@@ -490,14 +491,18 @@ export function openToken(c: SimCoin): void {
   renderQuote();
 
   const cvs = must<HTMLCanvasElement>('#tchart');
-  cvs.addEventListener('mousemove', (e) => {
-    TV.cross = e.clientX - cvs.getBoundingClientRect().left;
-    drawTChart();
-  });
-  cvs.addEventListener('mouseleave', () => {
-    TV.cross = null;
-    drawTChart();
-  });
+  if (canHover()) {
+    // A crosshair needs a pointer that can rest somewhere without committing.
+    // On touch the chart is read-only and the range chips do the work.
+    cvs.addEventListener('mousemove', (e) => {
+      TV.cross = e.clientX - cvs.getBoundingClientRect().left;
+      drawTChart();
+    });
+    cvs.addEventListener('mouseleave', () => {
+      TV.cross = null;
+      drawTChart();
+    });
+  }
   must('#tk-back').addEventListener('click', () => navigate({ view: 'board' }));
   must('#tk-stake').addEventListener('click', () => openStake(c));
   must('#tk-share').addEventListener('click', () => {
