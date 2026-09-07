@@ -1,30 +1,37 @@
-import type { Net } from '@stonkz/shared';
-
 /**
- * PLACEHOLDER. Phase 1.C owns this service.
+ * `@stonkz/indexer` — the dual-chain event indexer.
  *
- * What lands here: a stateful worker with two independent replay cursors — a
- * Solana slot cursor fed by Helius and an EVM block cursor fed by Robinhood
- * Chain log subscriptions — writing `tokens`, `trades`, `candles`,
- * `holders_snapshot`, `koth`, `tape` and `treasuries` to Neon, and publishing
- * `board` / `token:{sym}` / `user:{addr}` over Redis pub/sub.
- *
- * Event schema to implement: TokenCreated, Trade, Graduated, FeeAccrued
- * (carrying the 20/70/10 split), Stake*, CashbackWindow, TreasuryCredit.
- *
- * Alert if either chain's lag exceeds 30 seconds.
+ * Owns the chain event schema, the two replay cursors, the read-table ingest
+ * and the fixture producer that drives all of it until the programs exist.
+ * Every database definition and every ledger write comes from `@stonkz/api`,
+ * so there is one schema and one set of award rules, not two.
  */
-export interface ReplayCursor {
-  net: Net;
-  /** Solana slot, or EVM block number. */
-  position: number;
-  /** Epoch ms of the last committed advance. */
-  updatedAt: number;
-}
 
-export const INDEXER_PLACEHOLDER = {
-  name: '@stonkz/indexer',
-  phase: '1.C',
-  cursors: ['SOL', 'RH'] satisfies Net[],
-  maxLagSeconds: 30,
-} as const;
+export {
+  EVENT_KINDS,
+  EventIntegrityError,
+  assertEventIntegrity,
+  assertFeeSplit,
+  compareEvents,
+  type ChainEvent,
+  type ChainEventKind,
+  type CashbackWindowEvent,
+  type CreatorFeesClaimedEvent,
+  type EventBase,
+  type FeeAccruedEvent,
+  type GraduatedEvent,
+  type StakeClaimedEvent,
+  type StakedEvent,
+  type TokenCreatedEvent,
+  type TradeEvent,
+  type TreasuryCreditEvent,
+  type UnstakedEvent,
+} from './events.js';
+
+export { ReplayCursors, type CursorState } from './cursors.js';
+export { Ingestor, type IngestOptions, type IngestReport } from './ingest.js';
+export { LagMonitor } from './lag.js';
+export { IndexerRunner, type PassResult } from './runner.js';
+export { FixtureEventSource, type EventSource } from './source.js';
+export { TF_MS, TIMEFRAMES, bucketStart, candleUpdatesFor, type Timeframe } from './candles.js';
+export { FixtureProducer, canonicalScenario, type ScenarioResult } from './fixtures/producer.js';
