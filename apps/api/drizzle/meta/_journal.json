@@ -50,6 +50,13 @@
       "when": 1788758479136,
       "tag": "0006_social_layer",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788758479137,
+      "tag": "0007_indexer_chain_mode",
+      "breakpoints": true
     }
   ]
 }

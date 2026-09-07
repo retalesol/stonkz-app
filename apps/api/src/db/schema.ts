@@ -175,6 +175,8 @@ export const tokens = pgTable(
     index('tokens_lane_idx').on(t.net, t.lane),
     index('tokens_mc_idx').on(t.net, t.mc),
     index('tokens_creator_idx').on(t.net, t.creator),
+    // A decoded chain event names a mint/contract address, never a ticker.
+    index('tokens_mint_idx').on(t.net, t.mint),
   ],
 );
 
@@ -312,10 +314,13 @@ export const tape = pgTable(
     txSig: text('tx_sig').notNull(),
     logIndex: integer('log_index').notNull().default(0),
     blockTime: timestamp('block_time', { withTimezone: true }).notNull(),
+    /** Slot/block this row was materialised from — what a reorg rollback deletes by. */
+    chainPosition: bigint('chain_position', { mode: 'number' }).notNull().default(0),
   },
   (t) => [
     uniqueIndex('tape_sig_uq').on(t.net, t.txSig, t.logIndex),
     index('tape_time_idx').on(t.blockTime),
+    index('tape_position_idx').on(t.net, t.chainPosition),
   ],
 );
 
@@ -343,8 +348,12 @@ export const treasuryCredits = pgTable(
     txSig: text('tx_sig').notNull(),
     logIndex: integer('log_index').notNull().default(0),
     blockTime: timestamp('block_time', { withTimezone: true }).notNull(),
+    chainPosition: bigint('chain_position', { mode: 'number' }).notNull().default(0),
   },
-  (t) => [uniqueIndex('treasury_credits_sig_uq').on(t.net, t.kind, t.txSig, t.logIndex)],
+  (t) => [
+    uniqueIndex('treasury_credits_sig_uq').on(t.net, t.kind, t.txSig, t.logIndex),
+    index('treasury_credits_position_idx').on(t.net, t.chainPosition),
+  ],
 );
 
 export const creatorVaults = pgTable(
@@ -404,6 +413,7 @@ export const chainEvents = pgTable(
   (t) => [
     uniqueIndex('chain_events_sig_uq').on(t.net, t.txSig, t.logIndex, t.kind),
     index('chain_events_cursor_idx').on(t.net, t.chainPosition),
+    index('chain_events_rollback_idx').on(t.net, t.chainPosition, t.id),
   ],
 );
 
@@ -412,9 +422,61 @@ export const indexerCursors = pgTable('indexer_cursors', {
   net: text('net').primaryKey(),
   position: bigint('position', { mode: 'number' }).notNull().default(0),
   chainHead: bigint('chain_head', { mode: 'number' }).notNull().default(0),
+  /**
+   * Block hash (EVM) / blockhash (Solana) observed at `position`. `null` means
+   * never observed — a fresh cursor, or fixture mode, which has no hashes.
+   * Reorg detection compares the chain's current hash at `position` against
+   * this; a mismatch is the only signal that history moved under us.
+   */
+  positionHash: text('position_hash'),
+  /** Last committed Solana signature at `position`; the `until` cursor for `getSignaturesForAddress`. */
+  positionSignature: text('position_signature'),
+  /** Highest position ingest is allowed to reach, i.e. head minus the confirmation depth. */
+  confirmedHead: bigint('confirmed_head', { mode: 'number' }).notNull().default(0),
+  reorgs: integer('reorgs').notNull().default(0),
+  lastReorgAt: timestamp('last_reorg_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  lastErrorAt: timestamp('last_error_at', { withTimezone: true }),
+  /** Consecutive failed passes at `position`; drives the dead-letter skip. */
+  failedAttempts: integer('failed_attempts').notNull().default(0),
   lastEventAt: timestamp('last_event_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Where an event or a batch goes when ingest cannot make progress on it.
+ *
+ * Without this table an integrity-rejected event left only a log line, and an
+ * uncaught exception in `apply()` re-looped the same batch forever
+ * (`docs/indexer-runbooks.md` §5). Both now land here, with the payload and
+ * the error, and the cursor is allowed past them.
+ */
+export const indexerDeadLetters = pgTable(
+  'indexer_dead_letters',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    net: text('net').notNull(),
+    /** `event` for a single rejected event, `batch` for a whole poison range. */
+    scope: text('scope').notNull().default('event'),
+    kind: text('kind').notNull(),
+    txSig: text('tx_sig').notNull(),
+    logIndex: integer('log_index').notNull().default(0),
+    chainPosition: bigint('chain_position', { mode: 'number' }).notNull(),
+    fromPosition: bigint('from_position', { mode: 'number' }).notNull().default(0),
+    toPosition: bigint('to_position', { mode: 'number' }).notNull().default(0),
+    payload: jsonb('payload').notNull().default({}),
+    error: text('error').notNull(),
+    attempts: integer('attempts').notNull().default(1),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('indexer_dead_letters_uq').on(t.net, t.txSig, t.logIndex, t.kind),
+    index('indexer_dead_letters_open_idx').on(t.net, t.resolvedAt, t.id),
+    index('indexer_dead_letters_position_idx').on(t.net, t.chainPosition),
+  ],
+);
 
 /* -------------------------------------------------------------------------- */
 /* 0002 — the game ledger                                                     */

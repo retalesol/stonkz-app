@@ -277,6 +277,7 @@ export class Ingestor {
         txSig: event.txSig,
         logIndex: event.logIndex,
         blockTime: at,
+        chainPosition: event.chainPosition,
       })
       .onConflictDoNothing();
 
@@ -584,23 +585,29 @@ export class Ingestor {
         },
       });
 
-    await this.creditVault(event.net, 'protocol', event.protocol, event.sym, event.txSig, event.logIndex, event.blockTimeMs);
-    await this.creditVault(event.net, 'stonkz_ops', event.stonkzOps, event.sym, event.txSig, event.logIndex, event.blockTimeMs);
+    await this.creditVault(event, 'protocol', event.protocol);
+    await this.creditVault(event, 'stonkz_ops', event.stonkzOps);
   }
 
   private async creditVault(
-    net: Net,
+    event: FeeAccruedEvent | TreasuryCreditEvent,
     kind: 'protocol' | 'stonkz_ops',
     amount: number,
-    sym: string | null,
-    txSig: string,
-    logIndex: number,
-    blockTimeMs: number,
   ): Promise<void> {
     if (amount === 0) return;
+    const { net, sym, txSig, logIndex, blockTimeMs, chainPosition } = event;
     const credited = await this.db
       .insert(treasuryCredits)
-      .values({ net, kind, sym, amount, txSig, logIndex, blockTime: new Date(blockTimeMs) })
+      .values({
+        net,
+        kind,
+        sym,
+        amount,
+        txSig,
+        logIndex,
+        blockTime: new Date(blockTimeMs),
+        chainPosition,
+      })
       .onConflictDoNothing()
       .returning({ id: treasuryCredits.id });
     // Only move the balance if the credit row was new, so a replay cannot
@@ -618,15 +625,7 @@ export class Ingestor {
   }
 
   private async onTreasuryCredit(event: TreasuryCreditEvent): Promise<void> {
-    await this.creditVault(
-      event.net,
-      event.vault,
-      event.amount,
-      event.sym,
-      event.txSig,
-      event.logIndex,
-      event.blockTimeMs,
-    );
+    await this.creditVault(event, event.vault, event.amount);
   }
 
   private async onCreatorFeesClaimed(event: CreatorFeesClaimedEvent, report: IngestReport): Promise<void> {
