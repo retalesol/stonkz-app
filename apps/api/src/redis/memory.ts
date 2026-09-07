@@ -1,3 +1,4 @@
+import { fanout, type HandlerErrorSink } from './fanout.js';
 import type { RedisHandler, RedisLike, RedisUnsubscribe, SetOptions } from './types.js';
 
 interface Entry {
@@ -26,7 +27,10 @@ export class MemoryRedis implements RedisLike {
   private readonly channels = new Map<string, Set<RedisHandler>>();
   private readonly patterns = new Map<string, Set<RedisHandler>>();
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly onHandlerError?: HandlerErrorSink,
+  ) {}
 
   private live(key: string): Entry | null {
     const entry = this.store.get(key);
@@ -84,17 +88,10 @@ export class MemoryRedis implements RedisLike {
   }
 
   async publish(channel: string, message: string): Promise<number> {
-    let n = 0;
-    for (const handler of this.channels.get(channel) ?? []) {
-      handler(message, channel);
-      n++;
-    }
+    let n = fanout(this.channels.get(channel) ?? [], message, channel, this.onHandlerError);
     for (const [pattern, handlers] of this.patterns) {
       if (!globToRegExp(pattern).test(channel)) continue;
-      for (const handler of handlers) {
-        handler(message, channel);
-        n++;
-      }
+      n += fanout(handlers, message, channel, this.onHandlerError);
     }
     return n;
   }

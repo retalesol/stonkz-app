@@ -1,4 +1,5 @@
 import type { Redis } from 'ioredis';
+import { fanout, type HandlerErrorSink } from './fanout.js';
 import type { RedisHandler, RedisLike, RedisUnsubscribe, SetOptions } from './types.js';
 
 /**
@@ -11,11 +12,17 @@ export class IoRedis implements RedisLike {
   private readonly channelHandlers = new Map<string, Set<RedisHandler>>();
   private readonly patternHandlers = new Map<string, Set<RedisHandler>>();
 
-  constructor(private readonly client: Redis) {}
+  constructor(
+    private readonly client: Redis,
+    private readonly onHandlerError?: HandlerErrorSink,
+  ) {}
 
-  static async connect(url: string): Promise<IoRedis> {
+  static async connect(url: string, onHandlerError?: HandlerErrorSink): Promise<IoRedis> {
     const { Redis: RedisCtor } = await import('ioredis');
-    return new IoRedis(new RedisCtor(url, { maxRetriesPerRequest: 3, lazyConnect: false }));
+    return new IoRedis(
+      new RedisCtor(url, { maxRetriesPerRequest: 3, lazyConnect: false }),
+      onHandlerError,
+    );
   }
 
   async get(key: string): Promise<string | null> {
@@ -77,11 +84,13 @@ export class IoRedis implements RedisLike {
   private async ensureSubscriber(): Promise<Redis> {
     if (this.subscriber) return this.subscriber;
     const sub = this.client.duplicate();
+    // Anything thrown in these callbacks is an unhandled exception inside
+    // ioredis's emitter, so `fanout` has to contain it.
     sub.on('message', (channel: string, message: string) => {
-      for (const handler of this.channelHandlers.get(channel) ?? []) handler(message, channel);
+      fanout(this.channelHandlers.get(channel) ?? [], message, channel, this.onHandlerError);
     });
     sub.on('pmessage', (pattern: string, channel: string, message: string) => {
-      for (const handler of this.patternHandlers.get(pattern) ?? []) handler(message, channel);
+      fanout(this.patternHandlers.get(pattern) ?? [], message, channel, this.onHandlerError);
     });
     this.subscriber = sub;
     return sub;
@@ -134,10 +143,10 @@ export class IoRedis implements RedisLike {
 }
 
 /** `memory://` or an empty URL selects the in-process fake. */
-export async function createRedis(url: string): Promise<RedisLike> {
+export async function createRedis(url: string, onHandlerError?: HandlerErrorSink): Promise<RedisLike> {
   if (url === '' || url.startsWith('memory:')) {
     const { MemoryRedis } = await import('./memory.js');
-    return new MemoryRedis();
+    return new MemoryRedis(Date.now, onHandlerError);
   }
-  return IoRedis.connect(url);
+  return IoRedis.connect(url, onHandlerError);
 }
