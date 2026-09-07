@@ -131,7 +131,12 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
       ]);
       if (block) blockTimeMs = Number.parseInt(block.timestamp, 16) * 1000;
     } catch {
-      // Best-effort only; the caller does not depend on this to verify the transfer.
+      // Left null on failure. `verifyTip` treats a null block time as
+      // `unknown_age` and refuses the tip (security review L1), so a
+      // transient failure here costs the user a retry rather than letting an
+      // arbitrarily old transfer pass the recency check. Deliberately the
+      // safer direction: the sender/recipient/amount checks are unaffected,
+      // so this only ever rejects, never accepts.
     }
 
     return {

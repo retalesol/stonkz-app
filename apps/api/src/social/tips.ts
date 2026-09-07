@@ -20,7 +20,8 @@ export type TipRejectionReason =
   | 'wrong_sender'
   | 'wrong_recipient'
   | 'below_minimum'
-  | 'too_old';
+  | 'too_old'
+  | 'unknown_age';
 
 export interface TipVerification {
   ok: boolean;
@@ -68,7 +69,15 @@ export async function verifyTip(input: VerifyTipInput): Promise<TipVerification>
   const unit = nativeUnit(net);
   if (!isValidTip(amount, unit)) return { ok: false, reason: 'below_minimum' };
 
-  if (transfer.blockTimeMs !== null && nowMs - transfer.blockTimeMs > maxAgeMs) {
+  // Fail closed on an unknown timestamp (security review L1). Skipping the
+  // recency check when `blockTimeMs` is null means an arbitrarily old transfer
+  // can be replayed as evidence of a live payment on any backend that cannot
+  // supply a block time — a distinct reason rather than a silent accept, so
+  // the operator can tell "too old" from "cannot tell how old".
+  if (transfer.blockTimeMs === null) {
+    return { ok: false, reason: 'unknown_age' };
+  }
+  if (nowMs - transfer.blockTimeMs > maxAgeMs) {
     return { ok: false, reason: 'too_old' };
   }
 

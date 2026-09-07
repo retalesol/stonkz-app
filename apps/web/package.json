@@ -15,9 +15,16 @@
   "dependencies": {
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
+    "@solana/wallet-standard-features": "^1.4.0",
     "@solana/web3.js": "^1.98.4",
     "@stonkz/shared": "workspace:*",
-    "bs58": "^6.0.0"
+    "@wallet-standard/app": "^1.1.1",
+    "@wallet-standard/base": "^1.1.1",
+    "@wallet-standard/features": "^1.1.1",
+    "@walletconnect/universal-provider": "^2.24.0",
+    "bs58": "^6.0.0",
+    "qrcode-generator": "^2.0.4",
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

@@ -179,6 +179,31 @@ describe('verifyTip', () => {
     expect(result).toEqual({ ok: false, reason: 'too_old' });
   });
 
+  // Security review L1: a null block time used to skip the recency check
+  // entirely, so a transfer of unknowable age passed as evidence of a live
+  // payment. It now fails closed, with a reason distinct from `too_old` so an
+  // operator can tell "provably stale" from "cannot establish age".
+  it('rejects a transfer whose age cannot be established', async () => {
+    const rpcs = createFakeRpcs();
+    rpcs.SOL.setNativeTransfer('sig-no-time', {
+      found: true,
+      status: 'success',
+      from: 'ALICE',
+      to: 'BOB',
+      amountNative: 1,
+      blockTimeMs: null,
+    });
+    const result = await verifyTip({
+      rpc: rpcs.SOL,
+      net: 'SOL',
+      signature: 'sig-no-time',
+      fromWallet: 'ALICE',
+      toWallet: 'BOB',
+      nowMs: NOW,
+    });
+    expect(result).toEqual({ ok: false, reason: 'unknown_age' });
+  });
+
   it('matches EVM addresses case-insensitively', async () => {
     const rpcs = createFakeRpcs();
     rpcs.RH.setNativeTransfer('0xhash', {
