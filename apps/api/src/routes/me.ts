@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { and, eq } from 'drizzle-orm';
 import { nativeUnit } from '@stonkz/shared';
 import { settings, users } from '../db/schema.js';
-import { requireAuth } from '../app/middleware.js';
+import { limit, requireAuth } from '../app/middleware.js';
+import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 
 /**
@@ -16,7 +17,7 @@ import type { AppEnv } from '../app/context.js';
 export function meRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
-  app.get('/me', requireAuth(), async (c) => {
+  app.get('/me', requireAuth(), limit(RATE_LIMITS.read), async (c) => {
     const deps = c.get('deps');
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
@@ -96,7 +97,7 @@ export function meRoutes(): Hono<AppEnv> {
    * The footer price on its own, for the pre-connect state where there is no
    * session yet but the tape still needs a USD figure.
    */
-  app.get('/native-price', async (c) => {
+  app.get('/native-price', limit(RATE_LIMITS.read), async (c) => {
     const deps = c.get('deps');
     const [sol, eth] = await Promise.all([
       deps.oracle.nativeUsd('SOL').catch(() => null),
