@@ -1,0 +1,36 @@
+/* ---------- staking ---------- */
+.stakebtn{border:1px solid var(--amber);background:#2a1a04;color:var(--amber);padding:4px 13px;font-weight:700;
+  letter-spacing:.12em;font-size:11.5px;flex:0 0 auto;font-family:"IBM Plex Sans Condensed",sans-serif}
+.stakebtn:hover{background:var(--amber);color:#150d00}
+.stk-grid{display:grid;grid-template-columns:186px minmax(0,1fr);gap:11px;align-items:start}
+.stk-pie{display:block;width:186px;height:150px}
+.stk-legend{display:flex;flex-direction:column;gap:3px;margin-top:5px}
+.stk-legend div{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--txt2)}
+.stk-legend i{width:9px;height:9px;flex:0 0 auto}
+.stk-legend b{margin-left:auto;color:var(--txt);font-weight:600}
+.lock-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.lock-opt{border:1px solid var(--line2);background:#12161f;padding:3px 2px;text-align:center;color:var(--txt2)}
+.lock-opt:hover{border-color:var(--amber2);color:var(--amber)}
+.lock-opt.on{border-color:var(--amber);background:#211703;color:var(--amber)}
+.lock-opt .ld{display:block;font-size:10px;letter-spacing:.04em}
+.lock-opt .lm{display:block;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:12px;color:var(--gold)}
+.lock-opt.on .lm{color:var(--amber)}
+.stk-claim{border:1px solid var(--line2);border-left:2px solid var(--up);background:var(--pnl2);padding:6px 9px;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stk-claim .v{font-size:15px;font-weight:600;color:var(--up)}
+.stk-claim .grow{flex:1}
+.claimbtn{border:1px solid #3fe08a;background:#0d3319;color:#6cf0a5;padding:4px 14px;font-weight:700;
+  letter-spacing:.1em;font-size:11px}
+.claimbtn:hover{background:#12a052;color:#eafff2}
+.claimbtn[disabled]{border-color:var(--line2);background:#171c25;color:var(--dim);cursor:not-allowed}
+.stk-row{display:grid;grid-template-columns:1fr auto auto;gap:9px;align-items:center;padding:6px 9px;
+  border-bottom:1px solid var(--line)}
+.stk-row:last-child{border-bottom:0}
+.stk-row .sy{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:13px;color:var(--gold);letter-spacing:.04em}
+.stk-row .mt{font-size:10px;color:var(--dim)}
+.stk-row .earn{text-align:right}
+.stk-row .earn b{display:block;color:var(--up);font-size:12px;font-weight:600}
+.stk-row .earn span{font-size:9.5px;color:var(--dim)}
+.lockbadge{font-size:9px;letter-spacing:.05em;border:1px solid var(--amber2);color:var(--amber);padding:0 4px;margin-left:6px}
+
+

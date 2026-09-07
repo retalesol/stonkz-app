@@ -1,0 +1,12 @@
+/* ---------- rank up ---------- */
+.rankup{position:fixed;inset:0;z-index:97;display:none;align-items:center;justify-content:center;pointer-events:none;
+  background:radial-gradient(circle at center,rgba(255,210,63,.2),rgba(0,0,0,0) 58%)}
+.rankup.show{display:flex;animation:ruFade 2.3s ease-out forwards}
+.rankup .ru-box{text-align:center;animation:ruPop .6s cubic-bezier(.16,.9,.28,1)}
+.rankup .ru-k{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:13px;letter-spacing:.34em;color:var(--amber)}
+.rankup .ru-n{font-family:"Silkscreen",monospace;font-size:40px;color:var(--gold);line-height:1.2;
+  text-shadow:0 0 34px rgba(255,210,63,.85),0 4px 0 #3a2400}
+.rankup .ru-s{font-size:11px;color:var(--txt2);letter-spacing:.12em;margin-top:6px}
+@keyframes ruPop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.06);opacity:1}100%{transform:none}}
+@keyframes ruFade{0%,72%{opacity:1}100%{opacity:0}}
+

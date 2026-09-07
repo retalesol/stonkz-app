@@ -1,0 +1,13 @@
+/* ---------- claim modal ---------- */
+.claim-row{display:grid;grid-template-columns:30px 1fr auto;gap:9px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.claim-row canvas{image-rendering:pixelated;width:30px;height:30px;border:1px solid var(--line2);display:block}
+.claim-row .sy{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:13px;color:var(--gold);letter-spacing:.04em}
+.claim-row .mt{font-size:10px;color:var(--dim)}
+.claim-row .amt{text-align:right}
+.claim-row .amt b{color:var(--up);font-size:13px;font-weight:600;display:block}
+.claim-row .amt span{font-size:10px;color:var(--dim)}
+.claim-tot{display:flex;justify-content:space-between;align-items:baseline;border:1px solid var(--line2);
+  border-left:2px solid var(--up);background:var(--pnl2);padding:6px 9px}
+.claim-tot b{font-size:19px;color:var(--up);font-weight:600}
+
+

@@ -1,0 +1,5 @@
+/* ---------- footer bits ---------- */
+.foot .brk{border:1px solid var(--line2);padding:1px 7px;color:var(--txt2);letter-spacing:.06em}
+.foot .grad{color:var(--gold);letter-spacing:.06em}
+.foot .grad b{color:var(--gold);font-weight:600}
+

@@ -1,0 +1,33 @@
+/* ---------- tape ---------- */
+.tape{display:flex;align-items:stretch;height:24px;background:#050608;border-bottom:1px solid var(--line);overflow:hidden}
+.tape-lbl{flex:0 0 auto;display:flex;align-items:center;background:var(--hd);color:var(--amber);
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:10px;letter-spacing:.14em;
+  padding:0 9px;border-right:1px solid var(--line)}
+.tape-vp{flex:1;overflow:hidden;position:relative;min-width:0}
+.tape-run{position:absolute;right:0;top:0;height:100%;display:flex;align-items:center;width:max-content;will-change:transform}
+.tx{padding:0 14px;font-size:10.5px;white-space:nowrap;border-right:1px solid #161b24;
+  display:flex;align-items:center;gap:5px;height:100%;cursor:pointer;box-sizing:border-box}
+.tape-run .tx:hover{background:#111823}
+.tx.pinned{position:absolute;top:0;height:100%;z-index:6;background:var(--amber);border:1px solid #ffdc95;
+  color:#150d00;box-shadow:0 0 0 1px rgba(255,162,43,.45),0 8px 20px rgba(0,0,0,.7)}
+.tx.pinned b,.tx.pinned span{color:#2a1a02}
+.tx.pinned .up{color:#0a4a25}
+.tx.pinned .dn{color:#7d1a0c}
+.tx.pinned .gd{color:#150d00}
+.tx.pinned .dm{color:#6a4708}
+.tx.pinned .blk{background:currentColor}
+.tx.src{background:#0b1119}
+.tx.fading{transition:opacity .32s ease-out;opacity:0}
+.tx .blk{width:5px;height:5px;background:currentColor;flex:0 0 auto}
+.tx.punch{animation:punch .36s cubic-bezier(.16,.9,.28,1) both}
+@keyframes punch{
+  0%{transform:translateX(26px) scaleX(1.35);opacity:0;background:rgba(255,162,43,.85)}
+  38%{transform:translateX(-4px) scaleX(.94);opacity:1;background:rgba(255,162,43,.42)}
+  55%{transform:translateX(3px) translateY(-1.5px);background:rgba(255,162,43,.16)}
+  70%{transform:translateX(-2px) translateY(1.5px)}
+  84%{transform:translateX(1px) translateY(-.5px)}
+  100%{transform:none;background:transparent}
+}
+.tape.jolt{animation:jolt .18s steps(3,end)}
+@keyframes jolt{0%{transform:translateX(0)}33%{transform:translateX(-1.5px)}66%{transform:translateX(1px)}100%{transform:translateX(0)}}
+

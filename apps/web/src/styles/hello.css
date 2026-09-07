@@ -1,0 +1,13 @@
+/* ---------- first visit ---------- */
+.hello{display:flex;align-items:center;gap:12px;border:1px solid var(--amber2);
+  background:linear-gradient(90deg,#1a1204,#0a0b0e 62%);padding:7px 11px;flex-wrap:wrap}
+.hello .hl{font-family:"Silkscreen",monospace;font-size:11px;color:var(--gold);white-space:nowrap}
+.hello .hs{font-size:10.5px;color:var(--txt2);letter-spacing:.02em}
+.hello .grow{flex:1}
+
+@media (prefers-reduced-motion:reduce){
+  .tx.punch,.tape.jolt,.coin.punchin,.koth.crowned,.fu,.fd,.toast.show,.cm.in,tr.newrow td,
+  .crate.shake,.reveal.in,.rankw.gain,.launch-cta.wake,.launch-cta.nudge,.money,.rankup.show,.rankup .ru-box,.pnl.filled{animation:none}
+  .tape-run,.drawer{transition:none !important}
+}
+

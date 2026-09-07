@@ -1,0 +1,14 @@
+/* ---------- achievements ---------- */
+.ach-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;background:var(--line)}
+.ach{background:var(--pnl);padding:9px 9px 7px;display:flex;flex-direction:column;gap:3px;min-width:0;position:relative}
+.ach .an{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:11.5px;letter-spacing:.08em;color:var(--gold)}
+.ach .ad{font-size:9.5px;color:var(--txt2);line-height:1.4}
+.ach .ax{font-size:9.5px;color:var(--amber);letter-spacing:.06em;margin-top:auto;padding-top:4px}
+.ach .mark{position:absolute;left:0;right:0;bottom:0;height:2px;background:#1b212a}
+.ach.done .mark{background:var(--up)}
+.ach.done .ax{color:var(--up)}
+.ach.locked{opacity:.45}
+.ach.locked .an{color:var(--txt2)}
+@media (max-width:1120px){.ach-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:680px){.ach-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+

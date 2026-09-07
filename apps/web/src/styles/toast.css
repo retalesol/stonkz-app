@@ -1,0 +1,20 @@
+/* ---------- toast / footer ---------- */
+.toasts{position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:90;display:flex;
+  flex-direction:column;gap:5px;align-items:center;pointer-events:none;max-width:calc(100vw - 24px)}
+.toast{background:#0f7a3d;border:1px solid #3fe08a;color:#eafff2;padding:6px 16px;letter-spacing:.08em;
+  font-size:11.5px;animation:rise .3s ease-out;transition:opacity .35s ease-out;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.toast.bye{opacity:0}
+.toast.gold{background:#241a04;border-color:var(--gold);color:var(--gold)}
+.toast.ach{background:#17102b;border-color:var(--violet);color:#dccdff}
+.toast.red{background:#3a1210;border-color:var(--down);color:#ffb0a6}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.foot{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;gap:14px;align-items:center;
+  flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;background:#06070a;border-top:1px solid var(--line2);
+  padding:6px 12px;font-size:10.5px;color:var(--dim);letter-spacing:.04em;
+  scrollbar-width:none}
+.foot::-webkit-scrollbar{display:none}
+.foot>span{flex:0 0 auto}
+.foot .demo{margin-left:auto;background:var(--amber2);color:#150d00;padding:1px 8px;letter-spacing:.1em;font-weight:600}
+
+

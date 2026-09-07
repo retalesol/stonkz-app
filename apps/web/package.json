@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "css:split": "node scripts/split-css.mjs",
+    "css:check": "node scripts/split-css.mjs --check && node scripts/verify-css.mjs"
   },
   "dependencies": {
     "@stonkz/shared": "workspace:*"

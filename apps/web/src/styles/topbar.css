@@ -1,0 +1,19 @@
+/* ---------- top bar ---------- */
+.top{position:sticky;top:0;z-index:40;display:flex;align-items:stretch;
+  background:linear-gradient(180deg,#1b1204,#100b03);border-bottom:1px solid var(--amber2)}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 14px 4px 9px;background:var(--amber);color:#150d00;cursor:pointer}
+.brand canvas{width:32px;height:32px;image-rendering:pixelated;display:block;flex:0 0 auto}
+.brand .mark{font-family:"Silkscreen","IBM Plex Mono",monospace;font-weight:700;font-size:17px}
+.brand .dom{font-size:9px;letter-spacing:.16em;opacity:.72;padding-top:3px}
+.search{flex:1;display:flex;align-items:center;gap:8px;padding:0 12px;min-width:0}
+.search label{font-size:10px;letter-spacing:.12em;color:var(--amber)}
+.search input{flex:1;min-width:60px;max-width:420px;background:var(--input);border:1px solid #f0a943;
+  color:#120b00;font-weight:600;padding:3px 7px;letter-spacing:.05em;text-transform:uppercase}
+.search input::placeholder{color:#5f3e02}
+.top-act{display:flex;align-items:center;gap:8px;padding:0 12px;white-space:nowrap;font-size:11px}
+.pill{border:1px solid var(--line2);background:#141922;padding:3px 9px;color:var(--txt2);letter-spacing:.06em}
+.pill:hover{border-color:var(--amber2);color:var(--amber)}
+.pill.launch{background:#0f7a3d;border-color:#3fe08a;color:#eafff2;font-weight:700;letter-spacing:.1em}
+.pill.launch:hover{background:#12a052}
+.led{display:inline-block;width:6px;height:6px;background:var(--up);margin-right:5px;vertical-align:1px}
+

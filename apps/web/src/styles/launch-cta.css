@@ -1,0 +1,24 @@
+/* ---------- launch cta (sort strip) ---------- */
+.launch-cta{margin-left:auto;padding:3px 14px;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;
+  font-size:12px;letter-spacing:.14em;background:#171c25;border:1px solid var(--line2);color:var(--dim);
+  cursor:not-allowed;white-space:nowrap}
+.launch-cta.on{background:#0f7a3d;border-color:#3fe08a;color:#eafff2;cursor:pointer}
+.launch-cta.on:hover{background:#12a052}
+.launch-cta.wake{animation:wake 8s ease-out}
+@keyframes wake{
+  0%{background:#171c25;border-color:#2c3444;color:#6b675c;box-shadow:none}
+  37.5%{background:#1ad06a;border-color:#b6ffd8;color:#04160c;box-shadow:0 0 30px 7px rgba(0,210,106,.8)}
+  75%{background:#15b058;border-color:#6cf0a5;color:#eafff2;box-shadow:0 0 24px 5px rgba(0,210,106,.55)}
+  100%{background:#0f7a3d;border-color:#3fe08a;color:#eafff2;box-shadow:none}
+}
+.launch-cta.nudge{animation:nudge .75s ease-out}
+@keyframes nudge{
+  0%{transform:none;box-shadow:none}
+  14%{transform:translateX(-3px) scale(1.05);box-shadow:0 0 18px 4px rgba(0,210,106,.55)}
+  30%{transform:translateX(3px) scale(1.06)}
+  46%{transform:translateX(-2px) scale(1.03);box-shadow:0 0 12px 3px rgba(0,210,106,.35)}
+  62%{transform:translateX(2px) scale(1.02)}
+  80%{transform:translateX(-1px) scale(1.01)}
+  100%{transform:none;box-shadow:none}
+}
+

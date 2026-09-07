@@ -1,0 +1,35 @@
+/* ---------- profiles: identity, follow, shoutbox, friends ---------- */
+.pf-name{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.pf-name h1{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:18px;font-weight:700;letter-spacing:.05em;color:var(--up)}
+.pf-name .addr{font-size:10.5px;color:var(--blue);letter-spacing:.04em}
+.pf-bio{font-size:11.5px;color:var(--txt2);margin-top:3px;max-width:74ch}
+.pf-acts{display:flex;gap:6px;align-items:center}
+.followbtn{border:1px solid var(--amber);background:#2a1a04;color:var(--amber);padding:4px 14px;font-weight:700;
+  letter-spacing:.1em;font-size:11px;font-family:"IBM Plex Sans Condensed",sans-serif}
+.followbtn:hover{background:var(--amber);color:#150d00}
+.followbtn.on{background:#0d3319;border-color:#3fe08a;color:#6cf0a5}
+.followbtn.on:hover{background:#3a1210;border-color:var(--down);color:#ff9a8c}
+.editbtn{border:1px solid var(--line2);background:#12161f;color:var(--txt2);padding:4px 12px;font-size:10.5px;letter-spacing:.08em}
+.editbtn:hover{border-color:var(--amber);color:var(--amber)}
+.addrlink{color:var(--blue);cursor:pointer}
+.addrlink:hover{color:var(--amber);text-decoration:underline}
+.pnl-tabs{margin-left:auto;display:flex;gap:3px;flex:0 0 auto}
+.shout-form{display:grid;grid-template-columns:1fr 104px auto;gap:5px}
+.shout{border-left:2px solid var(--line2);padding:3px 0 5px 8px}
+.shout.mine{border-left-color:var(--amber)}
+.shout .sh-hd{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.shout .sh-hd .who{font-size:10.5px;letter-spacing:.04em}
+.shout .sh-hd .tip{font-size:9.5px;border:1px solid var(--up);color:var(--up);padding:0 4px;letter-spacing:.04em}
+.shout .sh-hd .t{font-size:9.5px;color:var(--dim);margin-left:auto}
+.shout p{font-size:11.5px;color:var(--txt2);margin-top:2px;word-break:break-word}
+.friend{display:grid;grid-template-columns:30px 1fr auto;gap:9px;align-items:center;padding:6px 9px;
+  border-bottom:1px solid var(--line);cursor:pointer}
+.friend:last-child{border-bottom:0}
+.friend:hover{background:#101520}
+.friend canvas{image-rendering:pixelated;width:30px;height:30px;border:1px solid var(--line2);display:block}
+.friend .fn{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:12.5px;color:var(--gold);letter-spacing:.04em}
+.friend .fa{font-size:9.5px;color:var(--dim)}
+.friend .fp{text-align:right;font-size:13px;font-weight:600}
+.friend .fp span{display:block;font-size:9px;color:var(--dim);font-weight:400;letter-spacing:.06em}
+
+

@@ -1,0 +1,26 @@
+/* ---------- rank widget (header) ---------- */
+.rank-wrap{position:relative;display:flex;align-items:center}
+.rankw{display:flex;align-items:center;gap:8px;border:1px solid var(--line2);background:#141922;padding:2px 9px 2px 3px}
+.rankw:hover{border-color:var(--amber)}
+.rk-lv{background:var(--amber);color:#150d00;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;
+  font-size:10px;letter-spacing:.08em;padding:2px 5px}
+.rk-body{display:flex;flex-direction:column;gap:2px;min-width:104px}
+.rk-name{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:10px;font-weight:700;letter-spacing:.1em;
+  color:var(--gold);text-align:left;line-height:1}
+.rk-track{display:block;height:4px;background:#20262f;border:1px solid #2c3444}
+.rk-track i{display:block;height:100%;background:linear-gradient(90deg,var(--amber2),var(--gold));transition:width .5s ease-out}
+.rk-xp{font-size:10px;color:var(--txt2);letter-spacing:.04em}
+.rankw.gain{animation:xpgain .7s ease-out}
+@keyframes xpgain{0%{background:rgba(255,210,63,.55);border-color:var(--gold)}100%{background:#141922}}
+.rk-tip{position:absolute;top:calc(100% + 5px);right:0;z-index:60;width:256px;max-width:calc(100vw - 24px);
+  background:var(--pnl);border:1px solid var(--amber2);padding:7px 9px;display:none;
+  box-shadow:0 6px 20px rgba(0,0,0,.7);text-align:left;white-space:normal;overflow-wrap:anywhere}
+.rank-wrap:hover .rk-tip,.rank-wrap:focus-within .rk-tip{display:block}
+.rk-tip .row{display:flex;justify-content:space-between;gap:10px;font-size:10.5px;color:var(--txt2);padding:1px 0}
+.rk-tip .row span{min-width:0}
+.rk-tip .row b{color:var(--txt);font-weight:600;white-space:nowrap;flex:0 0 auto}
+.rk-tip .hd{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;
+  color:var(--gold);border-bottom:1px solid var(--line);padding-bottom:3px;margin-bottom:4px}
+.rk-tip .cta{margin-top:5px;border-top:1px solid var(--line);padding-top:4px;font-size:9.5px;color:var(--amber);
+  letter-spacing:.06em;line-height:1.35}
+

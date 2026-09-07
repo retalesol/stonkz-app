@@ -1,100 +1,36 @@
-/* ---------- design tokens ----------
-   Byte-for-byte the :root block from index.html lines 14-32, plus the reset
-   and utility classes that follow it (lines 33-47). Review gate 0.A checks
-   these against the oracle. Do not edit without editing index.html.
-------------------------------------- */
-:root {
-  --bg: #000000;
-  --pnl: #08090c;
-  --pnl2: #0d1016;
-  --hd: #121826;
-  --line: #1e2431;
-  --line2: #2c3444;
-  --txt: #cac6ba;
-  --txt2: #948e80;
-  --dim: #6b675c;
-  --amber: #ffa22b;
-  --amber2: #c87c14;
-  --gold: #ffd23f;
-  --blue: #4d9bff;
-  --up: #00d26a;
-  --down: #ff4c3b;
-  --violet: #a273ff;
-  --input: #df8f1e;
+body{margin:0}[hidden]:not([hidden=until-found]){display:none!important}
+:root{
+  --bg:#000000;
+  --pnl:#08090c;
+  --pnl2:#0d1016;
+  --hd:#121826;
+  --line:#1e2431;
+  --line2:#2c3444;
+  --txt:#cac6ba;
+  --txt2:#948e80;
+  --dim:#6b675c;
+  --amber:#ffa22b;
+  --amber2:#c87c14;
+  --gold:#ffd23f;
+  --blue:#4d9bff;
+  --up:#00d26a;
+  --down:#ff4c3b;
+  --violet:#a273ff;
+  --input:#df8f1e;
 }
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+body{
+  background:var(--bg);color:var(--txt);
+  font:400 12px/1.4 "IBM Plex Mono","SFMono-Regular",Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,p{margin:0}
+button,input,textarea,select{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+.up{color:var(--up)}.dn{color:var(--down)}.am{color:var(--amber)}.dm{color:var(--dim)}
+.gd{color:var(--gold)}.bl{color:var(--blue)}
+.cond{font-family:"IBM Plex Sans Condensed",Arial,sans-serif}
+.lbl{font-size:9.5px;letter-spacing:.1em;color:var(--amber2);display:block}
 
-* {
-  box-sizing: border-box;
-}
-[hidden] {
-  display: none !important;
-}
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--txt);
-  font:
-    400 12px/1.4 'IBM Plex Mono',
-    'SFMono-Regular',
-    Menlo,
-    Consolas,
-    monospace;
-  font-variant-numeric: tabular-nums;
-  -webkit-font-smoothing: antialiased;
-}
-h1,
-h2,
-h3,
-p {
-  margin: 0;
-}
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
-}
-button {
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-:focus-visible {
-  outline: 1px solid var(--gold);
-  outline-offset: 2px;
-}
-.up {
-  color: var(--up);
-}
-.dn {
-  color: var(--down);
-}
-.am {
-  color: var(--amber);
-}
-.dm {
-  color: var(--dim);
-}
-.gd {
-  color: var(--gold);
-}
-.bl {
-  color: var(--blue);
-}
-.cond {
-  font-family: 'IBM Plex Sans Condensed', Arial, sans-serif;
-}
-.lbl {
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-  color: var(--amber2);
-  display: block;
-}
-
-/* The #app wrapper exists only so the Vite entry has a single mount point.
-   display:contents keeps it out of layout entirely, so the shell below it
-   lays out exactly as it does directly under <body> in index.html. */
-#app {
-  display: contents;
-}

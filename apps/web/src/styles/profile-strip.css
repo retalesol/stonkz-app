@@ -1,0 +1,12 @@
+/* ---------- profile strip extras ---------- */
+.pf-social{display:flex;gap:16px;margin-left:auto;border-left:1px solid var(--line);padding-left:14px}
+.pf-social .v{font-size:15px;font-weight:600;color:var(--txt)}
+button.pf-rank{background:none;border:0;border-left:1px solid var(--line);text-align:left;cursor:pointer;
+  font:inherit;color:inherit}
+button.pf-rank:hover .nm{color:#fff}
+button.pf-rank:hover .lv{background:var(--gold)}
+.pnl-hd .hdbtn{margin-left:auto;padding:2px 9px;font-size:10.5px;letter-spacing:.07em;border:1px solid #3fe08a;
+  background:#0d3319;color:#6cf0a5;font-weight:600;flex:0 0 auto}
+.pnl-hd .hdbtn:hover{background:#12a052;color:#eafff2}
+.pnl-hd .hdbtn[disabled]{border-color:var(--line2);background:#171c25;color:var(--dim);cursor:not-allowed}
+

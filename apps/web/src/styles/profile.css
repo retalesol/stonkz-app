@@ -1,0 +1,17 @@
+/* ---------- profile ---------- */
+.pf-bar{display:flex;align-items:center;gap:12px;border:1px solid var(--line2);background:var(--pnl);padding:9px 11px;flex-wrap:wrap}
+.pf-bar canvas{image-rendering:pixelated;width:52px;height:52px;border:1px solid var(--line2);display:block}
+.pf-id h1{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:18px;font-weight:700;letter-spacing:.05em;color:var(--up)}
+.pf-id .sub{font-size:10px;color:var(--dim);margin-top:2px}
+.pf-rank{display:flex;align-items:center;gap:8px;border-left:1px solid var(--line);padding-left:14px}
+.pf-rank .lv{background:var(--amber);color:#150d00;font-family:"Silkscreen",monospace;font-size:13px;padding:4px 7px}
+.pf-rank .nm{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:14px;font-weight:700;letter-spacing:.06em;color:var(--gold)}
+.pf-grid{display:grid;grid-template-columns:minmax(0,68fr) minmax(0,32fr);gap:10px;align-items:start}
+.pnl-note{padding:7px 10px;font-size:10px;color:var(--dim);border-top:1px solid var(--line)}
+.mine-row{display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;padding:6px 9px;border-bottom:1px solid var(--line);cursor:pointer}
+.mine-row:hover{background:#101520}
+.mine-row canvas{image-rendering:pixelated;width:34px;height:34px;border:1px solid var(--line2);display:block}
+.mine-row .sy{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:13px;letter-spacing:.04em;color:var(--gold)}
+.mine-row .mt{font-size:10px;color:var(--dim)}
+.empty{padding:14px 10px;font-size:11px;color:var(--dim);text-align:center}
+

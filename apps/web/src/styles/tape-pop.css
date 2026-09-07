@@ -1,0 +1,14 @@
+/* ---------- tape hover card ---------- */
+.tpop{position:fixed;z-index:96;width:252px;background:var(--pnl);border:1px solid var(--amber2);
+  box-shadow:0 10px 26px rgba(0,0,0,.78);padding:7px 8px;display:flex;flex-direction:column;gap:5px;pointer-events:none}
+.tpop .tp-hd{display:flex;align-items:center;gap:7px}
+.tpop canvas.av{image-rendering:pixelated;width:26px;height:26px;border:1px solid var(--line2);display:block;flex:0 0 auto}
+.tpop .sy{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:13px;letter-spacing:.04em;
+  color:var(--gold);line-height:1.1}
+.tpop .nm{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:112px}
+.tpop .px{margin-left:auto;text-align:right}
+.tpop .px b{font-size:12px;font-weight:600;display:block}
+.tpop .px span{font-size:10px}
+.tpop .tp-chart{display:block;width:100%;height:62px;background:#040507;border:1px solid var(--line)}
+.tpop .tp-ft{display:flex;justify-content:space-between;gap:8px;font-size:9.5px;color:var(--dim);letter-spacing:.05em}
+

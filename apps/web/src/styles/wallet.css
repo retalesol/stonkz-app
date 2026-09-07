@@ -1,0 +1,26 @@
+/* ---------- wallet ---------- */
+.wallet{position:relative;display:flex;align-items:center}
+.wchip{display:flex;align-items:center;gap:7px;border:1px solid var(--line2);background:#141922;padding:2px 8px 2px 3px}
+.wchip:hover,.wchip.open{border-color:var(--up)}
+.wchip canvas{image-rendering:pixelated;width:18px;height:18px;display:block;border:1px solid var(--line2)}
+.wchip .addr{font-size:11px;color:var(--up);letter-spacing:.04em}
+.wchip .car{font-size:9px;color:var(--dim)}
+.wmenu{position:absolute;top:calc(100% + 5px);right:0;z-index:62;width:224px;max-width:calc(100vw - 24px);
+  background:var(--pnl);border:1px solid var(--line2);box-shadow:0 8px 24px rgba(0,0,0,.75);
+  display:flex;flex-direction:column;white-space:normal;overflow-wrap:anywhere}
+.wbal{padding:7px 9px;border-bottom:1px solid var(--line);background:var(--pnl2);display:flex;flex-direction:column;gap:1px}
+.wbal .wrow{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;min-width:0}
+.wbal .v{font-size:19px;font-weight:600;color:var(--up);line-height:1.15}
+.wbal .usd{font-size:10px;color:var(--dim)}
+.wbal .addr{display:block;width:100%;margin-top:5px;text-align:left;font-size:10px;color:var(--blue);
+  letter-spacing:.04em;border:1px solid var(--line2);background:#12161f;padding:2px 6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.wbal .addr:hover{border-color:var(--amber);color:var(--amber)}
+.wbal .addr.copied{border-color:var(--up);color:var(--up)}
+.wmi{text-align:left;padding:5px 9px;font-size:11px;letter-spacing:.08em;color:var(--txt2);border-bottom:1px solid var(--line)}
+.wmi:hover{background:#151b27;color:var(--amber)}
+.wmi:last-child{border-bottom:0}
+.wmi.dc{color:#ff9a8c}
+.wmi.dc:hover{background:#2a100c;color:var(--down)}
+.pill.connecting{border-color:var(--amber);color:var(--amber)}
+

@@ -1,0 +1,13 @@
+/* ---------- settings ---------- */
+.set-row{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.set-row:last-child{border-bottom:0}
+.set-row .k{font-size:11px;color:var(--txt2);letter-spacing:.04em}
+.set-row .k small{display:block;color:var(--dim);font-size:9.5px;letter-spacing:.02em;margin-top:1px}
+.set-ctl{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.set-ctl .fld{max-width:118px}
+.set-ctl .chipm{padding:2px 8px;font-size:10.5px;border:1px solid var(--line2);background:#12161f;color:var(--txt2);letter-spacing:.05em}
+.set-ctl .chipm:hover{border-color:var(--amber);color:var(--amber)}
+.set-ctl .chipm.on{background:var(--amber);border-color:var(--amber);color:#150d00;font-weight:700}
+.set-foot{display:flex;gap:8px;align-items:center}
+
+

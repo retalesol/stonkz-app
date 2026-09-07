@@ -1,0 +1,36 @@
+/* ---------- launch flow ---------- */
+.nc-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.nc-field .lbl{margin-bottom:3px}
+.base-hd{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.base-hd .netbadge{display:flex;align-items:center;gap:5px;border:1px solid var(--line2);background:#12161f;
+  padding:1px 8px;font-size:10px;letter-spacing:.08em;color:var(--txt2)}
+.base-tabs{display:flex;gap:3px;margin-left:auto}
+.base-search{background:var(--input);border:1px solid #f2ae4b;color:#140c00;font-weight:600;padding:2px 7px;
+  width:132px;font-size:11px}
+.base-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:1px;background:var(--line);
+  border:1px solid var(--line);max-height:174px;overflow:auto;scrollbar-width:thin;scrollbar-color:#2b3342 #06070a}
+.base-list::-webkit-scrollbar{width:8px}
+.base-list::-webkit-scrollbar-thumb{background:#2b3342}
+.base-opt{background:var(--pnl2);padding:5px 7px;text-align:left;border:1px solid transparent;min-width:0}
+.base-opt:hover{background:#151b27}
+.base-opt.on{border-color:var(--amber);background:#211703}
+.base-opt .bs{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;
+  color:var(--gold);display:block;line-height:1.15}
+.base-opt.on .bs{color:var(--amber)}
+.base-opt .bn{font-size:9.5px;color:var(--dim);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.base-empty{grid-column:1/-1;background:var(--pnl2);padding:14px;text-align:center;font-size:11px;color:var(--dim)}
+.supply-row{display:flex;gap:5px;flex-wrap:wrap}
+.supply-row .chipm{flex:1;text-align:center;padding:4px 0}
+.fee-row{display:flex;align-items:center;gap:10px}
+.fee-row input[type=range]{flex:1;accent-color:var(--amber);height:4px}
+.fee-val{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:19px;color:var(--amber);
+  min-width:56px;text-align:right}
+.nc-chart{display:block;width:100%;height:150px;background:#040507;border:1px solid var(--line2)}
+.nc-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+.nc-stats div{background:var(--pnl2);padding:5px 7px;min-width:0}
+.nc-stats .v{font-size:14px;font-weight:600;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nc-sum{border:1px solid var(--line2);border-left:2px solid var(--amber);background:var(--pnl2);padding:5px 8px;
+  font-size:11px;color:var(--txt2)}
+.nc-sum b{color:var(--gold);font-weight:600}
+
+

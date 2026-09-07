@@ -1,0 +1,38 @@
+/* ---------- chat drawer ---------- */
+.chat-tab{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:66;
+  background:var(--amber);color:#150d00;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;
+  font-size:11px;letter-spacing:.18em;padding:14px 5px;writing-mode:vertical-rl;border:1px solid #ffca7a;border-left:0}
+.chat-tab:hover{background:var(--gold)}
+.chat-tab .unread{display:block;background:#8c2418;color:#fff;font-size:9px;padding:2px 0;margin-top:6px;
+  letter-spacing:.06em;border:1px solid #ff7a6a}
+.drawer{position:fixed;left:0;top:0;bottom:33px;width:302px;z-index:70;background:var(--pnl);
+  border-right:1px solid var(--amber2);display:flex;flex-direction:column;
+  transform:translateX(-100%);transition:transform .22s cubic-bezier(.2,.8,.3,1);box-shadow:6px 0 22px rgba(0,0,0,.6)}
+.drawer.open{transform:none}
+.drawer-hd{display:flex;align-items:center;gap:7px;background:var(--hd);border-bottom:1px solid var(--line2);padding:5px 8px}
+.drawer-hd h2{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--amber)}
+.drawer-hd .x{margin-left:auto;color:var(--dim);letter-spacing:.15em}
+.drawer-hd .x:hover{color:var(--down)}
+.rooms{display:flex;gap:3px;padding:5px 8px;border-bottom:1px solid var(--line);background:var(--pnl2)}
+.room{padding:2px 9px;font-size:10.5px;letter-spacing:.06em;border:1px solid var(--line2);background:#12161f;color:var(--txt2)}
+.room.on{background:var(--amber);border-color:var(--amber);color:#150d00;font-weight:700}
+.room:hover{border-color:var(--amber2)}
+.chat-log{flex:1;overflow:auto;padding:7px 8px;display:flex;flex-direction:column;gap:6px;
+  scrollbar-width:thin;scrollbar-color:#2b3342 #06070a}
+.chat-log::-webkit-scrollbar{width:8px}
+.chat-log::-webkit-scrollbar-thumb{background:#2b3342}
+.chat-log::-webkit-scrollbar-track{background:#06070a}
+.cm{border-left:2px solid var(--line2);padding:1px 0 2px 7px}
+.cm .who{font-size:10px;letter-spacing:.05em}
+.cm .who span{color:var(--dim);margin-left:6px;font-size:9px}
+.cm p{font-size:11.5px;color:var(--txt2);margin-top:1px;word-break:break-word}
+.cm.mine{border-left-color:var(--amber)}
+.cm.sys{border-left-color:var(--up)}
+.cm.sys p{color:var(--up)}
+.cm.in{animation:cmin .3s ease-out}
+@keyframes cmin{0%{opacity:0;transform:translateX(-8px)}100%{opacity:1;transform:none}}
+.chat-in{display:flex;gap:4px;padding:6px 8px;border-top:1px solid var(--line2);background:var(--pnl2)}
+.chat-in .fld{flex:1}
+.chat-scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:65;display:none}
+.chat-scrim.open{display:block}
+

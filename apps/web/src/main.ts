@@ -1,5 +1,4 @@
-import './styles/tokens.css';
-import './styles/shell.css';
+import './styles/index.css';
 
 import { CRATES, GRAD, RANKS, rankOf, usd } from '@stonkz/shared';
 

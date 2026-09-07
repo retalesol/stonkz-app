@@ -1,0 +1,19 @@
+/* ---------- cashback ---------- */
+.cb-opt{border:1px solid var(--line2);background:var(--pnl2);padding:7px 9px;display:flex;gap:9px;align-items:flex-start;
+  cursor:pointer;text-align:left;width:100%}
+.cb-opt:hover{border-color:var(--amber2)}
+.cb-opt.on{border-color:var(--violet);background:#17102b}
+.cb-opt.off{opacity:.45;cursor:not-allowed}
+.cb-box{width:14px;height:14px;border:1px solid var(--line2);background:#0a0d13;flex:0 0 auto;margin-top:1px}
+.cb-opt.on .cb-box{background:var(--violet);border-color:var(--violet)}
+.cb-opt .cbt{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:13px;letter-spacing:.06em;
+  color:var(--violet)}
+.cb-opt .cbs{font-size:10px;color:var(--txt2);margin-top:2px;line-height:1.4}
+.cb-banner{display:flex;align-items:center;gap:10px;border:1px solid var(--violet);background:linear-gradient(90deg,#1a1030,#0b0d14 70%);
+  padding:5px 9px;flex-wrap:wrap}
+.cb-banner .cbl{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:11px;letter-spacing:.12em;color:var(--violet)}
+.cb-banner .cbv{font-size:14px;font-weight:600;color:var(--gold)}
+.cb-banner .cbtrack{flex:1;min-width:80px;height:5px;background:#1b212a}
+.cb-banner .cbtrack i{display:block;height:100%;background:linear-gradient(90deg,var(--violet),var(--amber))}
+.tag.cb{color:var(--violet)}
+

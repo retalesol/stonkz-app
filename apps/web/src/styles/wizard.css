@@ -1,0 +1,40 @@
+/* ---------- how it works wizard ---------- */
+.wiz{max-width:580px}
+.wiz-art{height:236px;background:#05070b;border:1px solid var(--line2);overflow:hidden;position:relative}
+.wiz-art canvas,.wiz-art img{display:block;width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
+.wiz-art .tagname{position:absolute;left:0;top:0;background:var(--amber);color:#150d00;font-size:9px;
+  letter-spacing:.12em;padding:2px 7px;font-weight:700}
+.wiz-step{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:23px;font-weight:700;letter-spacing:.03em;
+  color:var(--gold);line-height:1.1}
+.wiz-sub{font-size:11.5px;color:var(--txt2);margin-top:4px;max-width:62ch}
+.wiz-dots{display:flex;gap:5px;align-items:center}
+.wiz-dot{width:26px;height:4px;background:#20262f;border:1px solid #2c3444}
+.wiz-dot.on{background:var(--amber);border-color:var(--amber)}
+.wiz-dot.done{background:var(--amber2);border-color:var(--amber2)}
+.wiz-foot{display:flex;gap:8px;align-items:center}
+.wiz-foot .grow{flex:1}
+.wiz-btn{padding:6px 18px;letter-spacing:.12em;font-weight:700;font-size:12px;border:1px solid var(--line2);
+  background:#12161f;color:var(--txt2)}
+.wiz-btn:hover{border-color:var(--amber);color:var(--amber)}
+.wiz-btn[disabled]{opacity:.4;cursor:not-allowed}
+.wiz-btn.go{background:#0f7a3d;border-color:#3fe08a;color:#eafff2}
+.wiz-btn.go:hover{background:#12a052}
+.wiz-fin{text-align:center}
+.wiz-fin .big-line{font-family:"Silkscreen",monospace;font-size:24px;color:var(--up);margin-top:9px;
+  text-shadow:0 0 14px rgba(0,210,106,.5)}
+.wiz-fin .sub{font-size:11.5px;color:var(--txt2);margin-top:5px}
+
+/* +$10,000 rain */
+.money-layer{position:fixed;inset:0;pointer-events:none;z-index:100;overflow:hidden}
+.money{position:absolute;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:17px;
+  color:#2bff8f;white-space:nowrap;text-shadow:0 0 9px rgba(0,210,106,.75),0 2px 0 #04160c;
+  animation:moneyPop var(--dur) cubic-bezier(.18,.72,.4,1) var(--delay) both}
+@keyframes moneyPop{
+  0%{transform:translate(0,0) scale(.55) rotate(0deg);opacity:0}
+  10%{opacity:1;transform:translate(calc(var(--dx)*.16),calc(var(--up)*-.6)) scale(1.12) rotate(0deg)}
+  32%{opacity:1;transform:translate(calc(var(--dx)*.46),calc(var(--up)*-1)) scale(1) rotate(calc(var(--rot)*.3))}
+  70%{opacity:.92}
+  100%{transform:translate(var(--dx),var(--fall)) scale(.9) rotate(var(--rot));opacity:0}
+}
+
+

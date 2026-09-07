@@ -1,0 +1,9 @@
+/* ---------- streak chip, position, fill flash ---------- */
+.rk-streak{font-size:9px;letter-spacing:.08em;color:var(--amber);border:1px solid var(--amber2);padding:0 4px;
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700}
+.pos{border:1px solid var(--line2);border-left:2px solid var(--gold);background:var(--pnl2);padding:4px 8px;
+  font-size:10.5px;color:var(--txt2);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pos b{color:var(--txt);font-weight:600}
+.pnl.filled{animation:filled .7s ease-out}
+@keyframes filled{0%{box-shadow:0 0 0 2px var(--up),0 0 30px rgba(0,210,106,.6)}100%{box-shadow:none}}
+

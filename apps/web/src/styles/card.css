@@ -1,0 +1,30 @@
+/* ---------- coin card ---------- */
+.coin{display:grid;grid-template-columns:52px 1fr;gap:9px;padding:8px 9px 10px;
+  border-bottom:1px solid var(--line);position:relative;cursor:pointer;text-align:left;width:100%;background:transparent}
+.coin:last-child{border-bottom:0}
+.coin:hover{background:#101520}
+.coin canvas{image-rendering:pixelated;border:1px solid var(--line2);display:block;width:52px;height:52px}
+.cn{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.cn b{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:14px;letter-spacing:.04em;color:var(--gold);font-weight:700}
+.cn .nm{font-size:11px;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cn .chg{margin-left:auto;font-size:11.5px;font-weight:600}
+.cmeta{font-size:10px;color:var(--dim);margin-top:1px}
+.cmeta i{font-style:normal;color:var(--blue)}
+.cdesc{font-size:11px;color:var(--txt2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cstats{display:flex;gap:12px;align-items:baseline;margin-top:5px;font-size:10.5px;color:var(--dim);flex-wrap:wrap}
+.cstats .mc{font-size:12.5px;font-weight:600;color:var(--txt)}
+.cstats .cv{margin-left:auto;color:var(--amber);font-weight:600}
+.cbar{position:absolute;left:0;bottom:0;height:2px;background:var(--amber)}
+.lane.grad .cbar{background:var(--up)}
+.lane.new .cbar{background:var(--gold);opacity:.75}
+.coin.punchin{animation:cpunch .42s cubic-bezier(.12,.86,.24,1) both}
+@keyframes cpunch{
+  0%{transform:translateX(34px);opacity:0;background:rgba(255,162,43,.52)}
+  34%{transform:translateX(-5px);opacity:1;background:rgba(255,162,43,.24)}
+  50%{transform:translateX(4px) translateY(-1.5px);background:rgba(255,162,43,.1)}
+  66%{transform:translateX(-3px) translateY(1.5px)}
+  80%{transform:translateX(1.5px) translateY(-.5px)}
+  92%{transform:translateX(-.5px)}
+  100%{transform:none;background:transparent}
+}
+
