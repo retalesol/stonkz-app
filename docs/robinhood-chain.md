@@ -53,7 +53,7 @@ config flags, not constants.
 | 33 | Wallet — WalletConnect | **Supported, and Robinhood Chain is in the listed WalletConnect network set** (desktop = QR scan). Same page still carries a stale sentence telling users to "set the network to Polygon or Ethereum" | Confirmed | [connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/) (read 2026-09-06) |
 | 34 | Wallet — EIP-4361 (SIWE) | **No Robinhood document states `personal_sign` support explicitly.** It follows from "any wallet or dapp that supports standard Ethereum tooling can connect", and WalletConnect's wallet SDK specifies `personal_sign`/`eth_sign`/`eth_signTypedData`. SIWE is chain-agnostic message signing, so no chain feature is required | **Likely** — verify against a real device before SIWE ships | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [WalletConnect EVM methods](https://docs.walletconnect.network/wallet-sdk/chain-support/evm) |
 | 35 | Tokenized stocks exist | **Yes.** "Stock Tokens" — standard ERC-20, 18 decimals, ERC-8056 scaled-UI, issued by Robinhood Assets (Jersey) Ltd. ~96 tokenized at launch; **203 canonical tokens** enumerated 2026-08-14 | Confirmed | [docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/); [Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) (2026-07-20); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) |
-| 36 | Stock tokens tradeable on the AMM | **Yes** — Uniswap supports Stock Tokens on Web App, Wallet and API via the AMM and UniswapX from day one; "fully transferrable" | Confirmed (one source disagrees, see §6.2) | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02) |
+| 36 | Stock tokens tradeable on the AMM | **Yes** — Uniswap supports Stock Tokens on Web App, Wallet and API via the AMM and UniswapX from day one; "fully transferrable" | Confirmed (one source disagrees, see §7.2) | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02) |
 | 37 | Stock token transfer control | **Per-address blocklist, not an allowlist** (`onlyNotBlocked` on both sides and the caller) — the USDC/USDT default-open model. **Plus a global kill switch**: one registry can pause every stock token at once | Confirmed (verified source/bytecode read) | [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) (read 2026-08-25); [Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) |
 | 38 | Stock tokens are **not** rebasing | ERC-8056 changes only a UI multiplier. `balanceOf`, `totalSupply` and `transfer` operate on raw amounts and do not move during a corporate action — safe for a curve vault | Confirmed | [EIP-8056](https://eips.ethereum.org/EIPS/eip-8056); [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) |
 | 39 | Stock token jurisdiction | **Not available to US persons.** Also restricted in Canada, UK, Switzerland, UAE and sanctioned jurisdictions. Legal form = tokenised **debt securities**, not equity | Confirmed | [docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/); [robinhood.com/rhj/stocktokens](https://robinhood.com/rhj/stocktokens/) |
@@ -418,3 +418,269 @@ and must never be compared with a `block.number` value emitted from a contract.
 - **Two-component gas** (§3.4) means the composed router transaction's cost is dominated by calldata. Keep Universal
   Router command encoding tight; the plan's `SET.cap` pre-flight abort (step 85) should use a live
   `gasEstimateComponents` figure, not a constant.
+
+---
+
+## 6. Wallets and SIWE (plan step 49, 50, 54 — for the backend agent)
+
+### 6.1 The important surprise: Robinhood Wallet is mobile-only, so `window.ethereum` will usually be absent
+
+Robinhood Wallet "natively supports Robinhood Chain with no manual setup required"
+([RH support, Robinhood Chain](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/)), and the Wallet FAQ
+confirms Robinhood Chain in both the send/receive list and the "connect to dapps through the web3 browser" list
+([RH Wallet FAQ](https://robinhood.com/us/en/support/articles/robinhood-wallet-faqs/)). But every documented connection
+path is **iOS/Android**: an in-app web3 browser, or WalletConnect. There is no browser-extension product in any Robinhood
+document I found.
+
+Consequences for plan step 50 ("wagmi/viem for Robinhood Wallet / injected EVM"):
+
+- An `injected()`-only wagmi config **will show no wallet** for a desktop Robinhood Wallet user. EIP-1193 injection applies
+  inside Robinhood's own in-app browser, and to third-party extensions (MetaMask, OKX, Rabby) that added chain 4663
+  manually.
+- **WalletConnect is mandatory, not optional**, for the RH connector set. Robinhood's page lists Robinhood Chain among the
+  WalletConnect-supported networks and documents the desktop QR-scan flow
+  ([connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/), read 2026-09-06). Budget a
+  WalletConnect project id in `.env` (plan step 5) — it is a required credential, and it was not in the plan's env list.
+- That same page still contains a stale instruction ("You'll need to use the dapp to set the network to Polygon or
+  Ethereum") left over from before Robinhood Chain was added. Do not infer from it that 4663 is unsupported; the network
+  list on the same page includes it.
+- **Do not build a "switch network" prompt as a hard gate on connect.** Robinhood Wallet is a mobile app and Backpack also
+  supports the chain natively ([backpack learn](https://learn.backpack.exchange/articles/what-is-robinhood-chain)), so for
+  those wallets there is nothing to switch. Reserve `wallet_switchEthereumChain` / `wallet_addEthereumChain` for injected
+  extension wallets, and expect it to be unsupported over WalletConnect for some wallets.
+
+### 6.2 SIWE will work, but no Robinhood document promises `personal_sign` — verify on a device
+
+EIP-4361 is plain message signing; it needs nothing from the chain. The supporting chain of evidence:
+
+- Robinhood: "Robinhood Chain is fully EVM-compatible… **Any wallet or dapp that supports standard JSON-RPC can connect
+  directly**" ([docs.robinhood.com/chain](https://docs.robinhood.com/chain/)).
+- WalletConnect's wallet SDK specifies `personal_sign`, `eth_sign` and `eth_signTypedData` as supported EVM methods
+  ([WalletConnect EVM methods](https://docs.walletconnect.network/wallet-sdk/chain-support/evm)).
+- Robinhood Wallet's dapp-connection UI explicitly discusses reviewing and signing messages ("carefully review the contract
+  details before signing a message") ([connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/)).
+
+So `POST /auth/siwe` is safe to build now, but mark row 34 as **Likely, not Confirmed**: I found no Robinhood statement
+naming `personal_sign`. **Before SIWE ships to prod (plan step 51's gate), do one manual device test:** connect Robinhood
+Wallet over WalletConnect from desktop and sign the real SIWE payload. If `personal_sign` is rejected, the fallback is
+`eth_signTypedData_v4` over an EIP-712 encoding of the same claims, so keep the nonce/session model independent of the
+signing method.
+
+Practical SIWE rules for chain 4663:
+
+- Put `Chain ID: 4663` in the message and **validate it server-side against an allow-list** (`4663` in prod, `46630` in
+  staging). Reject any other value rather than accepting whatever the client sends — a mismatched `chainId` is the classic
+  replay vector across an operator's environments.
+- Do **not** require the wallet to be on chain 4663 to produce the signature. `personal_sign` is chain-agnostic, and
+  demanding a chain switch before login will fail for mobile wallets that have no switch method. Require the correct chain
+  only at trade time.
+- Bind `address` + `net=RH` in the JWT claims exactly as plan step 49 says, and keep the nonce single-use in Redis
+  (plan step 43).
+- `domain` and `uri` must be `ston.kz` in prod; WalletConnect surfaces its Verify API domain status to the user, and a
+  mismatch between the SIWE `domain` and the connection origin will show as "Domain mismatch" in Robinhood Wallet
+  ([connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/)). Getting this wrong looks like a
+  phishing warning to our own users.
+
+### 6.3 SIWE verification must accept contract signatures (EIP-1271)
+
+Robinhood Chain has **first-class ERC-4337 support**, with programmable wallets, gas sponsorship, batching and session keys
+([docs.robinhood.com/chain](https://docs.robinhood.com/chain/)). Smart-contract accounts therefore will appear as users.
+A SIWE verifier that only does `ecrecover` will reject them, and the failure looks like "signature invalid" rather than
+"unsupported account type".
+
+Build the verifier as: try ECDSA recovery, then fall back to **EIP-1271** `isValidSignature(hash, signature)` against the
+claimed address via an RPC call (viem's `verifyMessage` does this when given a public client). Also expect
+**EIP-6492**-style pre-deployment signatures if we ever sponsor account creation — out of scope for Phase 1, but note it so
+the verifier is not written in a way that forecloses it. This is a concrete addition to plan step 49 that the SIWS/Solana
+path has no equivalent of.
+
+### 6.4 Native ETH balance reads (plan step 53)
+
+Nothing exotic: `eth_getBalance` in wei, 18 decimals, gas token is ETH (row 9). Two notes:
+
+- Read balances through the **Alchemy endpoint**, not the public RPC, which Robinhood documents as rate-limited and not for
+  production ([docs …/connecting](https://docs.robinhood.com/chain/connecting/)). A balance read on every `renderWallet`
+  will hit those limits.
+- The footer's connected-native USD price (plan step 53, replacing the hardcoded `$214.08`) should come from the
+  **ETH/USD Chainlink feed on 4663** — `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9`, 8 decimals — so the UI price and the
+  contract's graduation price come from the same source. Note the 24-hour heartbeat (§4.4) means this feed is a reference
+  price, not a tick-by-tick quote; for a footer display that is fine.
+- Alchemy also offers a Data API for "token balances, transaction history… portfolio activity"
+  ([docs …/connecting](https://docs.robinhood.com/chain/connecting/)), which is a cheaper path for holdings than
+  hand-rolled log scans in Phase 1. Worth evaluating before building the RH side of `holders_snapshot` (plan step 56).
+
+---
+
+## 7. Tokenized stocks as base pairs (plan step 60, 90)
+
+### 7.1 They exist, they are real ERC-20s, and there are more than the plan assumes
+
+Robinhood's Stock Tokens are "issued as standard ERC-20 tokens that can be held, transferred, and composed into
+applications onchain" ([docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/)). All are 18 decimals.
+Beosin counted 96 tokenized stocks and ETFs on 2026-07-20; a full `StockFactory` enumeration on 2026-08-14 found **203
+canonical tokens**, none deployed after 2026-07-28, of which only **35 have a Chainlink price feed**
+([chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)).
+
+Representative canonical addresses (re-verified on-chain 2026-07-30 by that source; TSLA also cited by Beosin from
+Blockscout):
+
+| Symbol | Address |
+|---|---|
+| TSLA | `0x322F0929c4625eD5bAd873c95208D54E1c003b2d` |
+| AAPL | `0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9` |
+| NVDA | `0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC` |
+| MSFT | `0xe93237C50D904957Cf27E7B1133b510C669c2e74` |
+| GOOGL | `0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3` |
+| SPY | `0x117cc2133c37B721F49dE2A7a74833232B3B4C0C` |
+| QQQ | `0xD5f3879160bc7c32ebb4dC785F8a4F505888de68` |
+| COIN | `0x6330D8C3178a418788dF01a47479c0ce7CCF450b` |
+
+**The Solana `STOCKS` snapshot does not map across.** The plan's `/base-tokens` endpoint (step 60) says "RH stocks only if
+that market exists; otherwise majors only" — the market exists, so RH gets its own list, sourced independently, with its
+own addresses. It is not a mirror of the xStock symbol set.
+
+### 7.2 Transfer restrictions: blocklist, not allowlist — and one source says otherwise
+
+This was the single most disputed fact in the research, and it decides whether stock-token base pairs are viable at all.
+
+- **Blocklist (default-open).** A verified-source read of the `Stock` implementation found `onlyNotBlocked` applied 15
+  times — on `transfer`, on `transferFrom`, on both counterparties *and* the caller — and found `canTransfer`, `whitelist`
+  and `allowlist` appearing **zero** times. This is the USDC/USDT model, not ERC-3643's default-closed model
+  ([xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly), read 2026-08-25). Beosin's independent code analysis
+  describes the same contract shape ([Beosin, 2026-07-20](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol)).
+- **Corroboration from the venue.** Uniswap states Stock Tokens are "**fully transferrable** on Robinhood Chain" and
+  supports them on the AMM, UniswapX, Web App, Wallet and API
+  ([blog.uniswap.org, 2026-07-02](https://blog.uniswap.org/robinhood-chain-is-live)). Robinhood's own launch release talks
+  about "deploying tokens into lending pools and utilizing them as trading collateral across the broader DeFi ecosystem"
+  ([newsroom, 2026-07-01](https://robinhood.com/us/en/newsroom/robinhood-accelerates-global-expansion-robinhood-chain-mainnet-stock-tokens-agentic-trading/)).
+- **Contradicting claim.** A KuCoin blog post states transfers are "restricted to whitelisted wallets" and that the tokens
+  are "explicitly incompatible with open DeFi protocols… cannot be… traded in automated market makers"
+  ([KuCoin](https://www.kucoin.com/blog/Robinhood-chain-integrates-chainalysis-for-tokenized-stock-and-crypto-compliance)).
+  Its own timeline points at "July 2025 — tokenized stock contracts launch… in the EU", i.e. the earlier Arbitrum One / EU
+  product, not the 4663 tokens. It is contradicted by a bytecode read and by the tokens trading on Uniswap today. **I treat
+  it as stale/misapplied, not as a live risk** — but it is the reason to keep the base-token allow-list in config rather
+  than hardcoded, so a single flag can drop stock bases if this ever becomes true.
+
+### 7.3 What *is* real, and what it does to a curve vault
+
+Three live control surfaces, none of them a dealbreaker, all of them things the EVM launchpad must handle:
+
+1. **A global kill switch.** `paused()` returns `$.paused || IAccessControlsRegistry(...).paused()`. One transaction against
+   the registry (`0xe10b6f6b275de231345c20d14ab812db62151b00`) freezes **every stock token on the chain at once**, and the
+   same registry answers `isBlocked`, so a blocked address is blocked on all of them simultaneously
+   ([xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly)). Both flags read `false` as of 2026-08-25.
+   → A Stonkz curve whose base is a stock token can become untradeable, and its graduation can become unexecutable,
+   through no fault of ours. Buys/sells will revert inside the base transfer. Handle it as a first-class state
+   (`base_frozen`) with clear UI copy, not as an unexplained red toast.
+2. **`oraclePaused()` for corporate actions**, a second pause layer distinct from the token pause
+   ([Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol)).
+   Check it before trusting a stock-token price (§4.4).
+3. **Thirteen access-control roles** in the token contract, so its security rests on Robinhood's key management. Worth one
+   line in the risk disclosure (plan step 156), since a Stonkz user pairing against `AAPL` is taking that risk.
+
+**Good news on the accounting side:** ERC-8056 is **not** a rebase. The reference implementation is explicit — corporate
+actions "never move a balance, never mint, never burn, and never emit `Transfer`. Every ERC-20 invariant an integrator
+relies on (`balanceOf` is stable absent a transfer, the sum of balances is `totalSupply`, `transfer(x)` moves exactly `x`)
+survives a split untouched" ([EIP-8056](https://eips.ethereum.org/EIPS/eip-8056);
+[BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md)). So a constant-product vault holding a stock
+token needs **no special handling** — the plan's "vault holds the base mint" design is safe, and this is a genuinely
+better outcome than a rebasing RWA token would have been.
+
+**But the USD *display* and valuation must read `uiMultiplier()`**, and here two sources give opposite conventions:
+
+- BNB's ERC-8056 guide says to convert a raw-denominated feed to a UI price with `rawPrice × 1e18 / uiMultiplier`
+  ([docs.bnbchain.org](https://docs.bnbchain.org/developer-kit/scaled-ui-amount/)).
+- The Robinhood-specific research says the Chainlink `answer` **already includes** the multiplier and is "the price of ONE
+  token as it trades today — do not re-apply `uiMultiplier`"
+  ([chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)).
+
+Every canonical multiplier currently reads exactly `1e18`, so **both conventions agree today and the ambiguity is dormant**.
+It becomes a real mispricing at the first split. Action: read `uiMultiplier()` in the same multicall as any balance, pin the
+convention in a golden test in `packages/shared`, and add an indexer alarm on any stock-token multiplier ≠ `1e18` so we
+resolve it against the chain before it silently mis-values a position. Note also that a scheduled multiplier flips at its
+`effectiveAt` timestamp **with no transaction and no event**, so a cached multiplier goes stale invisibly
+([ERC8056 INTEGRATION.md](https://github.com/nirholas/robinhood-chain-erc8056/blob/main/INTEGRATION.md)).
+
+### 7.4 Impersonation makes the base-token allow-list a security control
+
+There are fifty results for a single ticker on the explorer, clones copy names character-for-character, and memecoins now
+append the exact `• Robinhood Token` suffix to their own names — there is one called "Hoodrat • Robinhood Token"
+([xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly)). Documented live impersonators include a fake `GME`
+(`0x1c8a973a…80F4`, a thirdweb `DropERC20` clone) and two fake `DJT` contracts
+([chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)).
+
+So plan step 60's `/base-tokens?network=RH` and step 90's "base mint allow-list" must be **address-pinned, with provenance
+verified out of band, and never resolved by symbol**. The strongest provenance check available is membership in the
+`StockFactory` proxy's (`0x4783C67b63dE2B358Ac5951a7D41F47A38F3C046`) `Deployed(bytes32 uid, address stock, string name,
+string symbol)` event log; a weaker but cheap check is the EIP-1967 beacon storage slot equalling
+`0xe10b6f6b275de231345c20d14ab812db62151b00`, which is a storage read the contract cannot forge. Do **not** use a getter
+like `ACCESS_CONTROLLED_REGISTRY()` as the identity check — a fake can implement it to return anything.
+
+### 7.5 Jurisdiction — this is a product gate, not a footnote
+
+Stock Tokens are **tokenised debt securities** issued by Robinhood Assets (Jersey) Limited. They give economic exposure but
+"do not grant investors any legal or beneficial rights in… those underlying securities," they are **not registered under US
+securities law and may not be offered, sold or delivered in the United States or to US persons** (Regulation S), and sales
+are also restricted in **Canada, the United Kingdom, Switzerland, the UAE** and sanctioned jurisdictions
+([docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/);
+[robinhood.com/rhj/stocktokens](https://robinhood.com/rhj/stocktokens/);
+[newsroom, 2026-07-01](https://robinhood.com/us/en/newsroom/robinhood-accelerates-global-expansion-robinhood-chain-mainnet-stock-tokens-agentic-trading/)).
+Analysis of the licensing position notes the US exclusion is a deliberate regulatory choice, not a technical one
+([aiying license analysis](https://license.aiying.cc/en/us/robinhood-chain-tokenized-stocks-broker-dealer-license/)).
+
+For Stonkz this upgrades plan step 156 ("footer disclosure, terms, risk, tokenized-stock disclaimer, jurisdiction gate")
+from Phase 5 polish to a **Phase 2 dependency for stock-base launches specifically**:
+
+- Launching or trading a coin whose base is a Stock Token is a jurisdiction-gated feature. ETH-based and USDG-based coins
+  are not.
+- `GET /base-tokens?network=RH` should return the stock list **conditionally**, and `POST /launch/prepare` should reject a
+  stock base for a gated request — server-side, not by hiding a UI chip.
+- The disclosure must say "tokenised debt securities issued by Robinhood Assets (Jersey) Limited; economic exposure only,
+  no shareholder rights", because "tokenized stock" overstates what the holder owns.
+- Get a human decision before shipping stock bases on RH (see §10).
+
+---
+
+## 8. Oracles (plan step 53, 77, 79)
+
+**Chainlink is the answer, and it is the only answer.** Robinhood's docs: "Robinhood Chain uses Chainlink for onchain price
+data. Both crypto assets and Stock Tokens have Chainlink price feeds… Chainlink price feeds implement the standard
+`AggregatorV3Interface`. Read the latest price with `latestRoundData()`" and "call `decimals()` to scale. Most USD feeds use
+8 decimals" ([docs …/oracles-and-price-feeds](https://docs.robinhood.com/chain/oracles-and-price-feeds/)). Chainlink is the
+sole entry under "Oracles" in the ecosystem table ([docs.robinhood.com/chain](https://docs.robinhood.com/chain/)).
+
+**Pyth is not present** in any Robinhood ecosystem listing or documentation I found. So the Solana side uses Pyth/whatever
+and the RH side uses Chainlink — `packages/shared` needs an oracle abstraction with two implementations, and the plan's
+"oracle" references should not be read as one integration.
+
+From Chainlink's canonical directory for this chain
+([`feeds-robinhood-mainnet.json`](https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json), fetched
+2026-09-06 — **57 feeds**):
+
+| Feed | Proxy | Decimals | Heartbeat |
+|---|---|---|---|
+| ETH / USD | `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9` | 8 | 86400 s |
+| BTC / USD | `0xa2c5184bF03d373Dc9dE4876eb4Bce595B460251` | 8 | — |
+| USDG / USD | `0x61B7e5650328764B076A108EFF5fa7282a1B9aD2` | 8 | — |
+| USDC / USD | `0x9e6f4605992a899eE2999999F3Ec80C41F452546` | 8 | — |
+| Robinhood TSLA / USD | `0x4A1166a659A55625345e9515b32adECea5547C38` | 8 | — |
+| Robinhood AAPL / USD | `0x6B22A786bAa607d76728168703a39Ea9C99f2cD0` | 8 | — |
+| Robinhood NVDA / USD | `0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15` | 8 | — |
+
+(Equity feeds are named `Robinhood <SYM> / USD` in the directory and `RH<SYM> / USD` in some third-party tables — same
+feeds. The non-ETH addresses above come from the same directory fetch cross-checked against
+[chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts); re-read the directory before pinning any of
+them, since Robinhood's own docs say the Chainlink page "is the source of truth, so always read addresses and parameters
+from there rather than hardcoding them".)
+
+Three operational facts that matter more than the addresses:
+
+1. **Heartbeat 86400 s on ETH/USD.** Design the staleness guard around a 24-hour heartbeat plus a grace window, not around
+   minutes (§4.4, point 3). This is the single most likely way to ship a graduation function that can never fire.
+2. **No L2 Sequencer Uptime Feed exists for 4663** — zero sequencer entries in the directory, and independent research
+   marks it as not located ([chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)). Chainlink's
+   documented L2 guard is unavailable; compensate as in §4.4, point 4, and record it as an accepted risk in the Phase 2.A
+   security review (plan step 168).
+3. **Equity feeds are 24/5; crypto feeds are 24/7.** Combined with `oraclePaused()`, this means USD valuation of a
+   stock-token base is intermittently unavailable by design. Denominate the graduation check through ETH/USD (§4.4,
+   point 5).
