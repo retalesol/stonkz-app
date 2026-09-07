@@ -28,6 +28,29 @@ export default tseslint.config(
     },
   },
   {
+    // k6 scripts run inside k6's own goja runtime, not Node: `__ENV`, `__VU`,
+    // and `console` are injected by the runner. Without this block every
+    // loadtest script fails `no-undef` on globals it is supposed to use.
+    files: ['apps/api/loadtest/k6/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        __ENV: 'readonly',
+        __VU: 'readonly',
+        __ITER: 'readonly',
+        console: 'readonly',
+        // k6's file reader, used by lib/config.js to load the seeded fixtures.
+        open: 'readonly',
+      },
+    },
+    rules: {
+      // k6's `open()`/module resolution and the operator-facing logging in
+      // these scripts are the point of them.
+      'no-console': 'off',
+    },
+  },
+  {
     files: ['**/*.ts'],
     languageOptions: {
       ecmaVersion: 2022,

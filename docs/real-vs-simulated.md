@@ -107,7 +107,9 @@ user would see today traces back to a fixture scenario, not to chain state.
 |---|---|---|
 | Unit tests | **REAL** | 542+ across packages, green. |
 | Playwright sim + live suites | **REAL, mocked writes** | Live suite mocks only the write endpoints (`/trade/prepare`, `/launch/*`, `/fees/*`) because practice wallets hold no balance. Reads, quotes, and auth hit the real stack. |
+| Funded-testnet integration harness | **REAL code, NEVER RUN** | `apps/api/integration/` drives prepare → sign → broadcast → confirm → indexer with real keypairs. Every scenario currently reports SKIP: there is no deployment and no funded wallet. See [`phase-f-e2e.md`](phase-f-e2e.md). |
 | Load tests | **REAL, not a capacity sign-off** | `docs/load-test-results.md`: run on one laptop, against stubbed RPC/oracle, with no WS broadcast fan-out from a live indexer. Treat the PASS as "no obvious bottleneck", not as a production SLA. |
+| WS fan-out load test | **REAL code, NEVER RUN** | `apps/api/loadtest/k6/ws-fanout.js` measures real delivery lag and fails closed if no publisher is running. Its thresholds are targets; no run has produced a number against them. |
 | Program tests | **REAL** | Anchor + Foundry, including a Raydium integration path and a skipped-by-default RH fork test. |
 
 ---

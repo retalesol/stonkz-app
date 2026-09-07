@@ -5,5 +5,5 @@
     "types": ["node"],
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*.ts", "drizzle.config.ts"]
+  "include": ["src/**/*.ts", "drizzle.config.ts", "integration/**/*.ts"]
 }

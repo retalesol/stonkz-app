@@ -10,7 +10,15 @@
  */
 import { ed25519 } from '@noble/curves/ed25519';
 import bs58 from 'bs58';
-import { Connection, Keypair, Transaction, VersionedTransaction } from '@solana/web3.js';
+import {
+  Connection,
+  Keypair,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  VersionedTransaction,
+} from '@solana/web3.js';
 import {
   createPublicClient,
   createWalletClient,
@@ -32,6 +40,10 @@ export interface SolSigner {
   signMessage: (message: string) => string;
   /** Sign whatever `/trade/prepare` returned, broadcast it, wait for confirmation. */
   signAndSend: (base64Tx: string) => Promise<string>;
+  /** SOL balance, so a scenario can fail with "fund this wallet" rather than a revert. */
+  balanceNative: () => Promise<number>;
+  /** Native transfer, for the tip-verification scenario. */
+  transferTo: (recipient: string, amountNative: number) => Promise<string>;
 }
 
 export function solSigner(cfg: Config, which: 'primary' | 'secondary' = 'primary'): SolSigner {
@@ -75,6 +87,23 @@ export function solSigner(cfg: Config, which: 'primary' | 'secondary' = 'primary
       }
       return signature;
     },
+    balanceNative: async () => (await connection.getBalance(keypair.publicKey)) / LAMPORTS_PER_SOL,
+    transferTo: async (recipient, amountNative) => {
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: keypair.publicKey,
+          toPubkey: new PublicKey(recipient),
+          lamports: Math.round(amountNative * LAMPORTS_PER_SOL),
+        }),
+      );
+      const signature = await connection.sendTransaction(tx, [keypair]);
+      const latest = await connection.getLatestBlockhash();
+      const confirmation = await connection.confirmTransaction({ signature, ...latest }, 'confirmed');
+      if (confirmation.value.err) {
+        throw new Error(`transfer ${signature} failed: ${JSON.stringify(confirmation.value.err)}`);
+      }
+      return signature;
+    },
   };
 }
 
@@ -103,7 +132,7 @@ export interface RhSigner {
   /** EIP-712, for the ERC-2612 permit on a first-time sell. */
   signTypedData: (typedData: unknown) => Promise<Hex>;
   /** Send a prepared call and wait for the receipt; throws on a reverted tx. */
-  sendAndWait: (call: { to: `0x${string}`; data: Hex; value?: string | bigint }) => Promise<Hex>;
+  sendAndWait: (call: { to: `0x${string}`; data: Hex; value?: string | bigint | undefined }) => Promise<Hex>;
 }
 
 export async function rhSigner(cfg: Config): Promise<RhSigner> {

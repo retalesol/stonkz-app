@@ -61,8 +61,14 @@ export const solanaRoundTrip: Scenario = {
     const signer = solSigner(cfg);
     log('signer', { address: signer.address });
 
-    const balance = await signer.connection.getBalance(await Promise.resolve(signer.connection ? (await import('@solana/web3.js')).PublicKey.default : (undefined as never)).then(() => (await import('@solana/web3.js')), () => (undefined as never)).then(() => (undefined as never)).catch(() => 0) as never);
-    void balance;
+    // Fail with "fund this wallet" rather than an opaque simulation error.
+    const balance = await signer.balanceNative();
+    log('balance', { sol: balance });
+    expect(
+      balance > cfg.tradeAmountNative * 2,
+      'signer holds enough SOL for a buy, a sell, and fees',
+      { balance, need: cfg.tradeAmountNative * 2 },
+    );
 
     const session = await login(cfg, 'SOL', signer.address, signer.signMessage);
     expect(session.wallet === signer.address, 'SIWS session is bound to the signing wallet', session.wallet);

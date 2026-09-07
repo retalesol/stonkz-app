@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "integration": "tsx integration/run.ts",
     "loadtest:stub": "tsx loadtest/stubs/chain-stub.ts",
     "loadtest:seed": "tsx loadtest/seed.ts",
     "loadtest:mint": "tsx loadtest/mint-tokens.ts"
