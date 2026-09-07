@@ -257,3 +257,164 @@ Consequences for plan step 85 (settings apply to the composed tx: "slippage, pri
   `gasleft()` and estimation behave differently than on Ethereum. Use `NodeInterface` (`0xC8`) `gasEstimateComponents`
   and `ArbGasInfo` (`0x6C`) with a buffer, because a composed two-hop transaction is calldata-heavy and the L1 component
   can spike independently of L2 congestion.
+
+---
+
+## 4. Graduation and the LP-burn mechanic (plan step 77, plan step 162–163)
+
+This is the section where the plan's wording does not survive the facts. Read it before writing the graduation path.
+
+### 4.1 Both LP forms are available, so this is our choice, not the chain's
+
+Because Uniswap **v2, v3 and v4 are all deployed** on 4663 (§3.1), we can graduate into either shape:
+
+- **v2**: the pool *is* an ERC-20 (`UniswapV2Pair`). LP is **fungible**, and "burn the LP" is literally possible — send the
+  LP tokens to a dead address and the liquidity is permanently unwithdrawable, verifiable by anyone with the explorer.
+- **v3 / v4**: a position is an **ERC-721 NFT** (v3 `NonfungiblePositionManager` `0x73991a…DE0D3`, v4 `PositionManager`
+  `0x58daEC…04fA7`). Concentrated by design; a full-range position emulates v2.
+
+### 4.2 The contradiction: "burn the LP **and** keep fee-claim authority" cannot be done on v2
+
+The plan's locked decision for `$STONKZ` POL says "**Lock and burn LP tokens for life. Keep the fee-claim authority**"
+(plan §Locked decisions, and step 162: "lock and burn LP NFT/tokens; retain fee-collect authority"). Those two clauses are
+compatible on v3/v4 and **mutually exclusive on v2**:
+
+- **v2 has no separate fee claim.** Swap fees stay inside the pool's reserves and accrue to LP-token holders pro rata.
+  There is no `collect()`. The only way to realise v2 fees is to burn LP tokens and withdraw a proportional slice of
+  reserves. So burning the LP tokens forfeits every past and future fee at the same moment it locks the principal — the
+  fee claim *is* the principal claim.
+- **v3/v4 separate the two.** Fees accrue to the position independently of principal and are claimed by the position's
+  owner or an approved operator (`collect` on v3; a zero-liquidity-delta `modifyLiquidity` + take on v4). Principal is
+  withdrawn by a different call (`decreaseLiquidity`).
+- **But "burning the NFT" is also wrong on v3/v4.** Sending the position NFT to `0xdead` destroys the fee claim too, since
+  only the owner or an approved operator can collect. (On v3 you cannot even call `NonfungiblePositionManager.burn` while
+  the position still holds liquidity.) A burned NFT is a burned fee stream.
+
+**The only construction that satisfies both halves of the plan is an immutable locker contract**, not a burn:
+
+> `StonkzLpLock` owns the position NFT. It exposes exactly one external mutation — collect fees to a pre-wired,
+> immutable destination — and contains **no** code path that calls `decreaseLiquidity`, transfers the NFT, or changes the
+> destination. Principal is unwithdrawable because no function exists to withdraw it; the fee claim survives because the
+> contract is still the owner. No admin, no upgrade proxy, no owner variable.
+
+This is exactly what the chain's existing precedents do, which is a useful signal that it is the accepted pattern here:
+
+- **pools.trade** (Uniswap Labs' own launchpad on this chain, live 2026-08-05) puts every launch's liquidity in a
+  "protocol-held pool that cannot be removed by the creator", with the 0.25% LP fee **autocompounding back into the locked
+  position** ([blog.uniswap.org](https://blog.uniswap.org/pools-trade-a-new-way-to-launch-on-robinhood-chain)).
+- **StonkBrokers** on 4663 ships separate V3 and V4 liquidity lockers, each issuing a transferable ownership NFT whose
+  holder "collects the position's swap fees" ([stonkbrokers docs](https://www.stonkbrokers.cash/docs)). Note their design
+  caveat, worth verifying before copying: they state **v4 position NFTs cannot be escrowed as-is**, so their V4 locker
+  *mints* a native-ETH v4 position directly into the canonical PoolManager rather than accepting a transferred one. If that
+  holds, `StonkzLpLock` must mint the v4 position itself, not receive it.
+
+### 4.3 Recommended split: burn for memecoin graduation, lock for `$STONKZ` POL
+
+The two mechanics in the plan have different requirements, and should therefore use different pool types.
+
+**Memecoin graduation at $69K (plan step 77) → Uniswap v2 pool, LP tokens burned.**
+Nobody is promised those LP fees: the plan states that after graduation "curve fee stops; remaining venue fees are the
+DEX's." Given that, v2 is strictly better here:
+
+- It is the only variant where "liquidity is burned" is *verifiable by a user with a block explorer* and requires trusting
+  no Stonkz contract at all. That is a real product asset for a launchpad.
+- **Burned v2 LP autocompounds for free.** Fees accrue into reserves, and because the LP tokens no longer exist they can
+  never be withdrawn — so the pool's floor thickens permanently with no locker, no searcher incentive, and no keeper. It
+  achieves pools.trade's autocompounding property by construction rather than by mechanism design.
+- No tick math, no position NFT custody, no upgrade surface in the graduation path — which matters because graduation is
+  a one-way, irreversible migration of real user funds.
+
+**`$STONKZ` protocol-owned liquidity (plan step 162–163) → Uniswap v3 or v4 position in `StonkzLpLock`.**
+Fee retention is a hard requirement here (POL fees fund the `$STONKZ` staker pool), so v2 is not an option. Prefer **v4
+with native ETH** (`currency0 = address(0)`) if the pair is ETH-denominated, since v4 pools can hold native ETH and skip
+WETH wrapping entirely; otherwise v3, whose locker semantics are the simplest and best-documented. Put the choice behind
+`STONKZ_POL_VERSION={v3|v4}` because plan Phase 7 is far enough out that Uniswap's v4 periphery may have moved.
+
+Either way, **update the plan's copy**. "Lock and burn LP tokens for life. Keep the fee-claim authority" should read, for
+the POL: "*Deposit the LP position into an immutable locker with no withdrawal path; retain only the fee-collect call.*"
+And the graduation copy should not promise fee claims on graduated memecoin pools.
+
+### 4.4 Graduation-time hazards specific to this chain
+
+1. **Pin the pool key; never probe fee tiers.** ~1,900 hookless v4 pools on this chain carry 88–100% LP fees and exist
+   solely to catch routers that try arbitrary tiers ([chain-facts, sweep 2026-08-14](https://docs.investorscenter.finance/docs/reference/chain-facts)).
+   Graduation must create the pool at a single hard-coded fee tier with no hook (or a hook we deployed), and record the
+   exact pool key/address in the `tokens` row so the indexer and router never rediscover it by search.
+2. **A sniper can initialize the canonical pool before you.** A v3/v4 pool key is deterministic from
+   `(currency0, currency1, fee, tickSpacing, hooks)`, so anyone can create and seed it at a manipulated price ahead of the
+   graduation transaction. The graduation function must read the pool's current price and **revert unless the pool is
+   uninitialized or already at the expected curve-exit price within a tight band**, rather than adding liquidity into
+   whatever price it finds.
+3. **The oracle heartbeat is 24 hours, not minutes.** The ETH/USD feed on 4663 (`0x78F3556b…d3A9`) has
+   `heartbeat: 86400` and 8 decimals (Chainlink's canonical directory, fetched 2026-09-06). A conventional
+   `require(block.timestamp - updatedAt < 3600)` staleness guard would make graduation permanently unreachable. Use a
+   heartbeat-aware bound (86400 plus a grace window) and accept that the $69K threshold is therefore fuzzy at the margin —
+   document that, rather than pretending it is exact.
+4. **There is no L2 Sequencer Uptime Feed for this chain** (row 42). Chainlink's documented L2 best practice — gate
+   `latestRoundData()` on the uptime feed — is *not available* here. Compensate with: the heartbeat-aware staleness bound,
+   a sanity band on `answer`, `answeredInRound` checks, and an admin pause on graduation specifically (plan step 79
+   already asks for "oracle staleness on graduation"; this is the concrete shape of it).
+5. **Equity-based bases go stale by design at the weekend.** Chainlink's Robinhood equity/ETF feeds "update 24/5 following
+   market hours", while crypto feeds are 24/7 ([docs …/oracles-and-price-feeds](https://docs.robinhood.com/chain/oracles-and-price-feeds/);
+   [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)). A coin paired against `AAPL` therefore
+   has no fresh USD price on a Saturday. So: **denominate the $69K check through ETH/USD**, and if a stock-token base must
+   be valued, additionally require the token's own `oraclePaused() == false`.
+6. **Graduation must never be able to block a trade.** Because of points 3–5, the graduation check will sometimes be
+   unresolvable. If the oracle is stale, paused, or out of band, the buy/sell must still succeed and graduation simply does
+   not trigger on that fill. A design where a stale oracle reverts trades turns a Chainlink hiccup into a chain-wide
+   outage of the launchpad.
+7. **Use `block.timestamp`, never `block.number`, for every deadline.** See §5.1 — this applies to the cashback window,
+   stake locks, and quote expiry as much as to graduation.
+
+---
+
+## 5. EVM behaviour that changes the launchpad contract (plan step 72, 74, 79)
+
+### 5.1 `block.number` is the **L1** block number — and sources disagree, so here is the evidence
+
+Robinhood's own documentation is unambiguous: "`block.number` returns an estimate of the L1 (Ethereum) block number, not
+the Robinhood Chain block number, and updates only periodically. Do not use it to measure L2 time precisely or as a
+per-block counter" ([docs …/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/)).
+
+**Conflict, flagged:** a third-party protocol-security write-up asserts the opposite — that on Arbitrum `block.number`
+returns the *L2* block number advancing every ~250 ms
+([chainscorelabs](https://chainscorelabs.com/protocol/arbitrum/incidents-and-security-advisories/defi-exploits-with-protocol-level-root-causes)),
+and it contradicts itself between two of its own pages. I weight the primary documentation plus an independent measurement
+over it: a researcher compared an Orbit chain's `block.number` against its parent chain's `eth_blockNumber` seconds apart
+and found the same clock, different chain
+([agentatwork](https://agentatwork.xyz/notes/chainclock.html)). Treat `block.number == L1 height` as the working truth, and
+note that **either way the safe action is identical**: do not use `block.number` for time.
+
+Concretely for `programs/evm`:
+
+- Cashback window (`CB_MS = 300000`, plan step 126: `fee = base + (5000 − base) × remaining/300` bps) must be computed from
+  `block.timestamp`. On `block.number` the 5-minute window would be denominated in L1 blocks and last hours.
+- Stake locks `{0,1,7,30,90,180,365}` days (plan step 131) — `block.timestamp`.
+- Quote/tx deadlines — `block.timestamp`.
+- If the indexer or any contract needs the chain's own height, read `ArbSys(0x0000000000000000000000000000000000000064).arbBlockNumber()`.
+- **Do not ship an OpenZeppelin `Governor`/`ERC20Votes` with its default `block.number` clock** if governance ever lands;
+  use ERC-6372 timestamp mode ([chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) makes this
+  point directly for Orbit).
+
+A useful nuance: self-consistent uses of `block.number` (write `block.number + N`, later compare against `block.number`)
+are not *broken*, just denominated in the wrong clock. It becomes a bug the moment a block height crosses a boundary — into
+the API, the indexer, or a comparison against `eth_blockNumber`. The indexer's EVM replay cursor (plan step 45, "two replay
+cursors: Solana slot + EVM block") must therefore be keyed on the **L2** height from `eth_blockNumber`/`arbBlockNumber`,
+and must never be compared with a `block.number` value emitted from a contract.
+
+### 5.2 Other EVM-level notes
+
+- **Nothing about the launchpad needs rewriting for EVM-equivalence.** Solidity deploys unmodified, PUSH0 is supported, the
+  24 KB contract size limit is the same as Ethereum, and CREATE2's deterministic deployer, Multicall3, Permit2 and Safe
+  v1.4.1 are all present at canonical addresses ([xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly),
+  on-chain 2026-08-25). The plan's "EVM mirror with the same interface" (step 72) is a normal Solidity port.
+- **ERC-4337 is first-class**, with gas sponsorship, batching and session keys available through Alchemy
+  ([docs.robinhood.com/chain](https://docs.robinhood.com/chain/)). This is an opportunity, not a requirement: a later
+  gasless-first-trade flow is feasible. It also means smart-contract accounts will show up as users — see §6.3 for the SIWE
+  consequence.
+- **Legacy vs EIP-1559 transaction type**: one third-party guide recommends legacy (type 0) on Arbitrum-family chains,
+  while the chain's RPC exposes `eth_maxPriorityFeePerGas` and `eth_feeHistory`. I could not confirm a Robinhood
+  recommendation either way. Low-stakes, but leave the transaction type to viem's default and do not hand-roll it.
+- **Two-component gas** (§3.4) means the composed router transaction's cost is dominated by calldata. Keep Universal
+  Router command encoding tight; the plan's `SET.cap` pre-flight abort (step 85) should use a live
+  `gasEstimateComponents` figure, not a constant.
