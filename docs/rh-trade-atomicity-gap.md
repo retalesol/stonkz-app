@@ -192,9 +192,10 @@ additionally returns `permitTypedData` — ready-to-sign EIP-712 typed data
 against `StonkzToken`'s own domain (`name` = the token's name, `version =
 "1"`, matching `StonkzToken.sol` exactly) — plus a `note` explaining the caller
 must either sign that and resend it as `permit`, or have already approved the
-router on that token. **Nothing calls this yet**: `apps/web`'s trade-box wiring
-(Phase 2.C) has not landed (confirmed by grep, not assumed — see "Frontend
-impact" below), so this is forward-compatible plumbing, not a live UX path.
+router on that token. **This is now a live path**: Phase 2.C's trade-box wiring
+in `apps/web/src/api/live.ts` walks a first-time RH sell as an explicit
+two-signature flow (sign the permit typed data, resend with `body.permit`,
+then sign the atomic swap) — see "Frontend impact" below.
 
 **6. Deployment.** Unchanged from the contract's own design: the Universal
 Router and launchpad addresses are immutable, set at construction. The API
@@ -203,17 +204,31 @@ asset, one `RH_V3_FEE_TIER_OVERRIDES` entry.
 
 ## Frontend impact
 
-None, as of this round. `apps/web` has no consumer of `POST /trade/prepare`
-yet — grepped for `trade/prepare`, `tradePrepare`, and `EvmStep` across
-`apps/web/src` and found only forward-looking doc comments in
-`apps/web/src/app/session.ts` and `apps/web/src/modals/steps.ts`, no actual
-`fetch` call. Whichever round wires up the trade box (Phase 2.C) needs to know
-the RH atomic response shape changed from `{ atomic: false, steps: EvmStep[],
-warning }` to `{ atomic: true, to, data, value }` — the same `to`/`data`/`value`
-shape `POST /launch/prepare`'s RH branch already returns — for every base asset
-that reaches the `StonkzRouter` path, with the ordered-step walker in
-`modals/steps.ts` only needed for whatever still falls through to the
-fallback.
+**Wired, as of Phase 2.C.** This section previously said "none" because
+`apps/web` had no consumer of `POST /trade/prepare` at the time this document
+was written; that is no longer true. `apps/web/src/api/live.ts` now handles all
+three RH response shapes:
+
+1. **`{ atomic: true, to, data, value }`** — the `StonkzRouter` path, signed as
+   a single transaction, the same `to`/`data`/`value` shape
+   `POST /launch/prepare`'s RH branch already returned.
+2. **`{ atomic: true, …, permitTypedData, note }`** — a first-time sell with no
+   standing allowance. Walked as an explicit two-signature flow: sign the
+   EIP-712 typed data, resend the prepare call with `body.permit`, then sign
+   the returned atomic call. Kept visually distinct from case 3 so a
+   two-signature *atomic* trade is never presented as a non-atomic one.
+3. **`{ atomic: false, steps: EvmStep[], warning }`** — the fallback, walked in
+   order by `modals/steps.ts` with the `warning` surfaced to the user, for the
+   two operator-config gaps listed at the top of this document.
+
+Playwright coverage for all three lives in `e2e/live.spec.ts` (atomic buy,
+atomic sell with permit, and the non-atomic multi-signature walk with its
+warning asserted visible).
+
+**Still simulated at the wallet layer:** `apps/web`'s signing goes through
+`app/signer.ts`'s practice keypair, which fakes the wallet prompt and the
+broadcast/confirm wait. No RH transaction built by this path has ever been
+broadcast to chain 4663. See [`real-vs-simulated.md`](real-vs-simulated.md).
 
 ## Tests
 

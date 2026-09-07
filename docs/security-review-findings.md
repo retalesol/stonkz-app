@@ -163,7 +163,21 @@ accounts the authority named.
 
 ## Medium
 
-### M1. Rate limiting keys off a client-controlled `X-Forwarded-For` header with no trusted-proxy validation
+### M1. Rate limiting keys off a client-controlled `X-Forwarded-For` header with no trusted-proxy validation — **RESOLVED**
+
+**Resolved** in commit `6668e9e`, in a follow-up round after this document was
+first written. `apps/api/src/net/client-ip.ts`'s `resolveClientIp()` now walks
+the `X-Forwarded-For` chain from the **right** by exactly
+`TRUSTED_PROXY_DEPTH` hops (default `1`, matching Railway's edge, which
+appends rather than replaces), ignores everything further left, and fails
+closed to `null` when the chain is shorter than the configured depth or the
+depth is `<= 0`. `clientIdentity()` in `app/middleware.ts` and the session
+`ip:` field in `routes/auth.ts` both consume it; the untrusted
+`CF-Connecting-IP` fallback was dropped, since Cloudflare is not part of this
+deployment's topology. Covered by 11 unit tests in `src/net/client-ip.test.ts`
+plus 3 integration tests in `src/app/middleware.test.ts` that drive the real
+Hono stack through `/auth/nonce` and assert a spoofed multi-value header can
+no longer dodge `RATE_LIMITS.auth`. The original finding is preserved below.
 
 **Location:** `apps/api/src/app/middleware.ts` (`clientIdentity`, lines
 53–58); also used raw in `apps/api/src/routes/auth.ts:70` for the session's
@@ -314,11 +328,14 @@ recency" and reject with a distinct reason (e.g. `unknown_age`) rather than
 silently accepting, so a backend that can't supply a timestamp fails closed
 instead of open.
 
-### L2. `sessions.ip`/request logs record the unvalidated `X-Forwarded-For` value (see M1) as if it were trustworthy operational data
+### L2. `sessions.ip`/request logs record the unvalidated `X-Forwarded-For` value (see M1) as if it were trustworthy operational data — **RESOLVED**
 
-Same root cause as M1; called out separately because the consequence is
-different — this is a data-integrity note for anyone using `sessions.ip` in
-an incident investigation, not an abuse vector on its own.
+Same root cause as M1, and closed by the same fix (`6668e9e`):
+`routes/auth.ts` now records `resolveClientIp()`'s trusted-depth result
+rather than the raw header, so `sessions.ip` is as trustworthy as the
+deployment's proxy topology allows. It is still `null` (recorded as unknown)
+when the chain doesn't match the configured depth, which is the intended
+fail-closed behaviour for incident investigation.
 
 ### L3. Achievement/crate/streak reason strings and the daily XP/SP cap constants are values an operator may want to tune per environment, and currently require a deploy to change
 
@@ -467,7 +484,8 @@ the brief.
   wall/tip post, launch/prepare, auth, and social writes all carry a
   `limit(...)` call (confirmed by grep across every route file) — the two
   gaps found (`GET /me`, `GET /native-price`) are fixed in this review (M3),
-  and the identity-spoofing gap underneath all of them is M1.
+  and the identity-spoofing gap underneath all of them (M1) is fixed too, in
+  a later round — see M1's own resolution note.
 
 ---
 
@@ -493,6 +511,19 @@ instruction to document rather than touch `programs/solana`/`programs/evm`
 or anything requiring a wider blast radius than a one-line rate-limit
 addition.
 
+## Fixed in later rounds (after this review)
+
+- **H1** — real Raydium CPMM CPI + SPL LP burn in `programs/solana`
+  (`0f5f6b6`, tests `ed6ce66`, docs `9ca894f`).
+- **M1 / L2** — trusted-proxy-depth IP resolution in `apps/api`
+  (`6668e9e`).
+
+Still open from this document: **M2** (crate VRF before odds are marketed),
+**M4** (`SafeERC20` before new EVM base assets), **L1** (tip
+`blockTimeMs === null` should fail closed), **L3** (whale/dust constants want
+to live in `packages/shared`). Their status is tracked alongside the rest of
+the pre-production gaps in [`real-vs-simulated.md`](real-vs-simulated.md).
+
 ---
 
 ## Summary table
@@ -500,12 +531,12 @@ addition.
 | # | Severity | Area | One-line summary |
 |---|----------|------|-------------------|
 | H1 | High (fixed) | Solana graduation | LP burn/migration was an unconstrained, unverifiable trusted hand-off; now a real Raydium CPMM CPI + SPL burn, tested against the real devnet program |
-| M1 | Medium | apps/api rate limiting | Per-IP identity trusts a client-controllable `X-Forwarded-For` with no trusted-proxy depth |
+| M1 | Medium (fixed) | apps/api rate limiting | Per-IP identity trusted a client-controllable `X-Forwarded-For`; now bound to a fixed `TRUSTED_PROXY_DEPTH` read from the right, failing closed |
 | M2 | Medium | Crate RNG | HMAC RNG is auditable, not publicly verifiable — already documented in-repo as pre-marketing-odds blocker |
 | M3 | Medium (fixed) | apps/api | `GET /me` and `GET /native-price` had no rate limit — added |
 | M4 | Medium | EVM contracts | Raw ERC-20 calls without `SafeERC20`; safe against known base assets today, worth hardening before new base assets are added |
 | L1 | Low | Tips | `blockTimeMs === null` skips the recency check instead of failing closed |
-| L2 | Low | apps/api logging | `sessions.ip` inherits M1's spoofable input; informational only |
+| L2 | Low (fixed) | apps/api logging | `sessions.ip` inherited M1's spoofable input; now records the same trusted-depth resolution |
 | L3 | Low | apps/api | Whale-cut/dust constants flagged (by the code itself) as wanting to move to `packages/shared` |
 
 No critical findings. Everything else checked — fee-split math on both
