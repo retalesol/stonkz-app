@@ -166,23 +166,54 @@ the price — as is a pair already at our price, which is what a retry looks lik
 
 ### 2.7 `buy` and `sell` take the base mint only
 
-Kept deliberately narrow so the `StonkzRouter` periphery (a later phase) can
-compose a Uniswap leg in front of them in one transaction (§3.3). `minOut` is
-enforced on the curve hop alone; the router carries its own bound on its own
-leg. The launched token also implements EIP-2612 `permit`, so that router's sell
-path can stay a single signature instead of an approve-then-swap pair that
-strands a user who signs only the first.
+Kept deliberately narrow so `StonkzRouter` can compose a Uniswap leg in front of
+them in one transaction (§2.8). `minOut` is enforced on the curve hop alone; the
+router carries its own bound on its own leg. The launched token also implements
+EIP-2612 `permit`, so the sell path stays a single signature instead of an
+approve-then-swap pair that strands a user who signs only the first.
 
-Not implemented here, and correctly so: the router itself, Universal Router
-command encoding, and anything that reads the Trading API.
+### 2.8 `StonkzRouter` judges the aggregator hop on its outcome, not its calldata
+
+The Universal Router commands are built off-chain and arrive as opaque bytes.
+The router does not parse them: a decoder is a second implementation of
+Uniswap's encoding and would rot the first time they add a command. It pins the
+Universal Router address at construction and checks the balance actually
+delivered against the `quotedOut` the caller declares, within a tolerance capped
+at 500 bps. An arbitrary payload can therefore do nothing useful, because one
+that fails to deliver the quote reverts the transaction.
+
+That single check also carries the "zero platform fee on the aggregator hop"
+invariant. Uniswap's `portionBips` service fee is taken from the output token,
+so a fee smuggled into calldata the API did not build presents as
+delivered-below-quoted. It is a bound rather than a detector — a fee inside the
+declared tolerance is, by definition, tolerated — so the API's own `portionBips`
+assertion stays worth keeping. Two checks measuring the same quantity in the
+same contract would be theatre; one check plus an off-chain assertion at a
+different layer is not.
+
+The recipient encoding is the one thing the caller must get right, and
+`docs/robinhood-chain.md` §3.3 gets it wrong: it names `ADDRESS_THIS`, which is
+the Universal Router itself, where output would sit in an ownerless contract for
+anyone to sweep. `MSG_SENDER` is correct, since this contract is the one calling
+`execute`. Both mis-encodings are pinned as tests, and the balance check turns
+either into a revert rather than a loss.
+
+The router has no owner, pause, upgrade path or rescue function. It holds no
+balance between transactions — every path forwards the output and sweeps the
+residue — so there is nothing to rescue, and an admin key on a contract sitting
+in the middle of a trade is a liability rather than a safety net.
+
+Not implemented here, and correctly so: Universal Router command encoding, and
+anything that reads the Trading API. Both belong to `apps/api`; see
+`docs/rh-trade-atomicity-gap.md` for what it must send.
 
 ---
 
 ## 3. Deliberately not implemented
 
 - **`$STONKZ` buy / LP / burn.** Phase 7.
-- **The `StonkzRouter` periphery.** A later phase; this tree only keeps its
-  interface composable.
+- **Universal Router command encoding.** `StonkzRouter` consumes it but does
+  not build it; that is `apps/api`'s job.
 - **A v3/v4 immutable locker.** Needed for POL, not for memecoin graduation.
 - **Native-ETH curves.** Every curve here is against an ERC-20 base. A native
   path needs WETH wrapping or a payable variant; the base allow-list starts at
