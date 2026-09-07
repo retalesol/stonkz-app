@@ -534,14 +534,16 @@ contract StonkzLaunchpad {
         require(c.token != address(0), "unknown token");
         Position storage p = positions[token][msg.sender];
 
+        // Validate the argument before comparing it against stored state, so a
+        // nonsense term reads as "lock term" rather than as a mismatch with
+        // whatever the caller happens to hold.
+        CurveMath.lockWeightBps(lockDays);
+
         if (p.amount == 0 && p.weight == 0 && p.unclaimedBase == 0 && p.unclaimedToken == 0) {
             p.lockDays = lockDays;
         } else {
             require(p.lockDays == lockDays, "lock mismatch");
         }
-        // Reverts on an off-grid term before anything is moved.
-        uint256 newWeightPerUnit = CurveMath.lockWeightBps(lockDays);
-        newWeightPerUnit; // silence unused; the call is the validation
 
         _settle(c, p);
         uint256 oldAmount = p.amount;
@@ -682,6 +684,18 @@ contract StonkzLaunchpad {
         bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
         fill = CurveMath.sellQuote(_state(c), bps, amountToken);
         shares = CurveMath.splitFee(fill.fee);
+    }
+
+    /// @notice The whole coin record in one read.
+    /// @dev The generated `coins` getter returns a 25-field positional tuple,
+    /// which is unusable from both the indexer and the test suite. This returns
+    /// the struct.
+    function coinInfo(address token) external view returns (Coin memory) {
+        return coins[token];
+    }
+
+    function positionInfo(address token, address owner) external view returns (Position memory) {
+        return positions[token][owner];
     }
 
     function marketCap(address token) external view returns (uint256 base, uint256 usd1e6) {

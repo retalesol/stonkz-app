@@ -32,7 +32,24 @@ library CurveMath {
     uint256 internal constant CB_WINDOW_SECS = 300;
     uint256 internal constant CB_START_FEE_BPS = 5_000;
 
-    uint256 internal constant ACC_PRECISION = 1e12;
+    /// @notice Fixed-point scale for the staking reward accumulator.
+    ///
+    /// **This is deliberately not the Solana program's `1e12`, and that is the
+    /// one number in this library that is allowed to differ.** The accumulator
+    /// divides a reward denominated in the *base* token by a weight denominated
+    /// in the *launched* token, so the right scale depends on the gap between
+    /// those two decimal counts. Solana launches 6-decimal mints, so weights sit
+    /// around 1e15 and `1e12` is ample. Here the launched token is 18 decimals,
+    /// so a fully-staked 1B float carries a weight near 1e27 — against a
+    /// 6-decimal base like USDG, `reward * 1e12 / weight` truncates to zero and
+    /// stakers would accrue nothing at all while the pool quietly banked their
+    /// share as dust.
+    ///
+    /// `1e36` clears that by twelve orders of magnitude and still leaves room:
+    /// the widest case in the allowed-supply set is a 1T-supply coin fully
+    /// staked at the 365-day multiplier, and both `amount * ACC_PRECISION` and
+    /// `weight * acc` stay near 1e66 against a 1.15e77 ceiling.
+    uint256 internal constant ACC_PRECISION = 1e36;
 
     struct FeeShares {
         uint256 protocol;
