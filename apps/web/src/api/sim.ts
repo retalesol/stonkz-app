@@ -34,10 +34,10 @@ import { emit } from '../lib/bus.js';
 import { COINS, type SimCoin, bySym, pushTrade, seedTrades, toFill } from '../state/coins.js';
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
-import { ensureStake, poolFrac, stakeOf, totalWeight, yourShare } from '../state/stake.js';
+import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
 import { USER, addXP, pushDrop, saveUser, unlock } from '../state/user.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, selectNet } from '../state/wallet.js';
-import { clock } from '../lib/fmt.js';
+import { clock, fakeAddr } from '../lib/fmt.js';
 import type { ClaimResult, CrateResult, QuoteInput, StakeClaim, StakeInput, StonkzApi } from './types.js';
 
 /**
@@ -54,35 +54,110 @@ let timer = 0;
 /* Stream                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** One beat: drift every cap, accrue creator fees, accrue stake rewards. `index.html:3611` */
+const NEWNAMES: Array<[string, string]> = [
+  ['SZN', 'Season Finale'],
+  ['GRIFT', 'Grift Capital'],
+  ['CHOPZ', 'Chop Zone'],
+  ['VIBEZ', 'Vibez Only'],
+  ['EXITZ', 'Exit Liquidity Inc'],
+  ['FLOORD', 'Floored Again'],
+  ['PONZI', 'Ponzi But Honest'],
+  ['MID', 'Aggressively Mid'],
+];
+
+const NEWDESC = [
+  'deployed forty seconds ago and already has opinions.',
+  'no utility, no roadmap, no shame.',
+  'the chart is a straight line and nobody knows which way.',
+  'made by someone who should be asleep.',
+];
+
+let beats = 0;
+
+/**
+ * One beat of the simulation. `index.html:4037`
+ *
+ * Model only: it moves numbers and announces what changed. Every DOM
+ * consequence lives in `app/loop.ts`, which is what makes the Phase 1 swap a
+ * one-file change — the `board` WS channel emits the same events.
+ */
 function beat(): void {
+  beats++;
   const now = Date.now();
+  NATIVE_PRICE.usd = Math.max(120, NATIVE_PRICE.usd * (1 + (Math.random() - 0.5) * 0.0018));
+
   for (const c of COINS) {
     c.lastMc = c.mc;
-    const heat = c.age < 30 ? 0.055 : c.age < 180 ? 0.03 : 0.016;
-    const drift = (Math.random() - 0.485) * heat;
-    c.mc = Math.max(900, c.mc * (1 + drift));
-    c.chg += drift * 100 * 0.6;
-    if (Math.random() > 0.86) c.reps += 1;
-    if (Math.random() > 0.9) c.hold += (Math.random() * 4) | 0;
-    c.age += TICK_MS / 60000;
-    if (c.cashback && c.cbStart !== undefined && !inCashback(c, now)) {
-      c.cashback = false;
-      c.cbStart = undefined as unknown as number;
+    const vol = c.lane === 'grad' ? 0.006 : 0.014;
+    c.mc = Math.max(600, c.mc * (1 + (Math.random() - 0.485) * vol * 2));
+    c.chg += (c.mc / c.lastMc - 1) * 100;
+    if (Math.random() > 0.86) c.reps++;
+    if (Math.random() > 0.9) c.hold++;
+    accrueFees(c, now);
+    if (c.h && c.hv) {
+      c.h.push(c.mc);
+      if (c.h.length > 260) c.h.shift();
+      c.hv.push((vol24(c) / 200) * (0.35 + Math.random() * 1.7));
+      if (c.hv.length > 260) c.hv.shift();
     }
-    // Creator fees accrue on simulated volume through the curve.
-    if (c.mine && laneOf(c) !== 'grad') {
-      const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
-      const feeUsd = turnover * (effFee(c, now) / 100);
-      const bucket = (feeUsd / NATIVE_PRICE.usd) * FEE_SPLIT.creatorBucket;
-      const st = stakeOf(c.sym);
-      const share = st && st.amt > 0 ? yourShare(c) : 0;
-      c.fee = (c.fee ?? 0) + bucket * (1 - share * 0.5);
-      if (inCashback(c, now)) c.feeTokens = (c.feeTokens ?? 0) + (bucket * NATIVE_PRICE.usd) / price(c);
+    const L = laneOf(c);
+    if (L !== c.lane) {
+      c.lane = L;
+      emit('lane', { sym: c.sym, lane: L });
     }
-    accrueStake(c, now);
   }
+
+  if (beats % 9 === 0 && COINS.length < 28) {
+    const nn = NEWNAMES[(Math.random() * NEWNAMES.length) | 0] as [string, string];
+    if (!bySym(nn[0])) {
+      const mc = 900 + Math.random() * 5200;
+      COINS.push({
+        id: COINS.length,
+        sym: nn[0],
+        name: nn[1],
+        desc: NEWDESC[(Math.random() * NEWDESC.length) | 0] as string,
+        mc,
+        chg: Math.random() * 120,
+        reps: 1 + ((Math.random() * 9) | 0),
+        hold: 1 + ((Math.random() * 40) | 0),
+        age: 0,
+        seed: (Math.random() * 1e6) | 0,
+        dev: fakeAddr((Math.random() * 1e5) | 0),
+        lane: 'new',
+        el: null,
+        lastMc: 0,
+        x: '@' + nn[0].toLowerCase() + 'sol',
+        h: null,
+        hv: null,
+        trades: null,
+        comments: null,
+      });
+      emit('mint', { sym: nn[0] });
+    }
+  }
+  if (beats % 60 === 0) for (const c of COINS) c.age++;
+  if (beats % 9 === 0 && USER.stake) saveUser();
   emit('tick');
+}
+
+/**
+ * Accrue this beat's creator fees and staker rewards.
+ *
+ * The creator only ever sees their share of the 70% bucket; the pool takes the
+ * rest of it, and protocol + ops never touch either. `index.html:3605`
+ */
+function accrueFees(c: SimCoin, now: number): void {
+  if (c.cashback && !inCashback(c, now)) c.cashback = false;
+  if (laneOf(c) === 'grad') return;
+  const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
+  const feeNative = (turnover * (effFee(c, now) / 100)) / NATIVE_PRICE.usd;
+  const bucket = feeNative * FEE_SPLIT.creatorBucket;
+  const share = poolFrac(c);
+  if (c.mine) {
+    c.fee = (c.fee ?? 0) + bucket * (1 - share);
+    if (inCashback(c, now)) c.feeTokens = (c.feeTokens ?? 0) + (bucket * (1 - share) * NATIVE_PRICE.usd) / price(c);
+  }
+  accrueStake(c, now);
 }
 
 /** Pay this wallet's slice of the staker pool for one beat. `index.html:1602` */
@@ -406,9 +481,9 @@ export const simApi: StonkzApi = {
         ? (() => {
             const amount = rollCrateAmount(drop);
             USER.optionz = (USER.optionz ?? 0) + amount;
-            return { tier, kind: 'S' as const, amount, item: '', label: num(amount) + ' OPTIONZ', xp };
+            return { tier, kind: 'S' as const, amount, item: '', label: num(amount) + ' OPTIONZ', dropIndex: i, xp };
           })()
-        : { tier, kind: 'I' as const, amount: 0, item: drop[2], label: drop[2], xp };
+        : { tier, kind: 'I' as const, amount: 0, item: drop[2], label: drop[2], dropIndex: i, xp };
     USER.crates[tier] = crateReadyAt(crate, Date.now());
     pushDrop({ t: clock(), k: tier, r: res.label, col: crate.col });
     saveUser();

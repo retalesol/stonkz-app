@@ -20,6 +20,10 @@ export interface BusEvents {
   wallet: void;
   /** The coin set changed shape (new mint, lane move) rather than just prices. */
   coins: void;
+  /** A coin crossed a lane boundary. Carries the ticker, not the object. */
+  lane: { sym: string; lane: 'new' | 'soon' | 'grad' };
+  /** A coin was minted. */
+  mint: { sym: string };
   /** Holdings or activity changed; the profile view repaints. */
   portfolio: void;
   /** One simulated/indexed beat completed. */

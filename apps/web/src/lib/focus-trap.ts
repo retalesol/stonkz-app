@@ -36,8 +36,8 @@ function focusable(root: ParentNode): HTMLElement[] {
  * @param opener    element focus returns to on release; defaults to whatever
  *                  had focus when the trap was installed
  */
-export function trapFocus(container: HTMLElement, opener?: HTMLElement | null): FocusTrap {
-  const restoreTo = opener ?? (document.activeElement as HTMLElement | null);
+export function trapFocus(container: HTMLElement, opener?: Element | null): FocusTrap {
+  const restoreTo = (opener ?? document.activeElement) as HTMLElement | null;
   let items = focusable(container);
 
   function onKeydown(e: KeyboardEvent): void {

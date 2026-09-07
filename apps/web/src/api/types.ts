@@ -66,6 +66,8 @@ export interface CrateResult {
   item: string;
   /** Rendered reward label for the drop log. */
   label: string;
+  /** Index into the tier's drop table, which is also its `RAR` rarity. */
+  dropIndex: number;
   xp: number;
 }
 

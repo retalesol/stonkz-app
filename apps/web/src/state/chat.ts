@@ -1,57 +1,77 @@
-import { fakeAddr } from '../lib/fmt.js';
-
 /**
- * The global chat drawer.
+ * Chat rooms and their logs.
  *
- * Phase 5.B replaces `push()` with a `chat` WS channel and a rate-limited
- * `POST /chat`; the drawer, the unread badge and the entry animation are
- * unchanged by that swap. `index.html:2990`
+ * One room per token plus GLOBAL. Phase 5.B replaces `HANDLES`/`GLINES`/
+ * `TLINES` with a `chat` WS channel and a rate-limited `POST /chat`; the room
+ * model, the 90-message cap and the unread counter survive that swap
+ * unchanged. `index.html:3557`
  */
 
 export interface ChatMsg {
   who: string;
-  t: string;
   text: string;
-  mine: boolean;
+  /** HH:MM. Filled in on push when absent. */
+  t?: string;
+  /** Handle colour. */
+  col?: string;
+  mine?: boolean;
+  /** System line: rendered without an author row. */
+  sys?: boolean;
 }
 
-export const CHAT: ChatMsg[] = [];
+export interface ChatState {
+  room: string;
+  /** The token whose room is available alongside GLOBAL, if any. */
+  token: { sym: string; seed: number } | null;
+  logs: Record<string, ChatMsg[]>;
+  unread: number;
+  open: boolean;
+}
 
-const SEED: Array<[string, string]> = [
-  ['09:02', 'gm. who is farming the trench today'],
-  ['09:03', 'giga curve is 88 percent, this one actually graduates'],
-  ['09:05', 'bought larp at 4k, it is 9800 now, i am a genius'],
-  ['09:06', 'ser you are up four hundred dollars, calm down'],
-  ['09:11', 'cashback window on hopium is open, fee is basically free'],
+export const CHAT: ChatState = { room: 'GLOBAL', token: null, logs: { GLOBAL: [] }, unread: 0, open: false };
+
+export const HANDLES: Array<[string, string]> = [
+  ['0xSCHIZO', '#ffd23f'],
+  ['TRENCHRAT', '#4d9bff'],
+  ['MEV_JANITOR', '#a273ff'],
+  ['LP_MAXI', '#00d26a'],
+  ['EXITLIQ', '#ff4c3b'],
+  ['FLOORSEER', '#a273ff'],
+  ['ANON_4488', '#cac6ba'],
+  ['CURVEWATCH', '#26d0c4'],
+  ['JEET_HUNTER', '#ff7ac0'],
 ];
 
-const CHATTER = [
-  'someone just moved 40 sol into bonkd',
-  'wojak holders are eating today',
-  'why is every new mint called something with trench in it',
-  'staked my whole bag, locked 30 days, pray for me',
-  'the tape is printing green, get in or stay poor',
-  'my portfolio is down but my conviction is up',
-  'gm to everyone except the guy who dumped tendie',
+export const GLINES = [
+  'board is moving. three curves past 80% at the same time',
+  'whoever is sniping every new mint in block zero, we see you',
+  'gm to everyone still reading contract authority before buying',
+  'the graduated lane is where the boring money is and i am fine with that',
+  'prio fees are cheap right now, good window',
+  'reminder: curve fill percent is not liquidity',
+  'someone explain why every ticker today is four letters',
+  'watching the new mints lane like it is a slot machine',
 ];
 
-export function seedChat(): void {
-  if (CHAT.length) return;
-  SEED.forEach((m, i) => {
-    CHAT.push({ who: fakeAddr(7100 + i * 311), t: m[0], text: m[1], mine: false });
-  });
+export const TLINES = [
+  '$SYM chart is doing the thing again',
+  'dev of $SYM has not touched the wallet once. checked twice',
+  'if $SYM graduates i am telling my wife about it',
+  'who is bidding $SYM up here, show yourself',
+  '$SYM holders are early or delusional and it is the same thing',
+  'curve on $SYM is filling faster than the last three',
+  'just added to $SYM. no thesis, only vibes',
+];
+
+export function logFor(room: string): ChatMsg[] {
+  let l = CHAT.logs[room];
+  if (!l) {
+    l = [];
+    CHAT.logs[room] = l;
+  }
+  return l;
 }
 
-/** Cap the buffer so a long session cannot grow the DOM without bound. */
-export function push(msg: ChatMsg): void {
-  CHAT.push(msg);
-  if (CHAT.length > 120) CHAT.shift();
-}
-
-export function ambientLine(): string {
-  return CHATTER[(Math.random() * CHATTER.length) | 0] as string;
-}
-
-export function ambientWho(): string {
-  return fakeAddr((Math.random() * 1e6) | 0);
+export function randomHandle(): [string, string] {
+  return HANDLES[(Math.random() * HANDLES.length) | 0] as [string, string];
 }

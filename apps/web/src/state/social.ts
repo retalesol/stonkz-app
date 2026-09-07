@@ -1,127 +1,187 @@
-import { type Member, type Wall, hash, rng } from '@stonkz/shared';
+import { type Member, type Wall, hash, minTip as minTipFor, rng } from '@stonkz/shared';
 import { fakeAddr } from '../lib/fmt.js';
-import { WALLET } from './wallet.js';
+import { COINS, type SimCoin } from './coins.js';
 import { USER, saveUser } from './user.js';
+import { WALLET, nativeUnit } from './wallet.js';
 
 /**
- * Member profiles, follows and walls.
+ * Members, follows and walls.
  *
  * Phase 5 replaces every generator here with `GET /users/:addr`,
- * `POST /follow` and a `wall_posts` table; tips become a real transfer whose
- * signature the server verifies before the post is accepted. `index.html:2860`
+ * `POST /follow` and a `wall_posts` table; a tip becomes a real transfer whose
+ * signature the server verifies before the post is accepted, which is why
+ * `Wall.sig` already exists in the shared type. `index.html:3230`
  */
 
-const NAMES = [
-  'trench rat',
-  'liquidity goblin',
-  'exit liquidity',
-  'chart astrologer',
-  'serial larper',
-  'bag holder prime',
-  'candle whisperer',
-  'rug survivor',
-  'sniper #4',
-  'the floor guy',
+export const SOCIAL = { followers: 1284, following: 312 };
+
+const MNAME = ['TRENCH', 'FLOOR', 'CURVE', 'JEET', 'WHALE', 'COPE', 'BAG', 'MOON', 'SNIPE', 'EXIT', 'GAS', 'DEGEN', 'CANDLE', 'ANON'];
+const MTAIL = ['RAT', 'LORD', 'GOBLIN', 'MAXI', 'WATCH', 'HANDS', 'SEEKER', 'JANITOR', 'PILOT', 'SZN', 'CHAD', 'MONK'];
+
+const MBIOS = [
+  'professional bag holder since the first candle. not selling, ever, probably.',
+  'i read contract authority before i buy. usually. sometimes. once.',
+  'here for the charts, staying for the psychological damage.',
+  'sniping block zero and telling my therapist it is a hobby.',
+  'long term investor on a five minute timeframe.',
+  'i only ape into tickers with four letters. it is a system.',
+  'made it, lost it, made it again, currently in phase two.',
+  'liquidity is temporary, screenshots are forever.',
 ];
 
-const BIOS = [
-  'i buy the top so you do not have to',
-  'onchain since the second rug',
-  'i do not have a thesis, i have a wallet',
-  'up only, spiritually',
-  'my exit strategy is hope',
+const SHOUTS = [
+  'gm, your last call actually printed. respect',
+  'still holding the bag you handed me. no hard feelings',
+  'thanks for the alpha, buying you a coffee',
+  'your chart takes are unhinged and usually right',
+  'followed. do not make me regret it',
+  'saw your entry on that one. filthy',
+  'tipping so you remember me when it moons',
 ];
 
-const MEMBERS = new Map<string, Member>();
+/** A member, plus the memoised tables only the sim needs. */
+export interface SimMember extends Member {
+  _h?: Array<{ sym: string; tok: number; cost: number }>;
+  _t?: Array<{ t: Date; sym: string; buy: boolean; sol: number }>;
+}
 
-/** Resolve an address to a stable profile. `index.html:2864` */
-export function memberOf(addr: string): Member {
-  const cached = MEMBERS.get(addr);
+const MEMBERS: Record<string, SimMember> = {};
+
+/** TODO(Phase 5.A): `GET /users/:addr`. `index.html:3253` */
+export function memberOf(addr: string): SimMember {
+  const cached = MEMBERS[addr];
   if (cached) return cached;
-  const seed = hash(addr);
-  const r = rng(seed);
-  const m: Member = {
+  const r = rng(hash(addr));
+  const m: SimMember = {
     addr,
-    seed,
-    name: NAMES[(r() * NAMES.length) | 0] as string,
-    bio: BIOS[(r() * BIOS.length) | 0] as string,
-    followers: (r() * 4200) | 0,
-    following: (r() * 380) | 0,
-    joined: ['MAR 2024', 'AUG 2024', 'JAN 2025', 'NOV 2023'][(r() * 4) | 0] as string,
-    xp: (r() * 24000) | 0,
+    seed: (r() * 1e6) | 0,
+    name: (MNAME[(r() * MNAME.length) | 0] as string) + '_' + (MTAIL[(r() * MTAIL.length) | 0] as string),
+    bio: MBIOS[(r() * MBIOS.length) | 0] as string,
+    followers: (40 + r() * 5200) | 0,
+    following: (8 + r() * 700) | 0,
+    joined: String((1 + r() * 380) | 0),
+    xp: (180 + r() * 34000) | 0,
   };
-  MEMBERS.set(addr, m);
+  MEMBERS[addr] = m;
   return m;
 }
 
-/** The connected wallet's own profile, with local overrides applied. */
-export function me(): Member {
-  const m = memberOf(WALLET.full);
-  return {
-    ...m,
-    seed: WALLET.seed,
-    name: USER.name || 'anon degen',
-    bio: USER.bio || 'no bio yet. probably down bad.',
-    xp: USER.xp,
-  };
-}
-
 export function isMe(addr: string): boolean {
-  return addr === WALLET.full || addr === WALLET.addr || addr === 'YOU..7xKQ';
+  return WALLET.on && addr === WALLET.addr;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Follows                                                                     */
-/* -------------------------------------------------------------------------- */
-
-export function following(addr: string): boolean {
-  return !!(USER.follow && USER.follow[addr]);
+export function myName(): string {
+  return USER.name || 'UNNAMED DEGEN';
 }
 
-export function followCount(): number {
-  return USER.follow ? Object.keys(USER.follow).length : 0;
+export function myBio(): string {
+  return USER.bio || 'NO BIO YET. HIT EDIT PROFILE AND SAY SOMETHING.';
 }
 
-/** Returns the new state. TODO(Phase 5.A): `POST /follow`. `index.html:2884` */
-export function toggleFollow(addr: string): boolean {
+export function follows(): Record<string, 1> {
   if (!USER.follow) USER.follow = {};
-  const now = !USER.follow[addr];
-  if (now) USER.follow[addr] = 1;
-  else delete USER.follow[addr];
+  return USER.follow;
+}
+
+export function isFollowing(a: string): boolean {
+  return !!follows()[a];
+}
+
+/** Returns the new state. TODO(Phase 5.A): `POST /follow`. `index.html:3267` */
+export function toggleFollow(a: string): boolean {
+  const f = follows();
+  const now = !f[a];
+  if (now) f[a] = 1;
+  else delete f[a];
   saveUser();
   return now;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Walls                                                                       */
-/* -------------------------------------------------------------------------- */
+let followerCache: string[] | null = null;
 
-const WALLS = new Map<string, Wall[]>();
-
-const WALL_POOL = [
-  'called giga at 400k. still waiting on my thank you',
-  'sold the bottom again. ask me anything',
-  'if you are reading this you are already exit liquidity',
-  'ser your last coin owes me a kidney',
-];
-
-export function wallOf(addr: string): Wall[] {
-  const cached = WALLS.get(addr);
-  if (cached) return cached;
-  const r = rng(hash(addr) + 17);
-  const posts: Wall[] = WALL_POOL.slice(0, 3).map((text, i) => ({
-    from: fakeAddr(hash(addr) + i * 71),
-    text,
-    tip: r() > 0.6 ? Number((0.01 + r() * 0.4).toFixed(3)) : 0,
-    t: (i + 1) * 7 + 'm',
-  }));
-  WALLS.set(addr, posts);
-  return posts;
+export function followerAddrs(): string[] {
+  if (followerCache) return followerCache;
+  const r = rng(90210);
+  const out: string[] = [];
+  for (let i = 0; i < 8; i++) out.push(fakeAddr((r() * 1e6) | 0));
+  followerCache = out;
+  return out;
 }
 
-/** TODO(Phase 5.C): `POST /wall` with the tip signature attached. */
+export function friendAddrs(addr: string): string[] {
+  if (isMe(addr)) {
+    return followerAddrs()
+      .concat(Object.keys(follows()))
+      .filter((a, i, arr) => a !== WALLET.addr && arr.indexOf(a) === i);
+  }
+  const r = rng(hash(addr) + 3);
+  const out: string[] = [];
+  for (let i = 0; i < 6; i++) out.push(fakeAddr((r() * 1e6) | 0));
+  return out;
+}
+
+/** Simulated PnL over a window. `index.html:3286` */
+export function memProfit(addr: string, win: string): number {
+  const r = rng(hash(addr + win));
+  const scale = win === '24h' ? 1200 : win === '7d' ? 5400 : 19000;
+  return (r() * 1.9 - 0.45) * scale;
+}
+
+export function memHold(m: SimMember, priceOf: (c: SimCoin) => number): Array<{ sym: string; tok: number; cost: number }> {
+  if (m._h) return m._h;
+  const r = rng(m.seed + 11);
+  const out: Array<{ sym: string; tok: number; cost: number }> = [];
+  const n = 2 + ((r() * 4) | 0);
+  for (let i = 0; i < n; i++) {
+    const c = COINS[(r() * COINS.length) | 0];
+    if (!c || out.some((o) => o.sym === c.sym)) continue;
+    const cost = 60 + r() * 4200;
+    out.push({ sym: c.sym, tok: (cost / priceOf(c)) * (0.55 + r() * 0.9), cost });
+  }
+  m._h = out;
+  return out;
+}
+
+export function memTrades(m: SimMember): Array<{ t: Date; sym: string; buy: boolean; sol: number }> {
+  if (m._t) return m._t;
+  const r = rng(m.seed + 29);
+  const out: Array<{ t: Date; sym: string; buy: boolean; sol: number }> = [];
+  const now = Date.now();
+  for (let i = 0; i < 6; i++) {
+    const c = COINS[(r() * COINS.length) | 0];
+    if (!c) continue;
+    out.push({ t: new Date(now - (i * 2400 + 600) * 1000), sym: c.sym, buy: r() > 0.42, sol: 0.2 + r() * 4 });
+  }
+  m._t = out;
+  return out;
+}
+
+/** Minimum tip in the chain's native unit: 0.001 SOL / 0.0001 ETH. */
+export function minTip(): number {
+  return minTipFor(nativeUnit());
+}
+
+const WALLS: Record<string, Wall[]> = {};
+
+export function wallOf(addr: string): Wall[] {
+  const cached = WALLS[addr];
+  if (cached) return cached;
+  const r = rng(hash(addr) + 77);
+  const n = 2 + ((r() * 4) | 0);
+  const out: Wall[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({
+      from: fakeAddr((r() * 1e6) | 0),
+      text: SHOUTS[(r() * SHOUTS.length) | 0] as string,
+      tip: Number((minTip() + r() * 0.35).toFixed(4)),
+      t: (i + 1) * 37 + ((r() * 20) | 0) + 'm',
+    });
+  }
+  WALLS[addr] = out;
+  return out;
+}
+
+/** TODO(Phase 5.C): `POST /wall`, with the tip signature attached. */
 export function postToWall(addr: string, post: Wall): void {
-  const list = wallOf(addr);
-  list.unshift(post);
-  if (list.length > 30) list.pop();
+  wallOf(addr).unshift(post);
 }
