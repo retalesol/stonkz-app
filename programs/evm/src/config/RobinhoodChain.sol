@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.24;
+
+/// @title Robinhood Chain deployment constants.
+/// @notice Every chain-specific value lives here so that a correction to
+/// `docs/robinhood-chain.md` is a one-file change and never touches curve or
+/// fee logic. Sourced from that document; see `ASSUMPTIONS.md` for the
+/// confidence level on each and what to re-verify before mainnet.
+library RobinhoodChain {
+    /* ------------------------------------------------------------- identity */
+
+    uint256 internal constant MAINNET_CHAIN_ID = 4663;
+    uint256 internal constant TESTNET_CHAIN_ID = 46630;
+
+    /// @dev The gas token is ETH, 18 decimals. There is no native chain token.
+    address internal constant WETH9 = 0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73;
+
+    /// @dev Paxos Global Dollar, **6 decimals** — the chain's headline stable
+    /// and the recommended base for USD-denominated curves.
+    address internal constant USDG = 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168;
+
+    /* ---------------------------------------------------------------- uniswap */
+
+    address internal constant UNISWAP_V2_FACTORY = 0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f;
+    address internal constant UNISWAP_V2_ROUTER02 = 0x89e5DB8B5aA49aA85AC63f691524311AEB649eba;
+
+    address internal constant UNISWAP_V3_FACTORY = 0x1f7d7550B1b028f7571E69A784071F0205FD2EfA;
+    address internal constant UNISWAP_V3_SWAP_ROUTER02 = 0xCaf681a66D020601342297493863E78C959E5cb2;
+    address internal constant UNISWAP_V3_QUOTER_V2 = 0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7;
+    address internal constant UNISWAP_V3_NFPM = 0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3;
+
+    address internal constant UNISWAP_V4_POOL_MANAGER = 0x8366a39CC670B4001A1121B8F6A443A643e40951;
+    address internal constant UNISWAP_V4_POSITION_MANAGER = 0x58daec3116aae6D93017bAAea7749052E8a04fA7;
+
+    address internal constant UNIVERSAL_ROUTER = 0x8876789976dEcBfCbBbe364623C63652db8C0904;
+    address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+
+    /* -------------------------------------------------------------- ArbOS */
+
+    /// @dev This is an Arbitrum Orbit rollup, so `block.number` returns an
+    /// estimate of the **L1** block number, not L2 height. Anything that needs
+    /// L2 height must call `ArbSys.arbBlockNumber()`. The launchpad deliberately
+    /// uses `block.timestamp` only, never `block.number`.
+    address internal constant ARB_SYS = 0x0000000000000000000000000000000000000064;
+    address internal constant ARB_GAS_INFO = 0x000000000000000000000000000000000000006C;
+
+    function isRobinhoodChain() internal view returns (bool) {
+        return block.chainid == MAINNET_CHAIN_ID || block.chainid == TESTNET_CHAIN_ID;
+    }
+}

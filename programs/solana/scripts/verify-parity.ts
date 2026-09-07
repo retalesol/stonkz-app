@@ -51,9 +51,25 @@ function eq(actual: bigint | number | boolean, expected: bigint | number | boole
   }
 }
 
+/**
+ * The vectors are stored as columns — one array per field — because Foundry's
+ * JSON cheatcodes cannot walk an array of objects. Zip them back into rows,
+ * which is the shape the checks below want.
+ */
+function rows(cols: Record<string, any[]>): Record<string, any>[] {
+  const keys = Object.keys(cols);
+  const n = cols[keys[0]].length;
+  for (const k of keys) {
+    if (cols[k].length !== n) throw new Error(`ragged parity column: ${k}`);
+  }
+  return Array.from({ length: n }, (_, i) =>
+    Object.fromEntries(keys.map((k) => [k, cols[k][i]])),
+  );
+}
+
 /* ------------------------------------------------------------------ fee split */
 
-for (const row of vectors.feeSplit) {
+for (const row of rows(vectors.feeSplit)) {
   const s = splitFee(BigInt(row.fee));
   eq(s.protocol, BigInt(row.protocol), `splitFee(${row.fee}).protocol`);
   eq(s.stonkzOps, BigInt(row.ops), `splitFee(${row.fee}).ops`);
@@ -67,7 +83,7 @@ for (const row of vectors.feeSplit) {
 
 /* --------------------------------------------------------------- bucket split */
 
-for (const row of vectors.creatorBucketSplit) {
+for (const row of rows(vectors.creatorBucketSplit)) {
   const r = splitCreatorBucket(
     BigInt(row.bucket),
     BigInt(row.eligibleStaked),
@@ -79,7 +95,7 @@ for (const row of vectors.creatorBucketSplit) {
 
 /* ------------------------------------------------------------------- cashback */
 
-for (const row of vectors.effFeeBps) {
+for (const row of rows(vectors.effFeeBps)) {
   const got = effFeeBps(row.baseBps, row.cashback, 0n, BigInt(row.elapsedSecs));
   eq(got, row.effBps, `effFeeBps(${row.baseBps}, t=${row.elapsedSecs}, cb=${row.cashback})`);
 }
@@ -101,7 +117,7 @@ for (const c of vectors.curves) {
   eq(p.gradMcapBase, BigInt(c.gradMcapBase), `${label} gradMcapBase`);
 
   let st: CurveState = freshState(p);
-  for (const [i, fill] of c.fills.entries()) {
+  for (const [i, fill] of rows(c.fills).entries()) {
     // The vector records the state the fill was quoted against; if our state
     // has drifted, say so here rather than reporting a downstream mismatch.
     eq(st.virtualBase, BigInt(fill.virtualBase), `${label} fill ${i} state.virtualBase`);

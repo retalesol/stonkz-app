@@ -1,0 +1,8 @@
+out/
+cache/
+broadcast/
+docs/
+
+# Fetched by `forge install`, pinned in foundry.toml. Not vendored: forge-std is
+# ~80 files of test scaffolding and reviewing it in our diffs is noise.
+lib/
