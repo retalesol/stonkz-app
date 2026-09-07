@@ -2,6 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBaseMintRegistry } from '@stonkz/api/router/base-mints';
 import { createLogger } from '@stonkz/api/observability/logger';
 import { createTestDb, type TestDb } from '@stonkz/api/test/harness';
+import {
+  applyBuy,
+  buyQuote,
+  deriveCurve,
+  freshState,
+  splitFee as splitFeeAtoms,
+} from '@stonkz/curve-sim';
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type TradeEvent } from '../events.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
@@ -55,16 +62,19 @@ const SUPPLY = 1_000_000_000_000_000n; // 1e9 tokens at 6 decimals
 const BASE_PRICE_1E6 = 214_080_000n; // $214.08 per SOL
 const BASE_DECIMALS = 9;
 
-const CURVE = deriveCurve(SUPPLY, BASE_PRICE_1E6, BASE_DECIMALS);
-if (!CURVE) throw new Error('fixture curve derivation failed');
+function required<T>(value: T | null, what: string): T {
+  if (value === null) throw new Error(`fixture ${what} failed`);
+  return value;
+}
+
+const CURVE = required(deriveCurve(SUPPLY, BASE_PRICE_1E6, BASE_DECIMALS), 'curve derivation');
 const FRESH = freshState(CURVE);
 const TOKENS_FOR_SALE = CURVE.tokensForSale;
 const GRAD_MCAP_BASE = CURVE.gradMcapBase;
 
 /** A 1.5 SOL buy at the creator's 2.5%, quoted and split exactly as the program would. */
 const BUY_BASE = 1_500_000_000n;
-const FILL = buyQuote(FRESH, 250, BUY_BASE);
-if (!FILL) throw new Error('fixture fill quote failed');
+const FILL = required(buyQuote(FRESH, 250, BUY_BASE), 'fill quote');
 const AFTER = applyBuy(FRESH, FILL);
 const CHAIN_LEGS = splitFeeAtoms(FILL.fee);
 /** The staker peel: a fifth of the bucket, well inside the half-bucket ceiling. */
@@ -82,10 +92,10 @@ function launchLog(overrides: Partial<Parameters<typeof encodeTokenCreated>[0]> 
       feeBps: 250,
       cashback: false,
       cbStart: 0n,
-      virtualBase: VIRTUAL_BASE,
-      virtualToken: VIRTUAL_TOKEN,
+      virtualBase: CURVE.virtualBase,
+      virtualToken: CURVE.virtualToken,
       tokensForSale: TOKENS_FOR_SALE,
-      lpReserve: 200_000_000_000_000n,
+      lpReserve: CURVE.lpReserve,
       gradMcapBase: GRAD_MCAP_BASE,
       basePrice1e6: BASE_PRICE_1E6,
       ts: 1_757_000_000n,
@@ -93,10 +103,6 @@ function launchLog(overrides: Partial<Parameters<typeof encodeTokenCreated>[0]> 
     }),
   );
 }
-
-/** A buy of 1.5 wSOL at 2.5%, with the on-chain integer fee split. */
-const FEE_TOTAL = 37_500_000n;
-const LEGS = { protocol: 7_500_000n, ops: 3_750_000n, bucket: 26_250_000n };
 
 function fillLogs(): string[] {
   return [
@@ -108,22 +114,22 @@ function fillLogs(): string[] {
         mint: DOGGO_MINT,
         trader: TRADER,
         isBuy: true,
-        baseAmount: 1_500_000_000n,
-        tokenAmount: 73_100_000_000n,
+        baseAmount: FILL.grossBase,
+        tokenAmount: FILL.tokensOut,
         effFeeBps: 250,
         inCashback: false,
-        feeTotal: FEE_TOTAL,
-        feeProtocol: LEGS.protocol,
-        feeOps: LEGS.ops,
-        feeCreatorBucket: LEGS.bucket,
-        feeStakers: 5_250_000n,
-        feeCreator: 21_000_000n,
+        feeTotal: FILL.fee,
+        feeProtocol: CHAIN_LEGS.protocol,
+        feeOps: CHAIN_LEGS.stonkzOps,
+        feeCreatorBucket: CHAIN_LEGS.creatorBucket,
+        feeStakers: FEE_STAKERS,
+        feeCreator: CHAIN_LEGS.creatorBucket - FEE_STAKERS,
         cashbackTokens: 0n,
-        virtualBase: VIRTUAL_BASE + 1_462_500_000n,
-        virtualToken: VIRTUAL_TOKEN - 73_100_000_000n,
-        realBase: 1_462_500_000n,
-        realToken: TOKENS_FOR_SALE - 73_100_000_000n,
-        circulating: 73_100_000_000n,
+        virtualBase: AFTER.virtualBase,
+        virtualToken: AFTER.virtualToken,
+        realBase: AFTER.realBase,
+        realToken: AFTER.realToken,
+        circulating: FILL.tokensOut,
         ts: 1_757_000_100n,
       }),
     ),
@@ -132,10 +138,10 @@ function fillLogs(): string[] {
       encodeFeeAccrued({
         mint: DOGGO_MINT,
         baseMint: WSOL_MINT,
-        feeTotal: FEE_TOTAL,
-        protocol: LEGS.protocol,
-        ops: LEGS.ops,
-        creatorBucket: LEGS.bucket,
+        feeTotal: FILL.fee,
+        protocol: CHAIN_LEGS.protocol,
+        ops: CHAIN_LEGS.stonkzOps,
+        creatorBucket: CHAIN_LEGS.creatorBucket,
         ts: 1_757_000_100n,
       }),
     ),
@@ -143,8 +149,8 @@ function fillLogs(): string[] {
       'TreasuryCredit',
       encodeTreasuryCredit({
         baseMint: WSOL_MINT,
-        protocolDelta: LEGS.protocol,
-        opsDelta: LEGS.ops,
+        protocolDelta: CHAIN_LEGS.protocol,
+        opsDelta: CHAIN_LEGS.stonkzOps,
         ts: 1_757_000_100n,
       }),
     ),
@@ -234,11 +240,11 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
     // baseDecimals recovered from gradMcapBase + basePrice1e6 alone.
     expect(launch.curve?.baseDecimals).toBe(9);
     expect(launch.curve?.tokenDecimals).toBe(6);
-    expect(launch.curve?.k).toBe((VIRTUAL_BASE * VIRTUAL_TOKEN).toString());
+    expect(launch.curve?.k).toBe(CURVE.k.toString());
     expect(launch.curve?.realToken).toBe(TOKENS_FOR_SALE.toString());
-    // A fresh curve opens at $69K/15 ≈ $4,600.
-    expect(launch.mc).toBeGreaterThan(4_000);
-    expect(launch.mc).toBeLessThan(5_000);
+    // The curve closes at exactly $69K, so it opens at grad/16 = $4,312.50:
+    // virtualBase is grad/15 against a virtualToken of supply*16/15.
+    expect(launch.mc).toBeCloseTo(69_000 / 16, 0);
     expect(() => assertEventIntegrity(launch)).not.toThrow();
   });
 
@@ -258,14 +264,15 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
     // Base is wrapped SOL, so the native leg is the base leg, exactly.
     expect(trade?.nativeAmount).toBeCloseTo(1.5, 12);
     expect(trade?.baseAmount).toBeCloseTo(1.5, 12);
-    expect(trade?.tokenAmount).toBeCloseTo(73_100, 6);
+    expect(trade?.tokenAmount).toBeCloseTo(Number(FILL.tokensOut) / 1e6, 6);
     expect(trade?.usdValue).toBeCloseTo(1.5 * 214.08, 6);
-    expect(trade?.realBase).toBe('1462500000');
+    expect(trade?.realBase).toBe(AFTER.realBase.toString());
+    expect(trade?.realToken).toBe(AFTER.realToken.toString());
 
     const fee = events.find((e) => e.kind === 'FeeAccrued');
     if (fee?.kind !== 'FeeAccrued') throw new Error('expected FeeAccrued');
     expect(fee.creator).toBe(CREATOR);
-    // 0.0375 wSOL of fee, split exactly 20/70/10 in the native unit.
+    // 2.5% of 1.5 SOL = 0.0375 SOL of fee, split exactly 20/70/10 in native.
     expect(fee.feeAmount).toBeCloseTo(0.0375, 12);
     expect(fee.protocol).toBeCloseTo(splitFee(0.0375).protocol, 12);
     // Staker peel stayed inside the bucket.
@@ -309,11 +316,11 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
       encodeFeeAccrued({
         mint: DOGGO_MINT,
         baseMint: WSOL_MINT,
-        feeTotal: FEE_TOTAL,
+        feeTotal: FILL.fee,
         // A protocol leg skimmed by one atom.
-        protocol: LEGS.protocol + 1n,
-        ops: LEGS.ops,
-        creatorBucket: LEGS.bucket - 1n,
+        protocol: CHAIN_LEGS.protocol + 1n,
+        ops: CHAIN_LEGS.stonkzOps,
+        creatorBucket: CHAIN_LEGS.creatorBucket - 1n,
         ts: 1n,
       }),
     );
@@ -480,11 +487,11 @@ describe('SolanaChainSource — signature paging and the cursor window', () => {
     await expect(source.pollRange(1_009, 1_109)).rejects.toThrow(SolanaRangeTooBusyError);
   });
 
-  it('returns an empty pass without any RPC work when the range is empty', async () => {
+  it('spends no RPC calls at all on a zero-width range', async () => {
     const { source, rpc } = makeSource(busy(3), { finalizedSlot: 1_012 });
     const result = await source.pollRange(1_012, 1_012);
     expect(result).toEqual({ events: [], coveredTo: 1_012, bookmark: null });
-    expect(rpc.calls.filter((c) => c.method === 'getSignaturesForAddress')).toHaveLength(1);
+    expect(rpc.calls).toHaveLength(0);
   });
 
   it('surfaces an RPC failure instead of reporting an empty range', async () => {
