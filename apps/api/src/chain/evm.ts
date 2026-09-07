@@ -83,6 +83,31 @@ export class EvmRpc implements ChainRpc {
     return this.call<string>('eth_call', [{ to, data }, 'latest']);
   }
 
+  /** `routes/launch.ts`'s `/launch/confirm` — status + calldata + logs, to verify and to find the `TokenCreated` address. */
+  async getTransactionReceipt(hash: string): Promise<{
+    status: 'success' | 'reverted';
+    to: string | null;
+    input: string;
+    logs: { address: string; topics: string[]; data: string }[];
+  } | null> {
+    const [receipt, tx] = await Promise.all([
+      this.call<{
+        status: string;
+        to: string | null;
+        logs: { address: string; topics: string[]; data: string }[];
+      } | null>('eth_getTransactionReceipt', [hash]),
+      this.call<{ input?: string; data?: string } | null>('eth_getTransactionByHash', [hash]),
+    ]);
+    if (!receipt || !tx) return null;
+    return {
+      status: receipt.status === '0x1' ? 'success' : 'reverted',
+      to: receipt.to,
+      // `input` on older nodes, `data` is the ethers-style alias some RPCs use.
+      input: tx.input ?? tx.data ?? '0x',
+      logs: receipt.logs,
+    };
+  }
+
   /** Guards against pointing the indexer at the wrong EVM network. */
   async verifyChainId(): Promise<void> {
     const actual = Number.parseInt(await this.call<string>('eth_chainId', []), 16);

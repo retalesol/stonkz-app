@@ -7,6 +7,7 @@ import { FakePriceOracle, createFakeRpcs, type FakeChainRpc } from '../chain/fak
 import { readEnv } from '../env.js';
 import { createLogger } from '../observability/logger.js';
 import { MemoryRedis } from '../redis/memory.js';
+import { FakeJupiterClient, FakeUniswapClient } from '../router/fixtures.js';
 import type { UserEvent } from '../redis/channels.js';
 import { createTestDb, type TestDb } from './harness.js';
 import { evmWallet, solanaWallet, type TestWallet } from './wallets.js';
@@ -26,6 +27,8 @@ export interface TestApp {
   redis: MemoryRedis;
   rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc };
   oracle: FakePriceOracle;
+  jupiter: FakeJupiterClient;
+  uniswap: FakeUniswapClient;
   /** Advance the frozen clock; every service reads through `deps.now`. */
   setNow(ms: number): void;
   advance(ms: number): void;
@@ -61,6 +64,8 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
   const redis = new MemoryRedis(now);
   const rpcs = createFakeRpcs();
   const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200 });
+  const jupiter = new FakeJupiterClient();
+  const uniswap = new FakeUniswapClient();
 
   const env = readEnv({
     NODE_ENV: 'test',
@@ -76,6 +81,8 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
     redis,
     rpcs,
     oracle,
+    jupiter,
+    uniswap,
     logger: createLogger('silent'),
     now,
   });
@@ -116,6 +123,8 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
     redis,
     rpcs,
     oracle,
+    jupiter,
+    uniswap,
     now,
     setNow: (ms) => {
       clock = ms;

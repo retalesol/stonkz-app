@@ -45,7 +45,38 @@ export interface ApiEnv {
   whaleCut: Record<Net, number>;
 
   quoteCacheTtlSeconds: number;
+
+  /* -------------------------------------------------------- router (Phase 2.R) */
+
+  /**
+   * Jupiter's public Swap API v6. No key needed for `lite-api.jup.ag` at
+   * moderate volume; a paid plan moves to `api.jup.ag` and sets
+   * `JUPITER_API_KEY` — see `router/jupiter.ts`.
+   */
+  jupiterApiBaseUrl: string;
+  jupiterApiKey: string | undefined;
+  /** Uniswap Trading API. Confirmed live for chain id 4663 — docs/robinhood-chain.md §3.2. */
+  uniswapApiBaseUrl: string;
+  uniswapApiKey: string | undefined;
+
+  /* -------------------------------------------------------- launchpad (Phase 2.B) */
+
+  /** `Anchor.toml`'s `[programs.localnet]` id — override per environment. */
+  solanaLaunchpadProgramId: string;
+  /**
+   * No `StonkzLaunchpad` deployment address is recorded anywhere in this
+   * repo yet (`programs/evm` has no deploy script/address file at the time
+   * of this phase). The zero address is a loud placeholder, not a guess —
+   * `readEnv` refuses it in production.
+   */
+  rhLaunchpadAddress: string;
+
+  launchIntentTtlSeconds: number;
+  launchRateLimitPerWallet: number;
+  launchRateLimitWindowSeconds: number;
 }
+
+export const ZERO_EVM_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 /** The dev fallbacks. Booting production on either of these is fatal. */
 export const DEV_JWT_SECRET = 'dev-only-insecure-secret-change-me-0000000000';
@@ -165,6 +196,18 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     },
 
     quoteCacheTtlSeconds: int(src, 'QUOTE_CACHE_TTL_SECONDS', 8),
+
+    jupiterApiBaseUrl: str(src, 'JUPITER_API_BASE_URL', 'https://lite-api.jup.ag/swap/v1'),
+    jupiterApiKey: src['JUPITER_API_KEY']?.trim() || undefined,
+    uniswapApiBaseUrl: str(src, 'UNISWAP_API_BASE_URL', 'https://trade-api.gateway.uniswap.org/v1'),
+    uniswapApiKey: src['UNISWAP_API_KEY']?.trim() || undefined,
+
+    solanaLaunchpadProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', 'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg'),
+    rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
+
+    launchIntentTtlSeconds: int(src, 'LAUNCH_INTENT_TTL_SECONDS', 120),
+    launchRateLimitPerWallet: int(src, 'LAUNCH_RATE_LIMIT_PER_WALLET', 5),
+    launchRateLimitWindowSeconds: int(src, 'LAUNCH_RATE_LIMIT_WINDOW_SECONDS', 3600),
   };
 
   if (env.nodeEnv === 'production') {
@@ -177,6 +220,9 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
       throw new Error(
         'RH_RPC_URL must be a provider endpoint in production; the public RPC is rate-limited and unsupported',
       );
+    }
+    if (env.rhLaunchpadAddress === ZERO_EVM_ADDRESS) {
+      throw new Error('RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in');
     }
   }
 

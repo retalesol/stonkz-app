@@ -7,10 +7,19 @@ import { RpcError, type ChainRpc, type ChainRpcs, type PriceOracle } from './typ
  */
 export type FakeEthCallHandler = (data: string) => Promise<string> | string;
 
+export interface FakeEvmReceipt {
+  status: 'success' | 'reverted';
+  to: string | null;
+  input: string;
+  logs: { address: string; topics: string[]; data: string }[];
+}
+
 export class FakeChainRpc implements ChainRpc {
   private slot: number;
   private readonly balances = new Map<string, number>();
   private readonly contracts = new Map<string, FakeEthCallHandler>();
+  private readonly solanaMessages = new Map<string, string>();
+  private readonly evmReceipts = new Map<string, FakeEvmReceipt>();
   private failing = false;
 
   constructor(
@@ -47,6 +56,16 @@ export class FakeChainRpc implements ChainRpc {
     this.contracts.set(address.toLowerCase(), handler);
   }
 
+  /** `routes/launch.test.ts` seeds what a submitted, confirmed Solana signature "contains". */
+  setSolanaTransactionMessage(signature: string, messageBase64: string): void {
+    this.solanaMessages.set(signature, messageBase64);
+  }
+
+  /** `routes/launch.test.ts` seeds what an EVM tx hash "receipted" as. */
+  setEvmReceipt(hash: string, receipt: FakeEvmReceipt): void {
+    this.evmReceipts.set(hash.toLowerCase(), receipt);
+  }
+
   async ethCall(to: string, data: string): Promise<string> {
     if (this.failing) throw new RpcError(this.net, 'eth_call', 'simulated outage');
     const handler = this.contracts.get(to.toLowerCase());
@@ -68,6 +87,28 @@ export class FakeChainRpc implements ChainRpc {
 
   async healthy(): Promise<boolean> {
     return !this.failing;
+  }
+
+  /**
+   * A deterministic fake base58 hash, so a test asserting on the composed
+   * transaction's bytes is reproducible. Only meaningful for the `SOL` net —
+   * nothing on `RH` calls this.
+   */
+  async latestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+    if (this.failing) throw new RpcError(this.net, 'getLatestBlockhash', 'simulated outage');
+    // Base58 of 32 zero bytes — the same string `PublicKey.default.toBase58()`
+    // produces, i.e. a value `bs58.decode` accepts as a real 32-byte hash.
+    return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: this.slot + 150 };
+  }
+
+  async getTransactionMessageBase64(signature: string): Promise<string | null> {
+    if (this.failing) throw new RpcError(this.net, 'getTransaction', 'simulated outage');
+    return this.solanaMessages.get(signature) ?? null;
+  }
+
+  async getTransactionReceipt(hash: string): Promise<FakeEvmReceipt | null> {
+    if (this.failing) throw new RpcError(this.net, 'eth_getTransactionReceipt', 'simulated outage');
+    return this.evmReceipts.get(hash.toLowerCase()) ?? null;
   }
 }
 

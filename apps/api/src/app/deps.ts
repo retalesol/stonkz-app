@@ -17,6 +17,9 @@ import { createRedis } from '../redis/ioredis.js';
 import { QuoteCache } from '../redis/quote-cache.js';
 import type { RedisLike } from '../redis/types.js';
 import { Publisher } from '../ws/publisher.js';
+import { createBaseMintRegistry, parseBaseMintOverrides, type BaseMintRegistry } from '../router/base-mints.js';
+import { HttpJupiterClient, type JupiterClient } from '../router/jupiter.js';
+import { HttpUniswapClient, type UniswapClient } from '../router/uniswap.js';
 import type { AppDeps } from './context.js';
 
 /**
@@ -40,6 +43,9 @@ export interface DepsOverrides {
   rpcs?: ChainRpcs;
   oracle?: PriceOracle;
   now?: () => number;
+  jupiter?: JupiterClient;
+  uniswap?: UniswapClient;
+  baseMints?: BaseMintRegistry;
 }
 
 export interface BuiltDeps {
@@ -132,6 +138,30 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
   const awards = new GameAwards({ ledger, dust: env.dust, whaleCut: env.whaleCut });
   const crates = new CrateService({ db, ledger, publisher, secret: env.crateHmacSecret, now });
 
+  // No real Jupiter/Uniswap credentials exist in this environment (see the
+  // phase report). These are still real HTTP clients pointed at the public
+  // APIs — only the test suite overrides them with `FakeJupiterClient`/
+  // `FakeUniswapClient` from `router/fixtures.ts`.
+  const jupiter: JupiterClient =
+    overrides.jupiter ??
+    new HttpJupiterClient({
+      baseUrl: env.jupiterApiBaseUrl,
+      ...(env.jupiterApiKey ? { apiKey: env.jupiterApiKey } : {}),
+    });
+  const uniswap: UniswapClient =
+    overrides.uniswap ??
+    new HttpUniswapClient({
+      baseUrl: env.uniswapApiBaseUrl,
+      ...(env.uniswapApiKey ? { apiKey: env.uniswapApiKey } : {}),
+      chainId: env.rhChainId,
+    });
+  const baseMints: BaseMintRegistry =
+    overrides.baseMints ??
+    createBaseMintRegistry({
+      SOL: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_SOL']),
+      RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
+    });
+
   const deps: AppDeps = {
     env,
     db,
@@ -148,6 +178,9 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     crates,
     publisher,
     now,
+    jupiter,
+    uniswap,
+    baseMints,
   };
 
   return {

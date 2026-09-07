@@ -12,6 +12,9 @@ import type { GameAwards } from '../game/awards.js';
 import type { CrateService } from '../game/crates.js';
 import type { Ledger } from '../game/ledger.js';
 import type { Publisher } from '../ws/publisher.js';
+import type { BaseMintRegistry } from '../router/base-mints.js';
+import type { JupiterClient } from '../router/jupiter.js';
+import type { UniswapClient } from '../router/uniswap.js';
 
 /** Everything a route handler is allowed to reach for. Constructed once at boot. */
 export interface AppDeps {
@@ -30,6 +33,11 @@ export interface AppDeps {
   crates: CrateService;
   publisher: Publisher;
   now: () => number;
+
+  /* -------------------------------------------------------- router (Phase 2.R/2.B) */
+  jupiter: JupiterClient;
+  uniswap: UniswapClient;
+  baseMints: BaseMintRegistry;
 }
 
 /** The authenticated caller, set by `requireAuth`. */

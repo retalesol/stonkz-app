@@ -24,6 +24,17 @@ export const RATE_LIMITS = {
   /** Quote requests refresh on an 8s bar, so ~8/min per token is generous. */
   quote: { bucket: 'quote', limit: 120, windowSeconds: 60 },
   read: { bucket: 'read', limit: 600, windowSeconds: 60 },
+  /** `POST /trade/prepare` composes a real transaction; cheaper to allow than a quote, still capped against spam. */
+  trade: { bucket: 'trade', limit: 60, windowSeconds: 60 },
+  /**
+   * Per-IP guard on `/launch/prepare`, ahead of the per-wallet limit `env`
+   * configures (`LAUNCH_RATE_LIMIT_PER_WALLET`/`_WINDOW_SECONDS` —
+   * `routes/launch.ts`). A flat IP ceiling generous enough that no legitimate
+   * multi-wallet user (e.g. testing both nets) trips it, but that still bounds
+   * a single source hammering distinct wallets to dodge the per-wallet cap.
+   */
+  launchIp: { bucket: 'launch_ip', limit: 30, windowSeconds: 3600 },
+  fees: { bucket: 'fees', limit: 60, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;
 
 /**
