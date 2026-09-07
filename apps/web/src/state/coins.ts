@@ -51,6 +51,12 @@ export interface SimCoin extends Coin {
   comments: Comment[] | null;
   /** Simulated third-party stake, memoised. Phase 4 reads it from chain. */
   _oth?: number;
+  /**
+   * Live holders, fetched by `api.watchToken()`. `null` means "not fetched
+   * yet (or sim)"; `holdersHTML()` falls back to the synthetic `holdersOf()`
+   * table until this lands. `plan step 62`
+   */
+  liveHolders?: Holder[] | null;
 }
 
 /** Seed rows: sym, name, desc, mcap, 24h %, replies, holders, age in minutes. */
@@ -222,10 +228,18 @@ export function holdersOf(c: SimCoin): Holder[] {
 }
 
 /**
- * Prepend a fill to the trades tab. Stays the live renderer once WS fills
- * arrive in Phase 1.D. `index.html:2014`
+ * Prepend a fill to the trades tab.
+ *
+ * The renderer both the sim's own trades and the live `token:{sym}` WS fills
+ * call (plan step 64): `tok`, `mc`, `w` and `v` are optional because a live
+ * fill already knows its real token amount, resulting market cap, trader and
+ * venue — only `buy`/`sol`/`cb` need deriving when the sim invents a print.
+ * `index.html:2014`
  */
-export function pushTrade(c: SimCoin, o: { buy: boolean; sol: number; cb?: boolean; mine?: boolean }): Trade {
+export function pushTrade(
+  c: SimCoin,
+  o: { buy: boolean; sol: number; cb?: boolean; mine?: boolean; tok?: number; mc?: number; w?: string; v?: string },
+): Trade {
   seedTrades(c);
   const trades = c.trades as Trade[];
   trades.forEach((t) => (t.fresh = false));
@@ -233,11 +247,11 @@ export function pushTrade(c: SimCoin, o: { buy: boolean; sol: number; cb?: boole
     t: new Date(),
     buy: o.buy,
     sol: o.sol,
-    tok: (o.sol * NATIVE_PRICE.usd) / price(c),
-    mc: c.mc,
+    tok: o.tok ?? (o.sol * NATIVE_PRICE.usd) / price(c),
+    mc: o.mc ?? c.mc,
     cb: !!o.cb,
-    w: o.cb ? 'CASHBACK' : o.mine ? 'YOU..7xKQ' : fakeAddr((Math.random() * 1e6) | 0),
-    v: o.cb ? 'CB' : randomVenue(),
+    w: o.cb ? 'CASHBACK' : o.w ?? (o.mine ? 'YOU..7xKQ' : fakeAddr((Math.random() * 1e6) | 0)),
+    v: o.v ?? (o.cb ? 'CB' : randomVenue()),
     fresh: true,
   };
   trades.unshift(t);

@@ -1,4 +1,4 @@
-import type { AchievementKey } from '@stonkz/shared';
+import type { AchievementKey, Fill } from '@stonkz/shared';
 
 /**
  * A tiny typed event bus.
@@ -28,6 +28,12 @@ export interface BusEvents {
   portfolio: void;
   /** One simulated/indexed beat completed. */
   tick: void;
+  /**
+   * A confirmed fill for the ticker tape — a real `board`/`tape` WS print in
+   * live mode. `animate: false` is the initial seed batch on boot; `true` is
+   * every fill after that. `plan step 65`
+   */
+  fill: { fill: Fill; animate: boolean };
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;

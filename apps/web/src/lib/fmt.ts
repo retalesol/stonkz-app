@@ -48,6 +48,16 @@ export function fakeAddr(seed: number): string {
   return out;
 }
 
+/**
+ * Shorten a real wallet address to the same `XXXX..YYYY` shape `fakeAddr`
+ * renders, so live trader/holder addresses fit the same fixed-width columns.
+ * `plan step 62`
+ */
+export function shortAddr(addr: string): string {
+  if (addr.length <= 10) return addr;
+  return addr.slice(0, 4) + '..' + addr.slice(-4);
+}
+
 /** `1e9` -> `1B`, falling back to a grouped integer. `index.html:3740` */
 export function fmtSupply(v: number): string {
   for (const [value, label] of SUPPLIES) if (value === v) return label;
