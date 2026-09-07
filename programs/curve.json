@@ -1,0 +1,73 @@
+{
+  "$comment": "Published CPMM parameters for the Stonkz bonding curve. Consumed by apps/api (quote), apps/web (Step-3 launch preview) and both on-chain programs. Every number here is an exact rational — do not round these before feeding them to integer math.",
+  "version": 1,
+  "model": "constant-product-with-virtual-reserves",
+  "gradMcapUsd": 69000,
+  "gradMcapUsd1e6": 69000000000,
+  "supplyFractions": {
+    "tokensForSale": { "num": 4, "den": 5, "note": "80% of fixed supply is sellable on the curve" },
+    "lpReserve": { "num": 1, "den": 5, "note": "20% of fixed supply is escrowed for the graduation pool" }
+  },
+  "virtualReserves": {
+    "virtualTokenReserves0": {
+      "num": 16,
+      "den": 15,
+      "of": "supplyAtoms",
+      "formula": "VT0 = floor(16 * supplyAtoms / 15)"
+    },
+    "virtualBaseReserves0": {
+      "num": 1,
+      "den": 15,
+      "of": "gradMcapBaseAtoms",
+      "formula": "VB0 = floor(gradMcapBaseAtoms / 15)"
+    },
+    "gradMcapBaseAtoms": {
+      "formula": "floor(69000 * 1e6 * 10^baseDecimals / baseUsdPrice1e6)",
+      "note": "Snapshotted once at create_token from a fresh oracle read. The curve is base-denominated from then on."
+    },
+    "k": { "formula": "VB0 * VT0", "note": "u128, held constant across fills" }
+  },
+  "derived": {
+    "priceMultipleToGraduation": 16,
+    "startMcapUsd": 4312.5,
+    "baseRaisedAtGraduation": {
+      "formula": "3 * VB0 = gradMcapBaseAtoms / 5",
+      "fractionOfGradMcap": 0.2,
+      "usd": 13800
+    },
+    "lpOpenPriceEqualsFinalCurvePrice": true
+  },
+  "feeSplitBps": {
+    "protocol": 2000,
+    "stonkzOps": 1000,
+    "creatorBucket": "remainder",
+    "note": "protocol and ops are floor(fee*bps/10000); the creator bucket takes fee - protocol - ops so the three always sum to the fee exactly. Dust (<= 2 atoms) lands in the creator bucket."
+  },
+  "creatorBucketSplit": {
+    "poolFracFormula": "min(1/2, eligibleStaked / (2 * circulating))",
+    "stakersFormula": "floor(creatorBucket * eligibleStaked / (2 * circulating)), clamped to floor(creatorBucket / 2)",
+    "creatorFormula": "creatorBucket - stakers",
+    "circulatingFormula": "tokensForSale - realTokenReserves",
+    "maxStakerShareOfCurveFee": 0.35,
+    "minCreatorShareOfCurveFee": 0.35
+  },
+  "lockWeightsBps": {
+    "0": 0,
+    "1": 11000,
+    "7": 12500,
+    "30": 15000,
+    "90": 25000,
+    "180": 50000,
+    "365": 80000,
+    "note": "FLEX (0 days) is escrow-only and earns zero pool weight in v1 (anti-wash). The UI's LOCKS table shows 1x for FLEX; that is display chrome, not pool weight."
+  },
+  "cashback": {
+    "windowSecs": 300,
+    "startFeeBps": 5000,
+    "effFeeFormula": "baseBps + floor((5000 - baseBps) * remainingSecs / 300)",
+    "note": "On-chain granularity is whole seconds (Solana Clock / EVM block.timestamp). Clients must floor cbLeft to seconds before mirroring this."
+  },
+  "feeBpsBounds": { "min": 100, "max": 500 },
+  "tokenDecimals": 6,
+  "allowedSupplies": [1000000, 500000000, 1000000000, 1000000000000]
+}

@@ -1,19 +1,23 @@
 # programs/
 
-On-chain code lands here. Empty on purpose — Phase 2.A owns it, and both chains
-are built in parallel from the same interface.
+On-chain code. Phase 2.A owns it, and both chains are built from one interface.
 
-## Planned layout
+## Layout
 
 ```
 programs/
-  launchpad-solana/     Anchor workspace (Rust). Anchor.toml, programs/, tests/
-  launchpad-evm/        Foundry or Hardhat workspace (Solidity) for Robinhood Chain
-  curve.json            Published CPMM virtual-reserve parameters, shared by both
+  SPEC.md               The interface, the CPMM derivation, the rounding rules
+  curve.json            Published CPMM parameters, read by both chains and both apps
+  solana/               Anchor workspace (Rust). Anchor.toml, programs/, tests/
+  evm/                  Foundry workspace (Solidity) for Robinhood Chain
 ```
 
 Neither chain is a port of the other: they are two implementations of one
 interface, and the golden tests must agree across them.
+
+Read [SPEC.md](SPEC.md) before changing anything in either tree — in particular
+§1 (why the parameters graduate at $69K) and §2 (why the creator bucket is the
+remainder rather than a third floor).
 
 ## Interface both families implement
 
