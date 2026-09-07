@@ -538,6 +538,53 @@ function onWsFrame(frame: { channel: string; data: Record<string, unknown> }): v
   if (channel === 'board') return onBoardEvent(data);
   if (channel === 'tape') return onTapeEvent(data);
   if (channel.startsWith('token:')) return onTokenEvent(channel.slice('token:'.length), data);
+  if (channel.startsWith('chat:')) return onChatFrame(channel, data);
+}
+
+/* -------------------------------------------------------------------------- */
+/* chat (Phase 5.B): views/chat.ts subscribes directly, gated on              */
+/* `api.mode === 'live'`, the same seam api/social.ts uses for profiles/wall. */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveChatFrame {
+  id: number;
+  wallet: string;
+  text: string;
+  createdAtMs: number;
+}
+
+const chatHandlers = new Map<string, Set<(msg: LiveChatFrame) => void>>();
+
+function onChatFrame(channel: string, data: Record<string, unknown>): void {
+  if (data['type'] !== 'message') return;
+  const handlers = chatHandlers.get(channel);
+  if (!handlers?.size) return;
+  const msg: LiveChatFrame = {
+    id: Number(data['id']),
+    wallet: String(data['wallet']),
+    text: String(data['text']),
+    createdAtMs: Number(data['createdAtMs']),
+  };
+  for (const h of handlers) h(msg);
+}
+
+/** Subscribes to a chat room's live messages over the shared WS. Returns an unsubscribe. */
+export function subscribeChatRoom(net: Net, room: string, onMessage: (msg: LiveChatFrame) => void): () => void {
+  const channel = `chat:${net}:${room}`;
+  let set = chatHandlers.get(channel);
+  if (!set) {
+    set = new Set();
+    chatHandlers.set(channel, set);
+  }
+  set.add(onMessage);
+  subscribeChannel(channel);
+  return () => {
+    set?.delete(onMessage);
+    if (set && set.size === 0) {
+      chatHandlers.delete(channel);
+      unsubscribeChannel(channel);
+    }
+  };
 }
 
 function onBoardEvent(data: Record<string, unknown>): void {

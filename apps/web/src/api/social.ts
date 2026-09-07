@@ -136,6 +136,24 @@ export function fetchXProfile(handle: string): Promise<LiveXProfile> {
   return getJson(`/x/${encodeURIComponent(handle.replace(/^@/, ''))}`);
 }
 
+/**
+ * Posts over `POST /chat/:net/:room` — the same `ChatService.send` the WS
+ * `send_chat` path uses (`routes/chat.ts`), so REST-only clients (this one:
+ * `views/chat.ts` never opens its own socket to send, only to receive over
+ * `api/live.ts`'s `subscribeChatRoom`) get the identical rate-limit and
+ * moderation behaviour.
+ */
+export function sendChatMessage(
+  net: Net,
+  room: string,
+  text: string,
+): Promise<{ ok: true; message: { id: number; room: string; text: string; flagged: boolean; createdAtMs: number } | null }> {
+  return authedJson(`/chat/${net}/${encodeURIComponent(room)}`, net, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+}
+
 export function fetchChatHistory(
   net: Net,
   room: string,

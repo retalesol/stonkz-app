@@ -1,21 +1,82 @@
 import { hash, rng } from '@stonkz/shared';
+import { api } from '../api/index.js';
+import { type LiveChatFrame, subscribeChatRoom } from '../api/live.js';
+import { SocialApiError, fetchChatHistory, sendChatMessage } from '../api/social.js';
+import { sessionWallet } from '../app/session.js';
+import { toast } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { ARR, clock } from '../lib/fmt.js';
+import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
 import { type Html, attr, html, node, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
-import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
 import { CHAT, type ChatMsg, GLINES, HANDLES, TLINES, logFor, randomHandle } from '../state/chat.js';
 import type { SimCoin } from '../state/coins.js';
+import { memberOf } from '../state/social.js';
+import { WALLET } from '../state/wallet.js';
 
 /**
  * The chat drawer. `index.html:3579`
+ *
+ * Live mode (`api.mode === 'live'`) replaces the seeded/random `HANDLES`/
+ * `GLINES`/`TLINES` chatter with `GET /chat/:net/:room/history` for backscroll
+ * and `api/live.ts`'s `subscribeChatRoom` (the shared board/tape WS) for new
+ * messages; sending goes through `POST /chat/:net/:room` (`api/social.ts`'s
+ * `sendChatMessage`) rather than the WS `send_chat` path, since this drawer
+ * never needs its own socket message type — one send per submit, no reason
+ * to hold a round-trip open for it.
  */
 
 let trap: FocusTrap | null = null;
 let loop = 0;
+let liveUnsub: (() => void) | null = null;
+const liveHistoryLoaded = new Set<string>();
 
 export function roomOf(c: { sym: string }): string {
   return '$' + c.sym;
+}
+
+/** The server's room key: uppercase, no leading `$`. `chat.ts`'s `normaliseRoom`. */
+function liveRoomKey(room: string): string {
+  return room.replace(/^\$/, '').toUpperCase();
+}
+
+function colorFor(wallet: string): string {
+  return (HANDLES[hash(wallet) % HANDLES.length] as [string, string])[1];
+}
+
+function pushLiveFrame(room: string, wallet: string, text: string, createdAtMs: number, live: boolean): void {
+  const mine = wallet === sessionWallet(WALLET.net);
+  addChat(
+    room,
+    { who: mine ? 'YOU' : memberOf(wallet).name, col: mine ? '#ffa22b' : colorFor(wallet), text, mine, t: clock(new Date(createdAtMs)) },
+    live,
+  );
+}
+
+/** Joins `room`'s live channel and, the first time, backfills its history. */
+function joinLiveRoom(room: string): void {
+  liveUnsub?.();
+  liveUnsub = subscribeChatRoom(WALLET.net, liveRoomKey(room), (msg: LiveChatFrame) =>
+    pushLiveFrame(room, msg.wallet, msg.text, msg.createdAtMs, true),
+  );
+  if (liveHistoryLoaded.has(room)) return;
+  liveHistoryLoaded.add(room);
+  fetchChatHistory(WALLET.net, liveRoomKey(room))
+    .then((res) => {
+      if (!logFor(room).length) {
+        for (const m of res.messages) pushLiveFrame(room, m.wallet, m.text, m.createdAtMs, false);
+        if (CHAT.room === room) chatRender();
+      }
+    })
+    .catch(() => {
+      // A failed backscroll load is not worth surfacing — the room just
+      // opens with the live messages that arrive from here on.
+    });
+}
+
+function leaveLiveRoom(): void {
+  liveUnsub?.();
+  liveUnsub = null;
 }
 
 function chatTitle(): void {
@@ -80,6 +141,7 @@ function bumpUnread(): void {
 
 function chatSwitch(room: string): void {
   CHAT.room = room;
+  if (api.mode === 'live') joinLiveRoom(room);
   chatRender();
 }
 
@@ -105,6 +167,7 @@ export function setChatToken(c: SimCoin | null): void {
   } else {
     CHAT.room = 'GLOBAL';
   }
+  if (api.mode === 'live') joinLiveRoom(CHAT.room);
   chatRender();
 }
 
@@ -144,6 +207,16 @@ export function initChat(): void {
     const v = input.value.trim();
     if (!v) return;
     input.value = '';
+    if (api.mode === 'live') {
+      const room = CHAT.room;
+      sendChatMessage(WALLET.net, liveRoomKey(room), v).catch((err) => {
+        toast(err instanceof SocialApiError ? err.message : 'MESSAGE FAILED');
+      });
+      // The room's own subscriber (this tab included) echoes the message
+      // back over `chat:{net}:{room}` once the server has persisted it, so
+      // it is not appended locally here — appending both would double it.
+      return;
+    }
     addChat(CHAT.room, { who: 'YOU', col: '#ffa22b', text: v, mine: true });
     if (Math.random() > 0.45) {
       const h = randomHandle();
@@ -166,6 +239,12 @@ export function initChat(): void {
       );
     }
   });
+
+  if (api.mode === 'live') {
+    joinLiveRoom(CHAT.room);
+    chatRender();
+    return;
+  }
 
   // Seven lines of backscroll so the room does not open empty. Seeded, so the
   // same handles say the same things on every load. `index.html:4105`
@@ -202,4 +281,5 @@ export function initChat(): void {
 export function stopChat(): void {
   if (loop) clearTimeout(loop);
   loop = 0;
+  leaveLiveRoom();
 }
