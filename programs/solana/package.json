@@ -1,0 +1,26 @@
+{
+  "name": "@stonkz/launchpad-solana",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "anchor build",
+    "test": "anchor test",
+    "test:unit": "cargo test -p launchpad --lib",
+    "curve:emit": "ts-node scripts/emit-curve-json.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.9"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.0",
+    "chai": "^4.3.4",
+    "mocha": "^10.3.0",
+    "ts-mocha": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
