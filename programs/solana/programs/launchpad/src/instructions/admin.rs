@@ -39,6 +39,12 @@ pub fn initialize(
     g.ops_withdraw_authority = ops_withdraw_authority;
     g.oracle_authority = oracle_authority;
     g.migration_authority = migration_authority;
+    // Set via `set_raydium_config` before any `migrate_liquidity` call — kept
+    // out of `initialize`'s argument list so this instruction's signature
+    // doesn't have to change again if Raydium ever publishes a new program id
+    // or this deploy needs a different fee-tier `AmmConfig`.
+    g.raydium_program = Pubkey::default();
+    g.raydium_amm_config = Pubkey::default();
     g.trading_paused = false;
     g.launch_paused = false;
     g.protocol_withdrawals_paused = false;
@@ -112,6 +118,22 @@ pub fn set_withdraw_authorities(
         require!(o != Pubkey::default(), LaunchpadError::Unauthorized);
         g.ops_withdraw_authority = o;
     }
+    Ok(())
+}
+
+/// Point `migrate_liquidity` at a Raydium CPMM deployment and fee tier.
+/// Admin-gated because a wrong program id here would make every subsequent
+/// graduation's CPI fail closed (Anchor's `address = …` constraint), not
+/// silently misbehave — this is a safety knob, not a money-moving one.
+pub fn set_raydium_config(
+    ctx: Context<AdminOnly>,
+    program: Pubkey,
+    amm_config: Pubkey,
+) -> Result<()> {
+    require!(program != Pubkey::default(), LaunchpadError::Unauthorized);
+    require!(amm_config != Pubkey::default(), LaunchpadError::Unauthorized);
+    ctx.accounts.global.raydium_program = program;
+    ctx.accounts.global.raydium_amm_config = amm_config;
     Ok(())
 }
 

@@ -132,3 +132,55 @@ pub const SEED_STAKE_ESCROW: &[u8] = b"stake_escrow";
 pub const SEED_STAKE_POSITION: &[u8] = b"stake";
 pub const SEED_PROTOCOL_VAULT: &[u8] = b"protocol_vault";
 pub const SEED_OPS_VAULT: &[u8] = b"ops_vault";
+
+/* -------------------------------------------------------------------------- */
+/* Graduation migration (Raydium CPMM) — see SPEC.md §5 and §7                */
+/* -------------------------------------------------------------------------- */
+
+/// Program-derived, unique per (this program, mint). Used as the CPI "creator"
+/// account for Raydium's `Initialize`: it signs via `invoke_signed`, holds the
+/// deposited reserves for the instant it takes to seed the pool, and receives
+/// (then immediately burns) 100% of the minted LP. No wallet — not even
+/// `migration_authority` — ever controls this key, which is what makes the
+/// burn irreversible rather than merely "nobody has done it yet".
+pub const SEED_RAYDIUM_ESCROW: &[u8] = b"raydium_escrow";
+
+/// Our own PDA, used as Raydium's non-canonical `pool_state`. Nothing but this
+/// program can ever produce a valid signature for this address, so nobody can
+/// occupy it ahead of a graduation the way they could Raydium's canonical
+/// `["pool", amm_config, token_0, token_1]` PDA — see `graduate.rs`'s
+/// `MigrateLiquidity` doc comment for the full argument.
+pub const SEED_RAYDIUM_POOL: &[u8] = b"raydium_pool";
+
+/// Raydium CPMM's own seed strings (`raydium-cp-swap/src/states/*`), needed to
+/// derive and validate its PDAs via Anchor's `seeds::program`. Copied here
+/// rather than pulled in as a crate dependency — see `graduate.rs` for why this
+/// integration is a hand-built CPI instead of `raydium_cp_swap::cpi::*`.
+pub const RAYDIUM_AUTH_SEED: &[u8] = b"vault_and_lp_mint_auth_seed";
+pub const RAYDIUM_POOL_LP_MINT_SEED: &[u8] = b"pool_lp_mint";
+pub const RAYDIUM_POOL_VAULT_SEED: &[u8] = b"pool_vault";
+pub const RAYDIUM_OBSERVATION_SEED: &[u8] = b"observation";
+
+/// Anchor instruction discriminator for `raydium_cp_swap::initialize`
+/// (`sha256("global:initialize")[..8]`). Verified against
+/// `raydium-io/raydium-cp-swap`'s published IDL; see `graduate.rs`.
+pub const RAYDIUM_INITIALIZE_DISCRIMINATOR: [u8; 8] = [175, 175, 109, 31, 13, 152, 155, 237];
+
+/// Rent buffer transferred from `migration_authority` into the escrow before
+/// the CPI, on top of `amm_config.create_pool_fee` (read live from the
+/// account, not hardcoded — see `graduate.rs`, it is 0.15 SOL on both of
+/// Raydium's published mainnet and devnet default configs, and the AmmConfig
+/// this network uses is itself admin-chosen via `set_raydium_config`, so it is
+/// not something this program should guess at). This buffer covers
+/// `lp_mint` + `pool_state` + `observation_state` + two vault accounts' rent.
+/// Any unspent lamports stay in the escrow permanently — a small, bounded,
+/// documented dust cost. Nobody can reclaim it because nobody but this
+/// program can ever sign for that PDA again.
+pub const RAYDIUM_MIGRATION_RENT_BUFFER_LAMPORTS: u64 = 50_000_000; // 0.05 SOL
+
+/// Byte offset of `AmmConfig.create_pool_fee` within its account data,
+/// including the 8-byte Anchor discriminator:
+/// `8 (disc) + bump(1) + disable_create_pool(1) + index(2) + trade_fee_rate(8)
+/// + protocol_fee_rate(8) + fund_fee_rate(8)`. Confirmed against
+/// `raydium-io/raydium-cp-swap/programs/cp-swap/src/states/config.rs`.
+pub const RAYDIUM_AMM_CONFIG_CREATE_POOL_FEE_OFFSET: usize = 8 + 1 + 1 + 2 + 8 + 8 + 8;

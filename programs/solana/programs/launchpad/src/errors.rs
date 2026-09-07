@@ -52,4 +52,10 @@ pub enum LaunchpadError {
     BaseMintMismatch,
     #[msg("Cashback requires a zero dev buy at launch")]
     CashbackRequiresNoDevBuy,
+    #[msg("This coin's liquidity has already been migrated and burned")]
+    AlreadyMigrated,
+    #[msg("The Raydium pool address for this migration is already in use")]
+    PoolAlreadyExists,
+    #[msg("Raydium CPMM minted no LP for this deposit")]
+    NoLiquidityMinted,
 }

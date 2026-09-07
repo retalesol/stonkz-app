@@ -74,6 +74,15 @@ pub mod launchpad {
         instructions::admin::set_max_oracle_staleness(ctx, secs)
     }
 
+    /// Which Raydium CPMM program and fee tier `migrate_liquidity` CPIs into.
+    pub fn set_raydium_config(
+        ctx: Context<AdminOnly>,
+        program: Pubkey,
+        amm_config: Pubkey,
+    ) -> Result<()> {
+        instructions::admin::set_raydium_config(ctx, program, amm_config)
+    }
+
     pub fn set_withdraw_authorities(
         ctx: Context<AdminOnly>,
         protocol: Option<Pubkey>,

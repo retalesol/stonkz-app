@@ -23,6 +23,13 @@ pub struct Global {
     /// pool and burns the LP. See SPEC.md §5 for why this is a separate key and
     /// a separate instruction.
     pub migration_authority: Pubkey,
+    /// Raydium CPMM program. Admin-settable rather than hardcoded so a devnet
+    /// deploy or a future program upgrade doesn't require a code change — see
+    /// `set_raydium_config`. `migrate_liquidity` CPIs into whatever is set
+    /// here; it does not trust the caller to name the program.
+    pub raydium_program: Pubkey,
+    /// The `AmmConfig` (fee tier) every graduation pool is created under.
+    pub raydium_amm_config: Pubkey,
     /// Halts buy and sell. Does not block claims or unstakes.
     pub trading_paused: bool,
     /// Halts create_token only.
@@ -100,6 +107,19 @@ pub struct Curve {
     pub graduated: bool,
     pub graduation_reason: Option<GraduationReason>,
     pub graduated_at: i64,
+    /// Set once `migrate_liquidity` has seeded a real Raydium CPMM pool and
+    /// burned 100% of the LP it received. See `graduate.rs::MigrateLiquidity`.
+    /// Once true, `real_base`/`lp_reserve` are permanently zero and the
+    /// instruction refuses to run again.
+    pub migrated: bool,
+    /// The Raydium CPMM pool this coin's liquidity now lives in. Verifiable on
+    /// any block explorer independent of this program.
+    pub raydium_pool: Pubkey,
+    /// LP atoms burned at migration — always exactly the LP mint's total
+    /// supply immediately after `Initialize`, since nothing is withdrawn
+    /// first. Recorded so an indexer/user can cross-check
+    /// `lp_mint.supply == 0` after this instruction without re-deriving it.
+    pub raydium_lp_burned: u64,
 
     /* fee ledger — lifetime totals, for the indexer to reconcile against */
     pub protocol_accrued: u64,
