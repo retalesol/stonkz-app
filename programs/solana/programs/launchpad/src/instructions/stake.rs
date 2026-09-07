@@ -74,8 +74,8 @@ pub struct Stake<'info> {
         bump = curve.bump,
         has_one = mint,
     )]
-    pub curve: Account<'info, Curve>,
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub curve: Box<Account<'info, Curve>>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
         init_if_needed,
         payer = owner,
@@ -83,13 +83,13 @@ pub struct Stake<'info> {
         seeds = [SEED_STAKE_POSITION, mint.key().as_ref(), owner.key().as_ref()],
         bump
     )]
-    pub position: Account<'info, StakePosition>,
+    pub position: Box<Account<'info, StakePosition>>,
     #[account(mut, seeds = [SEED_STAKE_ESCROW, mint.key().as_ref()], bump)]
-    pub stake_escrow: InterfaceAccount<'info, TokenAccount>,
+    pub stake_escrow: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut)]
     pub owner: Signer<'info>,
     #[account(mut, token::mint = mint, token::authority = owner)]
-    pub owner_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub owner_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -219,27 +219,27 @@ pub struct ClaimStake<'info> {
         has_one = mint,
         has_one = base_mint @ LaunchpadError::BaseMintMismatch,
     )]
-    pub curve: Account<'info, Curve>,
-    pub mint: InterfaceAccount<'info, Mint>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub curve: Box<Account<'info, Curve>>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
         mut,
         seeds = [SEED_STAKE_POSITION, mint.key().as_ref(), owner.key().as_ref()],
         bump = position.bump,
         has_one = owner @ LaunchpadError::Unauthorized,
     )]
-    pub position: Account<'info, StakePosition>,
+    pub position: Box<Account<'info, StakePosition>>,
     /// The pool's money and the creator's money live in the same vault, told
     /// apart by the `Curve` ledger. Neither can overdraw the other.
     #[account(mut, seeds = [SEED_BUCKET_BASE_VAULT, mint.key().as_ref()], bump)]
-    pub bucket_base_vault: InterfaceAccount<'info, TokenAccount>,
+    pub bucket_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_BUCKET_TOKEN_VAULT, mint.key().as_ref()], bump)]
-    pub bucket_token_vault: InterfaceAccount<'info, TokenAccount>,
+    pub bucket_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     pub owner: Signer<'info>,
     #[account(mut, token::mint = base_mint, token::authority = owner)]
-    pub owner_base_account: InterfaceAccount<'info, TokenAccount>,
+    pub owner_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, token::mint = mint, token::authority = owner)]
-    pub owner_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub owner_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Interface<'info, TokenInterface>,
     pub base_token_program: Interface<'info, TokenInterface>,
 }

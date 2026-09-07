@@ -17,7 +17,7 @@ pub struct Initialize<'info> {
         seeds = [SEED_GLOBAL],
         bump
     )]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -55,7 +55,7 @@ pub fn initialize(
 #[derive(Accounts)]
 pub struct AdminOnly<'info> {
     #[account(mut, seeds = [SEED_GLOBAL], bump = global.bump, has_one = admin @ LaunchpadError::Unauthorized)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
     pub admin: Signer<'info>,
 }
 
@@ -123,7 +123,7 @@ pub fn propose_admin(ctx: Context<AdminOnly>, new_admin: Pubkey) -> Result<()> {
 #[derive(Accounts)]
 pub struct AcceptAdmin<'info> {
     #[account(mut, seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
     pub pending_admin: Signer<'info>,
 }
 
@@ -145,7 +145,7 @@ pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
 #[derive(Accounts)]
 pub struct PushPrice<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
     #[account(
         init_if_needed,
         payer = oracle_authority,
@@ -153,8 +153,8 @@ pub struct PushPrice<'info> {
         seeds = [SEED_ORACLE, base_mint.key().as_ref()],
         bump
     )]
-    pub oracle: Account<'info, BaseOracle>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub oracle: Box<Account<'info, BaseOracle>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut, address = global.oracle_authority @ LaunchpadError::Unauthorized)]
     pub oracle_authority: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -209,8 +209,8 @@ pub fn read_fresh_price(
 #[derive(Accounts)]
 pub struct InitTreasury<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub global: Box<Account<'info, Global>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
         init_if_needed,
         payer = payer,
@@ -220,7 +220,7 @@ pub struct InitTreasury<'info> {
         token::authority = global,
         token::token_program = base_token_program,
     )]
-    pub protocol_vault: InterfaceAccount<'info, TokenAccount>,
+    pub protocol_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         init_if_needed,
         payer = payer,
@@ -230,7 +230,7 @@ pub struct InitTreasury<'info> {
         token::authority = global,
         token::token_program = base_token_program,
     )]
-    pub ops_vault: InterfaceAccount<'info, TokenAccount>,
+    pub ops_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub base_token_program: Interface<'info, TokenInterface>,
@@ -252,12 +252,12 @@ pub enum Treasury {
 #[instruction(which: Treasury)]
 pub struct WithdrawTreasury<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub global: Box<Account<'info, Global>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut)]
-    pub vault: InterfaceAccount<'info, TokenAccount>,
+    pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, token::mint = base_mint)]
-    pub destination: InterfaceAccount<'info, TokenAccount>,
+    pub destination: Box<InterfaceAccount<'info, TokenAccount>>,
     /// Must equal `global.protocol_withdraw_authority` or
     /// `global.ops_withdraw_authority` depending on `which`. Documented to be a
     /// multisig or cold key; the API process holds neither.

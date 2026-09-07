@@ -18,7 +18,7 @@ pub const MAX_URI_LEN: usize = 200;
 #[instruction(name: String, ticker: String)]
 pub struct CreateToken<'info> {
     #[account(mut, seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
 
     /// Seeding the mint on the ticker makes tickers unique per program
     /// deployment — one launchpad per network, so unique per net — without a
@@ -33,7 +33,7 @@ pub struct CreateToken<'info> {
         mint::freeze_authority = curve,
         mint::token_program = token_program,
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         init,
@@ -42,16 +42,16 @@ pub struct CreateToken<'info> {
         seeds = [SEED_CURVE, mint.key().as_ref()],
         bump
     )]
-    pub curve: Account<'info, Curve>,
+    pub curve: Box<Account<'info, Curve>>,
 
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         seeds = [SEED_ORACLE, base_mint.key().as_ref()],
         bump = oracle.bump,
         constraint = oracle.base_mint == base_mint.key() @ LaunchpadError::BaseMintMismatch,
     )]
-    pub oracle: Account<'info, BaseOracle>,
+    pub oracle: Box<Account<'info, BaseOracle>>,
 
     /// Holds the 80% sellable allocation.
     #[account(
@@ -59,7 +59,7 @@ pub struct CreateToken<'info> {
         seeds = [SEED_CURVE_TOKEN_VAULT, mint.key().as_ref()], bump,
         token::mint = mint, token::authority = curve, token::token_program = token_program,
     )]
-    pub curve_token_vault: InterfaceAccount<'info, TokenAccount>,
+    pub curve_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Holds the 20% escrowed for the graduation pool.
     #[account(
@@ -67,7 +67,7 @@ pub struct CreateToken<'info> {
         seeds = [SEED_LP_VAULT, mint.key().as_ref()], bump,
         token::mint = mint, token::authority = curve, token::token_program = token_program,
     )]
-    pub lp_vault: InterfaceAccount<'info, TokenAccount>,
+    pub lp_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Holds base paid into the curve.
     #[account(
@@ -75,7 +75,7 @@ pub struct CreateToken<'info> {
         seeds = [SEED_CURVE_BASE_VAULT, mint.key().as_ref()], bump,
         token::mint = base_mint, token::authority = curve, token::token_program = base_token_program,
     )]
-    pub curve_base_vault: InterfaceAccount<'info, TokenAccount>,
+    pub curve_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// The 70% bucket, in base. Creator claim and staker pool share it; the
     /// ledger on `Curve` says how much of the balance belongs to which.
@@ -84,7 +84,7 @@ pub struct CreateToken<'info> {
         seeds = [SEED_BUCKET_BASE_VAULT, mint.key().as_ref()], bump,
         token::mint = base_mint, token::authority = curve, token::token_program = base_token_program,
     )]
-    pub bucket_base_vault: InterfaceAccount<'info, TokenAccount>,
+    pub bucket_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// The 70% bucket after a cashback swap, in the launched token.
     #[account(
@@ -92,7 +92,7 @@ pub struct CreateToken<'info> {
         seeds = [SEED_BUCKET_TOKEN_VAULT, mint.key().as_ref()], bump,
         token::mint = mint, token::authority = curve, token::token_program = token_program,
     )]
-    pub bucket_token_vault: InterfaceAccount<'info, TokenAccount>,
+    pub bucket_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Escrow for staked tokens, including zero-weight FLEX positions.
     #[account(
@@ -100,7 +100,7 @@ pub struct CreateToken<'info> {
         seeds = [SEED_STAKE_ESCROW, mint.key().as_ref()], bump,
         token::mint = mint, token::authority = curve, token::token_program = token_program,
     )]
-    pub stake_escrow: InterfaceAccount<'info, TokenAccount>,
+    pub stake_escrow: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut)]
     pub creator: Signer<'info>,

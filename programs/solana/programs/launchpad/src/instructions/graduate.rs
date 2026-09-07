@@ -15,7 +15,7 @@ use crate::state::*;
 #[derive(Accounts)]
 pub struct Graduate<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
     #[account(
         mut,
         seeds = [SEED_CURVE, mint.key().as_ref()],
@@ -23,15 +23,15 @@ pub struct Graduate<'info> {
         has_one = mint,
         has_one = base_mint @ LaunchpadError::BaseMintMismatch,
     )]
-    pub curve: Account<'info, Curve>,
+    pub curve: Box<Account<'info, Curve>>,
     #[account(mut)]
-    pub mint: InterfaceAccount<'info, Mint>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     /// Optional. Without it only the curve-exhaustion trigger is available,
     /// which is exactly the intended behaviour when the oracle is down.
-    pub oracle: Option<Account<'info, BaseOracle>>,
+    pub oracle: Option<Box<Account<'info, BaseOracle>>>,
     #[account(mut, seeds = [SEED_CURVE_TOKEN_VAULT, mint.key().as_ref()], bump)]
-    pub curve_token_vault: InterfaceAccount<'info, TokenAccount>,
+    pub curve_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     pub caller: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }
@@ -136,7 +136,7 @@ pub fn graduate(ctx: Context<Graduate>) -> Result<()> {
 #[derive(Accounts)]
 pub struct MigrateLiquidity<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
     #[account(
         mut,
         seeds = [SEED_CURVE, mint.key().as_ref()],
@@ -144,17 +144,17 @@ pub struct MigrateLiquidity<'info> {
         has_one = mint,
         has_one = base_mint @ LaunchpadError::BaseMintMismatch,
     )]
-    pub curve: Account<'info, Curve>,
-    pub mint: InterfaceAccount<'info, Mint>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub curve: Box<Account<'info, Curve>>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut, seeds = [SEED_CURVE_BASE_VAULT, mint.key().as_ref()], bump)]
-    pub curve_base_vault: InterfaceAccount<'info, TokenAccount>,
+    pub curve_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_LP_VAULT, mint.key().as_ref()], bump)]
-    pub lp_vault: InterfaceAccount<'info, TokenAccount>,
+    pub lp_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, token::mint = base_mint)]
-    pub destination_base: InterfaceAccount<'info, TokenAccount>,
+    pub destination_base: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, token::mint = mint)]
-    pub destination_token: InterfaceAccount<'info, TokenAccount>,
+    pub destination_token: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(address = global.migration_authority @ LaunchpadError::Unauthorized)]
     pub migration_authority: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,

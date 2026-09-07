@@ -15,7 +15,7 @@ use crate::state::*;
 #[derive(Accounts)]
 pub struct TradeCtx<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
-    pub global: Account<'info, Global>,
+    pub global: Box<Account<'info, Global>>,
 
     #[account(
         mut,
@@ -24,31 +24,31 @@ pub struct TradeCtx<'info> {
         has_one = mint,
         has_one = base_mint @ LaunchpadError::BaseMintMismatch,
     )]
-    pub curve: Account<'info, Curve>,
+    pub curve: Box<Account<'info, Curve>>,
 
-    pub mint: InterfaceAccount<'info, Mint>,
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut, seeds = [SEED_CURVE_BASE_VAULT, mint.key().as_ref()], bump)]
-    pub curve_base_vault: InterfaceAccount<'info, TokenAccount>,
+    pub curve_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_CURVE_TOKEN_VAULT, mint.key().as_ref()], bump)]
-    pub curve_token_vault: InterfaceAccount<'info, TokenAccount>,
+    pub curve_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_BUCKET_BASE_VAULT, mint.key().as_ref()], bump)]
-    pub bucket_base_vault: InterfaceAccount<'info, TokenAccount>,
+    pub bucket_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_BUCKET_TOKEN_VAULT, mint.key().as_ref()], bump)]
-    pub bucket_token_vault: InterfaceAccount<'info, TokenAccount>,
+    pub bucket_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [SEED_PROTOCOL_VAULT, base_mint.key().as_ref()], bump)]
-    pub protocol_vault: InterfaceAccount<'info, TokenAccount>,
+    pub protocol_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_OPS_VAULT, base_mint.key().as_ref()], bump)]
-    pub ops_vault: InterfaceAccount<'info, TokenAccount>,
+    pub ops_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut)]
     pub trader: Signer<'info>,
     #[account(mut, token::mint = base_mint, token::authority = trader)]
-    pub trader_base_account: InterfaceAccount<'info, TokenAccount>,
+    pub trader_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, token::mint = mint, token::authority = trader)]
-    pub trader_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub trader_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub base_token_program: Interface<'info, TokenInterface>,

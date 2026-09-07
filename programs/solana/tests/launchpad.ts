@@ -647,7 +647,13 @@ program.methods.stake(new BN(1), 30).accountsPartial(stakeAccounts).signers([sta
 
       // Volume on the FLEX coin therefore routes the whole bucket to the creator.
       const before = BigInt(fc.creatorClaimableBase.toString());
-      await buy(flexCoin, trader, traderBase, ft, 10_000_000n);
+      const flexTraderToken = await createAssociatedTokenAccount(
+        conn,
+        trader,
+        flexCoin.mint,
+        trader.publicKey,
+      );
+      await buy(flexCoin, trader, traderBase, flexTraderToken, 10_000_000n);
       const fc2 = await program.account.curve.fetch(flexCoin.curve);
       assert.equal(
         BigInt(fc2.stakerAccruedBase.toString()),
@@ -963,35 +969,64 @@ program.methods
       );
     });
 
-    it('falls back to the exhaustion trigger when the oracle is stale', async () => {
-      // max_oracle_staleness of 1s makes every push stale a moment later, which
-      // is the condition we care about: a dead oracle must not wedge a token.
+    it('a stale oracle cannot wedge a token: exhaustion still graduates', async () => {
+      // Two coins, launched while the oracle is still fresh. One gets bought
+      // out, one stays young.
+      const done = await launch('STALE', { feeBps: 100 });
+      const young = await launch('STALE2', { feeBps: 100 });
+      const dt = await createAssociatedTokenAccount(conn, trader, done.mint, trader.publicKey);
+      const yt = await createAssociatedTokenAccount(conn, trader, young.mint, trader.publicKey);
+      await buy(done, trader, traderBase, dt, 100_000n * 1_000_000n);
+      await buy(young, trader, traderBase, yt, 1_000_000n);
+
+      // Now let the oracle go stale.
       await program.methods
         .setMaxOracleStaleness(new BN(1))
         .accountsPartial({ global: globalPda, admin: admin.publicKey })
         .signers([admin])
         .rpc();
-
-      const coin = await launch('STALE', { feeBps: 100 });
-      const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
-      await buy(coin, trader, traderBase, tt, 100_000n * 1_000_000n);
       await new Promise((r) => setTimeout(r, 2500));
 
+      const grad = (coin: typeof done, oracle: PublicKey | null) =>
+        program.methods
+          .graduate()
+          .accountsPartial({
+            global: globalPda,
+            curve: coin.curve,
+            mint: coin.mint,
+            baseMint,
+            oracle,
+            curveTokenVault: coin.curveTokenVault,
+            caller: trader.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([trader])
+          .rpc();
+
+      // The exhaustion trigger never consults the oracle, so it still works.
+      await grad(done, null);
+      assert.isTrue((await program.account.curve.fetch(done.curve)).graduated);
+
+      // The oracle trigger is the only thing staleness takes away, and taking
+      // it away can only delay an early graduation, never block a real one.
+      await rejects(grad(young, oraclePdaFor(baseMint)), /OracleStale/);
+      await rejects(grad(young, null), /NotGraduable/);
+
       await program.methods
-        .graduate()
-        .accountsPartial({
-          global: globalPda,
-          curve: coin.curve,
-          mint: coin.mint,
-          baseMint,
-          oracle: null,
-          curveTokenVault: coin.curveTokenVault,
-          caller: trader.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([trader])
+        .setMaxOracleStaleness(new BN(90))
+        .accountsPartial({ global: globalPda, admin: admin.publicKey })
+        .signers([admin])
         .rpc();
-      assert.isTrue((await program.account.curve.fetch(coin.curve)).graduated);
+    });
+
+    it('refuses to launch against a stale oracle', async () => {
+      await program.methods
+        .setMaxOracleStaleness(new BN(1))
+        .accountsPartial({ global: globalPda, admin: admin.publicKey })
+        .signers([admin])
+        .rpc();
+      await new Promise((r) => setTimeout(r, 2000));
+      await rejects(launch('STALE3'), /OracleStale/);
 
       await program.methods
         .setMaxOracleStaleness(new BN(90))
