@@ -1,0 +1,54 @@
+# Local-only infrastructure for the Stonkz API and indexer.
+#
+# Nothing here is provisioned in the cloud. The documented production topology
+# (Neon Postgres, Railway Redis + api + indexer) is described in
+# apps/api/README.md and is a separate, later, manual step.
+#
+#   docker compose up -d          # postgres + redis
+#   pnpm --filter @stonkz/api migrate
+#   pnpm --filter @stonkz/api dev
+#
+# The unit/integration suite does NOT need this file — it runs against an
+# ephemeral in-process PGlite database and an in-memory Redis fake.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stonkz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stonkz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stonkz}
+      POSTGRES_DB: ${POSTGRES_DB:-stonkz}
+      # Deterministic ordering so `ORDER BY sym` matches CI and production.
+      POSTGRES_INITDB_ARGS: '--locale=C --encoding=UTF8'
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - stonkz-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-stonkz} -d ${POSTGRES_DB:-stonkz}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: stonkz-redis
+    restart: unless-stopped
+    # Rate limits, session blacklist, the 8s quote cache and pub/sub are all
+    # reconstructable, so an eviction policy is safer than an OOM.
+    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - stonkz-redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  stonkz-pgdata:
+  stonkz-redisdata:

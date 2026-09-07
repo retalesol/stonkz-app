@@ -3,17 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "PLACEHOLDER — Phase 1.C owns this. Dual-chain event indexer with two replay cursors.",
+  "description": "Dual-chain event indexer. Two replay cursors (Solana slot + EVM block), read-table ingest, fixture producer.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
   "scripts": {
-    "dev": "echo \"@stonkz/indexer is a Phase 1.C placeholder\" && exit 0",
+    "dev": "tsx watch src/worker.ts",
+    "start": "tsx src/worker.ts",
+    "fixtures": "tsx src/fixtures/cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@stonkz/shared": "workspace:*"
+    "@stonkz/api": "workspace:*",
+    "@stonkz/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^20.19.9",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.2"
   }
 }

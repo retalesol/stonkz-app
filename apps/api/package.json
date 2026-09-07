@@ -3,17 +3,52 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "PLACEHOLDER — Phase 1.A owns this. REST + WS, JWT/SIWS/SIWE, Neon, Redis.",
+  "description": "REST + WS API. JWT/SIWS/SIWE auth, Postgres via Drizzle, Redis, the server-authoritative game ledger.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
   "scripts": {
-    "dev": "echo \"@stonkz/api is a Phase 1.A placeholder\" && exit 0",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "migrate": "tsx src/db/migrate-cli.ts",
+    "db:generate": "drizzle-kit generate",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@stonkz/shared": "workspace:*"
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "@stonkz/shared": "workspace:*",
+    "bs58": "^6.0.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.7",
+    "jose": "^6.2.12",
+    "postgres": "^3.4.9",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@hono/node-server": "^1.14.4",
     "@types/node": "^20.19.9",
+    "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
+    "ioredis": "^5.6.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.2"
+  },
+  "peerDependencies": {
+    "@hono/node-server": "^1.14.4",
+    "ioredis": "^5.6.1"
+  },
+  "peerDependenciesMeta": {
+    "@hono/node-server": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    }
   }
 }
