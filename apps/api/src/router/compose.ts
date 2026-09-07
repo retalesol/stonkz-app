@@ -143,6 +143,30 @@ export interface CurveTradeComposition {
   curveMinOutAtoms: bigint;
   /** `null` on the direct-pair fast path; otherwise hop 1's full aggregator response. */
   aggregatorQuote: AggregatorQuote | null;
+  /**
+   * Sell only (`null` on buy): `fill.netBase`, the curve's own expected
+   * proceeds *before* any aggregator conversion. `router/evm-router.ts`'s
+   * `StonkzRouter.sellViaAggregator` needs this exact number as
+   * `AggregatorLeg.amountIn` — the aggregator leg was quoted off-chain
+   * against this input, whether or not there is a further aggregator hop
+   * (the direct-pair fast path still needs it, as the amount `UNWRAP_WETH`
+   * is expected to deliver).
+   */
+  curveNetBaseOutAtoms: bigint | null;
+  /**
+   * Sell only (`null` on buy): the curve-only floor in *base* terms —
+   * `applySlippageFloor(fill.netBase, slippagePct)` — independent of
+   * `curveMinOutAtoms`, which (for a sell) is the *end-to-end* floor in
+   * final-native terms and is what the Solana path's single curve
+   * instruction already uses. `StonkzRouter.sellViaAggregator` takes these
+   * as two separate parameters (`minBaseOut` vs `minEthOut`) precisely so a
+   * bad fill on one leg cannot hide inside the other's tolerance — see that
+   * contract's `buyViaAggregator` doc comment. Splitting `curveMinOutAtoms`
+   * itself to mean this everywhere would change the number the
+   * already-shipped, already-tested Solana sell instruction receives; scoped
+   * to a new field instead of touching that path.
+   */
+  curveMinBaseOutAtoms: bigint | null;
 }
 
 export async function composeCurveTrade(input: ComposeQuoteInput): Promise<CurveTradeComposition> {
@@ -176,6 +200,8 @@ async function composeCurveQuote(
   let curveAmountInAtoms: bigint;
   let curveMinOutAtoms: bigint;
   let aggregatorQuote: AggregatorQuote | null = null;
+  let curveNetBaseOutAtoms: bigint | null = null;
+  let curveMinBaseOutAtoms: bigint | null = null;
 
   if (side === 'buy') {
     let baseAtoms: bigint;
@@ -282,6 +308,8 @@ async function composeCurveQuote(
     amountOut = fromAtoms(nativeAtoms, nativeDecimals);
     curveAmountInAtoms = tokenAtoms;
     curveMinOutAtoms = applySlippageFloor(nativeAtoms, slippagePct);
+    curveNetBaseOutAtoms = fill.netBase;
+    curveMinBaseOutAtoms = applySlippageFloor(fill.netBase, slippagePct);
     minOut = fromAtoms(curveMinOutAtoms, nativeDecimals);
     impactPct = hop1ImpactPct + curveImpactPct;
   }
@@ -303,7 +331,7 @@ async function composeCurveQuote(
     indicative: false,
     nativeUsd: usdPrice,
   };
-  return { quote, curveAmountInAtoms, curveMinOutAtoms, aggregatorQuote };
+  return { quote, curveAmountInAtoms, curveMinOutAtoms, aggregatorQuote, curveNetBaseOutAtoms, curveMinBaseOutAtoms };
 }
 
 /**

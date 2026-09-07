@@ -10,24 +10,42 @@ export function asEvmTransactionSource(rpc: ChainRpc): EvmTransactionSource | un
 }
 
 /**
- * Robinhood Chain has **no atomic native-in trade** on this launchpad, for
- * every base token including the wrapped-native fast path. This is the load
- * -bearing finding of this phase's RH work, so it is stated here, in
- * `docs/rh-trade-atomicity-gap.md`, and again in the phase report — not just
- * once.
+ * **Fallback only, as of the round that added `router/evm-router.ts`.**
+ * `programs/evm/src/StonkzRouter.sol` now exists and closes the atomicity gap
+ * this module's header used to document as unconditional
+ * (`docs/rh-trade-atomicity-gap.md` has the current status). `routes/trade.ts`
+ * calls `stonkzRouterDecision` first and only reaches this module when that
+ * returns `null` — no `StonkzRouter` deployment configured at all
+ * (`ApiEnv.rhRouterAddress` still the zero-address placeholder), or an
+ * aggregator-hop base asset with no pinned v3 fee tier
+ * (`ApiEnv.rhV3FeeTierOverrides` is an explicit allow-list, deliberately
+ * empty by default — see that field's doc comment).
  *
- * `docs/robinhood-chain.md` §3.3 already worked out why and what the real
- * fix is: **a `StonkzRouter` periphery contract**, deployed on Robinhood
- * Chain, that receives the swap output itself (Universal Router recipient =
- * `ADDRESS_THIS`) before calling the curve, so the whole thing reverts
- * atomically on failure. That contract does not exist anywhere in
- * `programs/evm` — I confirmed this by reading every file in that tree ahead
- * of writing this module — and building on-chain Solidity is outside this
- * phase's scope (`apps/api`, `apps/indexer`, and new `packages/*` only).
+ * The history below is preserved because it is still the accurate
+ * description of *this* module's own output and of why it is not atomic —
+ * only the "there is no fix" framing is now dated.
  *
- * What this module ships instead, so the gap is *usable* rather than just
- * documented: a fully-encoded, ordered **sequence of separate transactions**
- * (`EvmStep[]`) covering every case:
+ * ---
+ *
+ * Robinhood Chain has **no atomic native-in trade** on this launchpad via a
+ * plain EOA-composed transaction sequence, for every base token including the
+ * wrapped-native fast path — this module never becomes atomic no matter what
+ * base asset it is handed, because it is a sequence of independently-signed
+ * transactions by construction.
+ *
+ * `docs/robinhood-chain.md` §3.3 worked out why and what the real fix is: **a
+ * `StonkzRouter` periphery contract**, deployed on Robinhood Chain, that
+ * receives the swap output itself (Universal Router recipient = `MSG_SENDER`,
+ * i.e. `StonkzRouter` — an earlier draft of this doc and of that one said
+ * `ADDRESS_THIS`, which was wrong and has been corrected in both places)
+ * before calling the curve, so the whole thing reverts atomically on failure.
+ * That contract exists now (`router/evm-router.ts` calls it); it did not when
+ * this module was first written, which is the gap this module used to be the
+ * entirety of the answer to.
+ *
+ * What this module ships, so the gap is *usable* rather than just documented
+ * for whatever case still reaches it: a fully-encoded, ordered **sequence of
+ * separate transactions** (`EvmStep[]`) covering every case:
  *
  * - **Buy, base = wrapped-native (WETH):** `WETH.deposit{value}()` \u2192
  *   `WETH.approve(launchpad, amount)` \u2192 `launchpad.buy(token, amount, minOut)`.
@@ -45,9 +63,12 @@ export function asEvmTransactionSource(rpc: ChainRpc): EvmTransactionSource | un
  * confirmation. **A trader who stops midway is left holding whatever the
  * last completed step produced** (WETH, approved-but-unspent base, or the
  * launched token with no ETH yet) — exactly the failure mode plan step 83
- * forbids for a *single* transaction, accepted here only because the
- * alternative is not shipping RH trading in this phase at all. This must not
- * ship to production trading real user funds without the router.
+ * forbids for a *single* transaction. Now reachable only when the router is
+ * not configured for the trade's base asset (`ApiEnv.rhRouterAddress` unset,
+ * or an aggregator-hop base with no pinned `ApiEnv.rhV3FeeTierOverrides`
+ * entry) — an operator gap to close by configuring the router, not a
+ * per-trade one, but this path stays live rather than refusing the trade
+ * outright until it is.
  */
 
 export interface EvmStep {

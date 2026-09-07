@@ -158,6 +158,74 @@ export const ERC20_ABI = [
   },
 ] as const;
 
+/**
+ * `programs/evm/src/StonkzRouter.sol` — the atomic native-in/out path
+ * `router/evm-router.ts` builds calldata against. Hand-written from source
+ * for the same reason as `LAUNCHPAD_ABI` above: no committed build artifact
+ * to import from.
+ */
+export const STONKZ_ROUTER_ABI = [
+  {
+    type: 'function',
+    name: 'buyViaAggregator',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      {
+        name: 'leg',
+        type: 'tuple',
+        components: [
+          { name: 'commands', type: 'bytes' },
+          { name: 'inputs', type: 'bytes[]' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'amountIn', type: 'uint256' },
+          { name: 'quotedOut', type: 'uint256' },
+          { name: 'maxSlippageBps', type: 'uint256' },
+        ],
+      },
+      { name: 'minTokenOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'tokensOut', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'sellViaAggregator',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amountToken', type: 'uint256' },
+      {
+        name: 'permitData',
+        type: 'tuple',
+        components: [
+          { name: 'value', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+        ],
+      },
+      { name: 'minBaseOut', type: 'uint256' },
+      {
+        name: 'leg',
+        type: 'tuple',
+        components: [
+          { name: 'commands', type: 'bytes' },
+          { name: 'inputs', type: 'bytes[]' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'amountIn', type: 'uint256' },
+          { name: 'quotedOut', type: 'uint256' },
+          { name: 'maxSlippageBps', type: 'uint256' },
+        ],
+      },
+      { name: 'minEthOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'ethOut', type: 'uint256' }],
+  },
+] as const;
+
 /** WETH9 — deposit()/withdraw() wrap/unwrap ETH; everything else is plain ERC-20. */
 export const WETH_ABI = [
   { type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] },

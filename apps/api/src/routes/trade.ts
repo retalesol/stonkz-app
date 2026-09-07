@@ -13,6 +13,13 @@ import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import type { UniswapQuoteResponseRaw } from '../router/uniswap.js';
 import { asSolanaBlockhashSource, composeSolanaTradeTransaction } from '../router/solana-tx.js';
 import { buildEvmTradePlan } from '../router/evm-tx.js';
+import {
+  buildAtomicBuyCall,
+  buildAtomicSellCall,
+  buildSellPermitTypedData,
+  stonkzRouterDecision,
+  type PermitInput,
+} from '../router/evm-router.js';
 import type { TokenRow } from './serialise.js';
 
 /** `settings` table's own column defaults (`db/schema.ts`) — what an authenticated wallet gets before it has ever saved a preference. */
@@ -30,6 +37,31 @@ interface TradePrepareBody {
   sym?: unknown;
   side?: unknown;
   amount?: unknown;
+  /**
+   * RH sells only: a pre-signed EIP-2612 permit over `StonkzRouter`, so the
+   * atomic call needs no prior `approve` transaction. Optional — omitted
+   * means the standing-allowance branch (`PermitData.deadline == 0`), which
+   * requires `wallet` to have already approved the router on this token.
+   * Nothing in this repo signs one yet (`apps/web`'s trade-box wiring, Phase
+   * 2.C, has not landed); this field exists so that work can add it without
+   * a new endpoint. See `evm-router.ts`'s `buildSellPermitTypedData`.
+   */
+  permit?: unknown;
+}
+
+function parsePermit(raw: unknown): PermitInput | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Record<string, unknown>;
+  if (
+    typeof p['value'] !== 'string' ||
+    typeof p['deadline'] !== 'number' ||
+    typeof p['v'] !== 'number' ||
+    typeof p['r'] !== 'string' ||
+    typeof p['s'] !== 'string'
+  ) {
+    return null;
+  }
+  return { value: p['value'], deadline: p['deadline'], v: p['v'], r: p['r'] as `0x${string}`, s: p['s'] as `0x${string}` };
 }
 
 /**
@@ -191,6 +223,108 @@ export function tradeRoutes(): Hono<AppEnv> {
       }
 
       // Robinhood Chain.
+      const isDirectPair = trade.aggregatorQuote === null;
+      const weth = deps.baseMints.mintFor('RH', 'WETH');
+      const route = weth
+        ? stonkzRouterDecision(
+            net,
+            deps.env.rhRouterAddress,
+            isDirectPair,
+            row.baseMint,
+            row.baseSymbol,
+            deps.env.rhV3FeeTierOverrides,
+          )
+        : null;
+
+      if (route) {
+        // Atomic path: one call into `StonkzRouter`, built from commands this
+        // module encodes itself (never the Trading API's own `/v1/swap`
+        // calldata — see `router/universal-router.ts`'s header for why).
+        const deadlineUnixSeconds = Math.floor(now / 1000) + 300;
+        const routerAddress = deps.env.rhRouterAddress as Address;
+        const token = row.mint as Address;
+        const baseMint = row.baseMint as Address;
+        const wethAddress = weth as Address;
+
+        if (side === 'buy') {
+          const call = buildAtomicBuyCall({
+            routerAddress,
+            token,
+            weth: wethAddress,
+            baseMint,
+            route,
+            ethInAtoms: trade.curveAmountInAtoms,
+            quotedBaseOutAtoms: trade.aggregatorQuote?.outAmountAtoms ?? trade.curveAmountInAtoms,
+            minTokenOutAtoms: trade.curveMinOutAtoms,
+            userSlippagePct: s.slip,
+            deadlineUnixSeconds,
+          });
+          return c.json({
+            net,
+            atomic: true,
+            to: call.to,
+            data: call.data,
+            value: call.value,
+            quote: trade.quote,
+            expiresAt: now + 30_000,
+          });
+        }
+
+        // Sell. `curveNetBaseOutAtoms`/`curveMinBaseOutAtoms` are always
+        // populated on this branch — `composeCurveTrade`'s sell path sets
+        // them unconditionally (see that field's doc comment).
+        const netBaseOutAtoms = trade.curveNetBaseOutAtoms as bigint;
+        const minBaseOutAtoms = trade.curveMinBaseOutAtoms as bigint;
+        const permit = parsePermit(body.permit);
+        const call = buildAtomicSellCall({
+          routerAddress,
+          token,
+          weth: wethAddress,
+          baseMint,
+          route,
+          amountTokenAtoms: trade.curveAmountInAtoms,
+          netBaseOutAtoms,
+          quotedEthOutAtoms: trade.aggregatorQuote?.outAmountAtoms ?? netBaseOutAtoms,
+          minBaseOutAtoms,
+          minEthOutAtoms: trade.curveMinOutAtoms,
+          userSlippagePct: s.slip,
+          deadlineUnixSeconds,
+          permit,
+        });
+        const permitTypedData = permit
+          ? null
+          : buildSellPermitTypedData({
+              tokenAddress: token,
+              tokenName: row.name,
+              chainId: deps.env.rhChainId,
+              routerAddress,
+              owner: wallet as Address,
+              valueAtoms: trade.curveAmountInAtoms,
+              deadlineUnixSeconds,
+            });
+        return c.json({
+          net,
+          atomic: true,
+          to: call.to,
+          data: call.data,
+          value: call.value,
+          quote: trade.quote,
+          expiresAt: now + 30_000,
+          ...(permitTypedData
+            ? {
+                permitTypedData,
+                note:
+                  'no permit was supplied, so this call takes the standing-allowance branch: ' +
+                  'wallet must already have approved `to` (the router) to spend this token, or the ' +
+                  'transaction reverts. Sign permitTypedData and resend as body.permit to skip that ' +
+                  'prior approval.',
+              }
+            : {}),
+        });
+      }
+
+      // Fallback: no `StonkzRouter` configured for this base asset yet — the
+      // documented, explicitly non-atomic ordered step plan.
       const launchpad = deps.env.rhLaunchpadAddress as Address;
       const uniswap = trade.aggregatorQuote
         ? { client: deps.uniswap, quote: trade.aggregatorQuote.raw as UniswapQuoteResponseRaw }

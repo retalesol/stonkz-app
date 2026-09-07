@@ -110,6 +110,10 @@ interface TradePrepareResponse {
   expiresAt?: number;
   error?: string;
   detail?: string;
+  /** RH atomic path only (`router/evm-router.ts`). */
+  to?: string;
+  data?: string;
+  value?: string;
 }
 
 async function tradePrepare(token: string, body: TradeBody): Promise<{ status: number; body: TradePrepareResponse }> {
@@ -348,6 +352,200 @@ describe('POST /trade/prepare', () => {
     const { status, body } = await tradePrepare(token, { sym: 'NOROUTE', side: 'buy', amount: 1 });
     expect(status).toBe(422);
     expect(body.error).toBe('no_route');
+  });
+
+  describe('RH atomic path via StonkzRouter', () => {
+    const ROUTER_ADDRESS = getAddress(`0x${'baad'.padStart(40, '0')}`);
+    let hr: TestApp;
+
+    beforeAll(async () => {
+      hr = await createTestApp({
+        env: {
+          RH_ROUTER_ADDRESS: ROUTER_ADDRESS,
+          // Pinned per `ApiEnv.rhV3FeeTierOverrides`'s doc comment \u2014 an
+          // explicit allow-list, not a guessed default.
+          RH_V3_FEE_TIER_OVERRIDES: 'USDC:3000',
+        },
+      });
+    });
+    afterAll(async () => {
+      await hr.close();
+    });
+    beforeEach(async () => {
+      await hr.db.reset();
+      await hr.clearRateLimits();
+      hr.uniswap.reset();
+    });
+
+    async function tradePrepareOn(app: TestApp, token: string, body: TradeBody & { permit?: unknown }) {
+      const res = await app.app.request('/trade/prepare', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...authed(token) },
+        body: JSON.stringify(body),
+      });
+      return {
+        status: res.status,
+        body: (await res.json()) as TradePrepareResponse & { permitTypedData?: unknown; note?: string },
+      };
+    }
+
+    async function seedOn(app: TestApp, opts: SeedOpts): Promise<void> {
+      const supply = opts.supply ?? 1e9;
+      const feeBps = opts.feeBps ?? 250;
+      const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(opts.tokenDecimals);
+      const derived = deriveCurveColumns(supplyAtoms, opts.basePrice1e6, opts.baseDecimals, opts.tokenDecimals);
+      if (!derived) throw new Error('seedOn: curve derivation failed');
+      let columns = derived.columns;
+      if (opts.preFillBaseAtoms) {
+        const fill = buyQuote(derived.state, feeBps, opts.preFillBaseAtoms);
+        if (!fill) throw new Error('seedOn: preFillBaseAtoms could not be filled');
+        const next = applyBuy(derived.state, fill);
+        columns = { ...columns, curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
+      }
+      const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
+      const mc = Number(mcapUsd1e6(mcapBaseAtoms, opts.basePrice1e6, opts.baseDecimals)) / 1e6;
+      await app.deps.db.insert(tokens).values({
+        net: opts.net,
+        sym: opts.sym,
+        name: opts.sym,
+        creator: 'Dev',
+        mint: opts.mint,
+        baseSymbol: opts.baseSymbol,
+        baseMint: opts.baseMint,
+        supply,
+        feeBps,
+        mc,
+        lastMc: mc,
+        lane: 'new',
+        seed: 1,
+        launchedAt: new Date(app.now() - 600_000),
+        ...columns,
+      });
+    }
+
+    const RH_WETH_MINT = getAddress('0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73');
+
+    it('buys atomically on the direct-pair (WETH) fast path \u2014 one call to StonkzRouter, no step plan', async () => {
+      await seedOn(hr, {
+        net: 'RH',
+        sym: 'RHDIRECT',
+        mint: RH_TOKEN_MINT,
+        baseSymbol: 'WETH',
+        baseMint: RH_WETH_MINT,
+        baseDecimals: 18,
+        tokenDecimals: 18,
+        basePrice1e6: 4_200_000_000n,
+      });
+      const { token, address } = await hr.login('RH');
+      hr.rpcs.RH.setBalance(address, 5);
+
+      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHDIRECT', side: 'buy', amount: 0.5 });
+      expect(status).toBe(200);
+      expect(body.atomic).toBe(true);
+      expect(body.steps).toBeUndefined();
+      expect(body.warning).toBeUndefined();
+      expect(body.to).toBe(ROUTER_ADDRESS);
+      expect(typeof body.data).toBe('string');
+      expect(body.value).toBe(String(Math.round(0.5 * 1e18)));
+    });
+
+    it('buys atomically through the pinned Uniswap v3 pool on an aggregator-hop base asset', async () => {
+      await seedOn(hr, {
+        net: 'RH',
+        sym: 'RHAGG',
+        mint: RH_TOKEN_MINT,
+        baseSymbol: 'USDC',
+        baseMint: RH_USDC_MINT,
+        baseDecimals: 6,
+        tokenDecimals: 18,
+        basePrice1e6: 1_000_000n,
+      });
+      hr.uniswap.setRoute('0x0000000000000000000000000000000000000000', RH_USDC_MINT, { rate: 4_200 });
+      const { token, address } = await hr.login('RH');
+      hr.rpcs.RH.setBalance(address, 5);
+
+      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHAGG', side: 'buy', amount: 0.5 });
+      expect(status).toBe(200);
+      expect(body.atomic).toBe(true);
+      expect(body.to).toBe(ROUTER_ADDRESS);
+    });
+
+    it('sells atomically with no permit supplied \u2014 the standing-allowance branch, and returns signable permit typed data', async () => {
+      await seedOn(hr, {
+        net: 'RH',
+        sym: 'RHSELL',
+        mint: RH_TOKEN_MINT,
+        baseSymbol: 'WETH',
+        baseMint: RH_WETH_MINT,
+        baseDecimals: 18,
+        tokenDecimals: 18,
+        basePrice1e6: 4_200_000_000n,
+        preFillBaseAtoms: 10n ** 18n,
+      });
+      const { token, address } = await hr.login('RH');
+      hr.rpcs.RH.setBalance(address, 5);
+
+      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHSELL', side: 'sell', amount: 1_000_000 });
+      expect(status).toBe(200);
+      expect(body.atomic).toBe(true);
+      expect(body.value).toBe('0');
+      expect(body.permitTypedData).toBeTruthy();
+      const permitTypedData = body.permitTypedData as { domain: { name: string }; primaryType: string };
+      expect(permitTypedData.primaryType).toBe('Permit');
+      expect(permitTypedData.domain.name).toBe('RHSELL');
+      expect(typeof body.note).toBe('string');
+      expect(String(body.note)).toMatch(/standing.allowance/);
+    });
+
+    it('sells atomically with a permit supplied \u2014 no standing-allowance note, permit is embedded', async () => {
+      await seedOn(hr, {
+        net: 'RH',
+        sym: 'RHSELLP',
+        mint: RH_TOKEN_MINT,
+        baseSymbol: 'WETH',
+        baseMint: RH_WETH_MINT,
+        baseDecimals: 18,
+        tokenDecimals: 18,
+        basePrice1e6: 4_200_000_000n,
+        preFillBaseAtoms: 10n ** 18n,
+      });
+      const { token, address } = await hr.login('RH');
+      hr.rpcs.RH.setBalance(address, 5);
+
+      const { status, body } = await tradePrepareOn(hr, token, {
+        sym: 'RHSELLP',
+        side: 'sell',
+        amount: 1_000_000,
+        permit: { value: '1000000', deadline: 2_000_000_000, v: 27, r: `0x${'11'.repeat(32)}`, s: `0x${'22'.repeat(32)}` },
+      });
+      expect(status).toBe(200);
+      expect(body.atomic).toBe(true);
+      expect(body.permitTypedData).toBeUndefined();
+      expect(body.note).toBeUndefined();
+    });
+
+    it('falls back to the non-atomic EvmStep[] plan when the aggregator-hop base asset has no pinned fee tier', async () => {
+      const UNPINNED_MINT = getAddress(`0x${'dca0dca0'.padStart(40, '0')}`);
+      await seedOn(hr, {
+        net: 'RH',
+        sym: 'RHNOPIN',
+        mint: RH_TOKEN_MINT,
+        baseSymbol: 'DAI', // not in RH_V3_FEE_TIER_OVERRIDES
+        baseMint: UNPINNED_MINT,
+        baseDecimals: 18,
+        tokenDecimals: 18,
+        basePrice1e6: 4_200_000_000n,
+      });
+      hr.uniswap.setRoute('0x0000000000000000000000000000000000000000', UNPINNED_MINT, { rate: 3_000 });
+      const { token, address } = await hr.login('RH');
+      hr.rpcs.RH.setBalance(address, 5);
+
+      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHNOPIN', side: 'buy', amount: 0.5 });
+      expect(status).toBe(200);
+      expect(body.atomic).toBe(false);
+      expect(Array.isArray(body.steps)).toBe(true);
+      expect(String(body.warning)).toMatch(/StonkzRouter/);
+    });
   });
 
   it('rejects a Jupiter response that smuggles a platform fee on hop 1', async () => {

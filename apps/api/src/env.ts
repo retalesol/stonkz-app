@@ -71,6 +71,28 @@ export interface ApiEnv {
    */
   rhLaunchpadAddress: string;
 
+  /**
+   * `programs/evm/src/StonkzRouter.sol`'s deployment address. Zero address
+   * (the default) means "not deployed here" — `router/evm-router.ts`'s
+   * `canUseStonkzRouter` treats that as a hard "fall back to the non-atomic
+   * `EvmStep[]` plan", the same loud-placeholder pattern `rhLaunchpadAddress`
+   * already uses. Unlike the launchpad, this one is allowed to stay zero in
+   * production: RH trading degrades to the documented non-atomic sequence
+   * rather than refusing to boot, which is a real (if worse) product.
+   */
+  rhRouterAddress: string;
+  /**
+   * `SYM_OR_MINT:feeBps,SYM_OR_MINT:feeBps` — the Uniswap v3 pool fee tier
+   * `router/evm-router.ts` is allowed to route an aggregator-hop trade
+   * through `StonkzRouter` against, keyed by base mint address (lowercased)
+   * or symbol. Deliberately empty by default: `docs/robinhood-chain.md`
+   * row 43's "~1,900 hookless v4 pools carry 88-100% LP fees" warning is
+   * exactly why this is an explicit allow-list a human pins per base asset,
+   * never a guessed/probed default — the same posture `base-mints.ts`
+   * already takes for RH base addresses.
+   */
+  rhV3FeeTierOverrides: Record<string, number>;
+
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
   launchRateLimitWindowSeconds: number;
@@ -135,6 +157,20 @@ function ints(src: EnvSource, key: string, fallback: readonly number[]): number[
       }
       return n;
     });
+}
+
+/** `KEY:123,KEY:456` \u2192 `{KEY: 123, KEY2: 456}`, keys uppercased. Used for `rhV3FeeTierOverrides`. */
+function intMap(src: EnvSource, key: string): Record<string, number> {
+  const raw = src[key];
+  if (!raw || !raw.trim()) return {};
+  const out: Record<string, number> = {};
+  for (const pair of raw.split(',')) {
+    const [k, v] = pair.split(':').map((s) => s.trim());
+    if (!k || !v) continue;
+    const n = Number.parseInt(v, 10);
+    if (Number.isFinite(n)) out[k.toUpperCase()] = n;
+  }
+  return out;
 }
 
 function oneOf<T extends string>(src: EnvSource, key: string, allowed: readonly T[], fallback: T): T {
@@ -204,6 +240,8 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
 
     solanaLaunchpadProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', 'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg'),
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
+    rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
+    rhV3FeeTierOverrides: intMap(src, 'RH_V3_FEE_TIER_OVERRIDES'),
 
     launchIntentTtlSeconds: int(src, 'LAUNCH_INTENT_TTL_SECONDS', 120),
     launchRateLimitPerWallet: int(src, 'LAUNCH_RATE_LIMIT_PER_WALLET', 5),
