@@ -81,9 +81,16 @@ source of truth for settlement.
 
 ## Graduation
 
-At an oracle-priced **$69K** market cap, migrate the token plus base reserves to
-Raydium/Meteora on Solana or a Uniswap-style pool on Robinhood, burn the LP, and
-set `lane=grad`. After graduation the Stonkz curve fee is zero.
+At an oracle-priced **$69K** market cap, migrate the token plus base reserves
+into a real pool and burn 100% of the LP it mints, and set `lane=grad`. After
+graduation the Stonkz curve fee is zero.
+
+On Solana this is a CPI into Raydium CPMM (`migrate_liquidity`, in
+`launchpad/src/instructions/graduate.rs`) followed by a genuine SPL `burn` —
+`lp_mint.supply` reads `0` afterward, not merely "sent to an address nobody
+uses." On Robinhood it is `UniswapV2Migrator.sol`'s Uniswap v2 pool +
+burn-address mint. See `docs/security-review-findings.md` H1 for the fix
+history and `SPEC.md` §5/§7 for both chains' exact guarantees.
 
 ## Before any of this ships
 

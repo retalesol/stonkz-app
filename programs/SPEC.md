@@ -220,8 +220,15 @@ Phase 7 and the token does not exist.
 If the oracle is stale, trigger 2 is unavailable and trigger 1 still works, so
 staleness can never wedge a token — it can only delay an early graduation.
 
-Migration moves `real_base` + `lp_reserve` into the pool, and the LP position is
-burned. See §7 for what "burn the LP" means on each chain.
+`graduate` only marks the curve graduated and burns the unsold allocation.
+Moving `real_base` + `lp_reserve` into a real pool and burning the LP is a
+second, separate instruction, `migrate_liquidity`. `global.migration_authority`
+still funds and triggers it (a timing/rent-payer role, documented in §6), but
+unlike before, it no longer chooses *where* the money goes — the destination
+is a Raydium pool and a burn, both enforced on-chain, not a caller-supplied
+account. See §7 for what "burn the LP" means on each chain, and
+`docs/security-review-findings.md` H1 for why this is a CPI into Raydium CPMM
+on Solana rather than a caller-supplied hand-off.
 
 ## 6. Solana specifics
 
@@ -236,6 +243,23 @@ burned. See §7 for what "burn the LP" means on each chain.
   `global.oracle_authority`. **Assumption:** in production that authority is a
   Pyth/Switchboard crank or a dedicated pusher, never the API process. Swapping
   in a direct Pyth account read is a localized change to `oracle.rs`.
+- `migrate_liquidity` CPIs into Raydium CPMM (`global.raydium_program` /
+  `global.raydium_amm_config`, set once by `set_raydium_config`) rather than
+  depending on the `raydium-cp-swap` crate: the CPI instruction is built by
+  hand (a raw `Instruction` + `invoke_signed`, using Raydium's published
+  account list and Anchor sighash convention) so this program does not carry
+  a second, foreign anchor-lang/anchor-spl version pin. Every Raydium-owned
+  PDA in that account list is still verified with Anchor's
+  `seeds::program = …` constraint. The pool address itself is **not**
+  Raydium's canonical, guessable PDA — it is this program's own PDA
+  (`SEED_RAYDIUM_POOL`), passed via Raydium's non-canonical-pool path, so
+  nothing but this program can ever occupy or pre-seed it ahead of a
+  graduation. A dedicated escrow PDA (`SEED_RAYDIUM_ESCROW`) stands in as
+  Raydium's `creator` (funds source, rent payer, LP recipient); the LP it
+  receives is burned via a real SPL `Burn` in the same instruction, before
+  control returns to any signer. See `graduate.rs`'s `MigrateLiquidity` doc
+  comment for the full design and `docs/security-review-findings.md` H1 for
+  the fix history.
 
 ## 7. EVM specifics and Robinhood Chain assumptions
 
