@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {CurveMath} from "./CurveMath.sol";
+import {SafeErc20} from "./SafeErc20.sol";
 import {StonkzToken} from "./StonkzToken.sol";
 import {IPriceSource} from "./oracle/IPriceSource.sol";
 
@@ -790,12 +791,16 @@ contract StonkzLaunchpad {
         p.tokenDebt = c.accTokenPerWeight;
     }
 
+    /// @dev Base assets are foreign tokens, so these go through `SafeErc20`:
+    /// a token that returns no data from `transfer`/`transferFrom` is
+    /// otherwise unusable as a base asset entirely. See M4 in
+    /// `docs/security-review-findings.md`.
     function _pull(address erc20, address from, uint256 amount) internal {
-        require(IERC20(erc20).transferFrom(from, address(this), amount), "transferFrom");
+        SafeErc20.safeTransferFrom(erc20, from, address(this), amount);
     }
 
     function _send(address erc20, address to, uint256 amount) internal {
-        require(IERC20(erc20).transfer(to, amount), "transfer");
+        SafeErc20.safeTransfer(erc20, to, amount);
     }
 
     function _validTicker(string calldata t) internal pure returns (bool) {

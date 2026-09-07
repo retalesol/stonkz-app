@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {SafeErc20} from "./SafeErc20.sol";
+
 interface IERC20Min {
     function transfer(address to, uint256 value) external returns (bool);
     function balanceOf(address owner) external view returns (uint256);
@@ -87,8 +89,12 @@ contract UniswapV2Migrator {
         }
 
         // The launchpad has already sent both sides here.
-        require(IERC20Min(token).transfer(pool, tokenAmount), "token transfer");
-        require(IERC20Min(baseToken).transfer(pool, baseAmount), "base transfer");
+        // `baseToken` is foreign (whatever base asset the coin was launched
+        // against), so it goes through `SafeErc20` — see M4. `token` is this
+        // system's own `StonkzToken`, but is routed the same way here because
+        // this contract only ever sees it through a generic interface.
+        SafeErc20.safeTransfer(token, pool, tokenAmount);
+        SafeErc20.safeTransfer(baseToken, pool, baseAmount);
 
         liquidityBurned = IUniswapV2Pair(pool).mint(BURN_ADDRESS);
         require(liquidityBurned > 0, "no liquidity");

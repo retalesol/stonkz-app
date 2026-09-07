@@ -58,6 +58,86 @@ contract MockERC20 {
     }
 }
 
+/// @notice A token whose `transfer`/`transferFrom`/`approve` return **nothing**
+/// — the non-standard-but-widespread shape (mainnet USDT is the canonical
+/// example). Declared with no return value on purpose: a caller that ABI-decodes
+/// a `bool` from these reverts, which is the failure `SafeErc20` exists to
+/// tolerate. See M4 in `docs/security-review-findings.md`.
+contract MockNoReturnERC20 {
+    string public name;
+    string public symbol;
+    uint8 public decimals;
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
+        name = _name;
+        symbol = _symbol;
+        decimals = _decimals;
+    }
+
+    function mint(address to, uint256 value) external {
+        totalSupply += value;
+        balanceOf[to] += value;
+        emit Transfer(address(0), to, value);
+    }
+
+    function transfer(address to, uint256 value) external {
+        _transfer(msg.sender, to, value);
+    }
+
+    function approve(address spender, uint256 value) external {
+        allowance[msg.sender][spender] = value;
+        emit Approval(msg.sender, spender, value);
+    }
+
+    function transferFrom(address from, address to, uint256 value) external {
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed != type(uint256).max) {
+            require(allowed >= value, "allowance");
+            allowance[from][msg.sender] = allowed - value;
+        }
+        _transfer(from, to, value);
+    }
+
+    function _transfer(address from, address to, uint256 value) private {
+        require(balanceOf[from] >= value, "balance");
+        unchecked {
+            balanceOf[from] -= value;
+            balanceOf[to] += value;
+        }
+        emit Transfer(from, to, value);
+    }
+}
+
+/// @notice A token that reports failure by returning `false` instead of
+/// reverting. `SafeErc20` must still treat this as a failure — the hardening
+/// widens what counts as success, and must not widen it this far.
+contract MockFalseReturnERC20 {
+    uint8 public decimals = 18;
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 value) external {
+        balanceOf[to] += value;
+    }
+
+    function transfer(address, uint256) external pure returns (bool) {
+        return false;
+    }
+
+    function transferFrom(address, address, uint256) external pure returns (bool) {
+        return false;
+    }
+
+    function approve(address, uint256) external pure returns (bool) {
+        return false;
+    }
+}
+
 /// @notice Chainlink `AggregatorV3Interface`, with the failure modes chain 4663
 /// actually exposes: a stale round, a carried-over answer, and an aggregator
 /// that reverts outright.

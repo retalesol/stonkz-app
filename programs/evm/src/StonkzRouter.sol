@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {SafeErc20} from "./SafeErc20.sol";
 import {StonkzLaunchpad} from "./StonkzLaunchpad.sol";
 import {StonkzToken} from "./StonkzToken.sol";
 
@@ -201,9 +202,9 @@ contract StonkzRouter {
         // Approve exactly what will be spent, and let the launchpad consume all
         // of it. A standing allowance on a contract that anyone can call is an
         // unnecessary standing risk.
-        IERC20(base).approve(address(launchpad), delivered);
+        SafeErc20.safeApprove(base, address(launchpad), delivered);
         tokensOut = launchpad.buy(token, delivered, minTokenOut);
-        IERC20(base).approve(address(launchpad), 0);
+        SafeErc20.safeApprove(base, address(launchpad), 0);
 
         require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
 
@@ -276,7 +277,7 @@ contract StonkzRouter {
         // The Universal Router spends from its own balance when the command is
         // encoded with `payerIsUser = false`, which is the shape this path
         // requires: the payer is this contract, not the signer.
-        require(IERC20(base).transfer(address(universalRouter), leg.amountIn), "base to router");
+        SafeErc20.safeTransfer(base, address(universalRouter), leg.amountIn);
 
         uint256 ethBefore = address(this).balance;
         universalRouter.execute(leg.commands, leg.inputs, leg.deadline);
@@ -284,7 +285,7 @@ contract StonkzRouter {
         _requireQuoteHonoured(leg, ethOut);
         require(ethOut >= minEthOut, "slippage");
 
-        if (surplus > 0) require(IERC20(base).transfer(msg.sender, surplus), "surplus");
+        if (surplus > 0) SafeErc20.safeTransfer(base, msg.sender, surplus);
         _sendEth(msg.sender, ethOut);
 
         emit AtomicSell(msg.sender, token, amountToken, baseOut, ethOut);
