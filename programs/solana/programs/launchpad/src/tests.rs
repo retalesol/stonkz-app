@@ -516,6 +516,37 @@ fn flex_earns_zero_pool_weight() {
 }
 
 #[test]
+fn the_accumulator_resolves_a_fill_on_every_allowed_supply() {
+    // Regression. At `ACC_PRECISION = 1e12` the largest allowed supply, fully
+    // staked at the 365-day multiplier, drove `per_weight` to zero: the pool
+    // held every accrual as dust and stakers earned nothing, with no error
+    // raised anywhere. The failure is silent, so it needs an explicit test
+    // rather than trust in the fuzz, which never happened to stake a whole 1e12
+    // float.
+    for supply in ALLOWED_SUPPLIES {
+        let atoms = (supply as u128) * 10u128.pow(TOKEN_DECIMALS as u32);
+        let weight = atoms * (LOCK_WEIGHT_BPS[6] as u128) / (BPS_DEN as u128);
+
+        // One atom of a 6-decimal base is the smallest reward that can arrive.
+        let (acc, dust) = advance_acc(0, 1_000_000, weight).expect("no overflow");
+        assert!(
+            acc > 0,
+            "supply {supply}: a 1.0-base-token accrual must move the accumulator, \
+             not vanish into dust (weight {weight})"
+        );
+        assert!(dust < 1_000_000, "supply {supply}: most of the accrual must land");
+
+        // And a staker holding the whole float can actually claim it back.
+        let claimable = pending_reward(weight, acc, 0).expect("no overflow");
+        assert!(
+            claimable > 900_000,
+            "supply {supply}: sole staker should recover nearly the whole accrual, got {claimable}"
+        );
+        assert!(claimable <= 1_000_000, "supply {supply}: and never more than it");
+    }
+}
+
+#[test]
 fn reward_accumulator_conserves_value() {
     let mut rng = Rng::new(0xACC0_1234);
     for _ in 0..20_000 {

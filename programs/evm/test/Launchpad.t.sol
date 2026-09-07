@@ -407,6 +407,39 @@ contract LaunchpadTest is Test {
         assertGt(base.balanceOf(staker), held, "the staker can take it out");
     }
 
+    /// Regression. At the Solana program's `ACC_PRECISION = 1e12` this pool
+    /// resolved to zero: an 18-decimal float weighs ~1e27, so a 6-decimal base
+    /// reward divided by it truncated away entirely and the staker earned
+    /// nothing while the pool banked the whole share as dust. Silent, with no
+    /// error raised anywhere, which is why it gets an explicit test.
+    function testFuzz_AStakerAlwaysResolvesAFill(uint96 stakeSeed, uint8 termSeed) public {
+        uint16[7] memory terms = [uint16(0), 1, 7, 30, 90, 180, 365];
+        uint16 term = terms[1 + (uint256(termSeed) % 6)]; // skip FLEX: zero weight by design
+
+        address token = _launch("ACC", 500, false);
+        uint256 got = _buy(token, staker, FILL);
+        // At least 1% of the float. A dust stake really is entitled to zero —
+        // `poolFrac` is `staked / (2 * circulating)` and it floors — so pinning
+        // the accrual above zero only means something for a real position.
+        uint256 floor_ = got / 100;
+        uint256 amount = floor_ + (uint256(stakeSeed) % (got - floor_));
+
+        vm.startPrank(staker);
+        StonkzToken(token).approve(address(pad), type(uint256).max);
+        pad.stake(token, amount, term);
+        vm.stopPrank();
+
+        _buy(token, trader, FILL / 2);
+
+        StonkzLaunchpad.Coin memory c = pad.coinInfo(token);
+        assertGt(c.stakerAccruedBase, 0, "the pool was owed something");
+        (uint256 pending,) = pad.pendingStakeRewards(token, staker);
+        // The sole staker must be able to see essentially all of it. Some dust
+        // is carried forward by design; losing the whole accrual is the bug.
+        assertGt(pending * 100, c.stakerAccruedBase * 90, "the accrual must reach the staker");
+        assertLe(pending, c.stakerAccruedBase, "and never exceed what was accrued");
+    }
+
     function test_TwoCoinsDoNotShareAStakePool() public {
         address a = _launch("AAA", 250, false);
         address b = _launch("BBB", 250, false);

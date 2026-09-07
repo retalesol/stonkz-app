@@ -84,7 +84,26 @@ pub const LOCK_DAYS: [u16; 7] = [0, 1, 7, 30, 90, 180, 365];
 pub const LOCK_WEIGHT_BPS: [u64; 7] = [0, 11_000, 12_500, 15_000, 25_000, 50_000, 80_000];
 
 /// Fixed-point scale for the reward-per-weight accumulators.
-pub const ACC_PRECISION: u128 = 1_000_000_000_000;
+///
+/// The accumulator divides a reward in *base* atoms by a weight in *launched
+/// token* atoms, so the scale has to span the gap between two unrelated
+/// magnitudes. `1e12` is not enough: the largest allowed supply is 1e12 tokens,
+/// which at 6 decimals and the 365-day multiplier gives a fully-staked weight
+/// of 8e18, and `reward · 1e12 / 8e18` truncates to **zero** for any reward
+/// under 8 million atoms. Stakers on such a coin would accrue nothing at all
+/// while the pool banked their entire share as dust — silent, with no error
+/// anywhere. Even a 1e9-supply coin only resolved to about 1 part in 125.
+///
+/// `1e18` gives every allowed supply at least five significant digits per
+/// accrual, and the products stay inside `u128`: `amount · ACC_PRECISION` peaks
+/// near 1.8e37, and `weight · (acc − debt)` is bounded by total rewards times
+/// the scale — also about 1.8e37 — against a 3.4e38 ceiling.
+///
+/// The EVM mirror uses `1e36` for the same reason and by the same argument; its
+/// launched tokens are 18 decimals rather than 6, so its gap is twelve orders
+/// wider. This is the one constant the two chains are allowed to disagree on,
+/// because it is a function of token decimals and not of the fee model.
+pub const ACC_PRECISION: u128 = 1_000_000_000_000_000_000;
 
 /* -------------------------------------------------------------------------- */
 /* Oracle                                                                      */
