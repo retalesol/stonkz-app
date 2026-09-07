@@ -36,6 +36,13 @@
       "when": 1757120400000,
       "tag": "0004_index_advisor_prune",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1757120500000,
+      "tag": "0005_router_and_launch",
+      "breakpoints": true
     }
   ]
 }

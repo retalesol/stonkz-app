@@ -107,6 +107,8 @@ export const tokens = pgTable(
     name: text('name').notNull(),
     descr: text('descr').notNull().default(''),
     creator: text('creator').notNull(),
+    /** The launched token's own on-chain address (SPL mint / ERC-20 contract). */
+    mint: text('mint').notNull().default(''),
     baseSymbol: text('base_symbol').notNull(),
     baseMint: text('base_mint').notNull(),
     supply: doublePrecision('supply').notNull(),
@@ -129,12 +131,75 @@ export const tokens = pgTable(
     telegram: text('telegram'),
     launchedAt: timestamp('launched_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * CPMM state in atoms, mirroring `@stonkz/curve-sim`'s `CurveParams` /
+     * `CurveState`. `text`, not `bigint`/`numeric`: a fully-staked `k` can
+     * reach ~1e31, past Postgres `bigint`'s 2^63-1 ceiling, and every
+     * consumer already speaks `bigint` in TypeScript, never SQL arithmetic on
+     * these columns. Defaults are `0` for rows the read-path fixtures seed
+     * without curve state; `/quote` and `/trade/prepare` treat that as "no
+     * curve data" and refuse to quote rather than divide by zero.
+     */
+    tokenDecimals: integer('token_decimals').notNull().default(6),
+    baseDecimals: integer('base_decimals').notNull().default(6),
+    /** Oracle snapshot at `create_token`, USD per whole base token, 1e6-scaled. */
+    basePriceUsd1e6: text('base_price_usd_1e6').notNull().default('0'),
+    curveTokensForSale: text('curve_tokens_for_sale').notNull().default('0'),
+    curveVirtualBase0: text('curve_virtual_base0').notNull().default('0'),
+    curveVirtualToken0: text('curve_virtual_token0').notNull().default('0'),
+    curveK: text('curve_k').notNull().default('0'),
+    /** Mutable: the pool's actual reserves, updated as fills land. */
+    curveRealBase: text('curve_real_base').notNull().default('0'),
+    curveRealToken: text('curve_real_token').notNull().default('0'),
+    curveGradMcapBase: text('curve_grad_mcap_base').notNull().default('0'),
   },
   (t) => [
     primaryKey({ columns: [t.net, t.sym] }),
     index('tokens_lane_idx').on(t.net, t.lane),
     index('tokens_mc_idx').on(t.net, t.mc),
     index('tokens_creator_idx').on(t.net, t.creator),
+  ],
+);
+
+/**
+ * One row per `POST /launch/prepare` call, per plan step 90–91.
+ *
+ * `/launch/confirm` reads this back to verify the signed transaction it is
+ * handed matches — byte for byte on Solana, `to`+`data` on Robinhood — what
+ * this server actually built, rather than trusting client-reported params
+ * post-signature. Never a source of truth by itself: the `tokens` primary key
+ * `(net, sym)` is what actually rejects a duplicate ticker if two prepares for
+ * the same ticker race.
+ */
+export const launchIntents = pgTable(
+  'launch_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    net: text('net').notNull(),
+    ticker: text('ticker').notNull(),
+    creator: text('creator').notNull(),
+    name: text('name').notNull(),
+    descr: text('descr').notNull().default(''),
+    uri: text('uri').notNull().default(''),
+    supply: doublePrecision('supply').notNull(),
+    feeBps: integer('fee_bps').notNull(),
+    cashback: boolean('cashback').notNull().default(false),
+    baseSymbol: text('base_symbol').notNull(),
+    baseMint: text('base_mint').notNull(),
+    devBuyNative: doublePrecision('dev_buy_native').notNull().default(0),
+    /** Solana: PDA of the ticker, known pre-sign. Robinhood: null — `confirm` reads it from the `TokenCreated` log. */
+    predictedMint: text('predicted_mint'),
+    /** Solana: the compiled message (no signatures), base64. Robinhood: the exact calldata. */
+    unsignedPayload: text('unsigned_payload').notNull(),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    consumedTxSig: text('consumed_tx_sig'),
+  },
+  (t) => [
+    index('launch_intents_lookup_idx').on(t.net, t.ticker, t.consumedAt),
+    index('launch_intents_creator_idx').on(t.net, t.creator),
+    index('launch_intents_expires_idx').on(t.expiresAt),
   ],
 );
 
