@@ -15,11 +15,14 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
+  SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js';
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccount,
   createMint,
   getAccount,
+  getAssociatedTokenAddressSync,
   getMint,
   mintTo,
   TOKEN_PROGRAM_ID,
@@ -1048,6 +1051,214 @@ program.methods
         .accountsPartial({ global: globalPda, admin: admin.publicKey })
         .signers([admin])
         .rpc();
+    });
+  });
+
+  /* ------------------------------------------- 2.A graduation: LP migration */
+
+  describe('graduation liquidity migration (Raydium CPMM)', () => {
+    // Devnet deployment + the default, permissionless fee-tier config and its
+    // hardcoded fee receiver. Cloned onto the local validator by
+    // `[test.validator.clone]` in Anchor.toml so this suite exercises the
+    // real Raydium program's own account validation, not a mock.
+    const RAYDIUM_PROGRAM = new PublicKey('DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb');
+    const RAYDIUM_AMM_CONFIG = new PublicKey('5MxLgy9oPdTC3YgkiePHqr3EoCRD9uLVYRQS2ANAs7wy');
+    const CREATE_POOL_FEE_RECEIVER = new PublicKey('3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy');
+
+    const RAYDIUM_AUTH_SEED = enc('vault_and_lp_mint_auth_seed');
+    const POOL_LP_MINT_SEED = enc('pool_lp_mint');
+    const POOL_VAULT_SEED = enc('pool_vault');
+    const OBSERVATION_SEED = enc('observation');
+
+    before(async () => {
+      await program.methods
+        .setRaydiumConfig(RAYDIUM_PROGRAM, RAYDIUM_AMM_CONFIG)
+        .accountsPartial({ global: globalPda, admin: admin.publicKey })
+        .signers([admin])
+        .rpc();
+    });
+
+    /** Buy out the whole curve allocation and graduate it. */
+    async function graduateFully(ticker: string) {
+      const coin = await launch(ticker, { feeBps: 100 });
+      const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
+      await buy(coin, trader, traderBase, tt, 100_000n * 1_000_000n);
+
+      const c = await program.account.curve.fetch(coin.curve);
+      assert.isTrue(c.complete, 'curve must be exhausted before graduate()');
+
+      await program.methods
+        .graduate()
+        .accountsPartial({
+          global: globalPda,
+          curve: coin.curve,
+          mint: coin.mint,
+          baseMint,
+          oracle: oraclePdaFor(baseMint),
+          curveTokenVault: coin.curveTokenVault,
+          caller: trader.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([trader])
+        .rpc();
+
+      return coin;
+    }
+
+    /** Every Raydium + escrow account `migrate_liquidity` needs, derived the
+     * same way the program derives them. */
+    function raydiumAccountsFor(coin: { mint: PublicKey } & ReturnType<typeof coinAccounts>) {
+      const mint = coin.mint;
+      const escrow = vault('raydium_escrow', mint);
+      const poolState = vault('raydium_pool', mint);
+      const raydiumAuthority = PublicKey.findProgramAddressSync(
+        [RAYDIUM_AUTH_SEED],
+        RAYDIUM_PROGRAM,
+      )[0];
+      const lpMint = PublicKey.findProgramAddressSync(
+        [POOL_LP_MINT_SEED, poolState.toBuffer()],
+        RAYDIUM_PROGRAM,
+      )[0];
+      const poolVaultBase = PublicKey.findProgramAddressSync(
+        [POOL_VAULT_SEED, poolState.toBuffer(), baseMint.toBuffer()],
+        RAYDIUM_PROGRAM,
+      )[0];
+      const poolVaultToken = PublicKey.findProgramAddressSync(
+        [POOL_VAULT_SEED, poolState.toBuffer(), mint.toBuffer()],
+        RAYDIUM_PROGRAM,
+      )[0];
+      const observationState = PublicKey.findProgramAddressSync(
+        [OBSERVATION_SEED, poolState.toBuffer()],
+        RAYDIUM_PROGRAM,
+      )[0];
+      const escrowBase = getAssociatedTokenAddressSync(baseMint, escrow, true);
+      const escrowToken = getAssociatedTokenAddressSync(mint, escrow, true);
+      const escrowLpToken = getAssociatedTokenAddressSync(lpMint, escrow, true);
+      return {
+        escrow,
+        poolState,
+        raydiumAuthority,
+        lpMint,
+        poolVaultBase,
+        poolVaultToken,
+        observationState,
+        escrowBase,
+        escrowToken,
+        escrowLpToken,
+      };
+    }
+
+    async function migrate(coin: { mint: PublicKey } & ReturnType<typeof coinAccounts>) {
+      const r = raydiumAccountsFor(coin);
+      await program.methods
+        .migrateLiquidity()
+        .accountsPartial({
+          global: globalPda,
+          curve: coin.curve,
+          mint: coin.mint,
+          baseMint,
+          curveBaseVault: coin.curveBaseVault,
+          lpVault: coin.lpVault,
+          escrow: r.escrow,
+          escrowBase: r.escrowBase,
+          escrowToken: r.escrowToken,
+          raydiumProgram: RAYDIUM_PROGRAM,
+          ammConfig: RAYDIUM_AMM_CONFIG,
+          raydiumAuthority: r.raydiumAuthority,
+          poolState: r.poolState,
+          lpMint: r.lpMint,
+          poolVaultBase: r.poolVaultBase,
+          poolVaultToken: r.poolVaultToken,
+          observationState: r.observationState,
+          createPoolFee: CREATE_POOL_FEE_RECEIVER,
+          escrowLpToken: r.escrowLpToken,
+          migrationAuthority: migrationAuth.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          baseTokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: SYSVAR_RENT_PUBKEY,
+        })
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 700_000 })])
+        .signers([migrationAuth])
+        .rpc();
+      return r;
+    }
+
+    it('seeds a real Raydium CPMM pool and burns 100% of the LP it mints', async () => {
+      const coin = await graduateFully('RAYMIG1');
+      const graduated = await program.account.curve.fetch(coin.curve);
+      const baseToMigrate = BigInt(graduated.realBase.toString());
+      const tokensToMigrate = BigInt(graduated.lpReserve.toString());
+      assert.isTrue(baseToMigrate > 0n && tokensToMigrate > 0n);
+
+      const r = await migrate(coin);
+
+      const after = await program.account.curve.fetch(coin.curve);
+      assert.isTrue(after.migrated, 'curve must be marked migrated');
+      assert.equal(after.raydiumPool.toBase58(), r.poolState.toBase58());
+      assert.equal(BigInt(after.realBase.toString()), 0n, 'base reserve zeroed');
+      assert.equal(BigInt(after.lpReserve.toString()), 0n, 'token reserve zeroed');
+      const lpBurned = BigInt(after.raydiumLpBurned.toString());
+      assert.isTrue(lpBurned > 0n);
+
+      // The pool is real, owned by Raydium, and verifiable independent of
+      // this program -- a user or an indexer can confirm all of this straight
+      // off a block explorer.
+      const poolInfo = await conn.getAccountInfo(r.poolState);
+      assert.isNotNull(poolInfo, 'pool_state must exist');
+      assert.equal(poolInfo!.owner.toBase58(), RAYDIUM_PROGRAM.toBase58());
+      const vault0Info = await conn.getAccountInfo(r.poolVaultBase);
+      const vault1Info = await conn.getAccountInfo(r.poolVaultToken);
+      assert.isNotNull(vault0Info);
+      assert.isNotNull(vault1Info);
+
+      // The LP mint's *total supply* is reduced, not merely sent to an address
+      // nobody uses -- there is no SPL analogue of "still counted in supply
+      // but stuck at 0xdead". This is the on-chain-verifiable claim.
+      const lpMintInfo = await getMint(conn, r.lpMint);
+      assert.equal(lpMintInfo.supply, 0n, 'all minted LP burned, supply is exactly zero');
+      const escrowLp = await getAccount(conn, r.escrowLpToken);
+      assert.equal(escrowLp.amount, 0n, 'the escrow holds nothing after the burn');
+    });
+
+    it('refuses a second migration for the same coin', async () => {
+      const coin = await graduateFully('RAYMIG2');
+      await migrate(coin);
+      await rejects(migrate(coin), /AlreadyMigrated/);
+    });
+
+    it('rejects a pre-existing pool_state account (pre-seeded-pool defence)', async () => {
+      const coin = await graduateFully('RAYMIG3');
+      const r = raydiumAccountsFor(coin);
+      // In production nobody but this program can ever produce a signature
+      // for `pool_state`, so it cannot really be pre-seeded -- that is the
+      // whole point of using this program's own PDA rather than Raydium's
+      // canonical, guessable one. This test only proves the defence-in-depth
+      // assertion itself fires, by forcing the "already exists" precondition
+      // directly.
+      await conn.confirmTransaction(
+        await conn.requestAirdrop(r.poolState, 1_000_000),
+        'confirmed',
+      );
+      await rejects(migrate(coin), /PoolAlreadyExists/);
+    });
+
+    it('leaves migration_authority with no path to name an arbitrary destination', async () => {
+      // The old `MigrateLiquidity` shape (`destination_base`/
+      // `destination_token`, caller-supplied token accounts) no longer
+      // exists anywhere in the IDL.
+      const idl = program.idl as unknown as {
+        instructions: { name: string; accounts: { name: string }[] }[];
+      };
+      const ix = idl.instructions.find((i) => i.name === 'migrateLiquidity');
+      assert.isDefined(ix, 'migrateLiquidity must still exist');
+      const names = ix!.accounts.map((a) => a.name);
+      assert.notInclude(names, 'destinationBase');
+      assert.notInclude(names, 'destinationToken');
+      // And the only signer able to influence this instruction at all is
+      // `migrationAuthority`, funding rent -- never a token-account owner.
+      assert.include(names, 'migrationAuthority');
     });
   });
 });

@@ -20,3 +20,22 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+# The local validator clones the real Raydium CPMM (devnet) program plus the
+# accounts `migrate_liquidity`'s tests need it to already have on chain: the
+# default `AmmConfig` (index 0, permissionless, no OpenBook requirement) and
+# its hardcoded `create_pool_fee` receiver. This makes `tests/migration.ts`
+# exercise the actual Raydium program's account validation, not a mock —
+# see docs/security-review-findings.md H1 and SPEC.md §5/§7.
+[test.validator]
+url = "https://api.devnet.solana.com"
+bind_address = "127.0.0.1"
+
+[[test.validator.clone]]
+address = "DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb" # Raydium CPMM (devnet)
+
+[[test.validator.clone]]
+address = "5MxLgy9oPdTC3YgkiePHqr3EoCRD9uLVYRQS2ANAs7wy" # AmmConfig index 0 (devnet)
+
+[[test.validator.clone]]
+address = "3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy" # create_pool_fee receiver (devnet)
