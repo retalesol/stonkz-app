@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": ".",
+    "types": [],
+    // src/index.ts is a byte-identical mirror of programs/curve-sim.ts (see
+    // test/sync.test.ts), which type-checks under that tree's looser
+    // `tsconfig.parity.json` (no `noUncheckedIndexedAccess`). Relaxing the
+    // same one flag here — rather than editing the mirrored body out of sync
+    // with upstream — keeps the two files identical.
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
