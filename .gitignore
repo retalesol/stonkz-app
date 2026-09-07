@@ -42,3 +42,10 @@ pnpm-debug.log*
 .vite/
 .turbo/
 .eslintcache
+
+# load-test fixtures — generated per run by loadtest/seed.ts and
+# loadtest/mint-tokens.ts; auth.json/wallets.json hold freshly-generated key
+# material, manifest.json is only meaningful against the DB it was seeded
+# into, and results/ holds this machine's k6 JSON summaries.
+apps/api/loadtest/fixtures/*.json
+apps/api/loadtest/results/
