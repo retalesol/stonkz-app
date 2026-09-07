@@ -272,18 +272,24 @@ export class Ledger {
       sp = Math.min(sp, Math.max(0, this.opts.dailySpCap - usedSp));
     }
 
+    let eventId: number;
     try {
-      await this.db.insert(xpEvents).values({
-        wallet,
-        net,
-        amount: xp,
-        baseAmount: input.baseXp,
-        reason,
-        txSig: input.txSig ?? null,
-        sym: input.sym ?? null,
-        dayUtc,
-        meta: { mult, cappedBy, ...(input.meta ?? {}) },
-      });
+      const [inserted] = await this.db
+        .insert(xpEvents)
+        .values({
+          wallet,
+          net,
+          amount: xp,
+          baseAmount: input.baseXp,
+          reason,
+          txSig: input.txSig ?? null,
+          sym: input.sym ?? null,
+          dayUtc,
+          meta: { mult, cappedBy, ...(input.meta ?? {}) },
+        })
+        .returning({ id: xpEvents.id });
+      if (!inserted) throw new Error('xp_events insert returned no row');
+      eventId = inserted.id;
     } catch (err) {
       if (isUniqueViolation(err)) {
         return {
@@ -303,7 +309,10 @@ export class Ledger {
       throw err;
     }
 
-    const after = await this.applyBalanceDeltas(net, wallet, dayUtc, reason, 'xp_event', input.txSig ?? null, {
+    // The ledger row points at the `xp_events` row that caused it, not at the
+    // signature: one transaction can pay several reasons (a fill that also
+    // unlocks `first` and `whale`), and each needs its own idempotency key.
+    const after = await this.applyBalanceDeltas(net, wallet, dayUtc, reason, 'xp_event', String(eventId), {
       XP: xp,
       SP: sp,
     });
@@ -362,6 +371,9 @@ export class Ledger {
     const def = achOf(key);
     if (!def) return { unlocked: false, xp: 0 };
 
+    // The row is claimed first, because its primary key is the once-only
+    // guard. Server-authored achievements (`crate`, `social`, `streak7`) carry
+    // no signature, so `xp_events`' partial index cannot dedupe them.
     const inserted = await this.db
       .insert(achievements)
       .values({ wallet, net, key, unlockedAt: new Date(this.now()) })
@@ -369,13 +381,24 @@ export class Ledger {
       .returning({ key: achievements.key });
     if (inserted.length === 0) return { unlocked: false, xp: 0 };
 
-    const award = await this.award({
-      net,
-      wallet,
-      reason: achievementReason(key),
-      baseXp: def.xp,
-      txSig: txSig ?? null,
-    });
+    let award: AwardResult;
+    try {
+      award = await this.award({
+        net,
+        wallet,
+        reason: achievementReason(key),
+        baseXp: def.xp,
+        txSig: txSig ?? null,
+      });
+    } catch (err) {
+      // Release the claim, or the wallet would show the achievement as earned
+      // while never having been paid for it — and a retry would see it as
+      // already unlocked and pay nothing.
+      await this.db
+        .delete(achievements)
+        .where(and(eq(achievements.wallet, wallet), eq(achievements.net, net), eq(achievements.key, key)));
+      throw err;
+    }
 
     await this.opts.publisher.user(net, wallet, {
       type: 'achievement',

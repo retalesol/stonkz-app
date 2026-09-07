@@ -13,6 +13,13 @@ export interface EventSource {
   readonly net: Net;
   /** Chain head — slot on Solana, block number on the EVM. */
   head(): Promise<number>;
+  /**
+   * The earliest position worth indexing: the slot or block the programs were
+   * deployed at. A fresh cursor jumps here instead of crawling from zero —
+   * Solana is 250M slots in, so starting at genesis is not a slow start, it is
+   * an infinite one.
+   */
+  startPosition(): Promise<number>;
   /** Every event in `(fromExclusive, toInclusive]`, in chain order. */
   poll(fromExclusive: number, toInclusive: number): Promise<ChainEvent[]>;
 }
@@ -30,6 +37,10 @@ export class FixtureEventSource implements EventSource {
 
   async head(): Promise<number> {
     return this.events.at(-1)?.chainPosition ?? 0;
+  }
+
+  async startPosition(): Promise<number> {
+    return this.events[0]?.chainPosition ?? 0;
   }
 
   async poll(fromExclusive: number, toInclusive: number): Promise<ChainEvent[]> {

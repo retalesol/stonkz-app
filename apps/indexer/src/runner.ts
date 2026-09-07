@@ -44,7 +44,10 @@ export class IndexerRunner {
     const source = this.opts.sources[net];
     const head = await source.head();
     const cursor = await this.opts.cursors.read(net);
-    const from = cursor.position;
+    // A zeroed cursor means "never indexed"; start at the deployment position
+    // rather than walking 250 million empty Solana slots.
+    const from =
+      cursor.position > 0 ? cursor.position : Math.max(0, (await source.startPosition()) - 1);
     const to = Math.min(head, from + this.batchSize);
 
     if (to <= from) {

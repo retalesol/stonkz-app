@@ -352,9 +352,10 @@ export function canonicalScenario(seed = 0xc0ffee): ScenarioResult {
   rh.launch({ sym: 'RHDOG', name: 'RH Doggo', creator: actors.rhCreator, feeBps: 200 });
   // 2.5 ETH is over the 2 ETH cut documented in game/rules.ts.
   rh.trade({ sym: 'RHDOG', trader: actors.rhWhale, side: 'buy', nativeAmount: 2.5, mc: 15_000, feeBps: 200 });
-  rh.trade({ sym: 'RHDOG', trader: actors.rhTrader, side: 'buy', nativeAmount: 0.2, mc: 21_000, feeBps: 200 });
+  // Crosses 55% of the $69K cap, so RHDOG moves from the `new` lane to `soon`.
+  rh.trade({ sym: 'RHDOG', trader: actors.rhTrader, side: 'buy', nativeAmount: 0.2, mc: 40_000, feeBps: 200 });
   // 0.0002 ETH is under the 0.0005 ETH dust floor.
-  rh.trade({ sym: 'RHDOG', trader: actors.rhTrader, side: 'buy', nativeAmount: 0.0002, mc: 21_050, feeBps: 200 });
+  rh.trade({ sym: 'RHDOG', trader: actors.rhTrader, side: 'buy', nativeAmount: 0.0002, mc: 40_100, feeBps: 200 });
   rh.claimCreatorFees({ sym: 'RHDOG', creator: actors.rhCreator, nativeAmount: 0.008 });
 
   return {

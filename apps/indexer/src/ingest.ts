@@ -527,17 +527,22 @@ export class Ingestor {
     await this.opts.publisher.board({ type: 'graduated', net: event.net, sym: event.sym });
     await this.opts.publisher.token(event.sym, { type: 'graduated', net: event.net, sym: event.sym });
 
-    // Everyone still holding at the moment of graduation earns `grad`.
-    const holders = await this.db
-      .select({ wallet: holdersSnapshot.wallet })
-      .from(holdersSnapshot)
-      .where(
-        and(
-          eq(holdersSnapshot.net, event.net),
-          eq(holdersSnapshot.sym, event.sym),
-          gt(holdersSnapshot.tokenAmount, 0),
-        ),
-      );
+    // Everyone still holding at the moment of graduation earns `grad` — except
+    // dust positions. A wallet that sprayed 0.004 SOL across the board must not
+    // collect a 250 XP achievement for it, which is the same rule the trade
+    // path applies.
+    const holders = (
+      await this.db
+        .select({ wallet: holdersSnapshot.wallet, costNative: holdersSnapshot.costNative })
+        .from(holdersSnapshot)
+        .where(
+          and(
+            eq(holdersSnapshot.net, event.net),
+            eq(holdersSnapshot.sym, event.sym),
+            gt(holdersSnapshot.tokenAmount, 0),
+          ),
+        )
+    ).filter((h) => !this.opts.awards.isDust(event.net, h.costNative));
 
     for (const holder of holders) {
       const unlocked = await this.opts.awards.graduatedWhileHolding({
