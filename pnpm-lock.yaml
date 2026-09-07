@@ -136,9 +136,18 @@ importers:
 
   apps/web:
     dependencies:
+      '@noble/curves':
+        specifier: ^1.9.7
+        version: 1.9.7
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
       '@stonkz/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      bs58:
+        specifier: ^6.0.0
+        version: 6.0.0
     devDependencies:
       typescript:
         specifier: ^5.9.2
