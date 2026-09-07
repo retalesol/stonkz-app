@@ -6,6 +6,9 @@ import { meRoutes } from '../routes/me.js';
 import { quoteRoutes } from '../routes/quote.js';
 import { rewardsRoutes } from '../routes/rewards.js';
 import { tokenRoutes } from '../routes/tokens.js';
+import { tradeRoutes } from '../routes/trade.js';
+import { launchRoutes } from '../routes/launch.js';
+import { feesRoutes } from '../routes/fees.js';
 import type { AppDeps, AppEnv } from './context.js';
 import { requestLogger, withDeps } from './middleware.js';
 import { cors, securityHeaders } from './security.js';
@@ -32,6 +35,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/', tokenRoutes());
   app.route('/', quoteRoutes());
   app.route('/', marketRoutes());
+  app.route('/', tradeRoutes());
+  app.route('/', launchRoutes());
+  app.route('/', feesRoutes());
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
 
