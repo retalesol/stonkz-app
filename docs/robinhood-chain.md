@@ -684,3 +684,187 @@ Three operational facts that matter more than the addresses:
 3. **Equity feeds are 24/5; crypto feeds are 24/7.** Combined with `oraclePaused()`, this means USD valuation of a
    stock-token base is intermittently unavailable by design. Denominate the graduation check through ETH/USD (§4.4,
    point 5).
+
+---
+
+## 9. Impact on the Stonkz build — what actually has to change
+
+Ordered by how much work it moves. Each row says what the plan currently assumes, what is true, and the concrete change.
+
+### 9.1 Must change
+
+| Plan location | Plan assumes | Truth | Change |
+|---|---|---|---|
+| Locked decisions; step 162–163 | "Lock and **burn** LP tokens for life. **Keep the fee-claim authority**" | Impossible on v2 (fees *are* the LP claim); burning a v3/v4 NFT also kills the fee claim | Split the mechanic. Memecoin graduation → **v2 pool, LP burned** (fees then autocompound into reserves forever, by construction). `$STONKZ` POL → **v3/v4 position inside an immutable `StonkzLpLock`** with a fee-collect call and *no* withdrawal path. Rewrite the plan's copy. §4.2–4.3 |
+| Step 83 | "Uniswap Universal Router (or Trading API calldata) + curve contract in one wallet tx" | Trading API calldata puts the base token in the user's EOA and cannot target our contract as the next step | Deploy a **`StonkzRouter` periphery contract**; encode Universal Router commands ourselves with recipient = `ADDRESS_THIS`; use the Trading API/Quoters for **pricing only**. Add ERC-2612 `permit` to the launched token so the sell path stays one signature. §3.3 |
+| Step 85; settings modal | Priority fee and MEV shield/relay apply to the composed tx | Sequencer is **FCFS with no public mempool**; priority fees do not buy inclusion and there is no PGA to shield from | Make both controls inert for `net=RH` behind `RH_PRIORITY_FEE_ORDERING=false`; exclude prio from the `SET.cap` pre-flight on RH; do not tell an RH user "MEV SHIELD ON" is protecting them. Keep the code path — ArbOS 61 makes this chain-owner-flippable. §3.4 |
+| Step 79; step 126 | Standard oracle-staleness guard; time windows | ETH/USD **heartbeat is 86400 s**; there is **no L2 sequencer uptime feed**; equity feeds are 24/5 | Heartbeat-aware staleness bound (86400 + grace), sanity band, graduation-specific admin pause, graduation denominated through **ETH/USD**. **A stale oracle must never revert a buy/sell** — it just defers graduation. §4.4 |
+| Step 72; steps 126, 131 | Straight Solidity port of the Anchor program | `block.number` returns the **L1** height on this chain | Every deadline — cashback 300 s, stake locks, quote expiry — on `block.timestamp`. `ArbSys(0x64).arbBlockNumber()` for L2 height. No OZ `Governor` with the default block-number clock. §5.1 |
+| Step 50 | "wagmi/viem for Robinhood Wallet / **injected** EVM" | Robinhood Wallet is **mobile-only**; no browser extension, so no desktop `window.ethereum` | **WalletConnect is a required connector**, plus a WalletConnect project id in `.env`. Do not gate connect on `wallet_switchEthereumChain`. §6.1 |
+| Step 49 | SIWE verified by signature recovery | **ERC-4337 is first-class** on this chain, so smart-contract accounts will log in | SIWE verifier must fall back to **EIP-1271** `isValidSignature`, not just `ecrecover`. §6.3 |
+| Step 84; "must never ship" list | Zero Stonkz fee on aggregator hops | Trading API can carry a **fee attached to the API key** (`portionBips`), and `integratorFees` overrides it | Never send `integratorFees`; **assert `portionBips` is absent or 0 on every quote** and fail loudly otherwise. §3.2 |
+| Steps 60, 90 | Base-mint allow-list is a convenience list | Rampant impersonation; fake `GME`/`DJT` live; `~1,900` fee-trap pools at 88–100% LP fee | Allow-list is a **security control**: address-pinned, provenance-checked via the `StockFactory` `Deployed` event or the EIP-1967 beacon slot, never symbol-matched. Router pins pool keys/fee tiers and never probes arbitrary tiers. §3.3, §7.4 |
+| Step 156 | Jurisdiction gate is Phase 5 polish | Stock Tokens are **debt securities**, barred from US persons and restricted in CA/UK/CH/UAE | Stock-base launches become a **jurisdiction-gated feature with a Phase 2 dependency**; `/base-tokens` and `/launch/prepare` enforce it server-side. §7.5 |
+| Step 5; step 45 | Public RPC URL in env | Robinhood documents the public RPC as rate-limited and **not for production**; Alchemy is the recommended provider | `ALCHEMY_KEY` + provider URL in env; public RPC as dev fallback only; indexer needs an **archive** endpoint and can use the sequencer feed `wss://feed.mainnet.chain.robinhood.com`. §2.2 |
+
+### 9.2 Confirmed as planned — no change needed
+
+- **ETH is the gas token.** The UI's ETH ticket, the ETH wallet line, and the ETH treasury vaults are all correct (row 9).
+- **Uniswap is available**, so `UNISWAP → CURVE` as the RH route label is right, and the Trading API supports 4663 (rows 20, 26).
+- **The curve vault can hold a Stock Token safely.** ERC-8056 is not a rebase; `balanceOf` and `transfer` are untouched by
+  corporate actions (row 38, §7.3). This was the biggest latent risk in the pairs design and it came out clean.
+- **An EVM mirror is a normal Solidity port** — full EVM equivalence, 24 KB limit, Permit2/Multicall3/CREATE2/Safe present
+  (row 11).
+- **Deployment is permissionless**; no allowlist blocks Phase 2.A (§2.1).
+- **A direct competitor already shipped this shape on this chain** (pools.trade, 2026-08-05), which de-risks the concept and
+  gives us a live comparison for fees: their all-in cost is a 0.25% LP fee with no launchpad fee, versus Stonkz's creator-set
+  1.0–5.0% curve fee. That is a **product** finding worth a human look (§10).
+
+### 9.3 New risks to record in the runbook, not to engineer around
+
+- **Sequencer-level transaction filtering is live** (~150/day) and can defeat L1 force-inclusion, so treasury withdrawal
+  runbooks must not assume force-inclusion as a guaranteed escape hatch (§2.4, plan step 142).
+- **A single registry transaction can freeze every Stock Token on the chain**, which would make stock-based curves
+  untradeable and un-graduatable through no fault of ours. Model it as a `base_frozen` state with real UI copy (§7.3).
+- **Single centralized sequencer** operated by Robinhood; chain uptime is Robinhood's uptime. Plan step 46's "alert if either
+  chain lag > 30s" is the right instrument; add an explicit "RH sequencer down" degraded mode.
+
+---
+
+## 10. Recommended defaults to code against right now
+
+Everything here is defensible from a cited source today. Items marked **⚙ flag** are the ones I expect to move — keep them
+in config, not in code.
+
+```ts
+// packages/shared/src/chains/rh.ts  (illustrative — values sourced in §2, §3, §8)
+export const RH = {
+  chainId: 4663,                                   // ⚙ flag: 46630 on testnet
+  testnetChainId: 46630,
+  nativeSymbol: 'ETH',
+  nativeDecimals: 18,
+
+  // §2.2 — production must use a provider key, not the public RPC
+  rpcUrl: env.RH_RPC_URL,                          // Alchemy in prod
+  wsUrl: env.RH_WS_URL,
+  sequencerFeed: 'wss://feed.mainnet.chain.robinhood.com',
+  explorer: env.RH_EXPLORER,                       // ⚙ flag: host spelling varies, §2.3
+
+  // §3.1 — none of these are in @uniswap/sdk-core for 4663; config only
+  uniswap: {
+    universalRouter: '0x8876789976decbfcbbbe364623c63652db8c0904',
+    permit2:         '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    weth9:           '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    v2Factory:       '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f',
+    v2Router02:      '0x89e5DB8B5aA49aA85AC63f691524311AEB649eba',
+    v3Factory:       '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
+    v3QuoterV2:      '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7',
+    v3PositionMgr:   '0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3',
+    v4PoolManager:   '0x8366a39CC670B4001A1121B8F6A443A643e40951',
+    v4PositionMgr:   '0x58daEC3116AAe6d93017bAAea7749052E8a04fA7',
+    v4Quoter:        '0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94',
+    tradingApiChainId: 4663,
+    integratorFeeBps: 0,          // never set; assert portionBips == 0 on every quote, §3.2
+  },
+
+  arb: { arbSys: '0x0000000000000000000000000000000000000064',
+         arbGasInfo: '0x000000000000000000000000000000000000006C',
+         nodeInterface: '0x00000000000000000000000000000000000000C8' },
+
+  oracle: {
+    kind: 'chainlink',
+    ethUsd: '0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9',   // ⚙ flag, re-read Chainlink directory
+    usdDecimals: 8,
+    ethUsdHeartbeatSec: 86_400,                              // ⚙ flag — NOT minutes, §4.4
+    stalenessGraceSec: 3_600,                                // ⚙ tune
+    hasSequencerUptimeFeed: false,                           // §8, none exists on 4663
+  },
+
+  // §3.4 — inert today, chain-owner-flippable via ArbOS 61
+  priorityFeeOrdering: false,   // ⚙ flag
+  hasPublicMempool: false,
+  mevShieldMeaningful: false,   // ⚙ flag
+
+  // §4.3 — the two mechanics use different pool types on purpose
+  graduation: { targetUsd: 69_000, poolVersion: 'v2', lpDisposition: 'burn' },   // ⚙ flag
+  stonkzPol:  { poolVersion: 'v4', lpDisposition: 'immutable-locker' },          // ⚙ flag
+
+  baseTokens: {
+    // address-pinned allow-list; never resolve by symbol (§7.4)
+    ETH:  { address: 'native', decimals: 18, gated: false },
+    WETH: { address: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', decimals: 18, gated: false },
+    USDG: { address: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6,  gated: false }, // 6 dp, not 18
+    // stock bases: jurisdiction-gated (§7.5), require Chainlink feed + oraclePaused()==false
+    TSLA: { address: '0x322F0929c4625eD5bAd873c95208D54E1c003b2d', decimals: 18, gated: true },
+    AAPL: { address: '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9', decimals: 18, gated: true },
+    NVDA: { address: '0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC', decimals: 18, gated: true },
+    // USDC / USDT: feeds exist, canonical token addresses UNVERIFIED — do not add until read on-chain
+  },
+} as const
+```
+
+**Behavioural defaults for the contracts agent**
+
+1. Time is `block.timestamp`. `block.number` appears nowhere in the launchpad.
+2. Fee split 20/10/70 computed and settled on-chain, as planned — nothing on this chain changes that.
+3. Graduation is oracle-gated but **never trade-blocking**; a stale/paused oracle defers, it does not revert.
+4. Graduation creates the pool at a pinned fee tier with no third-party hook, and reverts if the pool already exists at an
+   unexpected price.
+5. Assume the base token can be paused or can block an address mid-transfer. Surface it; do not swallow the revert.
+6. Do not hardcode gas limits anywhere; the L1 data component moves independently.
+7. Ship on **testnet 46630 first** (faucet is capped at 0.01 ETH / 24 h, so plan fixture funding accordingly).
+
+**Behavioural defaults for the backend agent**
+
+1. `POST /auth/siwe` with `Chain ID: 4663` in the message, validated server-side against an allow-list; nonce single-use in
+   Redis; JWT binds `address` + `net=RH`.
+2. Verifier: ECDSA **then EIP-1271** fallback.
+3. Do not require a chain switch to sign; require the correct chain only at trade time.
+4. `domain`/`uri` must match the serving origin exactly, or Robinhood Wallet shows a domain-mismatch warning.
+5. Balances via `eth_getBalance` on the provider endpoint; footer USD from the ETH/USD feed, not a constant.
+6. Quote cache TTL stays 8 s; key it on `net + side + native amount + base address` as planned.
+7. `/base-tokens?network=RH` returns ETH/WETH/USDG unconditionally and stock bases only for non-gated requests.
+
+---
+
+## 11. Open questions requiring a human decision
+
+1. **Graduation pool type is a product decision, not just an engineering one.** §4.3 recommends v2-with-burned-LP for
+   memecoin graduation because "liquidity burned" is independently verifiable and needs no trusted contract. The cost is
+   that Stonkz permanently abandons those LP fees. If we want graduated-pool fee revenue, it must be a v3/v4 locker instead,
+   and the marketing claim changes from "LP burned" to "LP locked forever in an immutable contract". **Pick one before the
+   contracts agent writes the migration path** — it changes the contract, the copy, and the indexer's graduation event.
+2. **Do we ship stock-token base pairs on Robinhood Chain at all in v1?** They work technically (§7.3), but they are
+   tokenised debt securities barred from US persons and restricted in Canada, the UK, Switzerland and the UAE (§7.5). That
+   requires a real jurisdiction gate, a securities-flavoured disclosure, and probably legal review — on a launchpad whose
+   other user-facing surface is memecoins. The low-risk v1 is **ETH and USDG bases only on RH**, with stock bases behind a
+   flag. This is a legal/compliance call, not mine.
+3. **Fee-competitiveness against the incumbent on this chain.** pools.trade (Uniswap Labs' own launchpad, live since
+   2026-08-05) charges **no launchpad fee** — just a 0.25% LP fee that autocompounds — and explicitly markets that as "a
+   fraction of the standard ~1% on other launchpads". Stonkz's creator-set curve fee is 1.0–5.0%. The economics are locked in
+   the plan and I am not reopening them, but someone should decide knowingly that we are entering at 4×–20× the incumbent's
+   headline rate on its home chain.
+4. **Censorship risk appetite.** The chain's authorised filterer has run ~6,092 times with no published criteria and can
+   defeat L1 force-inclusion (§2.4). For a permissionless memecoin launchpad on a regulated brokerage's chain, that is a
+   business risk worth an explicit decision and a documented contingency, not a footnote.
+5. **Testnet strategy.** Chain 46630 exists with a faucet capped at 0.01 ETH/24 h. Confirm whether Uniswap v2/v3/v4 are
+   deployed on **46630** — I found third-party testnet addresses that do **not** match the mainnet set, so the router
+   integration tests (plan step 89) may need a mainnet fork rather than the public testnet. Worth 30 minutes of verification
+   before committing the test strategy.
+
+---
+
+## 12. Re-verification checklist
+
+This chain is nine weeks old and several sources here are single-source or third-party. Before mainnet:
+
+- [ ] Re-read every Uniswap address on Blockscout; Uniswap's own docs warn against assuming cross-chain address parity.
+- [ ] Smoke-test `POST /v1/quote` with `tokenInChainId: 4663` and confirm `portionBips` is absent/0 for our API key.
+- [ ] Confirm the explorer hostname from Robinhood's own page (§2.3) — phishing lookalikes are documented.
+- [ ] Re-read Chainlink feed addresses, decimals and heartbeats from the canonical directory; Robinhood's docs say it is the
+      source of truth and that addresses rotate.
+- [ ] Manual device test: Robinhood Wallet over WalletConnect signing a real SIWE payload (§6.2).
+- [ ] Confirm `ACCESS_CONTROLLED_REGISTRY.paused()` and `isBlocked` semantics against the live contract before shipping
+      stock bases; both read `false` as of 2026-08-25.
+- [ ] Verify Uniswap deployment on testnet 46630 (§11.5).
+- [ ] Re-check whether the chain owner has enabled ArbOS 61 priority-fee collection (§3.4).
