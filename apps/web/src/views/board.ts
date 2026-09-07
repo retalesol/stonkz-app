@@ -202,6 +202,7 @@ export function king(): void {
   if (best.id !== kothId) {
     const first = kothId === null;
     kothId = best.id;
+    koth.dataset['sym'] = best.sym;
     render(
       koth,
       html`<span class="crown">KING OF THE HILL</span
@@ -269,5 +270,23 @@ export function initBoard(): void {
     if (!link) return;
     e.stopPropagation();
     navigate({ view: 'profile', addr: link.dataset['addr'] as string });
+  });
+
+  // The crown opens the current king's chart — same click-to-token contract
+  // as a card, just for the one coin the board is already pointing at.
+  const koth = must('#koth');
+  koth.setAttribute('role', 'button');
+  koth.tabIndex = 0;
+  const openKing = (e: Event): void => {
+    if ((e.target as Element | null)?.closest('.addrlink')) return;
+    const sym = koth.dataset['sym'];
+    if (sym) navigate({ view: 'token', sym });
+  };
+  koth.addEventListener('click', openKing);
+  koth.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
+      e.preventDefault();
+      openKing(e);
+    }
   });
 }

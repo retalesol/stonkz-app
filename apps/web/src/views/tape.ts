@@ -1,4 +1,6 @@
+import type { Fill } from '@stonkz/shared';
 import { pct, usd } from '@stonkz/shared';
+import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
 import { miniChart } from '../canvas/spark.js';
 import { pix } from '../canvas/pix.js';
@@ -13,9 +15,11 @@ import { COINS, bySym, seedSeries, type SimCoin } from '../state/coins.js';
 /**
  * The live tape.
  *
- * Prints are invented on a loop here; Phase 1.D swaps `build()` for the `board`
- * WS fill stream and everything below it — the punch, the jolt, the debris, the
- * frozen hover print and its chart — is unchanged. `index.html:1278`
+ * Sim mode still invents its own prints on a loop (cosmetic, unrelated to any
+ * particular trade). Live mode drives the exact same strip from real
+ * `board`/`tape` WS fills via `pushFill()` — the punch, the jolt, the debris,
+ * the frozen hover print and its chart are unchanged either way.
+ * `plan step 65`, `index.html:1278`
  */
 
 let run: HTMLElement;
@@ -27,14 +31,28 @@ function vw(): number {
   return vp.clientWidth;
 }
 
-function build(): HTMLElement {
+/** A wholly-invented print — sim mode only. `index.html:1278` */
+function randomFill(): Fill {
   const c = COINS[(Math.random() * COINS.length) | 0] as SimCoin;
-  const buy = Math.random() > 0.42;
+  return {
+    t: Date.now(),
+    sym: c.sym,
+    net: c.net ?? 'SOL',
+    buy: Math.random() > 0.42,
+    sol: 0.05 + Math.random() * 9,
+    tok: 0,
+    mc: c.mc,
+    w: fakeAddr((Math.random() * 1e6) | 0),
+    v: 0,
+  };
+}
+
+function build(f: Fill): HTMLElement {
   const el = node(
-    html`<span class="tx" data-sym="${attr(c.sym)}"
-      ><i class="blk ${buy ? 'up' : 'dn'}"></i><b class="${buy ? 'up' : 'dn'}">${buy ? 'BUY' : 'SELL'}</b
-      ><span>${(0.05 + Math.random() * 9).toFixed(2)} SOL</span><b class="gd">${c.sym}</b><b class="dm">${DOT}</b
-      ><span class="dm">${fakeAddr((Math.random() * 1e6) | 0)}</span></span
+    html`<span class="tx" data-sym="${attr(f.sym)}"
+      ><i class="blk ${f.buy ? 'up' : 'dn'}"></i><b class="${f.buy ? 'up' : 'dn'}">${f.buy ? 'BUY' : 'SELL'}</b
+      ><span>${f.sol.toFixed(2)} ${f.net === 'RH' ? 'ETH' : 'SOL'}</span><b class="gd">${f.sym}</b><b class="dm">${DOT}</b
+      ><span class="dm">${f.w}</span></span
     >`,
   );
   return el as HTMLElement;
@@ -47,8 +65,8 @@ function trim(): void {
   while (run.offsetWidth > w * 2.6 && run.children.length > 4) run.removeChild(run.firstChild as ChildNode);
 }
 
-function push(animate: boolean): void {
-  const el = build();
+function push(f: Fill, animate: boolean): void {
+  const el = build(f);
   run.appendChild(el);
   if (!animate || reducedMotion()) {
     trim();
@@ -69,6 +87,11 @@ function push(animate: boolean): void {
     burst(r.left, r.top + 2, Math.max(6, r.height - 4), { n: 20 });
   }, 130);
   trim();
+}
+
+/** The live renderer: a real `board`/`tape` WS fill, or the initial seed batch. */
+export function pushFill(f: Fill, animate: boolean): void {
+  push(f, animate);
 }
 
 /* ----------------------------- hover: freeze one print, chart it ----------- */
@@ -202,14 +225,19 @@ export function initTape(): void {
     if (!document.hidden) trim();
   });
 
-  for (let i = 0; i < 16; i++) push(false);
-  const next = (): void => {
-    loop = window.setTimeout(() => {
-      push(true);
-      next();
-    }, 850 + Math.random() * 1500);
-  };
-  next();
+  // Live mode seeds from `GET /tape` and drives every print after that from
+  // real WS fills (`pushFill`, wired in `app/loop.ts`). The self-looping
+  // random strip stays sim-only. `plan step 65`
+  if (api.mode === 'sim') {
+    for (let i = 0; i < 16; i++) push(randomFill(), false);
+    const next = (): void => {
+      loop = window.setTimeout(() => {
+        push(randomFill(), true);
+        next();
+      }, 850 + Math.random() * 1500);
+    };
+    next();
+  }
 }
 
 /** Only the tests need this; the tape runs for the life of the page. */

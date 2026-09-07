@@ -147,7 +147,11 @@ function tokenHTML(c: SimCoin): Html {
 export function drawTChart(): void {
   const c = TV.c;
   if (!c) return;
-  seedSeries(c);
+  // Live mode hydrates `c.h`/`c.hv` from real candles in `api.watchToken()`;
+  // `seedSeries` is the sim-only synthetic fallback and must not overwrite
+  // that with a random walk while the fetch is still in flight. `plan step 63`
+  if (api.mode === 'sim') seedSeries(c);
+  if (!c.h || !c.hv || c.h.length < 2) return;
   const hud = drawTokenChart($<HTMLCanvasElement>('#tchart'), {
     series: c.h as number[],
     volume: c.hv as number[],
@@ -287,9 +291,13 @@ function tradesHTML(c: SimCoin): Html {
 }
 
 function holdersHTML(c: SimCoin): Html {
+  // Live mode fetches real holders in `api.watchToken()`; `holdersOf` is the
+  // sim-only synthetic generator and is only reached if that fetch hasn't
+  // landed yet. `plan step 64`
+  const rows = c.liveHolders ?? holdersOf(c);
   return html`<div class="scrolly"><table class="tbl"><thead><tr><th scope="col">#</th><th scope="col">WALLET</th
     ><th scope="col" class="r">HOLDING</th><th scope="col" class="r">VALUE</th><th scope="col">TAG</th></tr></thead
-    ><tbody>${holdersOf(c).map(
+    ><tbody>${rows.map(
       (h, i) => html`<tr><td class="dm">${i + 1}</td><td class="${h.curve ? 'am' : 'bl'}"
         >${h.curve ? h.w : html`<span class="addrlink" data-addr="${attr(h.w)}">${h.w}</span>`}</td
         ><td class="r">${h.p.toFixed(2)}%</td><td class="r">${usd((c.mc * h.p) / 100)}</td><td
@@ -467,8 +475,21 @@ export function syncToken(): void {
 /* --------------------------------- open ----------------------------------- */
 
 export function openToken(c: SimCoin): void {
-  seedSeries(c);
-  seedTrades(c);
+  if (api.mode === 'sim') {
+    seedSeries(c);
+    seedTrades(c);
+  } else {
+    // Live: candles/trades/holders come from REST and the `token:{sym}` WS
+    // channel (`api.watchToken()`); render below with whatever is cached (if
+    // anything), then repaint once the fetch lands. `plan step 63`, `plan step 64`
+    void api.watchToken(c).then(() => {
+      if (TV.c !== c) return; // navigated away before the fetch landed
+      drawTChart();
+      if (TV.tab !== 'comments') renderTab();
+    });
+  }
+  // Comments/X feed stay simulated in both modes — the plan's live scope is
+  // candles/trades/holders/tape/koth, not social features.
   seedComments(c);
   c.lane = laneOf(c);
   TV.c = c;
@@ -605,6 +626,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
 }
 
 export function closeToken(): void {
+  if (TV.c && api.mode === 'live') api.unwatchToken(TV.c.sym);
   clearInterval(TV.qTimer);
   TV.qTimer = 0;
   TV.c = null;

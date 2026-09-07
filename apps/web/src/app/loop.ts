@@ -1,4 +1,5 @@
 import { type Lane, price } from '@stonkz/shared';
+import { api } from '../api/index.js';
 import { toast } from '../fx/toast.js';
 import { must } from '../lib/dom.js';
 import { DOT } from '../lib/fmt.js';
@@ -7,20 +8,22 @@ import { NATIVE_PRICE } from '../state/wallet.js';
 import { COINS, bySym, pushTrade } from '../state/coins.js';
 import { HOLD, holdOf } from '../state/holdings.js';
 import { USER, unlock } from '../state/user.js';
-import { addCoin, counts, king, landIn, paint } from '../views/board.js';
+import { addCoin, counts, king, landIn, paint, renderBoard } from '../views/board.js';
 import { addChat } from '../views/chat.js';
-import { TV, drawTChart, syncToken } from '../views/token.js';
+import { pushFill } from '../views/tape.js';
+import { TV, drawTChart, renderTab, syncToken } from '../views/token.js';
 import { syncProfile } from '../views/profile.js';
 import { isStakeOpen, syncStake } from '../modals/stake.js';
+import { navigate } from './route.js';
 import { renderRank } from './rank.js';
 import { renderWallet } from './wallet.js';
 
 /**
  * The single place where model events become DOM.
  *
- * `api/sim.ts` never touches an element; it moves numbers and emits. Phase 1.C
- * points the same handlers at the `board` and `user:{addr}` WS channels and
- * this file does not change. `index.html:4037`
+ * `api/sim.ts` never touches an element; it moves numbers and emits.
+ * `api/live.ts` does the same against real WS/REST data — this file does not
+ * change per adapter, it only reacts to more event types. `index.html:4037`
  */
 
 let beats = 0;
@@ -49,8 +52,11 @@ export function startLoop(): void {
     if (TV.c) {
       syncToken();
       drawTChart();
-      // Someone else is always trading the coin you are looking at.
-      if (beats % 2 === 0 && Math.random() > 0.35) {
+      if (TV.tab === 'trades') renderTab();
+      // Someone else is always trading the coin you are looking at — sim
+      // only. Live mode gets this from the real `token:{sym}` WS fill
+      // instead (`api/live.ts`'s `onTokenEvent`). `plan step 67`
+      if (beats % 2 === 0 && Math.random() > 0.35 && api.mode === 'sim') {
         pushTrade(TV.c, { buy: Math.random() > 0.42, sol: 0.05 + Math.random() * 6 });
       }
     }
@@ -73,6 +79,19 @@ export function startLoop(): void {
     const c = bySym(sym);
     if (c) addCoin(c);
   });
+
+  // The coin set changed shape — a net switch reloaded `COINS`, or the board
+  // poll found tokens beyond the initial page. Rebuild the lanes; if the open
+  // token page no longer has a backing coin (it belonged to the net we just
+  // left), fall back to the board rather than showing a dead page.
+  // `plan step 62`, `plan step 69`
+  on('coins', () => {
+    renderBoard();
+    king();
+    if (TV.c && !bySym(TV.c.sym)) navigate({ view: 'board' });
+  });
+
+  on('fill', ({ fill, animate }) => pushFill(fill, animate));
 
   on('rank', () => renderRank(true));
   on('wallet', () => renderWallet());

@@ -163,15 +163,24 @@ export async function boot(): Promise<void> {
   });
 
   /* search */
+  // Enter goes through `api.search()` — a local `COINS` filter in sim, the
+  // server's `GET /tokens?q=` in live, so a symbol beyond the board's
+  // initial page still opens. `plan step 66`
   must('#searchform').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = must<HTMLInputElement>('#q');
-    const c = bySym(q.value.trim().toUpperCase());
-    if (!c) return;
-    navigate({ view: 'token', sym: c.sym });
+    const query = q.value.trim();
+    const sym = query.toUpperCase();
     q.value = '';
     filterBoard('');
+    if (!sym) return;
+    void api.search(query).then((matches) => {
+      const c = matches.find((m) => m.sym === sym);
+      if (c) navigate({ view: 'token', sym: c.sym });
+    });
   });
+  // The as-you-type filter only ever hides/shows cards already on the
+  // rendered board, so it stays a local scan in both modes.
   must('#q').addEventListener('input', () => filterBoard(must<HTMLInputElement>('#q').value));
 
   document.addEventListener('keydown', (e) => {
