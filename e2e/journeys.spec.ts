@@ -199,7 +199,9 @@ test('every route is linkable, titled, and survives the back button', async ({ p
 
 test('sort chips reorder the board without changing which coins are on it', async ({ page }) => {
   const symsIn = async (laneSel: string): Promise<string[]> =>
-    page.locator(`${laneSel} .coin`).evaluateAll((els) => els.map((el) => el.getAttribute('data-sym')));
+    page
+      .locator(`${laneSel} .coin`)
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-sym')).filter((s): s is string => s !== null));
 
   const before = new Set(await symsIn('#lane-new'));
   await page.click('.filters .chip[data-sort="mc"]');

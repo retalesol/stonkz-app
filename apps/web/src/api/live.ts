@@ -227,8 +227,8 @@ interface ApiEvmStep {
   description: string;
 }
 
-interface ApiTradePrepareAtomic {
-  net: Net;
+interface ApiTradePrepareSolAtomic {
+  net: 'SOL';
   atomic: true;
   transaction: string;
   lastValidBlockHeight: number;
@@ -236,6 +236,31 @@ interface ApiTradePrepareAtomic {
   expiresAt: number;
 }
 
+/**
+ * Robinhood's atomic path, once a `StonkzRouter` is configured
+ * (`router/evm-router.ts`) — one call, `to`/`data`/`value` like a launch or
+ * claim payload, not `transaction` like Solana's signed message. A sell
+ * with no `permit` in the request comes back with `permitTypedData` set:
+ * the router needs its own approval and this endpoint has no on-chain
+ * nonce to sign one against ahead of time (that field's own doc comment in
+ * `router/evm-router.ts` explains why), so the caller must sign that
+ * EIP-712 permit, resend with `body.permit`, and get a *second* response
+ * back with `permitTypedData` absent — still one on-chain transaction
+ * either way, just two off-chain signatures for a first-time sell.
+ */
+interface ApiTradePrepareRhAtomic {
+  net: 'RH';
+  atomic: true;
+  to: string;
+  data: string;
+  value: string;
+  quote: Quote;
+  expiresAt: number;
+  permitTypedData?: unknown;
+  note?: string;
+}
+
+/** The still-live fallback for whatever `stonkzRouterDecision` has no route for — `docs/rh-trade-atomicity-gap.md`. */
 interface ApiTradePrepareSteps {
   net: Net;
   atomic: false;
@@ -245,7 +270,7 @@ interface ApiTradePrepareSteps {
   expiresAt: number;
 }
 
-type ApiTradePrepare = ApiTradePrepareAtomic | ApiTradePrepareSteps;
+type ApiTradePrepare = ApiTradePrepareSolAtomic | ApiTradePrepareRhAtomic | ApiTradePrepareSteps;
 
 interface ApiLaunchPrepareSol {
   net: 'SOL';
@@ -689,23 +714,63 @@ async function fetchQuote(net: Net, sym: string, side: 'buy' | 'sell', amount: n
   return getJson<Quote>(`/tokens/${encodeURIComponent(sym)}/quote${qs}`);
 }
 
+/** A placeholder EIP-2612 permit — see `liveTrade`'s permit branch for why this can never be a real signature in this phase either way. */
+function fakeSellPermit(): { value: string; deadline: number; v: number; r: string; s: string } {
+  const zero32 = '0x' + '00'.repeat(32);
+  return { value: '0', deadline: Math.floor(Date.now() / 1000) + 300, v: 27, r: zero32, s: zero32 };
+}
+
 /**
  * Walks a `/trade/prepare` response to a signed, "confirmed" result.
  *
- * Solana's `atomic: true` is one signature, inline — no modal, the same
- * shape as any other wallet-adapter prompt. Robinhood's `atomic: false`
- * `EvmStep[]` is never collapsed into that: `modals/steps.ts` opens, shows
- * `plan.warning` verbatim, and makes the trader click through every step in
- * order. `SignerCancelledError` propagates to the caller unchanged so a
- * backed-out trade never applies a fill.
+ * Both chains' single-call atomic paths — Solana's `transaction`, Robinhood
+ * `StonkzRouter`'s `to`/`data`/`value` — are one signature, inline, no
+ * modal, the same shape as any other wallet-adapter prompt. Robinhood's
+ * `atomic: false` `EvmStep[]` fallback is never collapsed into that:
+ * `modals/steps.ts` opens, shows `plan.warning` verbatim, and makes the
+ * trader click through every step in order. A first-time Robinhood *sell*
+ * is the one case with more than one signature and still `atomic: true` —
+ * the on-chain swap is genuinely one transaction, only the permit ahead of
+ * it is a separate off-chain signature — so it gets its own two-step walk
+ * with a note that says exactly that, not the non-atomic warning.
+ * `SignerCancelledError` propagates to the caller unchanged so a backed-out
+ * trade never applies a fill.
  */
-async function signTradePlan(net: Net, prep: ApiTradePrepare, title: string): Promise<void> {
-  if (prep.atomic) {
-    await signAndConfirmStep(net);
-    return;
+async function signTradePlan(
+  net: Net,
+  prep: ApiTradePrepare,
+  title: string,
+  sym: string,
+  body: Record<string, unknown>,
+): Promise<Quote> {
+  if (!prep.atomic) {
+    const steps: UiStep[] = prep.steps.map((s) => ({ description: s.description }));
+    await openSteps(net, title, steps, prep.warning);
+    return prep.quote;
   }
-  const steps: UiStep[] = prep.steps.map((s) => ({ description: s.description }));
-  await openSteps(net, title, steps, prep.warning);
+  if (prep.net === 'RH' && prep.permitTypedData) {
+    const confirmed = { quote: prep.quote };
+    await openSteps(
+      net,
+      title,
+      [
+        { description: 'Approve StonkzRouter to move ' + sym + ' (permit signature)' },
+        {
+          description: 'Sell on Robinhood Chain via StonkzRouter',
+          run: async () => {
+            const resent = await postJson<ApiTradePrepare>('/trade/prepare', { ...body, permit: fakeSellPermit() }, net);
+            confirmed.quote = resent.quote;
+          },
+        },
+      ],
+      'The swap itself still lands as one on-chain transaction; this practice wallet has no live chain ' +
+        "to read the token's real permit nonce from, so the approval step is a simulated stand-in, not a " +
+        'verifiable signature (see `router/evm-router.ts`\u2019s `buildSellPermitTypedData` doc comment).',
+    );
+    return confirmed.quote;
+  }
+  await signAndConfirmStep(net);
+  return prep.quote;
 }
 
 /** Apply a confirmed trade to local state from the exact numbers `/trade/prepare` composed. */
@@ -740,14 +805,11 @@ async function liveTrade(quote: Quote): Promise<Fill> {
   const c = bySym(quote.sym);
   if (!c) throw new Error('unknown ticker ' + quote.sym);
   const net = quote.net;
-  const prep = await postJson<ApiTradePrepare>(
-    '/trade/prepare',
-    { sym: quote.sym, side: quote.side, amount: quote.amountIn },
-    net,
-  );
+  const body = { sym: quote.sym, side: quote.side, amount: quote.amountIn };
+  const prep = await postJson<ApiTradePrepare>('/trade/prepare', body, net);
   const title = (quote.side === 'buy' ? 'BUY ' : 'SELL ') + c.sym + (net === 'RH' ? ' \u00b7 ROBINHOOD CHAIN' : '');
-  await signTradePlan(net, prep, title);
-  return applyConfirmedTrade(c, quote.side, quote.amountIn, prep.quote, net);
+  const confirmedQuote = await signTradePlan(net, prep, title, c.sym, body);
+  return applyConfirmedTrade(c, quote.side, quote.amountIn, confirmedQuote, net);
 }
 
 /* -------------------------------------------------------------------------- */
