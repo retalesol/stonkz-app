@@ -96,7 +96,7 @@ user would see today traces back to a fixture scenario, not to chain state.
 | Surface | Status | Evidence |
 |---|---|---|
 | 10% ops-vault accrual | **REAL** | Enforced on-chain in both chains' fee split. |
-| Buy-and-burn / POL seeding / LP locker | **MISSING** | `programs/SPEC.md`: "No `$STONKZ` buy / LP / burn logic exists anywhere in these programs." |
+| Buy-and-burn / POL seeding / LP locker | **MISSING (designed)** | `programs/SPEC.md`: "No `$STONKZ` buy / LP / burn logic exists anywhere in these programs." Implementation-ready design, with the per-chain locking mechanism chosen and the gate stated, in [`phase7-stonkz.md`](phase7-stonkz.md). |
 | `$STONKZ` staker fee claims | **MISSING** | Distinct from per-memecoin staking, which is real. |
 | Sweep recipe math (50 / 25 / 25) | **REAL (math only)** | `packages/shared/src/fees.ts::opsSplit`. Nothing executes it. |
 | Guard against leaking a spendable balance early | **REAL** | `apps/api/src/routes/rewards.test.ts` pins that no `$STONKZ` balance is exposed pre-Phase 7. |
