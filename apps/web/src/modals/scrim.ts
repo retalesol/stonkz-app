@@ -13,7 +13,14 @@ import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
  * @see plan step 33
  */
 
-export type ScrimId = '#newScrim' | '#setScrim' | '#wizScrim' | '#editScrim' | '#stakeScrim' | '#claimScrim';
+export type ScrimId =
+  | '#newScrim'
+  | '#setScrim'
+  | '#wizScrim'
+  | '#editScrim'
+  | '#stakeScrim'
+  | '#claimScrim'
+  | '#txScrim';
 
 const traps = new Map<ScrimId, FocusTrap>();
 
@@ -22,7 +29,9 @@ export function isOpen(id: ScrimId): boolean {
 }
 
 export function anyOpen(): boolean {
-  return (['#stakeScrim', '#wizScrim', '#claimScrim', '#setScrim', '#newScrim', '#editScrim'] as ScrimId[]).some(isOpen);
+  return (
+    ['#stakeScrim', '#wizScrim', '#claimScrim', '#setScrim', '#newScrim', '#editScrim', '#txScrim'] as ScrimId[]
+  ).some(isOpen);
 }
 
 export function openScrim(id: ScrimId, opener?: Element | null): void {

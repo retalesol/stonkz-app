@@ -11,6 +11,7 @@ import { closeLaunch, initLaunch, isLaunchOpen, openLaunch } from '../modals/lau
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
 import { initSettings, isSetOpen, openSet } from '../modals/settings.js';
 import { closeStake, isStakeOpen } from '../modals/stake.js';
+import { closeSteps, initSteps, isStepsOpen } from '../modals/steps.js';
 import { closeWiz, initWizard, isWizOpen, openWiz } from '../modals/wizard.js';
 import { COINS, bySym } from '../state/coins.js';
 import { loadSettings } from '../state/settings.js';
@@ -78,12 +79,15 @@ function leaveLaunch(): void {
 /**
  * Escape unwinds exactly one layer, innermost first.
  *
- * The order is the z-order: the six scrims (stake is opened from the token page
- * on top of everything, the wizard can be opened from inside claim), then the
- * two header menus, then the chat drawer, then the view stack.
+ * The order is the z-order: the transaction-step walker (opened from inside
+ * the trade box, launch stepper or claim modal, so it outranks all of them),
+ * then the six scrims (stake is opened from the token page on top of
+ * everything, the wizard can be opened from inside claim), then the two
+ * header menus, then the chat drawer, then the view stack.
  */
 function onEscape(): void {
-  if (isStakeOpen()) closeStake();
+  if (isStepsOpen()) closeSteps();
+  else if (isStakeOpen()) closeStake();
   else if (isWizOpen()) closeWiz();
   else if (isClaimOpen()) closeClaim();
   else if (isEditOpen()) closeEdit();
@@ -115,6 +119,7 @@ export async function boot(): Promise<void> {
   initBoard();
   initTape();
   initChat();
+  initSteps();
   initProfileView();
   initLaunch(leaveLaunch);
   initWizard();

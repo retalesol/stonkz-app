@@ -38,7 +38,7 @@ import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
 import { USER, addXP, pushDrop, saveUser, unlock } from '../state/user.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, selectNet } from '../state/wallet.js';
 import { clock, fakeAddr } from '../lib/fmt.js';
-import type { ClaimResult, CrateResult, QuoteInput, StakeClaim, StakeInput, StonkzApi } from './types.js';
+import type { ClaimResult, CrateResult, FeeVault, QuoteInput, StakeClaim, StakeInput, StonkzApi } from './types.js';
 
 /**
  * The simulation adapter — everything the single-file build did, behind the
@@ -403,6 +403,15 @@ export const simApi: StonkzApi = {
     unlock('deploy');
     emit('coins');
     return c;
+  },
+
+  /** The claim modal's live-mode row, reshaped from the sim's own coin fields. */
+  async claimableFees(): Promise<FeeVault[]> {
+    return COINS.filter((c) => (c.fee ?? 0) > 0 || (c.feeTokens ?? 0) > 0).map((c) => ({
+      sym: c.sym,
+      native: c.fee ?? 0,
+      tokens: c.feeTokens ?? 0,
+    }));
   },
 
   /** TODO(Phase 2.F): `claim_creator_fees` against the coin's fee vault. */

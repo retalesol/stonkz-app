@@ -43,6 +43,18 @@ export interface ClaimResult {
   tokens: Record<string, number>;
 }
 
+/**
+ * One creator vault's claimable balance — `GET /fees`'s wire shape, and the
+ * claim modal's live-mode row. `sim.ts` derives the same shape from
+ * `SimCoin.fee`/`feeTokens` so `modals/claim.ts` never has to branch on
+ * `api.mode` to render a row, only to decide whether it needs to ask first.
+ */
+export interface FeeVault {
+  sym: string;
+  native: number;
+  tokens: number;
+}
+
 export interface StakeInput {
   sym: string;
   amount: number;
@@ -99,6 +111,8 @@ export interface StonkzApi {
   disconnect(): void;
 
   launch(draft: LaunchDraft): Promise<SimCoin>;
+  /** What the claim modal has to offer, before the trader commits to anything. */
+  claimableFees(): Promise<FeeVault[]>;
   claimCreatorFees(sym?: string): Promise<ClaimResult>;
 
   stake(input: StakeInput): Promise<void>;
