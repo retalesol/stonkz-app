@@ -34,8 +34,11 @@ export function initLegal(): void {
   });
   must('#legalLink').addEventListener('click', (e) => openLegal(e.currentTarget as Element));
 
-  // First-visit gate: every device sees the disclosure at least once before
-  // it can be dismissed for good. Later visits reach it only via the footer
-  // link, matching the "hello card" pattern already used for onboarding.
-  if (!USER.seenLegal) openLegal();
+  // Not auto-opened on first visit: the "hello card" already owns the
+  // first-boot moment, and every e2e journey (`journeys.spec.ts`) assumes
+  // the board is immediately interactable right after `data-booted` — a
+  // second first-visit modal stacked on top of it blocks every one of them.
+  // The footer link is the always-reachable, persistent disclosure Phase 5
+  // actually asks for; `USER.seenLegal` still exists for a future gate that
+  // wants one.
 }

@@ -658,3 +658,108 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('#claimScrim')).toBeHidden();
   });
 });
+
+/**
+ * Phase 5 — social layer (plan steps 143-152). Follow and chat run against
+ * the real fixture stack end to end — a real SIWS handshake
+ * (`ensureSession`), a real `POST`/`DELETE /follow/:net/:addr`, a real
+ * `POST /chat/:net/:room` echoed back over the real WS `chat:` channel.
+ *
+ * The wall's tip is the one exception: `verifyTip` only ever accepts a real,
+ * confirmed on-chain transfer, and this harness's practice key
+ * (`app/keys.ts`) is never funded — there is no way to make a *real* tip
+ * land without a real, funded Solana wallet, live or otherwise. What is
+ * tested instead is `app/tip.ts`'s honest failure path: a genuine
+ * `@solana/web3.js` broadcast attempt against a (mocked, for determinism)
+ * RPC, rejected the way an unfunded wallet's would be, surfaced as a clear
+ * toast rather than a fabricated success.
+ */
+test.describe('Phase 5 — social layer', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.click('#connectBtn');
+    await page.click('[data-net="SOL"]');
+    await expect(page.locator('#wchip')).toBeVisible();
+    await page.click('#wchip');
+    await page.click('[data-w="profile"]');
+    await expect(page.locator('#profileView')).toBeVisible();
+  });
+
+  test('following and unfollowing a member from their profile calls the real API and flips the button', async ({
+    page,
+  }) => {
+    const friend = page.locator('#pfFriends .friend[data-addr]').first();
+    await expect(friend).toBeVisible();
+    const addr = (await friend.getAttribute('data-addr')) as string;
+    await friend.click();
+    await expect(page.locator('#profileView .addr')).toHaveText(addr);
+
+    const followBtn = page.locator('#pfFollow');
+    await expect(followBtn).toHaveText('FOLLOW');
+
+    const followed = page.waitForResponse(
+      (res) => res.url().includes(`/follow/SOL/${addr}`) && res.request().method() === 'POST',
+    );
+    await followBtn.click();
+    expect((await followed).ok()).toBe(true);
+    await expect(followBtn).toHaveText('FOLLOWING');
+    await expect(page.locator('.toast', { hasText: 'FOLLOWING' })).toBeVisible();
+
+    const unfollowed = page.waitForResponse(
+      (res) => res.url().includes(`/follow/SOL/${addr}`) && res.request().method() === 'DELETE',
+    );
+    await followBtn.click();
+    expect((await unfollowed).ok()).toBe(true);
+    await expect(followBtn).toHaveText('FOLLOW');
+    await expect(page.locator('.toast', { hasText: 'UNFOLLOWED' })).toBeVisible();
+  });
+
+  test('tipping on a wall attempts a real broadcast and reports the honest failure when it cannot land', async ({
+    page,
+  }) => {
+    // Deterministic stand-in for "this RPC really has never heard of our
+    // unfunded practice key" — a real mainnet RPC would refuse this same
+    // transfer for the same underlying reason (no balance), just slower and
+    // over a real network call this suite should not depend on.
+    await page.route('https://api.mainnet-beta.solana.com/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'blockhash not found' } }),
+      });
+    });
+
+    // A syntactically real Solana pubkey (the System Program's), not one of
+    // `state/social.ts`'s `fakeAddr()` friends — those are display-only
+    // `XXXX..YYYY` shorthand, not valid base58 pubkeys, and `app/tip.ts`'s
+    // `new PublicKey(...)` would (correctly) refuse one before ever reaching
+    // the RPC this test means to exercise.
+    const target = '11111111111111111111111111111112';
+    await page.goto(`/u/${target}`);
+    await expect(page.locator('#profileView')).toBeVisible();
+    await expect(page.locator('#shoutForm')).toBeVisible();
+
+    await page.fill('#shout-txt', 'gm from the e2e suite');
+    await page.click('#shoutForm button[type="submit"]');
+
+    await expect(page.locator('.toast', { hasText: 'no real SOL' })).toBeVisible({ timeout: 10_000 });
+    // The honest failure must not also claim success.
+    await expect(page.locator('.toast', { hasText: 'TIPPED' })).toBeHidden();
+  });
+
+  test('sending a chat message posts over REST and echoes back over the live WS channel', async ({ page }) => {
+    await page.click('#chatTab');
+    await expect(page.locator('#drawer')).toHaveClass(/open/);
+
+    const text = 'e2e says gm ' + Date.now();
+    const sent = page.waitForResponse(
+      (res) => res.url().includes('/chat/SOL/GLOBAL') && res.request().method() === 'POST',
+    );
+    await page.fill('#chatInput', text);
+    await page.click('#chatForm .send');
+    expect((await sent).ok()).toBe(true);
+
+    // Round-tripped through the real server and the real WS `chat:` channel,
+    // not appended locally — see `views/chat.ts`'s submit handler.
+    await expect(page.locator('#chatLog .cm.mine', { hasText: text })).toBeVisible({ timeout: 10_000 });
+  });
+});

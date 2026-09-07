@@ -44,6 +44,7 @@ test('the shell renders the oracle element order', async ({ page }) => {
     'setScrim',
     'wizScrim',
     'editScrim',
+    'legalScrim',
     'stakeScrim',
     'claimScrim',
     'txScrim',
