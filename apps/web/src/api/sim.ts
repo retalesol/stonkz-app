@@ -31,7 +31,7 @@ import {
   circ,
 } from '@stonkz/shared';
 import { emit } from '../lib/bus.js';
-import { COINS, type SimCoin, bySym, pushTrade, seedTrades, toFill } from '../state/coins.js';
+import { COINS, type SimCoin, bySym, pushTrade, seedSeries, seedTrades, toFill } from '../state/coins.js';
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
@@ -300,6 +300,22 @@ export const simApi: StonkzApi = {
     if (!timer) return;
     clearInterval(timer);
     timer = 0;
+  },
+
+  /** Sim data is already synchronous and local; nothing to fetch. */
+  async watchToken(c) {
+    seedSeries(c);
+    seedTrades(c);
+  },
+  unwatchToken() {
+    /* nothing to tear down */
+  },
+
+  /** Board search, sim: a local, case-insensitive contains match. */
+  async search(query) {
+    const v = query.trim().toUpperCase();
+    if (!v) return [];
+    return COINS.filter((c) => c.sym.indexOf(v) > -1 || c.name.toUpperCase().indexOf(v) > -1 || c.dev.toUpperCase().indexOf(v) > -1);
   },
 
   async quote(input) {

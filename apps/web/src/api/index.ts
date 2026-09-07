@@ -18,8 +18,15 @@ export const API_MODE: ApiMode = (import.meta.env['VITE_API_MODE'] as ApiMode) =
 
 export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
 
-/** True while the app is inventing its own data. Used to label the footer. */
-export const SIMULATED = api.mode === 'sim';
+/**
+ * True while trading, launch, staking and crates are simulated. This is
+ * *not* `api.mode === 'sim'` — Phase 1.D (`live.ts`) wires the read path
+ * (board/candles/trades/holders/tape/koth) to the real API, but quote/trade/
+ * launch/stake/crate still run on `simApi`'s in-memory model regardless of
+ * mode, so the footer's disclosure must stay lit either way. Flip this once
+ * Phase 2.C lands `/quote` and `/trade/*` for real. `plan step 68`
+ */
+export const SIMULATED = true;
 
 export type {
   ClaimResult,

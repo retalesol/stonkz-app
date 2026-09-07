@@ -81,6 +81,17 @@ export interface StonkzApi {
   startStream(): void;
   stopStream(): void;
 
+  /**
+   * Hydrate `coin.h`/`coin.hv`/`coin.trades`/`coin.liveHolders` for the open
+   * token page and keep them current — WS `token:{sym}` in live mode, a no-op
+   * subscription in sim — until `unwatchToken()`. `plan step 63-64`
+   */
+  watchToken(coin: SimCoin): Promise<void>;
+  unwatchToken(sym: string): void;
+
+  /** Board search. Sim filters `COINS` locally; live hits `GET /tokens?q=`. */
+  search(query: string): Promise<SimCoin[]>;
+
   quote(input: QuoteInput): Promise<Quote>;
   trade(quote: Quote): Promise<Fill>;
 
