@@ -8,8 +8,11 @@ On-chain code. Phase 2.A owns it, and both chains are built from one interface.
 programs/
   SPEC.md               The interface, the CPMM derivation, the rounding rules
   curve.json            Published CPMM parameters, read by both chains and both apps
+  parity-vectors.json   Generated from Rust; the table all three implementations answer to
+  curve-sim.ts          Dependency-free BigInt mirror, imported by the API and the launch preview
   solana/               Anchor workspace (Rust). Anchor.toml, programs/, tests/
   evm/                  Foundry workspace (Solidity) for Robinhood Chain
+    ASSUMPTIONS.md      Divergences from the Anchor program, and why each one is forced
 ```
 
 Neither chain is a port of the other: they are two implementations of one
@@ -17,7 +20,34 @@ interface, and the golden tests must agree across them.
 
 Read [SPEC.md](SPEC.md) before changing anything in either tree — in particular
 §1 (why the parameters graduate at $69K) and §2 (why the creator bucket is the
-remainder rather than a third floor).
+remainder rather than a third floor). If you are working in `evm/`, read
+[evm/ASSUMPTIONS.md](evm/ASSUMPTIONS.md) as well: it lists the places the two
+chains legitimately differ, so that a difference is never mistaken for drift.
+
+## Keeping the three implementations honest
+
+`parity-vectors.json` is generated from the Rust settlement math and is the
+single table the Anchor program, the TypeScript simulate helper and the Solidity
+mirror are all held to. A divergence fails a test suite here rather than
+surfacing in production as a user whose quote did not match their fill.
+
+```
+cargo test -p launchpad --lib parity      # regenerate the vectors from Rust
+pnpm --dir solana verify:parity           # hold curve-sim.ts to them
+forge test --match-contract ParityTest    # hold CurveMath.sol to them  (from evm/)
+```
+
+Regenerate the vectors whenever the math changes, and expect the other two
+suites to fail until they are brought back into line. That is the mechanism
+working, not a nuisance.
+
+## Running everything
+
+```
+cargo test -p launchpad --lib             # 21 host tests: fuzz, invariants, rounding
+anchor test                               # 19 integration tests on a local validator
+forge test                                # 52 tests                        (from evm/)
+```
 
 ## Interface both families implement
 
