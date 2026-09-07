@@ -25,9 +25,35 @@ export interface EventBase {
   blockTimeMs: number;
 }
 
+/**
+ * The curve state a chain-sourced launch carries, in the exact string form
+ * `tokens`' curve columns store (atoms past `bigint`'s range — see the schema
+ * comment on `tokens.curveK`).
+ *
+ * Optional on the event because the fixture producer has no curve to describe;
+ * a fixture-sourced `tokens` row keeps its `'0'` defaults and `/quote` falls
+ * back to the indicative approximation, exactly as before this phase.
+ */
+export interface CurveSnapshot {
+  tokenDecimals: number;
+  baseDecimals: number;
+  basePriceUsd1e6: string;
+  tokensForSale: string;
+  virtualBase0: string;
+  virtualToken0: string;
+  k: string;
+  realBase: string;
+  realToken: string;
+  gradMcapBase: string;
+}
+
 /** A fair launch. */
 export interface TokenCreatedEvent extends EventBase {
   kind: 'TokenCreated';
+  /** The launched token's own address (SPL mint / ERC-20). Chain sources only. */
+  mint?: string;
+  /** Real curve parameters, when the source decoded them from the program. */
+  curve?: CurveSnapshot;
   sym: string;
   name: string;
   descr: string;
@@ -63,6 +89,13 @@ export interface TradeEvent extends EventBase {
   mc: number;
   /** Filled inside a cashback window. */
   cashback: boolean;
+  /**
+   * Post-fill real reserves, in atoms, when the source decoded them. Keeps
+   * `tokens`' curve columns live instead of frozen at the last
+   * `/trade/prepare` — the staleness caveat in `router/curve-state.ts`.
+   */
+  realBase?: string;
+  realToken?: string;
 }
 
 /** $69K market cap reached; reserves migrated and LP burned. */

@@ -23,6 +23,7 @@ import {
 import { api } from '../api/index.js';
 import { navigate, retitle } from '../app/route.js';
 import { SignerCancelledError } from '../app/signer.js';
+import { describeWalletError, isRejection } from '../wallet/index.js';
 import { showView } from '../app/view.js';
 import { drawTokenChart } from '../canvas/chart.js';
 import { pix } from '../canvas/pix.js';
@@ -620,11 +621,12 @@ async function submitTrade(c: SimCoin): Promise<void> {
   } catch (err) {
     go.disabled = false;
     go.textContent = restoreLabel;
-    if (err instanceof SignerCancelledError) {
-      toast('SIGNING CANCELLED');
-    } else {
-      toast(String(err instanceof Error ? err.message : err).toUpperCase(), 'red');
-    }
+    if (err instanceof SignerCancelledError) toast('SIGNING CANCELLED');
+    // A wallet rejection is the trader's own decision, not a red failure;
+    // everything else — insufficient funds, a slippage revert, the wrong
+    // chain — reports the real reason it did not settle.
+    else if (isRejection(err)) toast(describeWalletError(err));
+    else toast(describeWalletError(err), 'red');
     return;
   }
   go.disabled = false;

@@ -209,6 +209,23 @@ export class Ingestor {
         telegram: event.telegram ?? null,
         launchedAt: new Date(event.blockTimeMs),
         updatedAt: new Date(this.now()),
+        ...(event.mint ? { mint: event.mint } : {}),
+        // A chain source decodes the real curve; the fixture producer has none
+        // and leaves the columns at their `'0'` defaults.
+        ...(event.curve
+          ? {
+              tokenDecimals: event.curve.tokenDecimals,
+              baseDecimals: event.curve.baseDecimals,
+              basePriceUsd1e6: event.curve.basePriceUsd1e6,
+              curveTokensForSale: event.curve.tokensForSale,
+              curveVirtualBase0: event.curve.virtualBase0,
+              curveVirtualToken0: event.curve.virtualToken0,
+              curveK: event.curve.k,
+              curveRealBase: event.curve.realBase,
+              curveRealToken: event.curve.realToken,
+              curveGradMcapBase: event.curve.gradMcapBase,
+            }
+          : {}),
       })
       .onConflictDoNothing();
 
@@ -464,6 +481,10 @@ export class Ingestor {
         holders: holderRows[0]?.n ?? 0,
         lane,
         updatedAt: new Date(this.now()),
+        // Keeps the curve columns live off the fill the chain just settled,
+        // rather than frozen at the last `/trade/prepare` write-back.
+        ...(event.realBase !== undefined ? { curveRealBase: event.realBase } : {}),
+        ...(event.realToken !== undefined ? { curveRealToken: event.realToken } : {}),
       })
       .where(and(eq(tokens.net, event.net), eq(tokens.sym, event.sym)));
 

@@ -3,10 +3,12 @@ import { type NativeUnit, type Net, type NetworkOption, type Wallet, nativeUnit 
 /**
  * The connected wallet.
  *
- * Both networks are live in the picker from day one — the sim just fakes the
- * signature. Phase 1.B replaces `connect()` with SIWS (Wallet Standard) and
- * SIWE (wagmi/viem) and `balance` with a real RPC read; nothing else here
- * changes shape. `index.html:2443`
+ * Both networks are live in the picker from day one. In live mode the values
+ * below are placeholders only until `api.connect()` overwrites them with the
+ * connected wallet's real address, label and on-chain balance (Wallet
+ * Standard for SIWS, EIP-1193/WalletConnect for SIWE — `wallet/`). In sim
+ * mode they stay as written, which is what a sandbox should show.
+ * `index.html:2443`
  */
 
 export const NETS: Record<Net, NetworkOption> = {
@@ -69,7 +71,8 @@ export function selectNet(net: Net): NetworkOption {
 /**
  * Native price feed for the footer and USD conversions.
  *
- * Hard-coded in the sim; Phase 1.B swaps it for the connected network's oracle
- * price (SOLUSD or ETHUSD) so the footer stops claiming $214.08 on Robinhood.
+ * Hard-coded as the sim's seed value, then overwritten in live mode by
+ * `GET /me`'s `native.usdPrice` for the connected chain (`api/live.ts`'s
+ * `connect()`), so the footer stops claiming a SOL price on Robinhood.
  */
 export const NATIVE_PRICE = { usd: 214.08 };

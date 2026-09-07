@@ -248,6 +248,15 @@
   </div>
 </div>
 
+<!-- ============ WALLET PICKER ============ -->
+<div class="scrim" id="walletScrim">
+  <div class="win" role="dialog" aria-modal="true" aria-label="Connect a wallet" style="max-width:430px">
+    <div class="win-hd"><h2>Connect a Wallet</h2><span class="sub">STONKZ NEVER SEES YOUR KEYS</span>
+      <button class="x" id="wp-x" aria-label="Close">&#10005;</button></div>
+    <div class="win-bd" id="walletBody"></div>
+  </div>
+</div>
+
 <!-- ============ SIGN / CONFIRM STEPS ============ -->
 <div class="scrim" id="txScrim">
   <div class="win" role="dialog" aria-modal="true" aria-label="Confirm transaction" style="max-width:470px">
@@ -255,6 +264,15 @@
       <button class="x" id="tx-x" aria-label="Close">&#10005;</button></div>
     <div class="win-bd" id="txBody"></div>
   </div>
+</div>
+
+<!--
+  Practice-mode badge. Rendered only when `wallet/practice.ts` is the active
+  signer (`VITE_PRACTICE_WALLET=1`), and not dismissible: a build signing with
+  a browser-local key must say so for the whole session.
+-->
+<div class="practice-badge" id="practiceBadge" hidden role="status">
+  <b>PRACTICE WALLET</b><span id="practiceBadgeText">BROWSER-LOCAL KEY &#183; NOTHING SETTLES ON CHAIN</span>
 </div>
 
 <div class="toasts" id="toasts"></div>

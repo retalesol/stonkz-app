@@ -4,7 +4,9 @@
     "outDir": "dist",
     "rootDir": "src",
     "types": ["node"],
-    "noEmit": false
+    "noEmit": false,
+    // See `tsconfig.json` — `@stonkz/curve-sim` resolves to source.
+    "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "src/test/**/*.ts"]

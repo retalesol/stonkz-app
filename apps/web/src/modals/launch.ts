@@ -15,6 +15,7 @@ import {
 import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
 import { SignerCancelledError } from '../app/signer.js';
+import { describeWalletError, isRejection } from '../wallet/index.js';
 import { drawLaunchChart } from '../canvas/chart.js';
 import { pix } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
@@ -344,7 +345,8 @@ async function doLaunch(): Promise<void> {
     go.disabled = false;
     go.textContent = restoreLabel;
     if (err instanceof SignerCancelledError) toast('LAUNCH CANCELLED');
-    else toast(String(err instanceof Error ? err.message : err).toUpperCase(), 'red');
+    else if (isRejection(err)) toast('LAUNCH REJECTED IN WALLET');
+    else toast(describeWalletError(err), 'red');
     return;
   }
 

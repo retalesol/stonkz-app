@@ -1,0 +1,191 @@
+/*
+ * Phase B: the wallet picker and the practice-mode badge. No oracle
+ * equivalent — `legacy/index.html` had no wallet connect flow at all — so
+ * like `touch.css` and `phase5.css` this is imported from `main.ts` rather
+ * than `index.css` and stays outside `css:check`'s pixel lock. Every colour
+ * is an existing token.
+ */
+
+/* ---------- wallet picker ---------- */
+.wp-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  background: var(--pnl2);
+}
+
+.wp-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  width: 100%;
+}
+
+.wp-item:last-child {
+  border-bottom: 0;
+}
+
+.wp-item:hover:not(.off) {
+  background: #151b27;
+}
+
+.wp-item:hover:not(.off) .wp-nm,
+.wp-item:hover:not(.off) .wp-go {
+  color: var(--amber);
+}
+
+.wp-item.off {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wp-ic {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: block;
+  border: 1px solid var(--line2);
+  background: var(--hd);
+  image-rendering: pixelated;
+}
+
+.wp-nm {
+  font-family: 'IBM Plex Sans Condensed', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--txt);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.wp-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-style: normal;
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  padding: 1px 4px;
+  border: 1px solid var(--down);
+  color: var(--down);
+  flex: 0 0 auto;
+}
+
+.wp-tag.wc {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.wp-go {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.wp-why {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background: var(--pnl);
+  color: var(--txt2);
+  line-height: 1.45;
+}
+
+.wp-wait {
+  font-family: 'IBM Plex Sans Condensed', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--amber);
+}
+
+.wp-err {
+  border: 1px solid var(--down);
+  color: var(--down);
+  padding: 9px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.03em;
+}
+
+.wp-qrwrap {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  background: var(--txt);
+  border: 1px solid var(--line2);
+}
+
+.wp-qrwrap canvas {
+  display: block;
+  image-rendering: pixelated;
+  width: 232px;
+  height: 232px;
+}
+
+.wp-deep {
+  display: block;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--blue);
+  text-decoration: none;
+  padding: 6px 0 2px;
+}
+
+.wp-deep:hover {
+  color: var(--amber);
+}
+
+/* ---------- practice-mode badge ---------- */
+/*
+ * Deliberately hard to miss and impossible to dismiss: a fixed strip above
+ * the footer, in the loss colour, stating that nothing settles. It renders
+ * only when `wallet/practice.ts` is the active signer.
+ */
+.practice-badge {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 33px;
+  z-index: 92;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 12px;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(255, 76, 59, 0.22) 0 10px,
+    rgba(255, 76, 59, 0.08) 10px 20px
+  );
+  border-top: 1px solid var(--down);
+  border-bottom: 1px solid var(--down);
+  pointer-events: none;
+}
+
+.practice-badge b {
+  font-family: 'IBM Plex Sans Condensed', Arial, sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--down);
+}
+
+.practice-badge span {
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  color: var(--txt2);
+}
+
+@media (max-width: 680px) {
+  .practice-badge {
+    bottom: 44px;
+  }
+}

@@ -12,6 +12,7 @@ import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
 import { initSettings, isSetOpen, openSet } from '../modals/settings.js';
 import { closeStake, isStakeOpen } from '../modals/stake.js';
 import { closeSteps, initSteps, isStepsOpen } from '../modals/steps.js';
+import { cancelPicker, initWalletPicker, isWalletPickerOpen } from '../modals/walletpicker.js';
 import { closeWiz, initWizard, isWizOpen, openWiz } from '../modals/wizard.js';
 import { COINS, bySym } from '../state/coins.js';
 import { loadSettings } from '../state/settings.js';
@@ -27,7 +28,16 @@ import { startLoop } from './loop.js';
 import { renderRank } from './rank.js';
 import { type Route, back, current, navigate, onRoute, startRouting } from './route.js';
 import { currentView, showView } from './view.js';
-import { connectWallet, disconnectWallet, initWalletChip, isWmenuOpen, renderWallet, wmenu } from './wallet.js';
+import { initWalletDiscovery } from '../wallet/index.js';
+import {
+  connectWallet,
+  disconnectWallet,
+  initWalletChip,
+  isWmenuOpen,
+  renderPracticeBadge,
+  renderWallet,
+  wmenu,
+} from './wallet.js';
 
 /**
  * The app shell: header, search, escape stack, footer and boot.
@@ -81,13 +91,16 @@ function leaveLaunch(): void {
  *
  * The order is the z-order: the transaction-step walker (opened from inside
  * the trade box, launch stepper or claim modal, so it outranks all of them),
- * then the six scrims (stake is opened from the token page on top of
- * everything, the wizard can be opened from inside claim), then the two
- * header menus, then the chat drawer, then the view stack.
+ * the wallet picker (opened from the header, and the innermost thing on
+ * screen while it is up), then the remaining scrims (stake is opened from the
+ * token page on top of everything, the wizard can be opened from inside
+ * claim), then the two header menus, then the chat drawer, then the view
+ * stack.
  */
 function onEscape(): void {
   if (isLegalOpen()) closeLegal();
   else if (isStepsOpen()) closeSteps();
+  else if (isWalletPickerOpen()) cancelPicker();
   else if (isStakeOpen()) closeStake();
   else if (isWizOpen()) closeWiz();
   else if (isClaimOpen()) closeClaim();
@@ -104,6 +117,9 @@ function onEscape(): void {
 /* ---------------------------------- boot ---------------------------------- */
 
 export async function boot(): Promise<void> {
+  // EIP-6963 announcements only arrive in response to our request event, and
+  // wallets that load after us re-announce, so ask as early as possible.
+  initWalletDiscovery();
   drawFace(must<HTMLCanvasElement>('#brandFace'));
   initFx();
   loadUser();
@@ -120,6 +136,7 @@ export async function boot(): Promise<void> {
   initTape();
   initChat();
   initSteps();
+  initWalletPicker();
   initProfileView();
   initLaunch(leaveLaunch);
   initWizard();
@@ -142,6 +159,7 @@ export async function boot(): Promise<void> {
     onDisconnect: disconnectWallet,
   });
   renderWallet();
+  renderPracticeBadge();
 
   /* header */
   must('#howBtn').addEventListener('click', () => openWiz(must('#howBtn')));

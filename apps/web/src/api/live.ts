@@ -13,7 +13,7 @@ import {
   type Wallet,
 } from '@stonkz/shared';
 import { authHeader, ensureSession, sessionWallet } from '../app/session.js';
-import { signAndConfirmStep, type UiStep } from '../app/signer.js';
+import { signAndConfirm, signPermit, type SellPermit, type SignPayload, type UiStep } from '../app/signer.js';
 import { emit } from '../lib/bus.js';
 import { shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
@@ -21,6 +21,7 @@ import { COINS, bySym, pushTrade, toFill as fillFromTrade, type Holder, type Sim
 import { creditTokens, noteTrade } from '../state/holdings.js';
 import { addXP, saveUser, unlock, USER } from '../state/user.js';
 import { NATIVE_PRICE, WALLET, selectNet } from '../state/wallet.js';
+import { activeWallet } from '../wallet/index.js';
 import { simApi } from './sim.js';
 import type {
   ClaimResult,
@@ -50,15 +51,19 @@ import type {
  * live endpoint yet, which is why `api/index.ts`'s footer disclosure still
  * names them.
  *
- * Every write here needs a session (`app/session.ts`'s SIWS/SIWE JWT, from a
- * practice keypair — see `app/keys.ts`'s header for why that is not the same
- * thing as a real wallet extension) and a signature (`app/signer.ts`, or
- * `modals/steps.ts` when a plan is more than one step). Neither of those
- * modules, nor this one, broadcasts anything to a real chain — there is
- * nowhere real to send it in this phase — so every "confirmed" fill below is
- * applied to `SimCoin` state locally, from the exact composed numbers the
- * API just returned, the same honesty trade `connect()` already made for
- * the practice address. `signer.ts`'s header comment has the full rationale.
+ * Every write here needs a session (`app/session.ts`'s SIWS/SIWE JWT, signed
+ * by the connected wallet as of Phase B) and a real signature and broadcast
+ * (`app/signer.ts`, or `modals/steps.ts` when a plan is more than one step).
+ * The prepared transaction that leaves this module is the one the wallet
+ * signs, byte for byte — nothing here re-composes a payload.
+ *
+ * One thing is still local: the post-fill *state patch*. `applyConfirmedTrade`
+ * moves the coin's market cap from the numbers `/trade/prepare` composed
+ * rather than re-reading the curve off chain, because §2 of
+ * `docs/real-vs-simulated.md` is still open — the board's numbers come from
+ * the indexer, and the indexer still reads fixtures. The transaction is real;
+ * the number that appears a moment later is the API's own arithmetic, and it
+ * gets overwritten by the next `refreshBoard()` poll either way.
  *
  * @see plan step 30, plan step 62-70, plan step 95-99
  */
@@ -761,27 +766,37 @@ async function fetchQuote(net: Net, sym: string, side: 'buy' | 'sell', amount: n
   return getJson<Quote>(`/tokens/${encodeURIComponent(sym)}/quote${qs}`);
 }
 
-/** A placeholder EIP-2612 permit — see `liveTrade`'s permit branch for why this can never be a real signature in this phase either way. */
-function fakeSellPermit(): { value: string; deadline: number; v: number; r: string; s: string } {
-  const zero32 = '0x' + '00'.repeat(32);
-  return { value: '0', deadline: Math.floor(Date.now() / 1000) + 300, v: 27, r: zero32, s: zero32 };
+/** An `EvmStep`, a `StonkzRouter` call and an RH launch/claim payload are all the same three fields. */
+function evmPayload(call: { to: string; data: string; value: string }): SignPayload {
+  return { net: 'RH', to: call.to, data: call.data, value: call.value };
+}
+
+function solPayload(prep: { transaction: string; lastValidBlockHeight: number }): SignPayload {
+  return { net: 'SOL', transaction: prep.transaction, lastValidBlockHeight: prep.lastValidBlockHeight };
 }
 
 /**
- * Walks a `/trade/prepare` response to a signed, "confirmed" result.
+ * Walks a `/trade/prepare` response to a real, confirmed transaction.
  *
  * Both chains' single-call atomic paths — Solana's `transaction`, Robinhood
  * `StonkzRouter`'s `to`/`data`/`value` — are one signature, inline, no
- * modal, the same shape as any other wallet-adapter prompt. Robinhood's
+ * modal, the same shape as any other wallet prompt. Robinhood's
  * `atomic: false` `EvmStep[]` fallback is never collapsed into that:
  * `modals/steps.ts` opens, shows `plan.warning` verbatim, and makes the
- * trader click through every step in order. A first-time Robinhood *sell*
- * is the one case with more than one signature and still `atomic: true` —
- * the on-chain swap is genuinely one transaction, only the permit ahead of
- * it is a separate off-chain signature — so it gets its own two-step walk
- * with a note that says exactly that, not the non-atomic warning.
- * `SignerCancelledError` propagates to the caller unchanged so a backed-out
- * trade never applies a fill.
+ * trader click through every step in order, each one now genuinely
+ * broadcast and confirmed before the next unlocks.
+ *
+ * A first-time Robinhood *sell* is the one case with more than one signature
+ * and still `atomic: true` — the on-chain swap is genuinely one transaction,
+ * only the EIP-2612 permit ahead of it is a separate off-chain signature.
+ * That permit is real as of Phase B: `wallet/permit.ts` reads
+ * `nonces(owner)` off the token contract (the API returns `nonce: null` on
+ * purpose — `docs/rh-trade-atomicity-gap.md` §5), gets the wallet to sign the
+ * typed data, and the split `{v,r,s}` goes back to `/trade/prepare` as
+ * `body.permit`.
+ *
+ * A rejection propagates to the caller unchanged so a backed-out trade never
+ * applies a fill.
  */
 async function signTradePlan(
   net: Net,
@@ -791,32 +806,54 @@ async function signTradePlan(
   body: Record<string, unknown>,
 ): Promise<Quote> {
   if (!prep.atomic) {
-    const steps: UiStep[] = prep.steps.map((s) => ({ description: s.description }));
+    const steps: UiStep[] = prep.steps.map((s) => ({
+      description: s.description,
+      payload: () => evmPayload(s),
+    }));
     await openSteps(net, title, steps, prep.warning);
     return prep.quote;
   }
   if (prep.net === 'RH' && prep.permitTypedData) {
-    const confirmed = { quote: prep.quote };
+    const permitTypedData = prep.permitTypedData;
+    // The atomic call is only known after the permit has been signed and the
+    // prepare call resent, so step 2 carries both the resend and the payload
+    // that resend returns.
+    const confirmed: { quote: Quote; call: SignPayload | null; permit: SellPermit | null } = {
+      quote: prep.quote,
+      call: null,
+      permit: null,
+    };
     await openSteps(
       net,
       title,
       [
-        { description: 'Approve StonkzRouter to move ' + sym + ' (permit signature)' },
+        {
+          description: 'Approve StonkzRouter to move ' + sym + ' (EIP-712 permit, off-chain)',
+          signOffChain: async () => {
+            confirmed.permit = await signPermit(net, permitTypedData);
+            return 'permit';
+          },
+        },
         {
           description: 'Sell on Robinhood Chain via StonkzRouter',
           run: async () => {
-            const resent = await postJson<ApiTradePrepare>('/trade/prepare', { ...body, permit: fakeSellPermit() }, net);
+            const resent = await postJson<ApiTradePrepare>(
+              '/trade/prepare',
+              { ...body, permit: confirmed.permit },
+              net,
+            );
             confirmed.quote = resent.quote;
+            confirmed.call = resent.atomic && resent.net === 'RH' ? evmPayload(resent) : null;
           },
+          payload: () => confirmed.call,
         },
       ],
-      'The swap itself still lands as one on-chain transaction; this practice wallet has no live chain ' +
-        "to read the token's real permit nonce from, so the approval step is a simulated stand-in, not a " +
-        'verifiable signature (see `router/evm-router.ts`\u2019s `buildSellPermitTypedData` doc comment).',
+      'Two signatures, one transaction: the first is an off-chain permit so the router can move your ' +
+        'tokens without a separate approval transaction. Only the second one settles on chain.',
     );
     return confirmed.quote;
   }
-  await signAndConfirmStep(net);
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
   return prep.quote;
 }
 
@@ -883,7 +920,14 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
   // Solana's create and Robinhood's `createToken` calldata are each a
   // single signable payload — one signature, inline, the same as an atomic
   // trade. Only a Robinhood dev buy (below) is ever a second one.
-  const { signature } = await signAndConfirmStep(net);
+  //
+  // `/launch/confirm` looks this signature up *on chain* to decode the mint
+  // out of the creation log, so it is the one endpoint that could never have
+  // worked against the old fabricated signature at all.
+  const { signature } = await signAndConfirm(
+    net,
+    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep),
+  );
   const confirmed = await postJson<ApiLaunchConfirm>(
     '/launch/confirm',
     { intentId: prep.intentId, signature },
@@ -996,23 +1040,31 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
   );
   if (targets.length === 0) return { native: 0, tokens: {} };
 
-  const prepareClaim = (v: ApiFeeVaultRow): Promise<void> =>
-    postJson<ApiClaimPrepare>('/fees/claim/prepare', { sym: v.sym }, net).then(() => undefined);
+  const prepareClaim = async (v: ApiFeeVaultRow): Promise<SignPayload> => {
+    const prep = await postJson<ApiClaimPrepare>('/fees/claim/prepare', { sym: v.sym }, net);
+    return prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep);
+  };
 
   if (targets.length === 1) {
     // One vault, one signature — inline, same as an atomic Solana trade.
-    await prepareClaim(targets[0] as ApiFeeVaultRow);
-    await signAndConfirmStep(net);
+    await signAndConfirm(net, await prepareClaim(targets[0] as ApiFeeVaultRow));
   } else {
     // Each vault is its own independent transaction; `run` prepares vault
     // *i*'s payload right before it is signed, not all of them up front —
     // the same ordering a fresh `/trade/prepare` per RH step would need if
     // this endpoint ever grew one.
     const title = 'CLAIM CREATOR FEES \u00b7 ' + targets.length + ' COINS';
+    const pending: { payload: SignPayload | null } = { payload: null };
     await openSteps(
       net,
       title,
-      targets.map((v) => ({ description: 'Claim ' + v.sym + ' fees', run: () => prepareClaim(v) })),
+      targets.map((v) => ({
+        description: 'Claim ' + v.sym + ' fees',
+        run: async () => {
+          pending.payload = await prepareClaim(v);
+        },
+        payload: () => pending.payload,
+      })),
       undefined,
     );
   }
@@ -1118,18 +1170,30 @@ export const liveApi: StonkzApi = {
     // the same net the board already has loaded.
     selectNet(net);
     WALLET.on = true;
+    const wallet = activeWallet();
+    if (wallet?.net === net) {
+      // Show the connected wallet's real address immediately, before the
+      // sign-in round trip: it is already known and already true.
+      WALLET.addr = shortAddr(wallet.address);
+      WALLET.full = wallet.address;
+      WALLET.provider = wallet.label;
+    }
     try {
       const session = await ensureSession(BASE, net);
-      // Displaying the sim's placeholder address while the session actually
-      // authenticated as the practice wallet would be its own dishonesty —
-      // `app/keys.ts`'s header has why this is a real keypair, not a mock.
       WALLET.addr = shortAddr(session.wallet);
       WALLET.full = session.wallet;
       const me = await getJsonAuthed<ApiMeResponse>('/me', net).catch(() => null);
-      WALLET.sol = me?.native.balance ?? 0;
+      // Prefer the server's read (it uses the operator's provider endpoint,
+      // not the public rate-limited RPC), and fall back to asking the wallet's
+      // own chain client directly.
+      WALLET.sol = me?.native.balance ?? (await wallet?.nativeBalance().catch(() => null)) ?? 0;
+      // The footer's USD figure is the connected chain's own price, not a
+      // constant that reads $214.08 next to an ETH balance.
+      if (me?.native.usdPrice) NATIVE_PRICE.usd = me.native.usdPrice;
     } catch {
-      // No session yet (API unreachable, etc.) — the board still loads;
-      // every authenticated write below will fail loudly on its own.
+      // No session yet (API unreachable, signature declined) — the board
+      // still loads; every authenticated write below fails loudly on its own.
+      WALLET.sol = (await wallet?.nativeBalance().catch(() => null)) ?? 0;
     }
     emit('wallet');
     await reloadForNet(net);

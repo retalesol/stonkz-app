@@ -17,6 +17,8 @@ export interface TokenMeta {
   /** SPL mint / ERC-20 address, lowercased on the EVM. */
   mint: string;
   sym: string;
+  /** `FeeAccrued` names the mint, not the creator; the vault row needs both. */
+  creator: string;
   baseMint: string;
   baseDecimals: number;
   tokenDecimals: number;
@@ -73,6 +75,7 @@ export class TokenRegistry {
       net,
       mint: normalised,
       sym: row.sym,
+      creator: row.creator,
       baseMint: row.baseMint,
       baseDecimals: row.baseDecimals,
       tokenDecimals: row.tokenDecimals || TOKEN_DECIMALS[net],

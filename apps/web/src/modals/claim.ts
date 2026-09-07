@@ -1,6 +1,7 @@
 import { hash, inCashback, num, usd, vol24 } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { SignerCancelledError } from '../app/signer.js';
+import { describeWalletError, isRejection } from '../wallet/index.js';
 import { pix } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, must } from '../lib/dom.js';
@@ -149,7 +150,8 @@ async function doClaim(): Promise<void> {
       go.textContent = restoreLabel;
     }
     if (err instanceof SignerCancelledError) toast('CLAIM CANCELLED');
-    else toast(String(err instanceof Error ? err.message : err).toUpperCase(), 'red');
+    else if (isRejection(err)) toast('CLAIM REJECTED IN WALLET');
+    else toast(describeWalletError(err), 'red');
     return;
   }
 

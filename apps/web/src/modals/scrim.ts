@@ -2,7 +2,7 @@ import { $, must } from '../lib/dom.js';
 import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
 
 /**
- * One open/close path for all six dialogs.
+ * One open/close path for every dialog.
  *
  * The oracle toggled `.open` and `body.overflow` by hand in six places and
  * shipped `aria-modal="true"` without the behaviour it promises. This adds the
@@ -21,6 +21,7 @@ export type ScrimId =
   | '#stakeScrim'
   | '#claimScrim'
   | '#txScrim'
+  | '#walletScrim'
   | '#legalScrim';
 
 const traps = new Map<ScrimId, FocusTrap>();
@@ -39,6 +40,7 @@ export function anyOpen(): boolean {
       '#newScrim',
       '#editScrim',
       '#txScrim',
+      '#walletScrim',
       '#legalScrim',
     ] as ScrimId[]
   ).some(isOpen);

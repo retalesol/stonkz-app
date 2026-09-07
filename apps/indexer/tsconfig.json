@@ -2,7 +2,16 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    // `chain/market.ts` imports the curve math from `@stonkz/curve-sim`
+    // rather than reimplementing it. That package resolves to its TypeScript
+    // source, so its file joins this program — and it is a byte-identical
+    // mirror of `programs/curve-sim.ts` that only type-checks without this
+    // flag (see the same comment, and the same opt-out, in
+    // `packages/curve-sim/tsconfig.json` and `apps/api/tsconfig.json`).
+    // Editing the mirrored body to satisfy this flag would desync it from
+    // upstream and fail `packages/curve-sim/test/sync.test.ts`.
+    "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*.ts"]
 }

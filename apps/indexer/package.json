@@ -14,13 +14,18 @@
     "dev": "tsx watch src/worker.ts",
     "start": "tsx src/worker.ts",
     "fixtures": "tsx src/fixtures/cli.ts",
+    "backfill": "tsx src/cli/backfill.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@noble/hashes": "^1.8.0",
     "@stonkz/api": "workspace:*",
+    "@stonkz/curve-sim": "workspace:*",
     "@stonkz/shared": "workspace:*",
-    "drizzle-orm": "^0.45.2"
+    "bs58": "^6.0.0",
+    "drizzle-orm": "^0.45.2",
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

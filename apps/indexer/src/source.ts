@@ -4,10 +4,17 @@ import { compareEvents, type ChainEvent } from './events.js';
 /**
  * Where events come from.
  *
- * The on-chain programs do not exist yet (Phase 2), so the worker takes its
- * event source as an interface. `FixtureEventSource` is what runs today and in
- * the tests; the Solana log subscriber and the EVM `eth_getLogs` poller will
- * implement the same two methods and nothing downstream will change.
+ * `FixtureEventSource` replays a static scenario and is what the tests and
+ * local dev run on; `chain/solana-source.ts` and `chain/evm-source.ts` are the
+ * real ones. Everything past this interface — ingest, the cursors, the read
+ * tables — is identical either way.
+ *
+ * The four original methods are still required and unchanged. Everything a
+ * real chain needs but a fixture cannot answer (a confirmation-gated head, the
+ * identity of a block, a resume bookmark, a partially-covered range) is an
+ * **optional** method, so `FixtureEventSource` keeps working untouched and the
+ * runner degrades to the old behaviour for any source that does not implement
+ * them.
  */
 export interface EventSource {
   readonly net: Net;
@@ -22,6 +29,63 @@ export interface EventSource {
   startPosition(): Promise<number>;
   /** Every event in `(fromExclusive, toInclusive]`, in chain order. */
   poll(fromExclusive: number, toInclusive: number): Promise<ChainEvent[]>;
+
+  /**
+   * The highest position it is safe to materialise, i.e. the head minus this
+   * chain's confirmation depth. Absent means "the raw head is safe", which is
+   * true for a fixture replay and for nothing else.
+   */
+  confirmedHead?(): Promise<number>;
+
+  /**
+   * A stable identifier for the block/slot at `position` — the EVM block hash,
+   * or Solana's blockhash. `null` when the source cannot answer (the position
+   * is empty, pruned, or hash tracking is switched off). This is the only
+   * input to reorg detection: if the chain's answer today differs from what
+   * was recorded when the cursor last sat there, history moved.
+   */
+  blockIdentity?(position: number): Promise<string | null>;
+
+  /**
+   * `poll`, but able to say it covered less of the range than it was asked
+   * for, and to hand back a resume hint. Solana needs both: signature paging
+   * is bounded per pass, and `getSignaturesForAddress` resumes by signature
+   * rather than by slot.
+   */
+  pollRange?(fromExclusive: number, toInclusive: number): Promise<PollResult>;
+
+  /** Restores the resume hint persisted with the cursor, on boot or after a rewind. */
+  restoreBookmark?(bookmark: string | null): void;
+}
+
+export interface PollResult {
+  events: ChainEvent[];
+  /**
+   * Highest position fully scanned. The cursor must not advance past this even
+   * if `toInclusive` was higher — a bounded pass that stopped early has not
+   * seen the rest of the range.
+   */
+  coveredTo: number;
+  /** Source-specific resume hint to persist alongside the cursor. */
+  bookmark?: string | null;
+}
+
+/** Normalises a source to the `pollRange` shape, whether or not it implements it. */
+export async function pollSource(
+  source: EventSource,
+  fromExclusive: number,
+  toInclusive: number,
+): Promise<PollResult> {
+  if (source.pollRange) return source.pollRange(fromExclusive, toInclusive);
+  return { events: await source.poll(fromExclusive, toInclusive), coveredTo: toInclusive };
+}
+
+/**
+ * The confirmation-gated head, falling back to the raw head for a source that
+ * does not gate (fixtures).
+ */
+export async function confirmedHeadOf(source: EventSource): Promise<number> {
+  return source.confirmedHead ? source.confirmedHead() : source.head();
 }
 
 /** Replays a fixed event list, gated by the cursor window. */

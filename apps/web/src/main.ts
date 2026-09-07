@@ -4,6 +4,8 @@ import './styles/index.css';
 import './styles/touch.css';
 // Phase 5 additions with no oracle equivalent (footer legal disclosure link).
 import './styles/phase5.css';
+// Phase B: the real wallet picker and the practice-mode badge.
+import './styles/wallet-connect.css';
 
 import { boot } from './app/shell.js';
 

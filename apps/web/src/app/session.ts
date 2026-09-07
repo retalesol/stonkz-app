@@ -1,5 +1,5 @@
 import type { Net } from '@stonkz/shared';
-import { practiceAddress, signSignInMessage } from './keys.js';
+import { WalletError, activeWallet, mapWalletError } from '../wallet/index.js';
 
 /**
  * The live adapter's auth session.
@@ -7,14 +7,24 @@ import { practiceAddress, signSignInMessage } from './keys.js';
  * `POST /trade/prepare`, `/launch/prepare`, `/launch/confirm`, `GET /fees`
  * and `POST /fees/claim/prepare` all sit behind `requireAuth()` — a real JWT
  * minted by `POST /auth/siws` / `/auth/siwe` (`auth/service.ts`), not a
- * fixture bypass. This module runs that real handshake with `app/keys.ts`'s
- * practice key so every one of those endpoints is reachable for real, then
- * holds the access token in memory for `live.ts` to attach as `Authorization:
- * Bearer …`.
+ * fixture bypass. This module runs that handshake and holds the access token
+ * in memory for `live.ts` to attach as `Authorization: Bearer …`.
+ *
+ * The handshake itself was always real cryptography; what changed in Phase B
+ * is the key holder. It is now whichever wallet `wallet/manager.ts` has
+ * connected — a Wallet Standard `solana:signMessage` for SIWS, an EIP-1193
+ * `personal_sign` for SIWE — rather than a keypair this app minted in
+ * `localStorage`. The address is the wallet's, so the session is bound to an
+ * account the user actually controls.
+ *
+ * Two deliberate non-behaviours, both from `docs/robinhood-chain.md` §6.2:
+ * signing in never asks the wallet to switch chains (`personal_sign` is
+ * chain-agnostic and mobile wallets may have no switch method), and the
+ * nonce/session model does not depend on the signing method, so an EIP-712
+ * sign-in fallback can be added without touching the server.
  *
  * Session lifetime is one page load — a reload logs back in rather than
- * refreshing, which is simpler and fine for a practice key that never expires
- * on its own.
+ * refreshing.
  */
 
 interface Session {
@@ -42,11 +52,21 @@ async function readError(res: Response): Promise<string> {
 }
 
 async function login(base: string, net: Net): Promise<Session> {
-  const address = practiceAddress(net);
+  const wallet = activeWallet();
+  if (!wallet || wallet.net !== net) {
+    throw new WalletError('not_connected', 'Connect a wallet before signing in.');
+  }
+  const address = wallet.address;
   const nonceRes = await fetch(`${base}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`);
   if (!nonceRes.ok) throw new Error('auth/nonce: ' + (await readError(nonceRes)));
   const challenge = (await nonceRes.json()) as NonceChallenge;
-  const signature = signSignInMessage(net, challenge.message);
+
+  let signature: string;
+  try {
+    signature = await wallet.signInMessage(challenge.message);
+  } catch (err) {
+    throw mapWalletError(err, 'The wallet would not sign the sign-in message.');
+  }
 
   const loginPath = net === 'SOL' ? '/auth/siws' : '/auth/siwe';
   const loginRes = await fetch(base + loginPath, {
@@ -61,6 +81,12 @@ async function login(base: string, net: Net): Promise<Session> {
 
 /** Logs in (once) for `net`, reusing an already-live session for the same net. */
 export async function ensureSession(base: string, net: Net): Promise<Session> {
+  const wallet = activeWallet();
+  // A session for an address the connected wallet no longer holds is worse
+  // than none: every write would authorise as the previous account.
+  if (session && (session.net !== net || (wallet && session.wallet.toLowerCase() !== wallet.address.toLowerCase()))) {
+    session = null;
+  }
   if (session && session.net === net) return session;
   if (!pending) {
     pending = login(base, net).then(
@@ -78,9 +104,11 @@ export async function ensureSession(base: string, net: Net): Promise<Session> {
   return pending;
 }
 
-/** `net`'s real derived wallet address, whether or not a session is live yet. */
+/** The connected wallet's address for `net`, whether or not a session is live yet. */
 export function sessionWallet(net: Net): string {
-  return session?.net === net ? session.wallet : practiceAddress(net);
+  if (session?.net === net) return session.wallet;
+  const wallet = activeWallet();
+  return wallet?.net === net ? wallet.address : '';
 }
 
 export function authHeader(net: Net): Record<string, string> {

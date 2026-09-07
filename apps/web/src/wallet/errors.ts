@@ -280,9 +280,18 @@ export function walletErrorHeadline(err: unknown): string {
   return kind ? HEADLINE[kind] : HEADLINE.unknown;
 }
 
-/** Headline plus the provider's own reason, for a toast or a modal line. */
+/**
+ * Toast copy for any failure on a write path.
+ *
+ * A `WalletError` gets its kind's headline plus the provider's own reason, so
+ * SLIPPAGE EXCEEDED and INSUFFICIENT FUNDS read as different events. Anything
+ * else — a `LiveApiError` from `api/live.ts`, say — passes through with just
+ * its own message, because prefixing an API validation failure with "WALLET
+ * ERROR" would be a lie about where it came from.
+ */
 export function describeWalletError(err: unknown): string {
-  const headline = walletErrorHeadline(err);
-  const detail = err instanceof Error ? err.message.trim() : '';
-  return detail === '' ? headline : headline + ' \u00b7 ' + detail.toUpperCase();
+  const kind = walletErrorKind(err);
+  const detail = (err instanceof Error ? err.message : String(err)).trim().toUpperCase();
+  if (kind === null) return detail === '' ? HEADLINE.unknown : detail;
+  return detail === '' ? HEADLINE[kind] : HEADLINE[kind] + ' \u00b7 ' + detail;
 }

@@ -5,26 +5,28 @@ import bs58 from 'bs58';
 import type { Net } from '@stonkz/shared';
 
 /**
- * The practice wallet — a real keypair, generated in the browser and never
- * leaving it, that stands in for a browser extension (Phantom / MetaMask /
- * Robinhood Wallet) so this phase can complete a genuine SIWS/SIWE handshake
- * end to end.
+ * The practice keypair — a real keypair, generated in the browser and never
+ * leaving it, kept as a development convenience and **no longer the default
+ * signer**.
  *
- * `apps/api`'s auth is real cryptographic verification (`auth/siws.ts`,
- * `auth/siwe.ts` — ed25519 / secp256k1, not a fixture bypass), so there is no
- * way to obtain a real access token without signing with a real key. No
- * browser-extension integration exists yet in this codebase (that is Phase
- * 1.B's frontend half, still a `TODO` in `app/wallet.ts`), and building one is
- * out of this phase's scope. This is the smallest thing that is *actually
- * real* rather than theatre: a genuine keypair, persisted per net in
- * `localStorage` so the same session address survives a reload, producing a
- * signature the server's verifier genuinely accepts.
+ * Real wallet integration landed in Phase B (`wallet/solana.ts`,
+ * `wallet/evm.ts`), so this is now one of several signers rather than the
+ * only one, and it is reachable only through `wallet/practice.ts`, which
+ * refuses to construct unless `VITE_PRACTICE_WALLET=1`. Read that module's
+ * header for the full gate: the build flag, the "a real wallet always wins"
+ * rule, the `vite.config.ts` production guard, and the persistent UI badge.
  *
- * It is deliberately never funded and never will be — nothing here can put
- * real SOL or ETH into it. `router/compose.ts`'s balance/cap checks will
- * correctly refuse a buy against this wallet's real (zero) on-chain balance
- * when pointed at a real RPC; that is the honest result, not a bug this file
- * should work around.
+ * What is genuinely real here is the cryptography. `apps/api`'s auth does
+ * real verification (`auth/siws.ts`, `auth/siwe.ts` — ed25519 / secp256k1,
+ * not a fixture bypass), so there is no way to obtain an access token without
+ * signing with a real key, and this one does.
+ *
+ * What is not real is settlement. The key is deliberately never funded and
+ * never will be — nothing here can put real SOL or ETH into it — so
+ * `wallet/practice.ts` does not broadcast at all and flags every result
+ * `simulated: true`. `app/tip.ts` is the single exception: it signs and
+ * broadcasts a real transfer from this key, which fails for lack of funds,
+ * because a genuine failure is more honest than a fabricated success.
  */
 
 const STORAGE_PREFIX = 'stonkz.practiceKey.';
