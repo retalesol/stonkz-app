@@ -166,19 +166,48 @@ export class WsHub {
   private deliver(channel: string, message: string): void {
     const sockets = this.subscribers.get(channel);
     if (!sockets || sockets.size === 0) return;
-    const frame = JSON.stringify({ channel, data: JSON.parse(message) as unknown });
-    for (const socket of sockets) {
-      if (socket.readyState === socket.OPEN) {
+
+    let frame: string;
+    try {
+      frame = JSON.stringify({ channel, data: JSON.parse(message) as unknown });
+    } catch (err) {
+      // A malformed payload is a publisher bug, not a reason to drop the lane.
+      this.opts.logger.error('ws: undeliverable payload', { channel, err: String(err) });
+      return;
+    }
+
+    // `readyState` can go stale between the check and the write, and a socket
+    // that closed in that window throws. One wedged client must not stop the
+    // rest of the room from seeing this message.
+    for (const socket of [...sockets]) {
+      if (socket.readyState !== socket.OPEN) continue;
+      try {
         socket.send(frame);
         this.opts.metrics.wsMessageSent();
+      } catch (err) {
+        this.opts.logger.warn('ws: send failed, dropping client', { channel, err: String(err) });
+        this.dropSocket(socket);
       }
     }
   }
 
   private send(client: Client, payload: object): void {
-    if (client.socket.readyState === client.socket.OPEN) {
+    if (client.socket.readyState !== client.socket.OPEN) return;
+    try {
       client.socket.send(JSON.stringify(payload));
       this.opts.metrics.wsMessageSent();
+    } catch {
+      this.dropSocket(client.socket);
+    }
+  }
+
+  private dropSocket(socket: WebSocket): void {
+    const client = this.clients.get(socket);
+    if (client) this.onClose(client);
+    try {
+      socket.terminate();
+    } catch {
+      // Already gone.
     }
   }
 
