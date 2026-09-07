@@ -19,7 +19,8 @@
       "num": 1,
       "den": 15,
       "of": "gradMcapBaseAtoms",
-      "formula": "VB0 = floor(gradMcapBaseAtoms / 15)"
+      "formula": "VB0 = ceil(gradMcapBaseAtoms / 15)",
+      "note": "Ceil, not floor: graduation mcap is 15*VB0, so rounding up keeps the close at or fractionally above $69K rather than fractionally below."
     },
     "gradMcapBaseAtoms": {
       "formula": "floor(69000 * 1e6 * 10^baseDecimals / baseUsdPrice1e6)",

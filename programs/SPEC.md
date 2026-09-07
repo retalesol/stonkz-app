@@ -75,12 +75,23 @@ from the oracle at `create_token`. Consequences worth knowing:
 
 ### Integer exactness
 
-`VT0 = floor(16·S/15)` is not an exact integer for the four allowed supplies, so
-the program floors it. The truncation is at most `14/15` of one atom against a
-`VT0` of order `10^15`–`10^18`, i.e. a relative error below `1e-15`. Graduation
-mcap is off by well under a millionth of a cent. `tokens_for_sale = 4/5·S` and
-`lp_reserve = 1/5·S` *are* exact for all four allowed supplies (all divisible by
-5), so no supply is ever stranded.
+`tokens_for_sale = 4/5·S` and `lp_reserve = 1/5·S` are exact for all four
+allowed supplies (every one is divisible by 5), so no supply is ever stranded.
+The two virtual reserves do not divide evenly and are rounded in opposite
+directions, both deliberately:
+
+- `VT0 = floor(16·S/15)`. `S` is `10^12`–`10^18` atoms, so the sub-atom
+  truncation is a relative error of `1e-15` or better.
+- `VB0 = ceil(grad_mcap_base/15)`. This is the one that matters: graduation mcap
+  is `15·VB0`, so the residue is multiplied by 15 on the way out, and
+  `grad_mcap_base` can be small in atom terms for an expensive, few-decimal
+  base. Flooring here made a 1M-supply coin on an 8-decimal $4,312.50 base
+  graduate **$0.0003 short** of $69,000. Ceiling puts the residue on the safe
+  side: the curve closes at or fractionally above target, never below.
+
+The fuzz suite asserts graduation lands within one part per million of $69,000
+(6.9 cents) across all four supplies and four very different base shapes; the
+observed worst case is two orders of magnitude tighter than that.
 
 `k = VB0 · VT0` is held in `u128`. Worst realistic case (1e12 supply, 5-decimal
 base at $1e-5) is ~`5e31`, four orders of magnitude below the `u128` ceiling.
@@ -95,8 +106,21 @@ Every rounding is **toward the pool**, never toward the trader:
 | buy: new virtual token  | `ceil(k / (VB + net))` → tokens out floor |
 | sell: new virtual base  | `ceil(k / (VT + amt))` → base out floor   |
 | fee on gross            | floor                                    |
+| staker reward committed | **ceil** — see below                     |
 
-So `VB · VT ≥ k` holds after every fill; the invariant test asserts it.
+So `VB · VT ≥ k` holds after every fill; the invariant test asserts it. Note
+that the product returns to roughly `k` after a sell rather than ratcheting up:
+fees leave the pool for the vaults instead of accruing to it, which is the
+intended design. `VB·VT ≥ k` is the invariant; monotonic growth is not.
+
+The staker reward accumulator is the one place where rounding *down* would be
+wrong. A staker claims `floor(weight · Σsteps / ACC)`, and the floor of a sum
+can exceed the sum of the floors by up to one unit per step. Committing the
+floored amount per accrual therefore let the pool promise a few atoms more than
+it had actually received — the fuzz suite caught it paying out 7 atoms over
+inflow across 10 accruals. `advance_acc` now rounds the commitment up and
+carries the remainder into the next accrual, which makes total claims provably
+bounded by total inflow.
 
 ## 2. Fee split — settled on-chain, exact to the lamport
 
