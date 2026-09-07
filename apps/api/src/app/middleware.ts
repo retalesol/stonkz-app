@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
 import { isTokenBlacklisted } from '../redis/blacklist.js';
+import { resolveClientIp } from '../net/client-ip.js';
 import { rateLimit, type RateLimitRule } from '../redis/ratelimit.js';
 import { redact } from '../observability/logger.js';
 import type { AppDeps, AppEnv } from './context.js';
@@ -50,18 +51,26 @@ export function requestLogger(): MiddlewareHandler<AppEnv> {
   };
 }
 
-function clientIdentity(c: Parameters<MiddlewareHandler<AppEnv>>[0]): string {
+/**
+ * Per-IP identity used before a wallet is authenticated. Only trusts the
+ * fixed number of `X-Forwarded-For` hops this deployment's edge proxy is
+ * known to append (`deps.env.trustedProxyDepth`, see `net/client-ip.ts`) —
+ * never the raw, client-controllable left end of the header. Without this,
+ * a client can bypass every per-IP limit below by prepending a fresh fake
+ * entry on every request (`docs/security-review-findings.md` M1).
+ */
+function clientIdentity(c: Parameters<MiddlewareHandler<AppEnv>>[0], deps: AppDeps): string {
   const user = c.get('user');
   if (user) return `w:${user.net}:${user.wallet}`;
-  const forwarded = c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
-  return `ip:${forwarded || c.req.header('CF-Connecting-IP') || 'unknown'}`;
+  const ip = resolveClientIp(c.req.header('X-Forwarded-For'), deps.env.trustedProxyDepth);
+  return `ip:${ip ?? 'unknown'}`;
 }
 
 /** Per-IP before auth, per-wallet after — whichever is known at this point. */
 export function limit(rule: RateLimitRule): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const deps = c.get('deps');
-    const verdict = await rateLimit(deps.redis, rule, clientIdentity(c), Math.floor(deps.now() / 1000));
+    const verdict = await rateLimit(deps.redis, rule, clientIdentity(c, deps), Math.floor(deps.now() / 1000));
     c.header('X-RateLimit-Limit', String(verdict.limit));
     c.header('X-RateLimit-Remaining', String(verdict.remaining));
     if (!verdict.ok) {

@@ -26,6 +26,18 @@ export interface ApiEnv {
 
   corsOrigins: readonly string[];
 
+  /**
+   * Number of reverse-proxy hops in front of this process that are trusted
+   * to append their own observed connecting IP to `X-Forwarded-For` — see
+   * `net/client-ip.ts`. Only the last this-many entries of that header are
+   * ever trusted for rate-limit identity/session `ip` logging; anything to
+   * the left is client-controllable and ignored. Defaults to `1`, matching
+   * Railway's single edge-proxy hop (`README.md`'s "Production deployment"
+   * table). Set to `0` to distrust the header entirely (e.g. reachable
+   * directly, with no proxy in front).
+   */
+  trustedProxyDepth: number;
+
   solanaRpcUrl: string;
   rhRpcUrl: string;
   rhChainId: number;
@@ -219,6 +231,8 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     siwsDomain: str(src, 'SIWS_DOMAIN', 'ston.kz'),
 
     corsOrigins: list(src, 'CORS_ORIGINS', DEFAULT_CORS),
+
+    trustedProxyDepth: int(src, 'TRUSTED_PROXY_DEPTH', 1),
 
     solanaRpcUrl: str(src, 'SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
     rhRpcUrl: str(src, 'RH_RPC_URL', RH_PUBLIC_RPC_URL),

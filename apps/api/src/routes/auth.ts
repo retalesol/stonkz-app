@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import type { Net } from '@stonkz/shared';
 import { AuthError } from '../auth/service.js';
 import { limit, requireAuth } from '../app/middleware.js';
+import { resolveClientIp } from '../net/client-ip.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 
@@ -67,7 +68,9 @@ export function authRoutes(): Hono<AppEnv> {
         message,
         signature,
         userAgent: c.req.header('User-Agent'),
-        ip: c.req.header('X-Forwarded-For')?.split(',')[0]?.trim(),
+        // Only the trusted-proxy-depth hop, never the client-controllable
+        // left end of the header — see M1 in docs/security-review-findings.md.
+        ip: resolveClientIp(c.req.header('X-Forwarded-For'), deps.env.trustedProxyDepth) ?? undefined,
       });
       // First sight of a wallet still starts its streak, so the multiplier is
       // right on the very first trade of the session.
