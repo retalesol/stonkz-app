@@ -1,0 +1,120 @@
+import { Hono } from 'hono';
+import { CRATES, RAR, type CrateTier } from '@stonkz/shared';
+import { CrateError } from '../game/crates.js';
+import { limit, optionalAuth, requireAuth } from '../app/middleware.js';
+import { RATE_LIMITS } from '../redis/ratelimit.js';
+import type { AppEnv } from '../app/context.js';
+
+function parseTier(raw: string): CrateTier | null {
+  const upper = raw.toUpperCase();
+  return CRATES.some((c) => c.k === upper) ? (upper as CrateTier) : null;
+}
+
+/** Plan step 120 — `GET /rewards`, `POST /rewards/crates/:tier/open`, `GET /achievements`. */
+export function rewardsRoutes(): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+
+  /**
+   * Crate definitions with cooldown state, the drop tables, XP and rank.
+   *
+   * The drop tables are public — they are the advertised odds — but every roll
+   * happens server-side, so publishing them gives a client nothing.
+   */
+  app.get('/rewards', requireAuth(), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+
+    const [snapshot, states] = await Promise.all([
+      deps.ledger.snapshot(user.net, user.wallet),
+      deps.crates.states(user.net, user.wallet),
+    ]);
+
+    return c.json({
+      net: user.net,
+      wallet: user.wallet,
+      xp: snapshot.xp,
+      rank: snapshot.rank,
+      sp: snapshot.sp,
+      optionz: snapshot.optionz,
+      streak: snapshot.streak,
+      streakMult: snapshot.streakMult,
+      achievementCount: snapshot.achievements.length,
+      cratesReady: states.filter((s) => s.ready).length,
+      crates: states.map((state) => {
+        const def = CRATES.find((cr) => cr.k === state.tier);
+        return {
+          ...state,
+          drops: (def?.drops ?? []).map((d, i) => ({
+            rarity: (RAR[i] as (typeof RAR)[number])[0],
+            rarityClass: (RAR[i] as (typeof RAR)[number])[1],
+            odds: d[0],
+            // `S` rows pay Stonk Optionz, never $STONKZ (plan step 107).
+            kind: d[1] === 'S' ? ('OPTIONZ' as const) : ('ITEM' as const),
+            min: d[1] === 'S' ? d[2] : null,
+            max: d[1] === 'S' ? d[3] : null,
+            item: d[1] === 'I' ? d[2] : null,
+          })),
+        };
+      }),
+      dropLog: snapshot.dropLog,
+      items: snapshot.items,
+    });
+  });
+
+  app.post('/rewards/crates/:tier/open', requireAuth(), limit(RATE_LIMITS.crate), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+
+    const tier = parseTier(c.req.param('tier'));
+    if (!tier) return c.json({ error: 'unknown_tier' }, 404);
+
+    try {
+      const result = await deps.crates.open(user.net, user.wallet, tier);
+      return c.json({
+        tier: result.tier,
+        rarity: result.rarity,
+        label: result.label,
+        optionz: result.optionz,
+        optionzTotal: result.optionzTotal,
+        item: result.item,
+        xp: result.xp,
+        rankedUp: result.rankedUp,
+        readyAt: result.readyAt,
+        cooldownHours: result.cooldownHours,
+        // The commitment is returned so an open can be checked later; the
+        // secret behind it never leaves the server.
+        proof: {
+          rollCommit: result.roll.rollCommit,
+          serverSeedHash: result.roll.serverSeedHash,
+          nonce: result.roll.clientNonce,
+        },
+      });
+    } catch (err) {
+      if (err instanceof CrateError) {
+        if (err.code === 'cooling_down') {
+          return c.json({ error: 'cooling_down', readyAt: err.readyAt ?? null }, 429);
+        }
+        return c.json({ error: err.code }, 404);
+      }
+      throw err;
+    }
+  });
+
+  /** Definitions always; unlock timestamps when there is a session. */
+  app.get('/achievements', optionalAuth(), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    const net = user?.net ?? 'SOL';
+    const list = await deps.ledger.achievementList(net, user?.wallet ?? null);
+    return c.json({
+      net: user?.net ?? null,
+      unlocked: list.filter((a) => a.unlockedAt !== null).length,
+      total: list.length,
+      achievements: list,
+    });
+  });
+
+  return app;
+}

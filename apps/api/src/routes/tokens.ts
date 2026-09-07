@@ -1,0 +1,214 @@
+import { Hono } from 'hono';
+import { and, desc, eq, gt, ilike, or, sql, type SQL } from 'drizzle-orm';
+import { laneOf, nativeUnit, type Lane, type Net } from '@stonkz/shared';
+import { candles, holdersSnapshot, tokens, trades } from '../db/schema.js';
+import { limit } from '../app/middleware.js';
+import { RATE_LIMITS } from '../redis/ratelimit.js';
+import type { AppEnv } from '../app/context.js';
+import { serialiseToken, type TokenRow } from './serialise.js';
+
+const TIMEFRAMES = new Set(['1m', '5m', '15m', '1h', '4h', '1d']);
+/** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
+const SORTS = new Set(['new', 'mc', 'chg', 'rep']);
+
+function parseNet(raw: string | undefined): Net | null {
+  return raw === 'SOL' || raw === 'RH' ? raw : null;
+}
+
+function parseLane(raw: string | undefined): Lane | null {
+  return raw === 'new' || raw === 'soon' || raw === 'grad' ? raw : null;
+}
+
+function clampLimit(raw: string | undefined, fallback: number, max: number): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(n, max);
+}
+
+/**
+ * Phase 1.C read path (plan step 57).
+ *
+ * The board defaults to the connected net — `WALLET.net` in the UI — and
+ * `net=ALL` opts into the cross-chain view. Everything here is a plain read of
+ * what the indexer materialised; no simulation, no `tick()`.
+ */
+export function tokenRoutes(): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+
+  app.use('/tokens/*', limit(RATE_LIMITS.read));
+
+  app.get('/tokens', async (c) => {
+    const deps = c.get('deps');
+    const netParam = c.req.query('net');
+    const net = netParam === 'ALL' ? null : (parseNet(netParam) ?? c.get('user')?.net ?? 'SOL');
+    const lane = parseLane(c.req.query('lane'));
+    const q = (c.req.query('q') ?? '').trim();
+    const sort = SORTS.has(c.req.query('sort') ?? '') ? (c.req.query('sort') as string) : 'new';
+    const max = clampLimit(c.req.query('limit'), 100, 500);
+
+    const filters: SQL[] = [];
+    if (net) filters.push(eq(tokens.net, net));
+    if (lane) filters.push(eq(tokens.lane, lane));
+    if (q) {
+      const like = `${q}%`;
+      const contains = `%${q}%`;
+      const clause = or(ilike(tokens.sym, like), ilike(tokens.name, contains));
+      if (clause) filters.push(clause);
+    }
+
+    const order =
+      sort === 'mc'
+        ? desc(tokens.mc)
+        : sort === 'chg'
+          ? desc(tokens.chg)
+          : sort === 'rep'
+            ? desc(tokens.replies)
+            : desc(tokens.launchedAt);
+
+    const rows = await deps.db
+      .select()
+      .from(tokens)
+      .where(filters.length > 0 ? and(...filters) : undefined)
+      .orderBy(order)
+      .limit(max);
+
+    const counts = await deps.db
+      .select({ lane: tokens.lane, n: sql<number>`count(*)::int` })
+      .from(tokens)
+      .where(net ? eq(tokens.net, net) : undefined)
+      .groupBy(tokens.lane);
+
+    const now = deps.now();
+    return c.json({
+      net: net ?? 'ALL',
+      sort,
+      count: rows.length,
+      lanes: {
+        new: counts.find((r) => r.lane === 'new')?.n ?? 0,
+        soon: counts.find((r) => r.lane === 'soon')?.n ?? 0,
+        grad: counts.find((r) => r.lane === 'grad')?.n ?? 0,
+      },
+      tokens: rows.map((r) => serialiseToken(r as TokenRow, now)),
+    });
+  });
+
+  app.get('/tokens/:sym', async (c) => {
+    const deps = c.get('deps');
+    const sym = c.req.param('sym').toUpperCase();
+    const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+
+    const [row] = await deps.db
+      .select()
+      .from(tokens)
+      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
+      .limit(1);
+    if (!row) return c.json({ error: 'not_found' }, 404);
+
+    return c.json(serialiseToken(row as TokenRow, deps.now()));
+  });
+
+  app.get('/tokens/:sym/candles', async (c) => {
+    const deps = c.get('deps');
+    const sym = c.req.param('sym').toUpperCase();
+    const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const tf = c.req.query('tf') ?? '1m';
+    if (!TIMEFRAMES.has(tf)) return c.json({ error: 'bad_timeframe' }, 400);
+    const max = clampLimit(c.req.query('limit'), 200, 1000);
+
+    const rows = await deps.db
+      .select()
+      .from(candles)
+      .where(and(eq(candles.net, net), eq(candles.sym, sym), eq(candles.tf, tf)))
+      .orderBy(desc(candles.bucketStart))
+      .limit(max);
+
+    return c.json({
+      net,
+      sym,
+      tf,
+      // Oldest first: `drawTChart` walks the series left to right.
+      candles: rows.reverse().map((r) => ({
+        t: r.bucketStart.getTime(),
+        o: r.o,
+        h: r.h,
+        l: r.l,
+        c: r.c,
+        v: r.v,
+        nativeVolume: r.nativeVolume,
+        trades: r.trades,
+      })),
+    });
+  });
+
+  app.get('/tokens/:sym/trades', async (c) => {
+    const deps = c.get('deps');
+    const sym = c.req.param('sym').toUpperCase();
+    const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const max = clampLimit(c.req.query('limit'), 50, 200);
+
+    const rows = await deps.db
+      .select()
+      .from(trades)
+      .where(and(eq(trades.net, net), eq(trades.sym, sym)))
+      .orderBy(desc(trades.id))
+      .limit(max);
+
+    return c.json({
+      net,
+      sym,
+      nativeUnit: nativeUnit(net),
+      trades: rows.map((r) => ({
+        t: r.blockTime.getTime(),
+        sym: r.sym,
+        net: r.net,
+        buy: r.side === 'buy',
+        sol: r.nativeAmount,
+        tok: r.tokenAmount,
+        mc: r.mc,
+        w: r.trader,
+        v: r.usdValue,
+        cb: r.cashback,
+        sig: r.txSig,
+      })),
+    });
+  });
+
+  app.get('/tokens/:sym/holders', async (c) => {
+    const deps = c.get('deps');
+    const sym = c.req.param('sym').toUpperCase();
+    const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const max = clampLimit(c.req.query('limit'), 50, 200);
+
+    const rows = await deps.db
+      .select()
+      .from(holdersSnapshot)
+      .where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym), gt(holdersSnapshot.tokenAmount, 0)))
+      .orderBy(desc(holdersSnapshot.tokenAmount))
+      .limit(max);
+
+    const [token] = await deps.db
+      .select({ supply: tokens.supply })
+      .from(tokens)
+      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
+      .limit(1);
+    const supply = token?.supply ?? 0;
+
+    return c.json({
+      net,
+      sym,
+      holders: rows.map((r) => ({
+        wallet: r.wallet,
+        amount: r.tokenAmount,
+        pct: supply > 0 ? (r.tokenAmount / supply) * 100 : 0,
+        costNative: r.costNative,
+      })),
+    });
+  });
+
+  return app;
+}
+
+/** Board lane from market cap, so route code never re-derives the thresholds. */
+export function laneFor(mc: number): Lane {
+  return laneOf({ mc });
+}

@@ -1,0 +1,135 @@
+import { Hono } from 'hono';
+import { and, desc, eq } from 'drizzle-orm';
+import { MAJORS, STOCKS, nativeUnit, type Net } from '@stonkz/shared';
+import { koth, tape, tokens, treasuries } from '../db/schema.js';
+import { limit } from '../app/middleware.js';
+import { RATE_LIMITS } from '../redis/ratelimit.js';
+import type { AppEnv } from '../app/context.js';
+import { serialiseToken, type TokenRow } from './serialise.js';
+
+function parseNet(raw: string | undefined): Net | null {
+  return raw === 'SOL' || raw === 'RH' ? raw : null;
+}
+
+/** `GET /koth`, `GET /tape`, `GET /base-tokens`, `GET /treasuries`. */
+export function marketRoutes(): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+
+  app.use('/koth', limit(RATE_LIMITS.read));
+  app.use('/tape', limit(RATE_LIMITS.read));
+
+  /** One king per net; `net=ALL` returns both crowns. */
+  app.get('/koth', async (c) => {
+    const deps = c.get('deps');
+    const netParam = c.req.query('net');
+    const net = netParam === 'ALL' ? null : (parseNet(netParam) ?? c.get('user')?.net ?? 'SOL');
+
+    const rows = await deps.db
+      .select()
+      .from(koth)
+      .where(net ? eq(koth.net, net) : undefined);
+
+    const now = deps.now();
+    const kings = await Promise.all(
+      rows.map(async (row) => {
+        const [token] = await deps.db
+          .select()
+          .from(tokens)
+          .where(and(eq(tokens.net, row.net), eq(tokens.sym, row.sym)))
+          .limit(1);
+        return {
+          net: row.net as Net,
+          sym: row.sym,
+          mc: row.mc,
+          crownedAt: row.crownedAt.getTime(),
+          // 5s `crowned` glow in the UI keys off this.
+          freshMs: now - row.crownedAt.getTime(),
+          token: token ? serialiseToken(token as TokenRow, now) : null,
+        };
+      }),
+    );
+
+    return c.json({ net: net ?? 'ALL', kings });
+  });
+
+  /** The global fill feed behind the ticker tape. */
+  app.get('/tape', async (c) => {
+    const deps = c.get('deps');
+    const netParam = c.req.query('net');
+    const net = netParam === 'ALL' ? null : (parseNet(netParam) ?? c.get('user')?.net ?? 'SOL');
+    const max = Math.min(Number.parseInt(c.req.query('limit') ?? '40', 10) || 40, 200);
+
+    const rows = await deps.db
+      .select()
+      .from(tape)
+      .where(net ? eq(tape.net, net) : undefined)
+      .orderBy(desc(tape.id))
+      .limit(max);
+
+    return c.json({
+      net: net ?? 'ALL',
+      fills: rows.map((r) => ({
+        t: r.blockTime.getTime(),
+        sym: r.sym,
+        net: r.net,
+        buy: r.side === 'buy',
+        sol: r.nativeAmount,
+        tok: r.tokenAmount,
+        mc: r.mc,
+        w: r.trader,
+        v: r.usdValue,
+        cb: r.cashback,
+        sig: r.txSig,
+      })),
+    });
+  });
+
+  /**
+   * Plan step 60 — majors per net, plus Solana's tokenized stocks.
+   *
+   * `STOCKS` in `packages/shared` is a 2026-09-06 snapshot; the GeckoTerminal
+   * cron that replaces it is Phase 1.C-live work and does not exist yet, so the
+   * response says which source it came from rather than pretending it is fresh.
+   * Robinhood returns majors only until that market is confirmed (plan step 51).
+   */
+  app.get('/base-tokens', (c) => {
+    const net = parseNet(c.req.query('network')) ?? parseNet(c.req.query('net')) ?? 'SOL';
+    const majors = MAJORS[net].map(([symbol, name]) => ({ symbol, name, kind: 'major' as const }));
+    const stocks =
+      net === 'SOL'
+        ? STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }))
+        : [];
+
+    return c.json({
+      net,
+      nativeUnit: nativeUnit(net),
+      source: 'snapshot:2026-09-06',
+      stale: true,
+      baseTokens: [...majors, ...stocks],
+    });
+  });
+
+  /**
+   * Plan step 139 — running protocol (20%) and `$STONKZ`-ops (10%) balances.
+   * Read-only and deliberately unauthenticated-safe: there is no claim path,
+   * and the withdrawal keys are not in this process.
+   */
+  app.get('/treasuries', async (c) => {
+    const deps = c.get('deps');
+    const rows = await deps.db.select().from(treasuries);
+    return c.json({
+      claimable: false,
+      note: 'Ops-visible only. Protocol 20% and $STONKZ-ops 10% are never user-claimable and never enter memecoin staking.',
+      vaults: rows.map((r) => ({
+        net: r.net as Net,
+        kind: r.kind,
+        nativeUnit: nativeUnit(r.net as Net),
+        nativeBalance: r.nativeBalance,
+        lifetimeCredited: r.lifetimeCredited,
+        updatedAt: r.updatedAt.getTime(),
+      })),
+    });
+  });
+
+  return app;
+}

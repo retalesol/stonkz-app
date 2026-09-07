@@ -1,0 +1,140 @@
+import { JwtService } from '../auth/jwt.js';
+import { AuthService } from '../auth/service.js';
+import { EvmRpc } from '../chain/evm.js';
+import { CachedPriceOracle, HttpPriceOracle } from '../chain/oracle.js';
+import { SolanaRpc } from '../chain/solana.js';
+import type { ChainRpcs, PriceOracle } from '../chain/types.js';
+import { createDb, type Db } from '../db/client.js';
+import type { ApiEnv } from '../env.js';
+import { GameAwards } from '../game/awards.js';
+import { CrateService } from '../game/crates.js';
+import { Ledger } from '../game/ledger.js';
+import { createLogger, type Logger } from '../observability/logger.js';
+import { Metrics, loggingAlertHook } from '../observability/metrics.js';
+import { createRedis } from '../redis/ioredis.js';
+import { QuoteCache } from '../redis/quote-cache.js';
+import type { RedisLike } from '../redis/types.js';
+import { Publisher } from '../ws/publisher.js';
+import type { AppDeps } from './context.js';
+
+/**
+ * Anything a caller wants to substitute. Production overrides nothing; tests
+ * override the database, Redis, both RPCs and the oracle.
+ */
+export interface DepsOverrides {
+  db?: Db;
+  redis?: RedisLike;
+  logger?: Logger;
+  rpcs?: ChainRpcs;
+  oracle?: PriceOracle;
+  now?: () => number;
+}
+
+export interface BuiltDeps {
+  deps: AppDeps;
+  /** Closes only what this call created; injected resources are the caller's. */
+  close(): Promise<void>;
+}
+
+export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Promise<BuiltDeps> {
+  const now = overrides.now ?? Date.now;
+  const logger = overrides.logger ?? createLogger(env.logLevel, { svc: 'api' });
+  const metrics = new Metrics(env.maxChainLagSeconds, loggingAlertHook(logger), now);
+
+  const closers: (() => Promise<void>)[] = [];
+
+  let db = overrides.db;
+  if (!db) {
+    const handle = createDb({ url: env.databaseUrl, poolMax: env.databasePoolMax });
+    db = handle.db;
+    closers.push(handle.close);
+  }
+
+  let redis = overrides.redis;
+  if (!redis) {
+    redis = await createRedis(env.redisUrl);
+    closers.push(() => (redis as RedisLike).close());
+  }
+
+  const rpcs: ChainRpcs =
+    overrides.rpcs ??
+    ({
+      SOL: new SolanaRpc({
+        url: env.solanaRpcUrl,
+        onCall: (ok) => metrics.rpcCall('SOL', ok),
+      }),
+      RH: new EvmRpc({
+        url: env.rhRpcUrl,
+        chainId: env.rhChainId,
+        onCall: (ok) => metrics.rpcCall('RH', ok),
+      }),
+    } satisfies ChainRpcs);
+
+  const oracle =
+    overrides.oracle ??
+    new CachedPriceOracle(
+      new HttpPriceOracle({ baseUrl: env.priceOracleUrl }),
+      redis,
+      env.priceOracleTtlSeconds,
+    );
+
+  const publisher = new Publisher(redis, now);
+  const jwt = new JwtService(
+    {
+      secret: env.jwtSecret,
+      issuer: env.jwtIssuer,
+      accessTtlSeconds: env.accessTokenTtlSeconds,
+      refreshTtlSeconds: env.refreshTokenTtlSeconds,
+    },
+    now,
+  );
+
+  const auth = new AuthService({
+    db,
+    redis,
+    jwt,
+    domain: env.siwsDomain,
+    uri: `https://${env.siwsDomain}`,
+    rhChainId: env.rhChainId,
+    nonceTtlSeconds: env.nonceTtlSeconds,
+    accessTtlSeconds: env.accessTokenTtlSeconds,
+    refreshTtlSeconds: env.refreshTokenTtlSeconds,
+    now,
+  });
+
+  const ledger = new Ledger({
+    db,
+    publisher,
+    dailyXpCap: env.dailyXpCap,
+    dailySpCap: env.dailySpCap,
+    now,
+  });
+
+  const awards = new GameAwards({ ledger, dust: env.dust, whaleCut: env.whaleCut });
+  const crates = new CrateService({ db, ledger, publisher, secret: env.crateHmacSecret, now });
+
+  const deps: AppDeps = {
+    env,
+    db,
+    redis,
+    logger,
+    metrics,
+    rpcs,
+    oracle,
+    jwt,
+    auth,
+    quotes: new QuoteCache(redis, env.quoteCacheTtlSeconds, now),
+    ledger,
+    awards,
+    crates,
+    publisher,
+    now,
+  };
+
+  return {
+    deps,
+    async close() {
+      for (const close of closers.reverse()) await close();
+    },
+  };
+}
