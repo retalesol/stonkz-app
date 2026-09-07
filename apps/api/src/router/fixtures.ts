@@ -48,6 +48,14 @@ export class FakeJupiterClient implements JupiterClient {
     this.noRouteFor = routeKey(inMint, outMint);
   }
 
+  /** Clears every configured route/fee-trap/failure flag — tests call this between cases sharing one `TestApp`. */
+  reset(): void {
+    this.routes.clear();
+    this.forcedPlatformFeeBps = 0;
+    this.failing = false;
+    this.noRouteFor = null;
+  }
+
   async quote(req: AggregatorQuoteRequest): Promise<AggregatorQuote> {
     if (this.failing) throw new NoRouteError(req.inMint, req.outMint, new Error('simulated outage'));
     if (this.noRouteFor === routeKey(req.inMint, req.outMint)) {
@@ -112,6 +120,14 @@ export class FakeUniswapClient implements UniswapClient {
 
   setNoRoute(inMint: string, outMint: string): void {
     this.noRouteFor = routeKey(inMint, outMint);
+  }
+
+  /** Clears every configured route/fee-trap/failure flag — tests call this between cases sharing one `TestApp`. */
+  reset(): void {
+    this.routes.clear();
+    this.forcedPortionBips = 0;
+    this.failing = false;
+    this.noRouteFor = null;
   }
 
   async quote(req: AggregatorQuoteRequest): Promise<AggregatorQuote> {

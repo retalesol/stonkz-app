@@ -1,0 +1,373 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { getAddress } from 'viem';
+import { applyBuy, buyQuote, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
+import type { Net } from '@stonkz/shared';
+import { settings, tokens } from '../db/schema.js';
+import { deriveCurveColumns } from '../router/curve-state.js';
+import { createTestApp, authed, type TestApp } from '../test/app.js';
+
+let h: TestApp;
+
+beforeAll(async () => {
+  h = await createTestApp();
+});
+afterAll(async () => {
+  await h.close();
+});
+beforeEach(async () => {
+  await h.db.reset();
+  await h.clearRateLimits();
+  h.jupiter.reset();
+  h.uniswap.reset();
+});
+
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const BONK_MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+const RH_USDC_MINT = getAddress(`0x${'def1'.padStart(40, '0')}`);
+const RH_TOKEN_MINT = getAddress(`0x${'123456'.padStart(40, '0')}`);
+
+interface SeedOpts {
+  net: Net;
+  sym: string;
+  mint: string;
+  baseSymbol: string;
+  baseMint: string;
+  baseDecimals: number;
+  tokenDecimals: number;
+  basePrice1e6: bigint;
+  supply?: number;
+  feeBps?: number;
+  /**
+   * Simulates prior on-chain trading activity by applying one buy fill to
+   * the fresh curve before the row is persisted — `/trade/prepare` never
+   * writes `curveRealBase`/`curveRealToken` back itself (that is the
+   * indexer's job, out of this phase's scope), so a sell-side test needs
+   * some already-circulating supply to sell against, exactly as a real
+   * launch that already saw a buy would have.
+   */
+  preFillBaseAtoms?: bigint;
+}
+
+async function seedTradeableToken(opts: SeedOpts): Promise<void> {
+  const supply = opts.supply ?? 1e9;
+  const feeBps = opts.feeBps ?? 250;
+  const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(opts.tokenDecimals);
+  const derived = deriveCurveColumns(supplyAtoms, opts.basePrice1e6, opts.baseDecimals, opts.tokenDecimals);
+  if (!derived) throw new Error('seedTradeableToken: curve derivation failed — bad fixture inputs');
+  const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
+  const mc = Number(mcapUsd1e6(mcapBaseAtoms, opts.basePrice1e6, opts.baseDecimals)) / 1e6;
+
+  let columns = derived.columns;
+  if (opts.preFillBaseAtoms) {
+    const fill = buyQuote(derived.state, feeBps, opts.preFillBaseAtoms);
+    if (!fill) throw new Error('seedTradeableToken: preFillBaseAtoms could not be filled against a fresh curve');
+    const next = applyBuy(derived.state, fill);
+    columns = { ...columns, curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
+  }
+
+  await h.deps.db.insert(tokens).values({
+    net: opts.net,
+    sym: opts.sym,
+    name: opts.sym,
+    creator: 'Dev',
+    mint: opts.mint,
+    baseSymbol: opts.baseSymbol,
+    baseMint: opts.baseMint,
+    supply,
+    feeBps,
+    mc,
+    lastMc: mc,
+    lane: 'new',
+    seed: 1,
+    launchedAt: new Date(h.now() - 600_000),
+    ...columns,
+  });
+}
+
+interface TradeBody {
+  sym: string;
+  side: 'buy' | 'sell';
+  amount: number;
+}
+
+interface TradeQuote {
+  side: string;
+  routeLabel: string;
+  hops: { venue: string; feeBps: number; feeAmount: number }[];
+}
+
+interface TradeStep {
+  description: string;
+}
+
+interface TradePrepareResponse {
+  net?: string;
+  atomic?: boolean;
+  transaction?: string;
+  steps?: TradeStep[];
+  warning?: string;
+  quote?: TradeQuote;
+  expiresAt?: number;
+  error?: string;
+  detail?: string;
+}
+
+async function tradePrepare(token: string, body: TradeBody): Promise<{ status: number; body: TradePrepareResponse }> {
+  const res = await h.app.request('/trade/prepare', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authed(token) },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as TradePrepareResponse };
+}
+
+/** Plan steps 83–87 — trade composition, `Settings` application, and structured router errors. */
+describe('POST /trade/prepare', () => {
+  it('composes an atomic Solana transaction on the direct-pair fast path (no aggregator hop)', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'DIRECT',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'SOL',
+      baseMint: SOL_MINT,
+      baseDecimals: 9,
+      tokenDecimals: 6,
+      basePrice1e6: 214_080_000n,
+    });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+
+    const { status, body } = await tradePrepare(token, { sym: 'DIRECT', side: 'buy', amount: 1 });
+    expect(status).toBe(200);
+    expect(body.atomic).toBe(true);
+    expect(typeof body.transaction).toBe('string');
+    expect(body.quote?.hops).toHaveLength(1);
+    expect(body.quote?.hops[0]?.venue).toBe('CURVE');
+  });
+
+  it('routes hop 1 through Jupiter and still composes one atomic transaction', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'VIABONK',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'BONK',
+      baseMint: BONK_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 6,
+      basePrice1e6: 1_000_000n,
+    });
+    h.jupiter.setRoute(SOL_MINT, BONK_MINT, { rate: 1_000 });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+
+    const { status, body } = await tradePrepare(token, { sym: 'VIABONK', side: 'buy', amount: 1 });
+    expect(status).toBe(200);
+    expect(body.atomic).toBe(true);
+    const quote = body.quote!;
+    expect(quote.routeLabel).toBe('JUPITER → CURVE');
+    expect(quote.hops[0]).toMatchObject({ venue: 'JUPITER', feeBps: 0, feeAmount: 0 });
+    expect(quote.hops[1]?.venue).toBe('CURVE');
+    expect(quote.hops[1]?.feeBps).toBe(250);
+  });
+
+  it('returns a non-atomic RH step plan through Uniswap, with the atomicity warning attached', async () => {
+    await seedTradeableToken({
+      net: 'RH',
+      sym: 'RHVIA',
+      mint: RH_TOKEN_MINT,
+      baseSymbol: 'USDC',
+      baseMint: RH_USDC_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 18,
+      basePrice1e6: 1_000_000n,
+    });
+    h.uniswap.setRoute('0x0000000000000000000000000000000000000000', RH_USDC_MINT, { rate: 4_200 });
+    const { token, address } = await h.login('RH');
+    h.rpcs.RH.setBalance(address, 5);
+
+    const { status, body } = await tradePrepare(token, { sym: 'RHVIA', side: 'buy', amount: 0.5 });
+    expect(status).toBe(200);
+    expect(body.atomic).toBe(false);
+    expect(typeof body.warning).toBe('string');
+    expect(String(body.warning)).toMatch(/StonkzRouter/);
+    const steps = body.steps ?? [];
+    expect(steps.length).toBeGreaterThanOrEqual(3);
+    expect(steps[0]?.description).toMatch(/Uniswap/);
+  });
+
+  it('rejects a buy when the wallet cannot cover hop 1 (insufficient native)', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'POOR',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'SOL',
+      baseMint: SOL_MINT,
+      baseDecimals: 9,
+      tokenDecimals: 6,
+      basePrice1e6: 214_080_000n,
+    });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 0.1);
+
+    const { status, body } = await tradePrepare(token, { sym: 'POOR', side: 'buy', amount: 2 });
+    expect(status).toBe(422);
+    expect(body.error).toBe('insufficient_native');
+  });
+
+  it('rejects a buy whose total cost exceeds the caller cap before ever touching the balance', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'CAPPED',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'SOL',
+      baseMint: SOL_MINT,
+      baseDecimals: 9,
+      tokenDecimals: 6,
+      basePrice1e6: 214_080_000n,
+    });
+    const { token, address } = await h.login('SOL');
+    // Plenty of balance — the cap must still fire first (default Settings cap is 5).
+    h.rpcs.SOL.setBalance(address, 100);
+
+    const { status, body } = await tradePrepare(token, { sym: 'CAPPED', side: 'buy', amount: 10 });
+    expect(status).toBe(422);
+    expect(body.error).toBe('cap_exceeded');
+  });
+
+  it('rejects a fill whose slippage-floored min-out would round to zero', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'SLIP',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'SOL',
+      baseMint: SOL_MINT,
+      baseDecimals: 9,
+      tokenDecimals: 6,
+      basePrice1e6: 214_080_000n,
+    });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    // 99.995% rounds to exactly 10,000 bps in `applySlippageFloor`'s integer
+    // math, flooring *any* expected output to 0 atoms — while still being
+    // `< 100`, so `/trade/prepare`'s own zero-min-out guard actually fires
+    // instead of being skipped as "slippage tolerance is effectively off".
+    await h.deps.db.insert(settings).values({ net: 'SOL', wallet: address, slip: 99.995 });
+
+    const { status, body } = await tradePrepare(token, { sym: 'SLIP', side: 'buy', amount: 1 });
+    expect(status).toBe(422);
+    expect(body.error).toBe('slippage_exceeded');
+  });
+
+  it('rejects an unknown ticker', async () => {
+    const { token } = await h.login('SOL');
+    const { status, body } = await tradePrepare(token, { sym: 'NOPE', side: 'buy', amount: 1 });
+    expect(status).toBe(404);
+    expect(body.error).toBe('not_found');
+  });
+
+  it('refuses to trade a token with no on-chain curve state yet (fixture-only row)', async () => {
+    await h.deps.db.insert(tokens).values({
+      net: 'SOL',
+      sym: 'FIXTURE',
+      name: 'Fixture Only',
+      creator: 'Dev',
+      baseSymbol: 'SOL',
+      baseMint: SOL_MINT,
+      supply: 1e9,
+      feeBps: 250,
+      mc: 1000,
+      lane: 'new',
+      seed: 2,
+      launchedAt: new Date(h.now() - 600_000),
+    });
+    const { token } = await h.login('SOL');
+    const { status, body } = await tradePrepare(token, { sym: 'FIXTURE', side: 'buy', amount: 1 });
+    expect(status).toBe(422);
+    expect(body.error).toBe('not_tradeable');
+  });
+
+  it('handles a sell on the direct-pair fast path', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'SELLIT',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'SOL',
+      baseMint: SOL_MINT,
+      baseDecimals: 9,
+      tokenDecimals: 6,
+      basePrice1e6: 214_080_000n,
+      // Simulates 1 SOL of prior buys already on-chain, so there is
+      // circulating supply on record to sell back against.
+      preFillBaseAtoms: 1_000_000_000n,
+    });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+
+    const { status, body } = await tradePrepare(token, { sym: 'SELLIT', side: 'sell', amount: 1000 });
+    expect(status).toBe(200);
+    expect(body.atomic).toBe(true);
+    const quote = body.quote as { side: string; hops: { venue: string }[] };
+    expect(quote.side).toBe('sell');
+    expect(quote.hops[0]?.venue).toBe('CURVE');
+  });
+
+  it("does not use USDC's price feed reasoning for trade — trades price straight off the stored curve regardless of base-price availability", async () => {
+    // BONK has no `basePriceFor` entry (router/base-price.ts), but `/trade/prepare`
+    // never calls it — only `/launch/prepare` does — so a BONK-based curve trades fine.
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'NOBASEPRICE',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'BONK',
+      baseMint: BONK_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 6,
+      basePrice1e6: 1_000n,
+    });
+    h.jupiter.setRoute(SOL_MINT, BONK_MINT, { rate: 500 });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    const { status } = await tradePrepare(token, { sym: 'NOBASEPRICE', side: 'buy', amount: 0.5 });
+    expect(status).toBe(200);
+  });
+
+  it('surfaces a structured, red-toastable error when the aggregator has no route', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'NOROUTE',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'BONK',
+      baseMint: BONK_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 6,
+      basePrice1e6: 1_000_000n,
+    });
+    // Deliberately do not configure a Jupiter route for this pair.
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    const { status, body } = await tradePrepare(token, { sym: 'NOROUTE', side: 'buy', amount: 1 });
+    expect(status).toBe(422);
+    expect(body.error).toBe('no_route');
+  });
+
+  it('rejects a Jupiter response that smuggles a platform fee on hop 1', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'FEETRAP',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'BONK',
+      baseMint: BONK_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 6,
+      basePrice1e6: 1_000_000n,
+    });
+    h.jupiter.setRoute(SOL_MINT, BONK_MINT, { rate: 500 });
+    h.jupiter.forcePlatformFeeBps(10);
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    const { status, body } = await tradePrepare(token, { sym: 'FEETRAP', side: 'buy', amount: 1 });
+    expect(status).toBe(502);
+    expect(body.error).toBe('aggregator_fee_detected');
+    h.jupiter.forcePlatformFeeBps(0);
+  });
+});
