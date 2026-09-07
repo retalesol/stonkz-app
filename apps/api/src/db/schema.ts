@@ -50,6 +50,14 @@ export const users = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.net, t.wallet] })],
+  // Note: `0000_infra_core.sql` already declares a case-insensitive, global
+  // `users_username_uq` unique index (`lower(username)`, not scoped to
+  // `net`) plus length CHECK constraints for `username`/`bio` — plan step
+  // 144's "409 on username clash". Neither is mirrored into this typed
+  // layer (drizzle-orm's `pg-core` builder has no `lower()` functional-index
+  // helper this repo uses elsewhere), so `routes/social.ts`'s `PATCH /me`
+  // relies on `isUniqueViolation()` from the raw SQL constraint rather than
+  // a duplicate declaration here.
 );
 
 export const authNonces = pgTable(

@@ -118,7 +118,9 @@ describe('handshake', () => {
     const client = await connect();
     const hello = await client.next();
     expect(hello.type).toBe('hello');
-    expect(hello).toMatchObject({ channels: ['board', 'tape', 'token:{sym}', 'user:{net}:{addr}'] });
+    expect(hello).toMatchObject({
+      channels: ['board', 'tape', 'token:{sym}', 'user:{net}:{addr}', 'chat:{net}:{room}'],
+    });
   });
 
   it('answers an application-level ping', async () => {
