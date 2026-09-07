@@ -197,6 +197,52 @@ test('every route is linkable, titled, and survives the back button', async ({ p
   await expect(page.locator('.tk-id h1')).toContainText(sym);
 });
 
+test('sort chips reorder the board without changing which coins are on it', async ({ page }) => {
+  const symsIn = async (laneSel: string): Promise<string[]> =>
+    page.locator(`${laneSel} .coin`).evaluateAll((els) => els.map((el) => el.getAttribute('data-sym')));
+
+  const before = new Set(await symsIn('#lane-new'));
+  await page.click('.filters .chip[data-sort="mc"]');
+  await expect(page.locator('.filters .chip[data-sort="mc"]')).toHaveClass(/on/);
+  // Same coins, just reordered — the chip is a sort, not a filter.
+  expect(new Set(await symsIn('#lane-new'))).toEqual(before);
+
+  const byMc = await symsIn('#lane-new');
+  await page.click('.filters .chip[data-sort="chg"]');
+  await expect(page.locator('.filters .chip[data-sort="chg"]')).toHaveClass(/on/);
+  const byChg = await symsIn('#lane-new');
+  // Different sort keys, same seed data: the order actually moved.
+  expect(byChg).not.toEqual(byMc);
+
+  await page.click('.filters .chip[data-sort="new"]');
+  await expect(page.locator('.filters .chip[data-sort="new"]')).toHaveClass(/on/);
+});
+
+test('the tape opens a token on click', async ({ page }) => {
+  // The strip is right-anchored and grows leftward as new prints arrive, so
+  // only the newest (rightmost) one is reliably inside the clipped viewport —
+  // `.first()` is the oldest print and scrolls out of view almost at once.
+  const print = page.locator('#tape .tx').last();
+  const sym = (await print.getAttribute('data-sym')) as string;
+  // Hovering (part of Playwright's default click sequence) pins a frozen
+  // clone on top of the print; `force: true` skips the actionability check
+  // that would otherwise balk at the clone covering the target — clone and
+  // original carry the same `data-sym` and both sit under the tape's one
+  // delegated click listener, so either is a correct click.
+  await print.click({ force: true });
+  await expect(page.locator('#tokenView')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/t/${sym}$`));
+});
+
+test('the KOTH crown opens its coin on click', async ({ page }) => {
+  const koth = page.locator('#koth');
+  const sym = (await koth.getAttribute('data-sym')) as string;
+  await koth.click();
+  await expect(page.locator('#tokenView')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/t/${sym}$`));
+  await expect(page.locator('.tk-id h1')).toContainText(sym);
+});
+
 test('the six dialogs trap focus and hand it back to whatever opened them', async ({ page }) => {
   await connect(page, 'SOL');
 
