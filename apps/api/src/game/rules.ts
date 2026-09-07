@@ -1,4 +1,4 @@
-import type { AchievementKey, Net } from '@stonkz/shared';
+import type { AchievementKey } from '@stonkz/shared';
 
 /**
  * Every award rule, ported from `legacy/index.html`.
@@ -69,30 +69,13 @@ export function requiresVerifiedEvent(reason: string): boolean {
 }
 
 /**
- * The `whale` cut, in native units.
- *
- * `index.html:1973` is `if (buy && sol >= 5) unlock("whale")` — five SOL. The
- * plan (step 109) asks for the ETH equivalent to be documented in
- * `packages/shared`; that package is owned by another track this cycle, so the
- * value lives here and is env-overridable via `WHALE_SOL` / `WHALE_ETH`.
- * 2 ETH is the chosen cut: at the frozen oracle prices in the test fixtures
- * (SOL $214.08, ETH $4200) five SOL is ~$1070 and two ETH is ~$8400, so this
- * is deliberately *not* USD-parity — it keeps the achievement rare on a chain
- * whose gas token is ~20x the price, rather than making it 20x easier.
- *
- * See the final report: this constant wants to move to `packages/shared`.
+ * The whale cut and the dust floor now live in `@stonkz/shared`
+ * (security review L3) so the sim and the server cannot drift on the exact
+ * boundary at which a fill earns anything. Re-exported here because this
+ * module is the policy surface the rest of `apps/api` imports from, and
+ * `WHALE_SOL`/`WHALE_ETH` env overrides still resolve against these defaults.
  */
-export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2 };
-
-/**
- * Dust floor, in native units. Below this a fill awards nothing at all — no
- * XP, no SP, and no achievement unlock either, since a 0.000001 SOL trade
- * earning FIRST BLOOD is exactly the farm the cap is meant to stop.
- *
- * The event is still recorded (with `amount = 0`) so a replay cannot later
- * decide the same fill is worth paying for.
- */
-export const DEFAULT_DUST: Record<Net, number> = { SOL: 0.01, RH: 0.0005 };
+export { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
 
 /** Achievements the ledger can unlock, with the XP each pays (from `ACH`). */
 export const UNLOCKABLE: readonly AchievementKey[] = [

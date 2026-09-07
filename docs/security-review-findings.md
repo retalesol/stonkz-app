@@ -517,12 +517,30 @@ addition.
   (`0f5f6b6`, tests `ed6ce66`, docs `9ca894f`).
 - **M1 / L2** — trusted-proxy-depth IP resolution in `apps/api`
   (`6668e9e`).
+- **M4** — `programs/evm/src/SafeErc20.sol`, applied at every foreign-token
+  call site (launchpad `_pull`/`_send`, router base approve/transfer, migrator
+  pool deposits). Investigating the finding changed its shape: the return
+  values were *already* checked with `require`, so the exposure was not an
+  unchecked `false` but the opposite — a token returning **no data** made the
+  declared `bool` decode revert, meaning a no-return token (the mainnet-USDT
+  shape) could be configured as a base asset and then fail every trade
+  against it. The wrappers accept empty-or-`true` and reject anything else
+  with a named error. Nine tests, including one that pins the original hazard
+  and one that runs a full launch/buy/sell against a no-return base asset.
+- **L1** — `verifyTip` now returns a distinct `unknown_age` rejection when
+  `blockTimeMs` is `null` instead of skipping the recency check. The EVM
+  RPC's block-time fetch comment was updated too: it previously said the
+  caller "does not depend on this", which stopped being true with this fix.
+- **L3** — `DEFAULT_WHALE_CUT` and `DEFAULT_DUST` moved to
+  `packages/shared/src/constants.ts`, re-exported from
+  `apps/api/src/game/rules.ts` so the env overrides still resolve against
+  them. The sim and the server can no longer drift on the boundary at which a
+  fill earns anything.
 
-Still open from this document: **M2** (crate VRF before odds are marketed),
-**M4** (`SafeERC20` before new EVM base assets), **L1** (tip
-`blockTimeMs === null` should fail closed), **L3** (whale/dust constants want
-to live in `packages/shared`). Their status is tracked alongside the rest of
-the pre-production gaps in [`real-vs-simulated.md`](real-vs-simulated.md).
+Still open from this document: **M2** only (crate RNG must become a
+commit-reveal VRF before odds are marketed; the code's own header already says
+so). Tracked alongside the rest of the pre-production gaps in
+[`real-vs-simulated.md`](real-vs-simulated.md).
 
 ---
 
@@ -534,10 +552,10 @@ the pre-production gaps in [`real-vs-simulated.md`](real-vs-simulated.md).
 | M1 | Medium (fixed) | apps/api rate limiting | Per-IP identity trusted a client-controllable `X-Forwarded-For`; now bound to a fixed `TRUSTED_PROXY_DEPTH` read from the right, failing closed |
 | M2 | Medium | Crate RNG | HMAC RNG is auditable, not publicly verifiable — already documented in-repo as pre-marketing-odds blocker |
 | M3 | Medium (fixed) | apps/api | `GET /me` and `GET /native-price` had no rate limit — added |
-| M4 | Medium | EVM contracts | Raw ERC-20 calls without `SafeERC20`; safe against known base assets today, worth hardening before new base assets are added |
-| L1 | Low | Tips | `blockTimeMs === null` skips the recency check instead of failing closed |
+| M4 | Medium (fixed) | EVM contracts | Foreign-token calls decoded a declared `bool`, so a no-return token was unusable as a base asset; now via `SafeErc20` |
+| L1 | Low (fixed) | Tips | `blockTimeMs === null` skipped the recency check; now rejected as `unknown_age` |
 | L2 | Low (fixed) | apps/api logging | `sessions.ip` inherited M1's spoofable input; now records the same trusted-depth resolution |
-| L3 | Low | apps/api | Whale-cut/dust constants flagged (by the code itself) as wanting to move to `packages/shared` |
+| L3 | Low (fixed) | apps/api | Whale-cut/dust constants moved to `packages/shared` so the sim and server cannot drift |
 
 No critical findings. Everything else checked — fee-split math on both
 chains, overflow/underflow handling, EVM reentrancy guards, Solana signer/PDA

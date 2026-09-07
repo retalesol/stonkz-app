@@ -44,6 +44,32 @@ export const MAX_TICKER_LEN = 10;
 export const MIN_TIP_SOL = 0.001;
 export const MIN_TIP_ETH = 0.0001;
 
+/**
+ * Fill size, in native units, that unlocks the WHALE achievement.
+ *
+ * Deliberately **not** USD-parity across the two chains: five SOL and two ETH
+ * are nowhere near the same amount of money. Parity would make the
+ * achievement roughly twenty times easier to earn on the chain whose gas token
+ * is worth twenty times more, so the threshold is set to keep it comparably
+ * rare on each chain instead.
+ *
+ * Lives here rather than in `apps/api` so the sim and the server award it on
+ * exactly the same boundary (security review L3).
+ */
+export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2 };
+
+/**
+ * Dust floor, in native units. Below this a fill awards nothing at all — no
+ * XP, no SP, and no achievement unlock either, since a 0.000001 SOL trade
+ * earning FIRST BLOOD is exactly the farm the daily cap exists to stop.
+ *
+ * The event is still recorded server-side (with `amount = 0`) so a replay
+ * cannot later decide the same fill was worth paying for.
+ *
+ * Shared with the sim for the same reason as `DEFAULT_WHALE_CUT`.
+ */
+export const DEFAULT_DUST: Record<Net, number> = { SOL: 0.01, RH: 0.0005 };
+
 /** `[days, weightMultiplier, label]`. `index.html:1565` */
 export const LOCKS = [
   [0, 1, 'FLEX'],
