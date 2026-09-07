@@ -24,7 +24,7 @@ import { initTape } from '../views/tape.js';
 import { TV, closeToken, drawTChart, openToken } from '../views/token.js';
 import { startLoop } from './loop.js';
 import { renderRank } from './rank.js';
-import { type Route, back, navigate, onRoute, startRouting } from './route.js';
+import { type Route, back, current, navigate, onRoute, startRouting } from './route.js';
 import { currentView, showView } from './view.js';
 import { connectWallet, disconnectWallet, initWalletChip, isWmenuOpen, renderWallet, wmenu } from './wallet.js';
 
@@ -63,6 +63,14 @@ function apply(r: Route): void {
   if (TV.c) closeToken();
   showView('board');
   window.scrollTo(0, 0);
+  if (r.view === 'launch') openLaunch(must('#createBtn'));
+  else closeLaunch();
+}
+
+/** Closing the stepper is a navigation, since `/launch` is a route. */
+function leaveLaunch(): void {
+  if (current().view === 'launch') navigate({ view: 'board' });
+  else closeLaunch();
 }
 
 /* ------------------------------- escape stack ------------------------------ */
@@ -80,7 +88,7 @@ function onEscape(): void {
   else if (isClaimOpen()) closeClaim();
   else if (isEditOpen()) closeEdit();
   else if (isSetOpen()) openSet(false);
-  else if (isLaunchOpen()) closeLaunch();
+  else if (isLaunchOpen()) leaveLaunch();
   else if (isNetOpen()) netOpen(false);
   else if (isWmenuOpen()) wmenu(false);
   else if (isChatOpen()) chatOpen(false);
@@ -99,9 +107,8 @@ export async function boot(): Promise<void> {
   renderRank();
 
   must('#gradCap').textContent = usd(GRAD);
-  must('#bootNote').textContent = SIMULATED
-    ? 'SIMULATED MARKET ' + DOT + ' PRICES, TRADES AND BALANCES ARE FAKE ' + DOT + ' NOTHING HERE TOUCHES A CHAIN'
-    : 'LIVE DATA ' + DOT + ' MAINNET';
+  // The oracle hard-coded the disclosure because it was always simulated.
+  must('.foot .demo').textContent = SIMULATED ? 'SIMULATED DATA ' + DOT + ' NOT FINANCIAL ADVICE' : 'NOT FINANCIAL ADVICE';
 
   await api.ready();
 
@@ -109,7 +116,7 @@ export async function boot(): Promise<void> {
   initTape();
   initChat();
   initProfileView();
-  initLaunch();
+  initLaunch(leaveLaunch);
   initWizard();
   initSettings(() => {
     if (TV.c) drawTChart();
@@ -140,7 +147,7 @@ export async function boot(): Promise<void> {
       netOpen(true);
       return;
     }
-    openLaunch(must('#createBtn'));
+    navigate({ view: 'launch' });
   });
 
   /* hello card */

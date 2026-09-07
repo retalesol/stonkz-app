@@ -20,6 +20,16 @@ export function $$<T extends Element = HTMLElement>(sel: string, root: ParentNod
   return Array.from(root.querySelectorAll<T>(sel));
 }
 
+/**
+ * Empty an element.
+ *
+ * The one sanctioned reason to touch a container's contents without going
+ * through `lib/html.ts`, so `no-raw-innerhtml` can ban the sink outright.
+ */
+export function clear(el: Element | null | undefined): void {
+  if (el) el.replaceChildren();
+}
+
 /** Force a style flush so the next class/transform change animates. */
 export function reflow(el: Element): void {
   void (el as HTMLElement).offsetWidth;

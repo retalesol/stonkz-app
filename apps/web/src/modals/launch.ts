@@ -356,6 +356,6 @@ export function isLaunchOpen(): boolean {
   return isOpen('#newScrim');
 }
 
-export function initLaunch(): void {
-  wireBackdrop('#newScrim', closeLaunch);
+export function initLaunch(onDismiss: () => void): void {
+  wireBackdrop('#newScrim', onDismiss);
 }

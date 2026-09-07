@@ -5,7 +5,7 @@ import { spark } from '../canvas/spark.js';
 import { burst } from '../fx/debris.js';
 import { punchIn } from '../fx/punch.js';
 import { toast } from '../fx/toast.js';
-import { $, $$, must, reflow } from '../lib/dom.js';
+import { $, $$, clear, must, reflow } from '../lib/dom.js';
 import { DOT, ud } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
@@ -133,7 +133,7 @@ export function counts(): void {
 }
 
 export function renderBoard(): void {
-  for (const k of Object.keys(LANES) as Lane[]) LANES[k].innerHTML = '';
+  for (const k of Object.keys(LANES) as Lane[]) clear(LANES[k]);
   for (const c of COINS) {
     c.lane = laneOf(c);
     if (!c.el) card(c);

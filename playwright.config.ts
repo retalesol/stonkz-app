@@ -28,7 +28,7 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: 'pnpm --filter web preview',
+          command: `pnpm --filter @stonkz/web preview --port ${PORT} --strictPort`,
           url: baseURL,
           reuseExistingServer: !isCI,
           timeout: 120_000,

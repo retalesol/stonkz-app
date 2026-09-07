@@ -47,7 +47,7 @@ import type { ClaimResult, CrateResult, QuoteInput, StakeClaim, StakeInput, Ston
  * @see plan step 30
  */
 
-const TICK_MS = 1400;
+const TICK_MS = 1100;
 let timer = 0;
 
 /* -------------------------------------------------------------------------- */

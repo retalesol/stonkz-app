@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import stonkz from './eslint-local/no-raw-innerhtml.js';
 
 export default tseslint.config(
   {
@@ -18,6 +19,15 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // Build-time scripts and the local lint plugin run in Node, not the browser.
+    files: ['**/*.mjs', 'eslint-local/**/*.js', '*.config.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
   {
     files: ['**/*.ts'],
     languageOptions: {
@@ -41,6 +51,16 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.browser },
     },
+    plugins: { stonkz },
+    rules: {
+      // Escaping is structural: lib/html.ts is the only door to a markup sink.
+      'stonkz/no-raw-innerhtml': 'error',
+    },
+  },
+  {
+    // The door itself.
+    files: ['apps/web/src/lib/html.ts'],
+    rules: { 'stonkz/no-raw-innerhtml': 'off' },
   },
   {
     files: ['packages/shared/src/**/*.ts'],

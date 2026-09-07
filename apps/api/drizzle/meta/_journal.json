@@ -29,6 +29,13 @@
       "when": 1757120300000,
       "tag": "0003_index_advisor",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1757120400000,
+      "tag": "0004_index_advisor_prune",
+      "breakpoints": true
     }
   ]
 }

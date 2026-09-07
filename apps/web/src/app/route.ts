@@ -16,7 +16,9 @@ export type Route =
   | { view: 'board' }
   | { view: 'token'; sym: string }
   | { view: 'rewards' }
-  | { view: 'profile'; addr?: string | undefined };
+  | { view: 'profile'; addr?: string | undefined }
+  /** The launch stepper over the board, so a deploy link can be shared. */
+  | { view: 'launch' };
 
 export const BOARD: Route = { view: 'board' };
 
@@ -26,6 +28,8 @@ export function toPath(r: Route): string {
       return '/t/' + encodeURIComponent(r.sym);
     case 'rewards':
       return '/rewards';
+    case 'launch':
+      return '/launch';
     case 'profile':
       return r.addr ? '/u/' + encodeURIComponent(r.addr) : '/me';
     default:
@@ -36,6 +40,7 @@ export function toPath(r: Route): string {
 export function parse(path: string): Route {
   const p = path.replace(/\/+$/, '') || '/';
   if (p === '/rewards') return { view: 'rewards' };
+  if (p === '/launch') return { view: 'launch' };
   if (p === '/me') return { view: 'profile' };
   const t = /^\/t\/([^/]+)$/.exec(p);
   if (t) return { view: 'token', sym: decodeURIComponent(t[1] as string).toUpperCase() };
@@ -44,14 +49,22 @@ export function parse(path: string): Route {
   return BOARD;
 }
 
-/** The document title for a route. `index.html` only ever had one. `plan step 32` */
+/**
+ * The document title for a route. `index.html` only ever had one, so every tab
+ * read "Stonkz Launchpad" and a pinned token page was unfindable. The market
+ * cap rides along on token routes because a tab strip is a tape too.
+ *
+ * @see plan step 32
+ */
 export function titleOf(r: Route): string {
+  const DOT = ' \u00B7 ';
   if (r.view === 'token') {
     const c = bySym(r.sym);
-    return c ? c.sym + ' ' + usd(c.mc) + ' \u00B7 ' + c.name + ' \u00B7 STONKZ' : r.sym + ' \u00B7 STONKZ';
+    return 'STONKZ' + DOT + '$' + r.sym + (c ? DOT + usd(c.mc) : '');
   }
-  if (r.view === 'rewards') return 'Rewards \u00B7 STONKZ';
-  if (r.view === 'profile') return (r.addr ? r.addr : 'Your profile') + ' \u00B7 STONKZ';
+  if (r.view === 'rewards') return 'STONKZ' + DOT + 'REWARDS';
+  if (r.view === 'launch') return 'STONKZ' + DOT + 'LAUNCH A COIN';
+  if (r.view === 'profile') return 'STONKZ' + DOT + (r.addr ? r.addr : 'YOUR PROFILE');
   return 'Stonkz Launchpad';
 }
 

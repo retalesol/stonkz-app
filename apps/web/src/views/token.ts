@@ -27,7 +27,7 @@ import { drawTokenChart } from '../canvas/chart.js';
 import { pix } from '../canvas/pix.js';
 import { burst } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
-import { $, $$, must, reflow } from '../lib/dom.js';
+import { $, $$, clear, must, reflow } from '../lib/dom.js';
 import { ARR, DOT, MID, clockSec, fmtSupply, ud } from '../lib/fmt.js';
 import { type Html, attr, html, raw, render } from '../lib/html.js';
 import { copyText } from '../lib/clipboard.js';
@@ -159,10 +159,27 @@ export function drawTChart(): void {
 
 /* -------------------------------- quote ----------------------------------- */
 
-/** One route leg. Stonkz charges nothing on an aggregator hop. `plan step 22` */
+/** How a venue reads in the route line. `index.html:1826` */
+const VENUE_NAME: Record<string, string> = {
+  CURVE: 'STONKZ CURVE',
+  RAYDIUM: 'RAY V4',
+  JUPITER: 'JUP',
+  UNISWAP: 'UNI V4',
+};
+
+const venueName = (v: string): string => VENUE_NAME[v] ?? v;
+
+/**
+ * One route leg, rendered only when the route actually has two.
+ *
+ * A coin paired against the native unit is a single curve hop and the ROUTE row
+ * already says so. A coin paired against USDC or AAPLx routes native -> base ->
+ * token, and the aggregator leg has to be visible because Stonkz charges
+ * nothing on it — that is the invariant Phase 2.R has to keep. `plan step 22`
+ */
 function hopRow(h: QuoteHop, i: number): Html {
   const fee = h.feeBps ? (h.feeBps / 100).toFixed(1) + '%' : 'NO FEE';
-  return html`<div class="qrow"><span>HOP ${i + 1} ${DOT} ${h.venue}</span
+  return html`<div class="qrow"><span>HOP ${i + 1} ${DOT} ${venueName(h.venue)}</span
     ><b>${h.inSymbol} ${'\u203A'} ${h.outSymbol} ${DOT} <span class="dm">${fee}</span></b></div>`;
 }
 
@@ -171,19 +188,20 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
   const slip = Number(SET.slip);
   const feeNative = q.hops.reduce((n, h) => n + h.feeAmount, 0);
   const impact = q.impactPct;
+  const hops = q.hops.length > 1 ? q.hops.map((h, i) => hopRow(h, i)) : '';
   return html`<div class="qrow hero"><span>${buy ? 'YOU RECEIVE' : 'YOU SELL'}</span
       ><b>${num(buy ? q.amountOut : (q.hops[0] as QuoteHop).inAmount)} ${c.sym}</b></div
     ><div class="qrow"><span>${buy ? 'YOU PAY' : 'YOU GET'}</span
-      ><b>${(buy ? q.amountIn : q.amountOut).toFixed(4)} ${q.nativeUnit}</b></div
+      ><b>${(buy ? q.amountIn : q.amountOut).toFixed(2)} ${c.base || q.nativeUnit}</b></div
     ><div class="qrow"><span>PRICE</span><b>${px(price(c))}</b></div
-    >${q.hops.map((h, i) => hopRow(h, i))}<div class="qrow"><span>PRICE IMPACT</span
+    >${hops}<div class="qrow"><span>PRICE IMPACT</span
       ><b class="${impact < 2 ? 'up' : impact < 8 ? 'am' : 'dn'}">${impact.toFixed(2)}%</b></div
     ><div class="qrow"><span>SLIPPAGE / FEE</span
       ><b>${slip.toFixed(1)}% ${DOT} ${feeNative.toFixed(4)} ${q.nativeUnit}</b></div
     ><div class="qrow"><span>NETWORK</span><b>PRIO ${Number(SET.prio).toFixed(4)} ${DOT} MEV
       ${SET.mev === 'OFF' ? 'OFF' : Number(SET.mevTip).toFixed(4) + ' ' + SET.mev}</b></div
     ><div class="qrow"><span>MIN RECEIVED</span><b>${num(q.minOut)}</b></div
-    ><div class="qrow"><span>ROUTE</span><b>${q.hops.map((h) => h.venue).join(' \u203A ')}</b></div
+    ><div class="qrow"><span>ROUTE</span><b>${q.hops.map((h) => venueName(h.venue)).join(' \u203A ')}</b></div
     ><div class="qfoot"><span>QUOTE</span><span class="qbar"><i id="qbar-i"></i></span><span>8S</span></div>`;
 }
 
@@ -239,9 +257,13 @@ function syncPosition(c: SimCoin): void {
   }
   const bal = $('#t-bal');
   if (bal) {
-    bal.textContent = WALLET.on
-      ? 'BALANCE ' + WALLET.sol.toFixed(3) + ' ' + nativeUnit()
-      : 'CONNECT A WALLET TO SEE YOUR BALANCE';
+    render(
+      bal,
+      WALLET.on
+        ? html`<span>BALANCE <b class="am">${WALLET.sol.toFixed(2)} ${nativeUnit()}</b></span
+            ><span>PAIR ${c.base || nativeUnit()} ${DOT} ${WALLET.addr}</span>`
+        : html`<span class="dm">NO WALLET CONNECTED</span><span class="dm">SIM FILLS ONLY</span>`,
+    );
   }
 }
 
@@ -369,10 +391,10 @@ function syncCashback(): void {
   const wrap = $('#cbWrap');
   if (!wrap) return;
   if (!inCashback(c)) {
-    if (wrap.innerHTML) wrap.innerHTML = '';
+    clear(wrap);
     return;
   }
-  if (!wrap.innerHTML) {
+  if (!wrap.firstElementChild) {
     render(wrap, cbBannerHTML(c));
     return;
   }
@@ -479,7 +501,9 @@ export function openToken(c: SimCoin): void {
   must('#tk-back').addEventListener('click', () => navigate({ view: 'board' }));
   must('#tk-stake').addEventListener('click', () => openStake(c));
   must('#tk-share').addEventListener('click', () => {
-    const link = location.origin + '/t/' + c.sym;
+    // The canonical link, not this origin: a share from a preview build should
+    // still point at production. `plan step 31`
+    const link = 'https://ston.kz/t/' + c.sym;
     copyText(link, (ok) => toast(ok ? 'LINK COPIED ' + DOT + ' ' + link : 'COPY BLOCKED ' + DOT + ' ' + link, ok ? 'gold' : 'red'));
   });
   must('#t-side').addEventListener('click', (e) => {
@@ -579,7 +603,7 @@ export function closeToken(): void {
   clearInterval(TV.qTimer);
   TV.qTimer = 0;
   TV.c = null;
-  must('#tokenView').innerHTML = '';
+  clear(must('#tokenView'));
   setChatToken(null);
   window.scrollTo(0, 0);
 }

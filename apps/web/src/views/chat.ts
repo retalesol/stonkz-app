@@ -167,9 +167,17 @@ export function initChat(): void {
     }
   });
 
-  for (let i = 0; i < GLINES.length - 3; i++) {
-    const h = HANDLES[i % HANDLES.length] as [string, string];
-    logFor('GLOBAL').push({ who: h[0], col: h[1], text: GLINES[i] as string, t: '09:0' + i });
+  // Seven lines of backscroll so the room does not open empty. Seeded, so the
+  // same handles say the same things on every load. `index.html:4105`
+  const r = rng(4242);
+  for (let i = 0; i < 7; i++) {
+    const h = HANDLES[(r() * HANDLES.length) | 0] as [string, string];
+    logFor('GLOBAL').push({
+      who: h[0],
+      col: h[1],
+      text: GLINES[i % GLINES.length] as string,
+      t: '09:' + String(31 + i * 3).padStart(2, '0'),
+    });
   }
   chatRender();
 
