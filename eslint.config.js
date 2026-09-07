@@ -14,7 +14,6 @@ export default tseslint.config(
       'test-results/**',
       // The visual oracle stays untouched.
       'legacy/**',
-      'index.html',
     ],
   },
   js.configs.recommended,
