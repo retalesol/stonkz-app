@@ -22,7 +22,14 @@ const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
   deps.logger.info('api listening', { port: info.port, env: env.nodeEnv });
 });
 
-const hub = new WsHub({ redis: deps.redis, jwt: deps.jwt, logger: deps.logger, metrics: deps.metrics });
+const hub = new WsHub({
+  redis: deps.redis,
+  jwt: deps.jwt,
+  logger: deps.logger,
+  metrics: deps.metrics,
+  chat: deps.chat,
+  publisher: deps.publisher,
+});
 await hub.attach(server as unknown as Server);
 
 let shuttingDown = false;

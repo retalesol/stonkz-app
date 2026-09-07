@@ -15,6 +15,8 @@ import type { Publisher } from '../ws/publisher.js';
 import type { BaseMintRegistry } from '../router/base-mints.js';
 import type { JupiterClient } from '../router/jupiter.js';
 import type { UniswapClient } from '../router/uniswap.js';
+import type { ChatService } from '../social/chat.js';
+import type { XProfileCacheService } from '../social/x-cache.js';
 
 /** Everything a route handler is allowed to reach for. Constructed once at boot. */
 export interface AppDeps {
@@ -38,6 +40,10 @@ export interface AppDeps {
   jupiter: JupiterClient;
   uniswap: UniswapClient;
   baseMints: BaseMintRegistry;
+
+  /* -------------------------------------------------------------- social (Phase 5) */
+  chat: ChatService;
+  xCache: XProfileCacheService;
 }
 
 /** The authenticated caller, set by `requireAuth`. */

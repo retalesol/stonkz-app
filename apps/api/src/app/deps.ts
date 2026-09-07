@@ -20,6 +20,9 @@ import { Publisher } from '../ws/publisher.js';
 import { createBaseMintRegistry, parseBaseMintOverrides, type BaseMintRegistry } from '../router/base-mints.js';
 import { HttpJupiterClient, type JupiterClient } from '../router/jupiter.js';
 import { HttpUniswapClient, type UniswapClient } from '../router/uniswap.js';
+import { ChatService } from '../social/chat.js';
+import { XProfileCacheService } from '../social/x-cache.js';
+import { HttpXProvider, PlaceholderXProvider, type XProvider } from '../social/x-provider.js';
 import type { AppDeps } from './context.js';
 
 /**
@@ -46,6 +49,7 @@ export interface DepsOverrides {
   jupiter?: JupiterClient;
   uniswap?: UniswapClient;
   baseMints?: BaseMintRegistry;
+  xProvider?: XProvider;
 }
 
 export interface BuiltDeps {
@@ -162,6 +166,12 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
     });
 
+  const xProvider: XProvider =
+    overrides.xProvider ??
+    (env.xBearerToken ? new HttpXProvider({ bearerToken: env.xBearerToken }) : new PlaceholderXProvider());
+  const xCache = new XProfileCacheService({ db, provider: xProvider, ttlSeconds: env.xCacheTtlSeconds, now });
+  const chat = new ChatService({ db, redis, now });
+
   const deps: AppDeps = {
     env,
     db,
@@ -181,6 +191,8 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     jupiter,
     uniswap,
     baseMints,
+    chat,
+    xCache,
   };
 
   return {

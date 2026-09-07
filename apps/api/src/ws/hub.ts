@@ -6,6 +6,8 @@ import type { RedisLike, RedisUnsubscribe } from '../redis/types.js';
 import type { JwtService } from '../auth/jwt.js';
 import type { Logger } from '../observability/logger.js';
 import type { Metrics } from '../observability/metrics.js';
+import type { ChatService } from '../social/chat.js';
+import type { Publisher } from './publisher.js';
 
 export interface HubOptions {
   redis: RedisLike;
@@ -15,6 +17,13 @@ export interface HubOptions {
   path?: string;
   /** Heartbeat interval; a socket that misses two pongs is dropped. */
   pingIntervalMs?: number;
+  /**
+   * Plan step 151's chat send path. Optional so every existing test that
+   * builds a hub without them keeps working — a hub with neither refuses
+   * `send_chat` with `error: "chat_unavailable"` rather than throwing.
+   */
+  chat?: ChatService;
+  publisher?: Publisher;
 }
 
 interface Client {
@@ -29,7 +38,8 @@ type ClientMessage =
   | { type: 'auth'; token: string }
   | { type: 'subscribe'; channel: string }
   | { type: 'unsubscribe'; channel: string }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  | { type: 'send_chat'; net: Net; room: string; text: string };
 
 /**
  * The WS gateway.
@@ -73,6 +83,7 @@ export class WsHub {
       await this.opts.redis.subscribe(CHANNELS.tape(), (m, ch) => this.deliver(ch, m)),
       await this.opts.redis.psubscribe(CHANNEL_PATTERNS.token, (m, ch) => this.deliver(ch, m)),
       await this.opts.redis.psubscribe(CHANNEL_PATTERNS.user, (m, ch) => this.deliver(ch, m)),
+      await this.opts.redis.psubscribe(CHANNEL_PATTERNS.chat, (m, ch) => this.deliver(ch, m)),
     );
 
     const interval = this.opts.pingIntervalMs ?? 30_000;
@@ -92,7 +103,10 @@ export class WsHub {
     socket.on('close', () => this.onClose(client));
     socket.on('error', () => this.onClose(client));
 
-    this.send(client, { type: 'hello', channels: ['board', 'tape', 'token:{sym}', 'user:{net}:{addr}'] });
+    this.send(client, {
+      type: 'hello',
+      channels: ['board', 'tape', 'token:{sym}', 'user:{net}:{addr}', 'chat:{net}:{room}'],
+    });
   }
 
   private async onMessage(client: Client, raw: string): Promise<void> {
@@ -147,6 +161,40 @@ export class WsHub {
         return;
       }
 
+      case 'send_chat': {
+        if (!client.identity) {
+          this.send(client, { type: 'error', error: 'unauthorized' });
+          return;
+        }
+        if (!this.opts.chat || !this.opts.publisher) {
+          this.send(client, { type: 'error', error: 'chat_unavailable' });
+          return;
+        }
+        const { net, wallet } = client.identity;
+        if (msg.net !== net) {
+          this.send(client, { type: 'error', error: 'net_mismatch' });
+          return;
+        }
+        const result = await this.opts.chat.send(net, msg.room, wallet, msg.text);
+        if (!result.ok) {
+          this.send(client, { type: 'send_chat', ok: false, error: result.error });
+          return;
+        }
+        this.send(client, { type: 'send_chat', ok: true });
+        if (!result.message?.flagged) {
+          await this.opts.publisher.chat(net, result.message?.room ?? msg.room, {
+            type: 'message',
+            net,
+            room: result.message?.room ?? msg.room,
+            id: result.message?.id ?? 0,
+            wallet,
+            text: result.message?.text ?? msg.text,
+            createdAtMs: result.message?.createdAtMs ?? Date.now(),
+          });
+        }
+        return;
+      }
+
       default:
         this.send(client, { type: 'error', error: 'unknown_type' });
     }
@@ -156,6 +204,7 @@ export class WsHub {
   maySubscribe(client: Client, channel: string): boolean {
     if (channel === 'board' || channel === 'tape') return true;
     if (channel.startsWith('token:')) return channel.length > 'token:'.length;
+    if (channel.startsWith('chat:')) return channel.length > 'chat:'.length;
     if (channel.startsWith('user:')) {
       if (!client.identity) return false;
       return channel === CHANNELS.user(client.identity.net, client.identity.wallet);

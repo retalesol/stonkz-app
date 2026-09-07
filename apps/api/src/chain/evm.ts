@@ -1,6 +1,6 @@
 import type { NativeUnit, Net } from '@stonkz/shared';
 import { jsonRpc } from './jsonrpc.js';
-import { RpcError, type ChainRpc, type FetchLike } from './types.js';
+import { RpcError, type ChainRpc, type FetchLike, type NativeTransferSource, type NativeTransferVerification } from './types.js';
 
 export const WEI_PER_ETH = 1e18;
 
@@ -34,7 +34,7 @@ export interface EvmRpcOptions {
  * silently indexing someone else's blocks — worth keeping now that the id is
  * confirmed, because 4663 and testnet 46630 are a plausible typo apart.
  */
-export class EvmRpc implements ChainRpc {
+export class EvmRpc implements ChainRpc, NativeTransferSource {
   readonly net: Net = 'RH';
   readonly nativeUnit: NativeUnit = 'ETH';
   readonly chainId: number;
@@ -105,6 +105,42 @@ export class EvmRpc implements ChainRpc {
       // `input` on older nodes, `data` is the ethers-style alias some RPCs use.
       input: tx.input ?? tx.data ?? '0x',
       logs: receipt.logs,
+    };
+  }
+
+  /**
+   * `social/tips.ts`'s only chain-facing call. A plain native transfer's
+   * `value` is on the transaction itself, not derivable from the receipt
+   * alone, so both are fetched — mirroring `getTransactionReceipt`'s own
+   * two-call shape above.
+   */
+  async getNativeTransfer(hash: string): Promise<NativeTransferVerification> {
+    const [receipt, tx] = await Promise.all([
+      this.call<{ status: string; blockNumber: string } | null>('eth_getTransactionReceipt', [hash]),
+      this.call<{ from?: string; to?: string | null; value?: string } | null>('eth_getTransactionByHash', [hash]),
+    ]);
+    if (!receipt || !tx) {
+      return { found: false, status: 'failed', from: null, to: null, amountNative: null, blockTimeMs: null };
+    }
+
+    let blockTimeMs: number | null = null;
+    try {
+      const block = await this.call<{ timestamp: string } | null>('eth_getBlockByNumber', [
+        receipt.blockNumber,
+        false,
+      ]);
+      if (block) blockTimeMs = Number.parseInt(block.timestamp, 16) * 1000;
+    } catch {
+      // Best-effort only; the caller does not depend on this to verify the transfer.
+    }
+
+    return {
+      found: true,
+      status: receipt.status === '0x1' ? 'success' : 'failed',
+      from: tx.from ?? null,
+      to: tx.to ?? null,
+      amountNative: tx.value ? Number(BigInt(tx.value)) / WEI_PER_ETH : null,
+      blockTimeMs,
     };
   }
 

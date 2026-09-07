@@ -61,3 +61,9 @@ export { Publisher } from './ws/publisher.js';
 export { WsHub } from './ws/hub.js';
 
 export { serialiseToken, type SerialisedToken, type TokenRow } from './routes/serialise.js';
+
+export { verifyTip, minTipFor, type TipRejectionReason, type TipVerification } from './social/tips.js';
+export { ChatService, CHAT_MAX_LEN, CHAT_RATE_LIMIT, isFlagged, normaliseRoom } from './social/chat.js';
+export { XProfileCacheService, type CachedXProfile } from './social/x-cache.js';
+export { HttpXProvider, PlaceholderXProvider, type XProfile, type XProvider } from './social/x-provider.js';
+export type { NativeTransferSource, NativeTransferVerification } from './chain/types.js';

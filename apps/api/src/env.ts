@@ -96,6 +96,16 @@ export interface ApiEnv {
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
   launchRateLimitWindowSeconds: number;
+
+  /* -------------------------------------------------------------- social (Phase 5) */
+
+  /** Absent (the default in every environment today) selects `PlaceholderXProvider` — see `social/x-provider.ts`. */
+  xBearerToken: string | undefined;
+  xCacheTtlSeconds: number;
+  /** How long a verified tip signature is accepted as "recent" evidence of payment. */
+  tipMaxAgeSeconds: number;
+  /** Canonical origin OG crawlers should be told the shareable page lives at. */
+  publicWebOrigin: string;
 }
 
 export const ZERO_EVM_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -109,6 +119,13 @@ const DEFAULT_CORS = [
   'https://www.ston.kz',
   'http://localhost:5173',
   'http://localhost:4173',
+  // Vite's own dev/preview server prints (and Playwright's `live.spec.ts`
+  // header instructions use) `http://127.0.0.1:<port>`, not `localhost` — a
+  // browser treats those as different origins even though they resolve to
+  // the same host, so both spellings need their own allow-list entry or the
+  // documented local live-e2e workflow gets a same-origin-looking 403.
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:4173',
 ];
 
 export type EnvSource = Record<string, string | undefined>;
@@ -246,6 +263,11 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     launchIntentTtlSeconds: int(src, 'LAUNCH_INTENT_TTL_SECONDS', 120),
     launchRateLimitPerWallet: int(src, 'LAUNCH_RATE_LIMIT_PER_WALLET', 5),
     launchRateLimitWindowSeconds: int(src, 'LAUNCH_RATE_LIMIT_WINDOW_SECONDS', 3600),
+
+    xBearerToken: src['X_BEARER_TOKEN']?.trim() || undefined,
+    xCacheTtlSeconds: int(src, 'X_CACHE_TTL_SECONDS', 6 * 3600),
+    tipMaxAgeSeconds: int(src, 'TIP_MAX_AGE_SECONDS', 24 * 3600),
+    publicWebOrigin: str(src, 'PUBLIC_WEB_ORIGIN', 'https://ston.kz'),
   };
 
   if (env.nodeEnv === 'production') {

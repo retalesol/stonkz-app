@@ -1,5 +1,12 @@
 import type { NativeUnit, Net } from '@stonkz/shared';
-import { RpcError, type ChainRpc, type ChainRpcs, type PriceOracle } from './types.js';
+import {
+  RpcError,
+  type ChainRpc,
+  type ChainRpcs,
+  type NativeTransferSource,
+  type NativeTransferVerification,
+  type PriceOracle,
+} from './types.js';
 
 /**
  * The stand-in every test and the fixture producer run against. No real API
@@ -14,12 +21,13 @@ export interface FakeEvmReceipt {
   logs: { address: string; topics: string[]; data: string }[];
 }
 
-export class FakeChainRpc implements ChainRpc {
+export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   private slot: number;
   private readonly balances = new Map<string, number>();
   private readonly contracts = new Map<string, FakeEthCallHandler>();
   private readonly solanaMessages = new Map<string, string>();
   private readonly evmReceipts = new Map<string, FakeEvmReceipt>();
+  private readonly transfers = new Map<string, NativeTransferVerification>();
   private failing = false;
 
   constructor(
@@ -109,6 +117,25 @@ export class FakeChainRpc implements ChainRpc {
   async getTransactionReceipt(hash: string): Promise<FakeEvmReceipt | null> {
     if (this.failing) throw new RpcError(this.net, 'eth_getTransactionReceipt', 'simulated outage');
     return this.evmReceipts.get(hash.toLowerCase()) ?? null;
+  }
+
+  /** `social/tips.test.ts` seeds what a signature "verified" as on-chain. */
+  setNativeTransfer(signature: string, transfer: NativeTransferVerification): void {
+    this.transfers.set(signature, transfer);
+  }
+
+  async getNativeTransfer(signature: string): Promise<NativeTransferVerification> {
+    if (this.failing) throw new RpcError(this.net, 'getNativeTransfer', 'simulated outage');
+    return (
+      this.transfers.get(signature) ?? {
+        found: false,
+        status: 'failed',
+        from: null,
+        to: null,
+        amountNative: null,
+        blockTimeMs: null,
+      }
+    );
   }
 }
 

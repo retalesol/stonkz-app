@@ -1,7 +1,7 @@
 import { Transaction } from '@solana/web3.js';
 import type { NativeUnit, Net } from '@stonkz/shared';
 import { jsonRpc } from './jsonrpc.js';
-import { RpcError, type ChainRpc, type FetchLike } from './types.js';
+import { RpcError, type ChainRpc, type FetchLike, type NativeTransferSource, type NativeTransferVerification } from './types.js';
 
 export const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -13,7 +13,7 @@ export interface SolanaRpcOptions {
 }
 
 /** Helius or any Solana JSON-RPC endpoint. Read-only for Phases 1 and 3. */
-export class SolanaRpc implements ChainRpc {
+export class SolanaRpc implements ChainRpc, NativeTransferSource {
   readonly net: Net = 'SOL';
   readonly nativeUnit: NativeUnit = 'SOL';
 
@@ -87,5 +87,50 @@ export class SolanaRpc implements ChainRpc {
     // exactly what a real submitted tx is expected to be.
     const tx = Transaction.from(raw);
     return tx.compileMessage().serialize().toString('base64');
+  }
+
+  /**
+   * `social/tips.ts`'s only chain-facing call. Reads `preBalances`/
+   * `postBalances` rather than trying to decode a `SystemProgram.transfer`
+   * instruction, so it verifies the actual lamport movement regardless of
+   * how the transfer was composed (direct transfer, transfer-with-seed,
+   * memo + transfer, etc.) — the largest balance increase is the recipient,
+   * the largest decrease is the payer, which is exactly right for a plain
+   * wallet-to-wallet tip and cannot be spoofed by padding the transaction
+   * with unrelated instructions that move smaller amounts.
+   */
+  async getNativeTransfer(signature: string): Promise<NativeTransferVerification> {
+    const res = await this.call<{
+      transaction: { message: { accountKeys: (string | { pubkey: string })[] } };
+      meta: { err: unknown; preBalances: number[]; postBalances: number[] } | null;
+      blockTime: number | null;
+    } | null>('getTransaction', [
+      signature,
+      { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+    ]);
+
+    if (!res || !res.meta) {
+      return { found: false, status: 'failed', from: null, to: null, amountNative: null, blockTimeMs: null };
+    }
+
+    const keys = res.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey));
+    const { preBalances, postBalances, err } = res.meta;
+
+    let bestTo: { addr: string; delta: number } | null = null;
+    let bestFrom: { addr: string; delta: number } | null = null;
+    for (let i = 0; i < keys.length; i++) {
+      const delta = (postBalances[i] ?? 0) - (preBalances[i] ?? 0);
+      if (delta > 0 && (!bestTo || delta > bestTo.delta)) bestTo = { addr: keys[i] as string, delta };
+      if (delta < 0 && (!bestFrom || delta < bestFrom.delta)) bestFrom = { addr: keys[i] as string, delta };
+    }
+
+    return {
+      found: true,
+      status: err ? 'failed' : 'success',
+      from: bestFrom?.addr ?? null,
+      to: bestTo?.addr ?? null,
+      amountNative: bestTo ? bestTo.delta / LAMPORTS_PER_SOL : null,
+      blockTimeMs: res.blockTime !== null ? res.blockTime * 1000 : null,
+    };
   }
 }

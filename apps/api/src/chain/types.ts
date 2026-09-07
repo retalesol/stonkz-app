@@ -69,6 +69,32 @@ export interface EvmTransactionSource {
   getTransactionReceipt(hash: string): Promise<EvmTransactionReceipt | null>;
 }
 
+/**
+ * A verified plain native transfer — what `social/tips.ts` needs to check a
+ * tip against, without trusting anything the client asserted about it.
+ * `amountNative` is whole units (SOL, not lamports; ETH, not wei), `null`
+ * when the signature does not resolve to a confirmed transaction at all.
+ */
+export interface NativeTransferVerification {
+  found: boolean;
+  status: 'success' | 'failed';
+  from: string | null;
+  to: string | null;
+  amountNative: number | null;
+  blockTimeMs: number | null;
+}
+
+/**
+ * Plan step 147's "tip tx sig required... verified server-side" — the
+ * capability a chain RPC needs to answer "did this signature move at least
+ * X native units from A to B". Both `SolanaRpc` and `EvmRpc` implement it;
+ * `FakeChainRpc` implements it too so `social/tips.test.ts` never touches a
+ * real RPC.
+ */
+export interface NativeTransferSource {
+  getNativeTransfer(signature: string): Promise<NativeTransferVerification>;
+}
+
 export class RpcError extends Error {
   constructor(
     readonly net: Net,

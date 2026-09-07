@@ -1,5 +1,5 @@
 import type { Net } from '@stonkz/shared';
-import { CHANNELS, type BoardEvent, type TapeEvent, type TokenEvent, type UserEvent } from '../redis/channels.js';
+import { CHANNELS, type BoardEvent, type ChatEvent, type TapeEvent, type TokenEvent, type UserEvent } from '../redis/channels.js';
 import type { RedisLike } from '../redis/types.js';
 
 /**
@@ -35,6 +35,11 @@ export class Publisher {
   /** `WS user:{addr}` — the rewards ceremonies (plan step 121). */
   user(net: Net, wallet: string, event: UserEvent): Promise<void> {
     return this.send(CHANNELS.user(net, wallet), event);
+  }
+
+  /** `WS chat:{net}:{room}` — plan step 151. */
+  chat(net: Net, room: string, event: ChatEvent): Promise<void> {
+    return this.send(CHANNELS.chat(net, room), event);
   }
 
   /** A fill lands on the token page, the board and the tape at once. */

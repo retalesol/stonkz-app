@@ -14,11 +14,14 @@ export const CHANNELS = {
   tape: () => 'tape',
   /** Plan step 121 — xp, rank_up, sp, optionz, achievement, streak, crate_ready. */
   user: (net: Net, wallet: string) => `user:${net}:${wallet}`,
+  /** Plan step 151 — `GLOBAL` or a token ticker (no `$` prefix). Tagged with `net`, like every other lane. */
+  chat: (net: Net, room: string) => `chat:${net}:${room.toUpperCase()}`,
 } as const;
 
 export const CHANNEL_PATTERNS = {
   token: 'token:*',
   user: 'user:*',
+  chat: 'chat:*',
 } as const;
 
 /** Board events carry `net` so a net-filtered board can drop the other chain. */
@@ -47,4 +50,15 @@ export type UserEvent =
   | { type: 'streak'; net: Net; wallet: string; count: number; mult: number }
   | { type: 'crate_ready'; net: Net; wallet: string; tier: string };
 
-export type ChannelEvent = BoardEvent | TokenEvent | TapeEvent | UserEvent;
+/** Plan step 151's chat drawer — one event per persisted (non-flagged) message. */
+export type ChatEvent = {
+  type: 'message';
+  net: Net;
+  room: string;
+  id: number;
+  wallet: string;
+  text: string;
+  createdAtMs: number;
+};
+
+export type ChannelEvent = BoardEvent | TokenEvent | TapeEvent | UserEvent | ChatEvent;
