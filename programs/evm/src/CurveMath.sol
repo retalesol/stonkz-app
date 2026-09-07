@@ -122,6 +122,9 @@ library CurveMath {
         uint256 remaining = end - nowSecs;
         if (remaining > CB_WINDOW_SECS) remaining = CB_WINDOW_SECS;
         uint256 base = baseBps;
+        // Safe: `base <= MAX_FEE_BPS` and the added term is at most
+        // `CB_START_FEE_BPS - base`, so the sum never exceeds 5000.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return uint16(base + ((CB_START_FEE_BPS - base) * remaining) / CB_WINDOW_SECS);
     }
 

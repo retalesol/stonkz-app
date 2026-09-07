@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {CurveMath} from "./CurveMath.sol";
 import {StonkzToken} from "./StonkzToken.sol";
+import {IPriceSource} from "./oracle/IPriceSource.sol";
 
 interface IERC20 {
     function transfer(address to, uint256 value) external returns (bool);
@@ -86,17 +87,9 @@ contract StonkzLaunchpad {
         uint16 lockDays;
     }
 
-    struct Oracle {
-        uint256 price1e6;
-        uint256 conf1e6;
-        uint64 publishTime;
-        uint8 decimals;
-    }
-
     mapping(address => Coin) public coins;
     mapping(address => mapping(address => Position)) public positions;
     mapping(bytes32 => address) public tokenByTicker;
-    mapping(address => Oracle) public oracles;
 
     /// Treasury balances per base token. Not claimable by any user path.
     mapping(address => uint256) public protocolRevenue;
@@ -108,18 +101,35 @@ contract StonkzLaunchpad {
     address public protocolWithdrawAuthority;
     /// Multisig / cold, distinct from the protocol one.
     address public opsWithdrawAuthority;
-    address public oracleAuthority;
     address public migrationAuthority;
     IGraduationMigrator public migrator;
+    IPriceSource public priceSource;
 
     bool public tradingPaused;
     bool public launchPaused;
     bool public protocolWithdrawalsPaused;
     /// Stops ops money leaving. Trading and accrual are unaffected — step 141.
     bool public opsWithdrawalsPaused;
+    /// Stops the oracle-triggered graduation only. An exhausted curve still
+    /// graduates: that trigger reads no oracle, so pausing it would strand a
+    /// finished coin for no reason.
+    bool public oracleGraduationPaused;
 
-    uint64 public maxOracleStaleness = 90;
-    uint256 public constant MAX_ORACLE_CONF_BPS = 200;
+    /// @notice Ceiling on how stale a price may be, in seconds.
+    ///
+    /// **86400 + 3600, not one hour.** The ETH/USD feed on Robinhood Chain has
+    /// a 24-hour heartbeat, so it only writes a round when the price moves past
+    /// the deviation threshold or a day elapses. A conventional one-hour guard
+    /// would read a perfectly healthy feed as stale almost all the time and
+    /// make oracle-triggered graduation unreachable. `docs/robinhood-chain.md`
+    /// §4.4 names this as the single most likely way to ship a graduation
+    /// function that can never fire.
+    ///
+    /// The price is consequently fuzzy at the margin, and that is accepted
+    /// rather than papered over: the $69K threshold is a trigger, not a
+    /// settlement price. Nothing is priced off the oracle — fills are priced
+    /// off the curve.
+    uint64 public maxOracleStaleness = 90_000;
     uint256 public tokenCount;
 
     uint256 private _lock = 1;
@@ -188,7 +198,6 @@ contract StonkzLaunchpad {
     event Staked(address indexed token, address indexed owner, uint256 amount, uint16 lockDays, uint256 weight, uint64 lockUntil);
     event Unstaked(address indexed token, address indexed owner, uint256 amount);
     event StakeClaimed(address indexed token, address indexed owner, uint256 base, uint256 tokens);
-    event PricePushed(address indexed baseToken, uint256 price1e6, uint256 conf1e6);
 
     /* ------------------------------------------------------------ modifiers */
 
@@ -208,7 +217,7 @@ contract StonkzLaunchpad {
         address _admin,
         address _protocolWithdrawAuthority,
         address _opsWithdrawAuthority,
-        address _oracleAuthority,
+        IPriceSource _priceSource,
         address _migrationAuthority
     ) {
         require(
@@ -219,29 +228,24 @@ contract StonkzLaunchpad {
         admin = _admin;
         protocolWithdrawAuthority = _protocolWithdrawAuthority;
         opsWithdrawAuthority = _opsWithdrawAuthority;
-        oracleAuthority = _oracleAuthority;
+        priceSource = _priceSource;
         migrationAuthority = _migrationAuthority;
     }
 
     /* ---------------------------------------------------------------- admin */
 
-    function setPause(bool trading, bool launch, bool protocolWithdrawals, bool opsWithdrawals)
-        external
-        onlyAdmin
-    {
+    function setPause(
+        bool trading,
+        bool launch,
+        bool protocolWithdrawals,
+        bool opsWithdrawals,
+        bool oracleGraduation
+    ) external onlyAdmin {
         tradingPaused = trading;
         launchPaused = launch;
         protocolWithdrawalsPaused = protocolWithdrawals;
         opsWithdrawalsPaused = opsWithdrawals;
-    }
-
-    function setOracleAuthority(address a) external onlyAdmin {
-        oracleAuthority = a;
-    }
-
-    function setMaxOracleStaleness(uint64 s) external onlyAdmin {
-        require(s > 0, "staleness");
-        maxOracleStaleness = s;
+        oracleGraduationPaused = oracleGraduation;
     }
 
     function setMigrator(IGraduationMigrator m, address authority) external onlyAdmin {
@@ -267,24 +271,41 @@ contract StonkzLaunchpad {
 
     /* --------------------------------------------------------------- oracle */
 
-    function pushPrice(address baseToken, uint256 price1e6, uint256 conf1e6) external {
-        require(msg.sender == oracleAuthority, "not oracle");
-        require(price1e6 > 0, "price");
-        oracles[baseToken] = Oracle({
-            price1e6: price1e6,
-            conf1e6: conf1e6,
-            publishTime: uint64(block.timestamp),
-            decimals: IERC20(baseToken).decimals()
-        });
-        emit PricePushed(baseToken, price1e6, conf1e6);
+    function setPriceSource(IPriceSource s) external onlyAdmin {
+        require(address(s) != address(0), "zero source");
+        priceSource = s;
     }
 
+    /// @notice Clamp on whatever the source says its own tolerance is, so a
+    /// misconfigured feed cannot widen the window without limit.
+    function setMaxOracleStaleness(uint64 s) external onlyAdmin {
+        require(s > 0, "staleness");
+        maxOracleStaleness = s;
+    }
+
+    /// @return ok Whether there is a usable price right now.
+    /// @return price1e6 The price, or zero.
+    /// @dev Never reverts. Every caller needs a different answer to "the oracle
+    /// is down" and only the caller knows which: `createToken` refuses,
+    /// `graduate` defers, and `buy`/`sell` never ask. See
+    /// `docs/robinhood-chain.md` §4.4 — a design where a stale Chainlink round
+    /// reverts trades turns an oracle hiccup into a launchpad outage.
+    function _tryPrice(address baseToken) internal view returns (bool ok, uint256 price1e6) {
+        if (address(priceSource) == address(0)) return (false, 0);
+        (uint256 p, uint256 publishedAt, uint256 sourceMaxAge) = priceSource.priceUsd1e6(baseToken);
+        if (p == 0 || publishedAt == 0) return (false, 0);
+        // The tighter of the feed's own tolerance and ours.
+        uint256 bound = sourceMaxAge < maxOracleStaleness ? sourceMaxAge : maxOracleStaleness;
+        if (block.timestamp < publishedAt) return (false, 0);
+        if (block.timestamp - publishedAt > bound) return (false, 0);
+        return (true, p);
+    }
+
+    /// @dev For the one call site that genuinely must have an answer.
     function _freshPrice(address baseToken) internal view returns (uint256) {
-        Oracle memory o = oracles[baseToken];
-        require(o.price1e6 > 0, "no price");
-        require(block.timestamp - o.publishTime <= maxOracleStaleness, "stale oracle");
-        require((o.conf1e6 * CurveMath.BPS_DEN) / o.price1e6 <= MAX_ORACLE_CONF_BPS, "wide oracle");
-        return o.price1e6;
+        (bool ok, uint256 p) = _tryPrice(baseToken);
+        require(ok, "stale oracle");
+        return p;
     }
 
     /* ------------------------------------------------------------ treasuries */
@@ -586,10 +607,14 @@ contract StonkzLaunchpad {
         uint8 reason;
 
         if (c.realToken == 0 || c.complete) {
+            // Exhaustion consults no oracle, so a dead feed can never strand a
+            // finished curve. The USD figure is reported at the creation price
+            // purely for the event; the trigger is the empty reserve.
             reason = 0;
             usd = CurveMath.mcapUsd1e6(mcap, c.creationPrice1e6, c.baseDecimals);
         } else {
             reason = 1;
+            require(!oracleGraduationPaused, "oracle graduation paused");
             uint256 price = _freshPrice(c.baseToken);
             usd = CurveMath.mcapUsd1e6(mcap, price, c.baseDecimals);
             require(usd >= CurveMath.GRAD_MCAP_USD_1E6, "not graduable");

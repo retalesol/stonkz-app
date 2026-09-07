@@ -20,6 +20,22 @@ contract StonkzToken {
     address public immutable launchpad;
     string public uri;
 
+    /* ------------------------------------------------------------- EIP-2612 */
+
+    /// @dev Present so the sell path can stay a single signature once the
+    /// `StonkzRouter` periphery lands. Selling starts from this token, so a
+    /// router has to be able to pull it; without `permit` that is an `approve`
+    /// transaction followed by a swap transaction, which is two signatures and
+    /// leaves the user stranded mid-flow if they only sign the first. See
+    /// `docs/robinhood-chain.md` §3.3.
+    bytes32 public constant PERMIT_TYPEHASH =
+        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    mapping(address => uint256) public nonces;
+
+    uint256 private immutable _cachedChainId;
+    bytes32 private immutable _cachedDomainSeparator;
+    bytes32 private immutable _hashedName;
+
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
@@ -31,6 +47,48 @@ contract StonkzToken {
         totalSupply = _supply;
         balanceOf[msg.sender] = _supply;
         emit Transfer(address(0), msg.sender, _supply);
+
+        _hashedName = keccak256(bytes(_name));
+        _cachedChainId = block.chainid;
+        _cachedDomainSeparator = _buildDomainSeparator();
+    }
+
+    /// @dev Rebuilt if the chain id has moved, so a signature cannot be replayed
+    /// from a fork onto the canonical chain.
+    function DOMAIN_SEPARATOR() public view returns (bytes32) {
+        return block.chainid == _cachedChainId ? _cachedDomainSeparator : _buildDomainSeparator();
+    }
+
+    function _buildDomainSeparator() private view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                _hashedName,
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    function permit(
+        address owner,
+        address spender,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        require(block.timestamp <= deadline, "permit expired");
+        require(owner != address(0), "owner zero");
+        bytes32 structHash =
+            keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR(), structHash));
+        address signer = ecrecover(digest, v, r, s);
+        require(signer != address(0) && signer == owner, "bad signature");
+        allowance[owner][spender] = value;
+        emit Approval(owner, spender, value);
     }
 
     function transfer(address to, uint256 value) external returns (bool) {

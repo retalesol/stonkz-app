@@ -11,3 +11,12 @@ fs_permissions = [{ access = "read", path = "../parity-vectors.json" }]
 
 [fmt]
 line_length = 110
+
+[lint]
+# `block.timestamp` is not a hazard here, it is the only correct clock.
+# Robinhood Chain is an Arbitrum Orbit rollup where `block.number` returns an
+# estimate of the *L1* height, so a 5-minute cashback window denominated in
+# blocks would run for hours and a 30-day stake lock for years. There is also
+# no proposer to manipulate the timestamp: ordering is first-come-first-served
+# on a single sequencer. See `docs/robinhood-chain.md` §5.1.
+exclude_lints = ["block-timestamp"]
