@@ -71,6 +71,21 @@ export function practiceAddress(net: Net): string {
   return '0x' + bytesToHex(hash.slice(-20));
 }
 
+/**
+ * The practice SOL key's raw 64-byte secret key — 32-byte seed followed by
+ * the 32-byte public key, `@solana/web3.js`'s `Keypair.fromSecretKey` shape.
+ * Only ever used by `app/tip.ts` to attempt a real (unfunded) devnet-or-
+ * mainnet transfer; never sent anywhere itself.
+ */
+export function practiceSolanaSecretKey(): Uint8Array {
+  const priv = privateKeyFor('SOL');
+  const pub = ed25519.getPublicKey(priv);
+  const out = new Uint8Array(64);
+  out.set(priv, 0);
+  out.set(pub, 32);
+  return out;
+}
+
 /** EIP-191 `personal_sign` digest — byte-for-byte `auth/siwe.ts`'s `personalSignHash`. */
 function personalSignHash(message: string): Uint8Array {
   const bytes = new TextEncoder().encode(message);

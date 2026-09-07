@@ -20,7 +20,8 @@ export type ScrimId =
   | '#editScrim'
   | '#stakeScrim'
   | '#claimScrim'
-  | '#txScrim';
+  | '#txScrim'
+  | '#legalScrim';
 
 const traps = new Map<ScrimId, FocusTrap>();
 
@@ -30,7 +31,16 @@ export function isOpen(id: ScrimId): boolean {
 
 export function anyOpen(): boolean {
   return (
-    ['#stakeScrim', '#wizScrim', '#claimScrim', '#setScrim', '#newScrim', '#editScrim', '#txScrim'] as ScrimId[]
+    [
+      '#stakeScrim',
+      '#wizScrim',
+      '#claimScrim',
+      '#setScrim',
+      '#newScrim',
+      '#editScrim',
+      '#txScrim',
+      '#legalScrim',
+    ] as ScrimId[]
   ).some(isOpen);
 }
 

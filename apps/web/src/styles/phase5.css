@@ -1,0 +1,19 @@
+/*
+ * Phase 5 additions with no oracle equivalent: the footer's real risk/legal
+ * disclosure link. Like `touch.css`, this is not a byte-for-byte slice of
+ * `legacy/index.html`, so it is imported from `main.ts` rather than
+ * `index.css` and stays outside `css:check`'s pixel lock.
+ */
+.foot-legal {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid var(--line2);
+  color: var(--txt2);
+  padding: 1px 8px;
+  letter-spacing: 0.06em;
+  font: inherit;
+  cursor: pointer;
+}
+.foot-legal:hover {
+  color: var(--txt);
+}

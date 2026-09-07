@@ -1,6 +1,8 @@
 import { GRAD, RANKS, ago, inCashback, num, pct, price, rankOf, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
+import { follow as liveFollow, postWallTip, unfollow as liveUnfollow, SocialApiError } from '../api/social.js';
 import { back, navigate } from '../app/route.js';
+import { TipBroadcastError, attemptTip } from '../app/tip.js';
 import { showView } from '../app/view.js';
 import { pix } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
@@ -263,13 +265,7 @@ export function renderProfile(addr?: string): void {
     $('#claimAllBtn')?.addEventListener('click', () => void claimAllStakes());
   } else {
     $('#pfFollow')?.addEventListener('click', () => {
-      const now = toggleFollow(PF.addr as string);
-      toast((now ? 'FOLLOWING ' : 'UNFOLLOWED ') + memberOf(PF.addr as string).name);
-      if (now) {
-        addXP(6, 'FOLLOW');
-        unlock('social');
-      }
-      renderProfile(PF.addr as string);
+      void onFollowClick(PF.addr as string);
     });
     $('#shoutForm')?.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -286,6 +282,61 @@ function paintMine(): void {
   for (const cv of $$<HTMLCanvasElement>('#pfMine canvas')) pix(cv, Number(cv.dataset['seed']));
 }
 
+/**
+ * Toggles a follow. Live mode calls the real `POST`/`DELETE /follow/:net/:addr`
+ * (`routes/social.ts`) so the relationship survives a reload on the server's
+ * own `follows` table; the local `USER.follow` mirror still updates too so
+ * the button and friend list stay in sync with `state/social.ts`'s other
+ * sim-only reads (friend PnL, avatars) that Phase 5 does not replace.
+ */
+async function onFollowClick(addr: string): Promise<void> {
+  const wasFollowing = isFollowing(addr);
+  if (api.mode === 'live') {
+    try {
+      const res = wasFollowing ? await liveUnfollow(WALLET.net, addr) : await liveFollow(WALLET.net, addr);
+      if (res.following !== wasFollowing) toggleFollow(addr);
+    } catch (err) {
+      toast(err instanceof SocialApiError ? err.message : 'FOLLOW FAILED');
+      return;
+    }
+  } else {
+    toggleFollow(addr);
+  }
+  const now = isFollowing(addr);
+  toast((now ? 'FOLLOWING ' : 'UNFOLLOWED ') + memberOf(addr).name);
+  if (now && !wasFollowing) {
+    addXP(6, 'FOLLOW');
+    unlock('social');
+  }
+  renderProfile(addr);
+}
+
+/**
+ * Live mode: attempts a real transfer (`app/tip.ts`), then `POST
+ * /wall/:net/:addr` with the confirmed signature — the server re-verifies
+ * the amount and sender on-chain itself (`social/tips.ts`'s `verifyTip`),
+ * so nothing asserted here is trusted. The practice wallet is never funded,
+ * so this is expected to fail with a clear reason rather than silently fall
+ * back to the simulated post.
+ */
+async function liveShout(addr: string, txt: string, tip: number): Promise<void> {
+  let sig: string;
+  try {
+    sig = await attemptTip(WALLET.net, addr, tip);
+  } catch (err) {
+    toast(err instanceof TipBroadcastError ? err.message : 'TIP FAILED ' + DOT + ' NO FUNDED WALLET');
+    return;
+  }
+  try {
+    const res = await postWallTip(WALLET.net, addr, txt, sig);
+    toast('TIPPED ' + tip.toFixed(4) + ' ' + nativeUnit() + ' TO ' + memberOf(addr).name);
+    if (res.xpAwarded) addXP(res.xpAwarded, 'WALL POST');
+    unlock('social');
+  } catch (err) {
+    toast(err instanceof SocialApiError ? err.message : 'WALL POST FAILED');
+  }
+}
+
 /** TODO(Phase 5.C): send the tip, then `POST /wall` with its signature. `index.html:3322` */
 function postShout(addr: string): void {
   const txt = (($('#shout-txt') as HTMLInputElement | null)?.value || '').trim();
@@ -297,6 +348,10 @@ function postShout(addr: string): void {
   }
   if (tip < minTip()) {
     toast('MINIMUM TIP IS ' + minTip() + ' ' + unit);
+    return;
+  }
+  if (api.mode === 'live') {
+    void liveShout(addr, txt, tip);
     return;
   }
   if (tip > WALLET.sol) {

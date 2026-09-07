@@ -7,6 +7,7 @@ import { $, must } from '../lib/dom.js';
 import { closeClaim, initClaim, isClaimOpen } from '../modals/claim.js';
 import { closeEdit, initEdit, isEditOpen } from '../modals/edit.js';
 import { closeLaunch, initLaunch, isLaunchOpen, openLaunch } from '../modals/launch.js';
+import { closeLegal, initLegal, isLegalOpen } from '../modals/legal.js';
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
 import { initSettings, isSetOpen, openSet } from '../modals/settings.js';
 import { closeStake, isStakeOpen } from '../modals/stake.js';
@@ -85,7 +86,8 @@ function leaveLaunch(): void {
  * header menus, then the chat drawer, then the view stack.
  */
 function onEscape(): void {
-  if (isStepsOpen()) closeSteps();
+  if (isLegalOpen()) closeLegal();
+  else if (isStepsOpen()) closeSteps();
   else if (isStakeOpen()) closeStake();
   else if (isWizOpen()) closeWiz();
   else if (isClaimOpen()) closeClaim();
@@ -127,6 +129,7 @@ export async function boot(): Promise<void> {
   initEdit(() => {
     if (currentView() === 'profile') renderProfile();
   });
+  initLegal();
   initClaim(() => renderWallet());
 
   initNetPicker((net) => void connectWallet(net));

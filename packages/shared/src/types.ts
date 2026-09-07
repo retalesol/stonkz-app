@@ -97,6 +97,8 @@ export interface User {
   feesClaimed?: number;
   seenWiz?: boolean;
   seenHello?: boolean;
+  /** Phase 5: has this device already dismissed the risk/legal disclosure? */
+  seenLegal?: boolean;
   /** Ticker -> stake position. */
   stake?: Record<string, Stake>;
   /** Address -> 1. */
