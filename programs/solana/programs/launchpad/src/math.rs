@@ -158,14 +158,14 @@ pub fn derive_curve(supply_atoms: u64, price_1e6: u64, base_decimals: u8) -> Opt
     // never below it. With a floor the residue lands on the wrong side: for a
     // 1M supply against an 8-decimal, $4312.50 base it graduated $0.0003 short.
     let virtual_base = ceil_div(grad_mcap_base, VIRTUAL_BASE_DEN)?;
-    if virtual_base == 0 {
+    // `virtual_base` quadruples on the way to graduation and every base amount
+    // the program moves is a u64, so refuse a curve whose graduated reserve
+    // would not fit one.
+    if virtual_base == 0 || virtual_base > MAX_VIRTUAL_BASE {
         return None;
     }
 
     let k = virtual_base.checked_mul(virtual_token)?;
-    if k > MAX_K {
-        return None;
-    }
 
     Some(CurveParams {
         tokens_for_sale: u64::try_from(tokens_for_sale).ok()?,

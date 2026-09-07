@@ -24,6 +24,8 @@ pub mod math;
 pub mod state;
 
 #[cfg(test)]
+mod parity;
+#[cfg(test)]
 mod tests;
 
 use instructions::*;

@@ -1,0 +1,16 @@
+{
+  "$comment": "curve-sim.ts lives in the repo's ESM scope; the Anchor package is CJS. Rather than force one to bend, compile both into a throwaway CJS build for the parity check.",
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2020",
+    "lib": ["es2020"],
+    "moduleResolution": "node",
+    "rootDir": "..",
+    "outDir": ".parity-build",
+    "types": ["node"],
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["scripts/verify-parity.ts", "../curve-sim.ts"]
+}

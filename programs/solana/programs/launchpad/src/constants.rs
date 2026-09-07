@@ -47,8 +47,18 @@ pub const TOKEN_DECIMALS: u8 = 6;
 /// The four supplies the launch stepper offers, in whole tokens.
 pub const ALLOWED_SUPPLIES: [u64; 4] = [1_000_000, 500_000_000, 1_000_000_000, 1_000_000_000_000];
 
-/// Guard rail on `k` so a pathological base mint cannot get near the u128 roof.
-pub const MAX_K: u128 = u128::MAX / 1_000_000;
+/// The binding safety constraint on curve size.
+///
+/// SPL token amounts are `u64`, and `real_base` reaches `3 · virtual_base` by
+/// graduation while `virtual_base` itself reaches `4 · virtual_base_0`. So the
+/// real limit is not `k` — which sits four orders of magnitude below the `u128`
+/// roof even for the largest supply against the cheapest base — it is that the
+/// graduated base reserve still fits a `u64`. `create_token` rejects any
+/// (supply, base price, base decimals) combination that would not.
+///
+/// This is what rules out very low-priced 18-decimal base mints on Solana. The
+/// EVM mirror uses `uint256` and is strictly more permissive.
+pub const MAX_VIRTUAL_BASE: u128 = (u64::MAX as u128) / 4;
 
 /* -------------------------------------------------------------------------- */
 /* Cashback — see SPEC.md §3                                                   */
