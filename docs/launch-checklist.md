@@ -56,9 +56,41 @@ user-facing paths.
 | Any price, market cap, or volume figure | Indexer in chain mode |
 | "Atomic trades on Robinhood Chain" | `RH_ROUTER_ADDRESS` set and verified |
 | "Liquidity is burned forever" | Explorer verification on both chains |
-| Specific crate odds or drop rates | Commit-reveal VRF (finding M2) |
+| Crate odds are "fair" or "provable" | Commit-reveal VRF (finding M2) — see below |
 | "Audited" | Third-party audit complete |
 | Anything about `$STONKZ` buybacks, burns, or POL | Phase 7 shipped, token exists |
+
+### On crate odds specifically
+
+The row above is narrower than it first looks, and the distinction matters
+because the product already contradicts the blunt version of this rule.
+
+The app **publishes the drop table today**: the rewards view renders a
+`DROP TABLE · ODDS PER OPEN` column, and `GET /rewards` serves the same
+percentages. So "do not publish crate odds" is not a gate anyone can pass —
+it is already shipped, and removing the table would break parity with the
+visual oracle in `legacy/index.html`.
+
+What makes that acceptable right now is that the payout is **simulated**: the
+view says so in the same breath, and Optionz carry no redeemable value yet.
+Publishing a number nobody can independently verify is fine when the number
+buys nothing.
+
+It stops being acceptable the moment Optionz become airdrop-bearing, because
+then an unverifiable server-side roll decides real value. The rolls use an
+HMAC of a server secret ([`apps/api/src/game/crates.ts`](../apps/api/src/game/crates.ts)) —
+uniform and unpredictable to the client, but entirely trust-me: nothing lets a
+user check that the roll they got was the roll the server committed to.
+
+So the real gate, in order:
+
+- [ ] Before Optionz are redeemable for anything: either ship commit-reveal
+      VRF, or replace the exact percentages with rarity tiers carrying no
+      numeric claim.
+- [ ] Never describe the current rolls as "provably fair", "verifiable", or
+      "on-chain randomness". They are none of those things.
+- [ ] Keep the simulated-payout disclosure adjacent to the table for as long
+      as the table shows numbers.
 
 ## Post-launch, first week
 
