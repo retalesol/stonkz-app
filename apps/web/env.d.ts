@@ -1,6 +1,11 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  /**
+   * Data source: `sim` (default) keeps every number local; `live` swaps in
+   * `src/api/live.ts`, which is unimplemented until Phase 1.
+   */
+  readonly VITE_API_MODE: 'sim' | 'live';
   /** REST base, e.g. https://api.ston.kz */
   readonly VITE_API_URL: string;
   /** WS base, e.g. wss://api.ston.kz */
