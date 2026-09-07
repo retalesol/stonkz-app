@@ -1,4 +1,4 @@
-import { UniversalProvider } from '@walletconnect/universal-provider';
+import type { UniversalProvider } from '@walletconnect/universal-provider';
 import { RH_CHAIN_ID, RH_RPC_URL } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
 import type { Eip1193Provider } from './evm.js';
@@ -90,10 +90,21 @@ type WcProvider = InstanceType<typeof UniversalProvider>;
 
 let cached: WcProvider | null = null;
 
+/**
+ * Loaded on demand, not at boot.
+ *
+ * The relay client, its crypto and its storage layer are the single largest
+ * thing this phase added to the bundle, and most sessions never touch them —
+ * a Solana trader never does, and a desktop user with an extension does not
+ * either. A dynamic import keeps it in its own chunk, fetched the moment
+ * someone actually picks WalletConnect, which is also the moment they are
+ * already waiting on a relay round-trip.
+ */
 async function providerInstance(): Promise<WcProvider> {
   if (cached) return cached;
   try {
-    cached = await UniversalProvider.init({
+    const { UniversalProvider: Provider } = await import('@walletconnect/universal-provider');
+    cached = await Provider.init({
       projectId: WALLETCONNECT_PROJECT_ID,
       metadata: appMetadata(),
     });
