@@ -433,6 +433,128 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible();
   });
 
+  /** The `StonkzRouter` path — `docs/rh-trade-atomicity-gap.md`'s "closed" case: one `to`/`data`/`value` call, no `EvmStep[]`. */
+  async function mockTradePrepareAtomicRh(page: Page, quote: MockQuote): Promise<void> {
+    await page.route('**/trade/prepare', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          net: 'RH',
+          atomic: true,
+          to: '0x1111111111111111111111111111111111111111',
+          data: '0xdeadbeef',
+          value: '200000000000000000',
+          quote,
+          expiresAt: Date.now() + 30_000,
+        }),
+      });
+    });
+  }
+
+  /**
+   * The first-time-sell permit edge case — `live.ts`'s `signTradePlan`
+   * branch. The first `POST /trade/prepare` (no `body.permit`) comes back
+   * `atomic: true` with `permitTypedData` set; the caller signs that EIP-712
+   * payload off-chain and resends with `body.permit`, and the *same*
+   * endpoint answers again, this time with `permitTypedData` absent — still
+   * one on-chain transaction, two off-chain signatures.
+   */
+  async function mockTradePrepareRhSellPermit(page: Page, quote: MockQuote): Promise<void> {
+    await page.route('**/trade/prepare', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = route.request().postDataJSON() as { permit?: unknown };
+      const base = {
+        net: 'RH',
+        atomic: true,
+        to: '0x1111111111111111111111111111111111111111',
+        data: '0xdeadbeef',
+        value: '0',
+        quote,
+        expiresAt: Date.now() + 30_000,
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          body.permit
+            ? base
+            : {
+                ...base,
+                permitTypedData: { domain: { name: 'RHDOG', version: '1' }, message: {} },
+                note: 'Sign the EIP-712 permit, then resend with `permit` set.',
+              },
+        ),
+      });
+    });
+  }
+
+  test('Robinhood atomic buy — one StonkzRouter call, no step walker, fills like an atomic Solana trade', async ({
+    page,
+  }) => {
+    const sym = 'RHDOG';
+    const amount = 0.2;
+    const quote = nativePairedQuote(sym, 'buy', amount);
+    quote.net = 'RH';
+    quote.nativeUnit = 'ETH';
+    await mockTradePrepareAtomicRh(page, quote);
+
+    await page.click('#connectBtn');
+    await page.click('[data-net="RH"]');
+    await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
+    const card = page.locator(`.coin[data-sym="${sym}"]`).first();
+    await expect(card).toBeVisible();
+    await card.click();
+    await expect(page.locator('#tokenView')).toBeVisible();
+
+    const go = page.locator('#t-go');
+    await go.click();
+    // Atomic on RH means exactly what it means on SOL: no step modal, one
+    // wallet-adapter signature.
+    await expect(page.locator('#txScrim')).toBeHidden();
+    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+    await expect(go).toBeEnabled();
+  });
+
+  test('Robinhood atomic sell with no standing permit walks the two off-chain signatures, then fills in one on-chain transaction', async ({
+    page,
+  }) => {
+    const sym = 'RHDOG';
+    const amount = 0.2;
+    const quote = nativePairedQuote(sym, 'sell', amount);
+    quote.net = 'RH';
+    quote.nativeUnit = 'ETH';
+    await mockTradePrepareRhSellPermit(page, quote);
+
+    await page.click('#connectBtn');
+    await page.click('[data-net="RH"]');
+    await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
+    const card = page.locator(`.coin[data-sym="${sym}"]`).first();
+    await expect(card).toBeVisible();
+    await card.click();
+    await expect(page.locator('#tokenView')).toBeVisible();
+    await page.click('#t-side [data-s="SELL"]');
+    await expect(page.locator('#t-quote')).toContainText('YOU SELL');
+
+    await page.click('#t-go');
+    // Two off-chain signatures, walked explicitly — but this is still the
+    // atomic path, so the copy must not read like the non-atomic warning.
+    await expect(page.locator('#txScrim')).toBeVisible();
+    await expect(page.locator('#txBody')).toContainText('one on-chain transaction');
+    await expect(page.locator('#txBody')).not.toContainText('SEPARATE SIGNATURES');
+    await expect(page.locator('#steps-go')).toHaveText('SIGN STEP 1 OF 2');
+    await expect(page.locator('#txBody')).toContainText('permit signature');
+    await page.click('#steps-go');
+
+    await expect(page.locator('#steps-go')).toHaveText('SIGN STEP 2 OF 2');
+    await expect(page.locator('#txBody')).toContainText('Sell on Robinhood Chain');
+    await page.click('#steps-go');
+
+    await expect(page.locator('#txScrim')).toBeHidden({ timeout: 15_000 });
+    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible();
+  });
+
   test('launching a coin with a dev buy runs the prepare -> sign -> confirm stepper and lands on the new token', async ({
     page,
   }) => {
