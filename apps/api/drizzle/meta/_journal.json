@@ -43,6 +43,13 @@
       "when": 1757120500000,
       "tag": "0005_router_and_launch",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788758479136,
+      "tag": "0006_social_layer",
+      "breakpoints": true
     }
   ]
 }

@@ -37,6 +37,15 @@ export const users = pgTable(
     wallet: text('wallet').notNull(),
     username: text('username'),
     bio: text('bio'),
+    /**
+     * Phase 5.A profile fields. `avatarUrl` is optional — the default art
+     * stays the address-seeded pixel avatar (`pix()`) both client-side and
+     * here; a set `avatarUrl` is a user override, never required.
+     */
+    avatarUrl: text('avatar_url'),
+    xHandle: text('x_handle'),
+    website: text('website'),
+    telegram: text('telegram'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -546,3 +555,91 @@ export const itemFlags = pgTable(
   },
   (t) => [primaryKey({ columns: [t.wallet, t.net, t.item] })],
 );
+
+/* -------------------------------------------------------------------------- */
+/* 0006 — social layer: follows, walls, chat, X cache                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Plan step 144. `(net, follower)` is followed by `(net, followee)` — same
+ * human, different address per net, so a follow on Solana and a follow on
+ * Robinhood are unrelated edges even for the same person, matching every
+ * other identity key in this schema.
+ */
+export const follows = pgTable(
+  'follows',
+  {
+    net: text('net').notNull(),
+    follower: text('follower').notNull(),
+    followee: text('followee').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.net, t.follower, t.followee] }),
+    index('follows_followee_idx').on(t.net, t.followee),
+  ],
+);
+
+/**
+ * Plan step 147-148: one post per verified tip signature. `tipTxSig` is
+ * `null` only for the profile owner's own pinned "this is your wall" state —
+ * in practice every row here has one, since `POST /wall` refuses to insert
+ * without a verified transfer at or above the net's minimum tip.
+ */
+export const wallPosts = pgTable(
+  'wall_posts',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    net: text('net').notNull(),
+    toWallet: text('to_wallet').notNull(),
+    fromWallet: text('from_wallet').notNull(),
+    text: text('text').notNull(),
+    /** Native units — SOL or ETH — actually verified on-chain, never client-asserted. */
+    tipNative: doublePrecision('tip_native').notNull(),
+    tipTxSig: text('tip_tx_sig').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // "One post per signature" — plan step 147 — makes replaying the same
+    // transfer to spam a wall a unique-constraint violation, not a policy.
+    uniqueIndex('wall_posts_sig_uq').on(t.net, t.tipTxSig),
+    index('wall_posts_to_idx').on(t.net, t.toWallet, t.id),
+  ],
+);
+
+/**
+ * Plan step 151. One room per token (`sym` upper-cased, matching the
+ * frontend's `$SYM` room label minus the `$`) plus the literal room `GLOBAL`.
+ * `flagged` is the moderation hook (plan step 156's "banned-word filtering or
+ * a moderation flag field") — a flagged message is persisted (so a human can
+ * audit it) but never replayed to new subscribers by `GET /chat/:room`.
+ */
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    net: text('net').notNull(),
+    room: text('room').notNull(),
+    wallet: text('wallet').notNull(),
+    text: text('text').notNull(),
+    flagged: boolean('flagged').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('chat_messages_room_idx').on(t.net, t.room, t.id)],
+);
+
+/**
+ * Plan step 153: a server-side cache in front of the X API v2 (or, absent
+ * credentials in this environment, `social/x-provider.ts`'s placeholder),
+ * keyed by lower-cased handle. `expiresAt` is the TTL gate `GET /x/:handle`
+ * checks before making a fresh call.
+ */
+export const xProfileCache = pgTable('x_profile_cache', {
+  handle: text('handle').primaryKey(),
+  displayName: text('display_name'),
+  avatarUrl: text('avatar_url'),
+  verified: boolean('verified').notNull().default(false),
+  found: boolean('found').notNull().default(true),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});

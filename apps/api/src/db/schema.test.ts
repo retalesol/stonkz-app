@@ -25,15 +25,16 @@ describe('migration history', () => {
       '0003_index_advisor',
       '0004_index_advisor_prune',
       '0005_router_and_launch',
+      '0006_social_layer',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(6);
+    expect(second.skipped).toHaveLength(7);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
-    expect(files.map((f) => f.idx)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(files.map((f) => f.idx)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });
 
