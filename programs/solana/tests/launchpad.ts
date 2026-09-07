@@ -7,7 +7,8 @@
  * paths which must not exist really do not exist.
  */
 import * as anchor from '@coral-xyz/anchor';
-import { BN, Program } from '@coral-xyz/anchor';
+import { BN } from '@coral-xyz/anchor';
+import type { Program } from '@coral-xyz/anchor';
 import {
   ComputeBudgetProgram,
   Keypair,
@@ -25,7 +26,7 @@ import {
 } from '@solana/spl-token';
 import { assert } from 'chai';
 
-import { Launchpad } from '../target/types/launchpad';
+import type { Launchpad } from '../target/types/launchpad';
 
 const enc = (s: string) => Buffer.from(s, 'utf8');
 
@@ -34,7 +35,7 @@ async function rejects(p: Promise<unknown> | (() => Promise<unknown>), match: Re
   try {
     await (typeof p === 'function' ? p() : p);
   } catch (e) {
-    const msg = `${(e as Error).message ?? ''}\n${JSON.stringify((e as any).logs ?? [])}`;
+    const msg = `${(e as Error).message ?? ''}\n${JSON.stringify((e as { logs?: unknown }).logs ?? [])}`;
     assert.match(msg, match, `rejected, but not with ${match}`);
     return;
   }
@@ -718,6 +719,18 @@ program.methods.stake(new BN(1), 30).accountsPartial(stakeAccounts).signers([sta
         BigInt(after.creatorClaimableBase.toString()) -
         BigInt(before.creatorClaimableBase.toString());
 
+      // `circ` is read after the reserves move, and `eligible_staked` cannot
+      // change on a buy, so the split is fully determined — assert the exact
+      // atoms rather than a band.
+      const circ = BigInt(after.tokensForSale.toString()) - BigInt(after.realToken.toString());
+      const exact = splitBucket(
+        want.creatorBucket,
+        BigInt(before.eligibleStaked.toString()),
+        circ === 0n ? 1n : circ,
+      );
+      assert.equal(stakerDelta, exact.stakers, 'staker share is exact');
+      assert.equal(creatorDelta, exact.creator, 'creator share is exact');
+
       assert.equal(stakerDelta + creatorDelta, want.creatorBucket, 'the bucket is conserved');
       assert.isTrue(stakerDelta <= want.creatorBucket / 2n, 'stakers capped at half the bucket');
       // At the cap that is 35% of the fee, and never more.
@@ -808,7 +821,9 @@ program.methods.stake(new BN(1), 30).accountsPartial(stakeAccounts).signers([sta
       const held = await bal(protocolVault());
       assert.isTrue(held > 0n, 'fills should have funded the protocol vault');
 
-      const call = (which: any, signer: Keypair, v: PublicKey, amount: bigint) =>
+      // Anchor renders a fieldless Rust enum as a one-key object.
+      type Which = { protocol: Record<string, never> } | { ops: Record<string, never> };
+      const call = (which: Which, signer: Keypair, v: PublicKey, amount: bigint) =>
         program.methods
           .withdrawTreasury(which, new BN(amount.toString()))
           .accountsPartial({

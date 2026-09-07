@@ -2,4 +2,3 @@ target
 node_modules
 .anchor
 test-ledger
-.parity-build

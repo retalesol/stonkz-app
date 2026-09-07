@@ -38,13 +38,53 @@ function findVectors(): string {
   );
 }
 
+/**
+ * One value from the table. Anything that can exceed 2^53 is a decimal string,
+ * because the vectors deliberately include `u64::MAX` and 33-digit `k` values;
+ * the two genuinely narrow fields (decimals, bps) stay as JSON numbers.
+ */
+type Cell = string | number | boolean;
+/** One array per field rather than an array of objects — see `rows` below. */
+type Columns = Record<string, Cell[]>;
+type Row = Record<string, Cell>;
+
+interface CurveVector {
+  supply: string;
+  supplyAtoms: string;
+  price1e6: string;
+  baseDecimals: number;
+  tokensForSale: string;
+  lpReserve: string;
+  virtualToken: string;
+  virtualBase: string;
+  k: string;
+  gradMcapBase: string;
+  fills: Columns;
+  final: {
+    virtualBase: string;
+    virtualToken: string;
+    realBase: string;
+    realToken: string;
+    mcapBase: string;
+    mcapUsd1e6: string;
+  };
+}
+
+interface Vectors {
+  feeSplit: Columns;
+  creatorBucketSplit: Columns;
+  effFeeBps: Columns;
+  curveCount: number;
+  curves: CurveVector[];
+}
+
 const vectorsPath = resolve(findVectors());
-const vectors = JSON.parse(readFileSync(vectorsPath, 'utf8')) as any;
+const vectors = JSON.parse(readFileSync(vectorsPath, 'utf8')) as Vectors;
 
 let checks = 0;
 const failures: string[] = [];
 
-function eq(actual: bigint | number | boolean, expected: bigint | number | boolean, what: string) {
+function eq(actual: Cell | bigint, expected: Cell | bigint, what: string) {
   checks += 1;
   if (String(actual) !== String(expected)) {
     failures.push(`${what}: rust says ${expected}, typescript says ${actual}`);
@@ -52,19 +92,17 @@ function eq(actual: bigint | number | boolean, expected: bigint | number | boole
 }
 
 /**
- * The vectors are stored as columns — one array per field — because Foundry's
- * JSON cheatcodes cannot walk an array of objects. Zip them back into rows,
- * which is the shape the checks below want.
+ * The vectors are stored as columns because Foundry's JSON cheatcodes cannot
+ * walk an array of objects. Zip them back into rows, which is the shape the
+ * checks below want.
  */
-function rows(cols: Record<string, any[]>): Record<string, any>[] {
+function rows(cols: Columns): Row[] {
   const keys = Object.keys(cols);
   const n = cols[keys[0]].length;
   for (const k of keys) {
     if (cols[k].length !== n) throw new Error(`ragged parity column: ${k}`);
   }
-  return Array.from({ length: n }, (_, i) =>
-    Object.fromEntries(keys.map((k) => [k, cols[k][i]])),
-  );
+  return Array.from({ length: n }, (_, i) => Object.fromEntries(keys.map((k) => [k, cols[k][i]])));
 }
 
 /* ------------------------------------------------------------------ fee split */
@@ -96,7 +134,7 @@ for (const row of rows(vectors.creatorBucketSplit)) {
 /* ------------------------------------------------------------------- cashback */
 
 for (const row of rows(vectors.effFeeBps)) {
-  const got = effFeeBps(row.baseBps, row.cashback, 0n, BigInt(row.elapsedSecs));
+  const got = effFeeBps(Number(row.baseBps), Boolean(row.cashback), 0n, BigInt(row.elapsedSecs));
   eq(got, row.effBps, `effFeeBps(${row.baseBps}, t=${row.elapsedSecs}, cb=${row.cashback})`);
 }
 
@@ -126,7 +164,7 @@ for (const c of vectors.curves) {
     eq(st.realBase, BigInt(fill.realBase), `${label} fill ${i} state.realBase`);
 
     if (fill.side === 'buy') {
-      const f = buyQuote(st, fill.feeBps, BigInt(fill.amountIn));
+      const f = buyQuote(st, Number(fill.feeBps), BigInt(fill.amountIn));
       if (!f) {
         failures.push(`${label} fill ${i}: buyQuote returned null`);
         break;
@@ -143,7 +181,7 @@ for (const c of vectors.curves) {
       st = applyBuy(st, f);
     } else {
       const amount = BigInt(fill.amountIn);
-      const f = sellQuote(st, fill.feeBps, amount);
+      const f = sellQuote(st, Number(fill.feeBps), amount);
       if (!f) {
         failures.push(`${label} fill ${i}: sellQuote returned null`);
         break;

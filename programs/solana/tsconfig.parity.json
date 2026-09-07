@@ -1,12 +1,12 @@
 {
-  "$comment": "curve-sim.ts lives in the repo's ESM scope; the Anchor package is CJS. Rather than force one to bend, compile both into a throwaway CJS build for the parity check.",
+  "$comment": "curve-sim.ts lives in the repo's ESM scope; the Anchor package is CJS. Rather than force one to bend, compile both into a throwaway CJS build for the parity check. It goes under node_modules because it is generated, disposable, and every lint/format tool in the repo already ignores that path.",
   "compilerOptions": {
     "module": "commonjs",
     "target": "es2020",
     "lib": ["es2020"],
     "moduleResolution": "node",
     "rootDir": "..",
-    "outDir": ".parity-build",
+    "outDir": "node_modules/.parity-build",
     "types": ["node"],
     "esModuleInterop": true,
     "strict": true,

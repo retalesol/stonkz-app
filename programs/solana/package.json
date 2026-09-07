@@ -6,7 +6,7 @@
     "build": "anchor build",
     "test": "anchor test",
     "test:unit": "cargo test -p launchpad --lib",
-    "verify:parity": "tsc -p tsconfig.parity.json && node .parity-build/solana/scripts/verify-parity.js"
+    "verify:parity": "tsc -p tsconfig.parity.json && node node_modules/.parity-build/solana/scripts/verify-parity.js"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
