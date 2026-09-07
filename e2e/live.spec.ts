@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
+import { connectWithMockWallet, installMockWallets, stubChainRpc, walletRecord } from './mock-wallets.js';
 
 /**
  * Phase 1.D live-mode journeys (plan steps 62-70).
@@ -54,6 +55,14 @@ test.use({
 });
 
 test.beforeEach(async ({ page }) => {
+  // Phase B: connecting now goes through `modals/walletpicker.ts` and a real
+  // wallet, which CI has none of. `e2e/mock-wallets.ts` supplies wallets that
+  // implement the real Wallet Standard and EIP-1193/EIP-6963 interfaces, so
+  // the app's own discovery, signing and confirmation code runs unmodified;
+  // `stubChainRpc` answers the confirmation reads that code then makes.
+  await installMockWallets(page);
+  await stubChainRpc(page);
+
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.resourceType() !== 'document') return route.continue();
@@ -146,9 +155,7 @@ test('a net switch reloads the board from the other chain', async ({ page }) => 
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-sym')));
   expect(solSyms.length).toBeGreaterThan(0);
 
-  await page.click('#connectBtn');
-  await page.click('[data-net="RH"]');
-  await expect(page.locator('#wchip')).toBeVisible();
+  await connectWithMockWallet(page, 'RH');
   await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
 
   // `GET /tokens?net=RH` replaced `COINS` — a different set than SOL's, not
@@ -343,6 +350,9 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
 
     await page.goto(`/t/${sym}`);
     await expect(page.locator('#tokenView')).toBeVisible();
+    // Phase B: signing needs a connected wallet, so there is nothing to
+    // press until there is one. That refusal is the feature.
+    await connectWithMockWallet(page, 'SOL');
     // The real `GET .../quote` answers this — a native-paired coin is one
     // curve hop, so the aggregator hop row never renders.
     await expect(page.locator('#t-quote')).toContainText('PRICE IMPACT');
@@ -364,6 +374,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
 
     await page.goto(`/t/${sym}`);
     await expect(page.locator('#tokenView')).toBeVisible();
+    await connectWithMockWallet(page, 'SOL');
     await expect(page.locator('#t-quote')).toContainText('HOP 1');
     await expect(page.locator('#t-quote')).toContainText('HOP 2');
     await expect(page.locator('#t-quote')).toContainText('JUP');
@@ -379,6 +390,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
 
     await page.goto(`/t/${sym}`);
     await expect(page.locator('#tokenView')).toBeVisible();
+    await connectWithMockWallet(page, 'SOL');
     await page.click('#t-side [data-s="SELL"]');
     await expect(page.locator('#t-quote')).toContainText('YOU SELL');
 
@@ -406,8 +418,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     // that in place; a cold `page.goto('/t/RHDOG')` would instead boot fresh
     // on the default SOL net and 404. Click into it the same way a trader
     // actually would: switch chains, then click the card.
-    await page.click('#connectBtn');
-    await page.click('[data-net="RH"]');
+    await connectWithMockWallet(page, 'RH');
     await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
     const card = page.locator(`.coin[data-sym="${sym}"]`).first();
     await expect(card).toBeVisible();
@@ -500,8 +511,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     quote.nativeUnit = 'ETH';
     await mockTradePrepareAtomicRh(page, quote);
 
-    await page.click('#connectBtn');
-    await page.click('[data-net="RH"]');
+    await connectWithMockWallet(page, 'RH');
     await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
     const card = page.locator(`.coin[data-sym="${sym}"]`).first();
     await expect(card).toBeVisible();
@@ -527,8 +537,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     quote.nativeUnit = 'ETH';
     await mockTradePrepareRhSellPermit(page, quote);
 
-    await page.click('#connectBtn');
-    await page.click('[data-net="RH"]');
+    await connectWithMockWallet(page, 'RH');
     await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
     const card = page.locator(`.coin[data-sym="${sym}"]`).first();
     await expect(card).toBeVisible();
@@ -588,9 +597,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
       });
     });
 
-    await page.click('#connectBtn');
-    await page.click('[data-net="SOL"]');
-    await expect(page.locator('#wchip')).toBeVisible();
+    await connectWithMockWallet(page, 'SOL');
 
     await page.click('#createBtn');
     await expect(page.locator('#newScrim')).toBeVisible();
@@ -638,9 +645,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
       });
     });
 
-    await page.click('#connectBtn');
-    await page.click('[data-net="SOL"]');
-    await expect(page.locator('#wchip')).toBeVisible();
+    await connectWithMockWallet(page, 'SOL');
 
     // A cold `page.goto('/me')` would boot fresh with the wallet
     // disconnected again (`openProfile()` requires `WALLET.on`) — get there
@@ -665,20 +670,19 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
  * (`ensureSession`), a real `POST`/`DELETE /follow/:net/:addr`, a real
  * `POST /chat/:net/:room` echoed back over the real WS `chat:` channel.
  *
- * The wall's tip is the one exception: `verifyTip` only ever accepts a real,
- * confirmed on-chain transfer, and this harness's practice key
- * (`app/keys.ts`) is never funded — there is no way to make a *real* tip
- * land without a real, funded Solana wallet, live or otherwise. What is
- * tested instead is `app/tip.ts`'s honest failure path: a genuine
- * `@solana/web3.js` broadcast attempt against a (mocked, for determinism)
- * RPC, rejected the way an unfunded wallet's would be, surfaced as a clear
- * toast rather than a fabricated success.
+ * The wall's tip is the one exception, and Phase B moved where the exception
+ * lies. `app/tip.ts` now builds a real `SystemProgram.transfer`, hands it to
+ * the connected wallet, and waits for a confirmation — all of which the mock
+ * wallet answers. What no mock can produce is a transfer that
+ * `apps/api/src/social/tips.ts`'s `verifyTip` will accept, because that
+ * re-derives sender, recipient and amount from the chain itself. So the tip
+ * is asserted up to the point the server independently refuses it, and the
+ * refusal is asserted to surface as a refusal rather than a fabricated
+ * "TIPPED".
  */
 test.describe('Phase 5 — social layer', () => {
   test.beforeEach(async ({ page }) => {
-    await page.click('#connectBtn');
-    await page.click('[data-net="SOL"]');
-    await expect(page.locator('#wchip')).toBeVisible();
+    await connectWithMockWallet(page, 'SOL');
     await page.click('#wchip');
     await page.click('[data-w="profile"]');
     await expect(page.locator('#profileView')).toBeVisible();
@@ -713,37 +717,33 @@ test.describe('Phase 5 — social layer', () => {
     await expect(page.locator('.toast', { hasText: 'UNFOLLOWED' })).toBeVisible();
   });
 
-  test('tipping on a wall attempts a real broadcast and reports the honest failure when it cannot land', async ({
+  test('tipping on a wall really signs a transfer with the wallet, and never claims success the server refused', async ({
     page,
   }) => {
-    // Deterministic stand-in for "this RPC really has never heard of our
-    // unfunded practice key" — a real mainnet RPC would refuse this same
-    // transfer for the same underlying reason (no balance), just slower and
-    // over a real network call this suite should not depend on.
-    await page.route('https://api.mainnet-beta.solana.com/**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'blockhash not found' } }),
-      });
-    });
-
     // A syntactically real Solana pubkey (the System Program's), not one of
     // `state/social.ts`'s `fakeAddr()` friends — those are display-only
     // `XXXX..YYYY` shorthand, not valid base58 pubkeys, and `app/tip.ts`'s
-    // `new PublicKey(...)` would (correctly) refuse one before ever reaching
-    // the RPC this test means to exercise.
+    // `new PublicKey(...)` would (correctly) refuse one before ever building
+    // the transfer this test means to exercise.
     const target = '11111111111111111111111111111112';
     await page.goto(`/u/${target}`);
     await expect(page.locator('#profileView')).toBeVisible();
+    await connectWithMockWallet(page, 'SOL');
     await expect(page.locator('#shoutForm')).toBeVisible();
 
     await page.fill('#shout-txt', 'gm from the e2e suite');
     await page.click('#shoutForm button[type="submit"]');
 
-    await expect(page.locator('.toast', { hasText: 'no real SOL' })).toBeVisible({ timeout: 10_000 });
-    // The honest failure must not also claim success.
+    // A toast either way, and it must not be a success one: the wallet's
+    // signature is real, but the transfer behind it never settled, and
+    // `verifyTip` is the thing that knows the difference.
+    await expect(page.locator('.toast').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.toast', { hasText: 'TIPPED' })).toBeHidden();
+
+    // The transfer was genuinely built and handed to the wallet — the old
+    // build would have refused a Robinhood tip outright and signed a SOL one
+    // with a `localStorage` key.
+    expect(await walletRecord<number | undefined>(page, '__sentSolBytes')).toBeGreaterThan(0);
   });
 
   test('sending a chat message posts over REST and echoes back over the live WS channel', async ({ page }) => {

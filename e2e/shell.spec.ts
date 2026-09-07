@@ -47,7 +47,14 @@ test('the shell renders the oracle element order', async ({ page }) => {
     'legalScrim',
     'stakeScrim',
     'claimScrim',
+    // Phase B additions. The oracle had no wallet picker because it had no
+    // wallets — connecting was a 460ms `setTimeout` in front of a
+    // `localStorage` keypair. `practiceBadge` sits last of the overlays, just
+    // above the toasts, so the strip announcing that nothing settles cannot
+    // be covered by anything but a toast.
+    'walletScrim',
     'txScrim',
+    'practiceBadge',
     'toasts',
     'rankup',
   ]);
