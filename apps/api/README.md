@@ -20,6 +20,14 @@ A clean checkout works with no `.env` at all — every default in
 [`src/env.ts`](src/env.ts) points at `docker compose up`. See
 [`.env.example`](.env.example) for the full list.
 
+If you already run Postgres on 5432, the container will fail to bind. Move it
+and point the API at the new port:
+
+```sh
+POSTGRES_PORT=55432 docker compose up -d
+DATABASE_URL=postgres://stonkz:stonkz@localhost:55432/stonkz pnpm --filter @stonkz/api migrate
+```
+
 `REDIS_URL=memory://` swaps Redis for an in-process fake, so the API runs with
 Postgres alone. That fake is single-node: pub/sub reaches only subscribers in
 the same process, which is correct for local dev and wrong for more than one
