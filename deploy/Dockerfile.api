@@ -1,0 +1,26 @@
+# API image. Run from the repo root:
+#   docker build -f deploy/Dockerfile.api -t stonkz-api .
+#
+# Workspace packages export TypeScript source, so production runs `tsx`
+# (the same `pnpm start` as local), not `node dist/server.js`.
+FROM node:20-bookworm-slim
+
+RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/curve-sim/package.json packages/curve-sim/package.json
+COPY apps/api/package.json apps/api/package.json
+
+RUN pnpm install --frozen-lockfile --filter @stonkz/api...
+
+COPY packages/shared packages/shared
+COPY packages/curve-sim packages/curve-sim
+COPY apps/api apps/api
+
+ENV NODE_ENV=production
+WORKDIR /app/apps/api
+EXPOSE 8787
+CMD ["pnpm", "start"]

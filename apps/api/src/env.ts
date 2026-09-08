@@ -284,19 +284,28 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     publicWebOrigin: str(src, 'PUBLIC_WEB_ORIGIN', 'https://ston.kz'),
   };
 
+  /**
+   * Staging on Railway/Vercel before any program is deployed. Secrets are
+   * still required — this only skips the checks that assume a live
+   * launchpad and a paid RH RPC, which we do not have yet.
+   */
+  const staging = str(src, 'STONKZ_STAGING', '') === '1';
+
   if (env.nodeEnv === 'production') {
     if (env.jwtSecret === DEV_JWT_SECRET) throw new Error('JWT_SECRET must be set in production');
     if (env.crateHmacSecret === DEV_CRATE_SECRET) throw new Error('CRATE_HMAC_SECRET must be set in production');
     if (env.jwtSecret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
-    // Robinhood documents the public endpoint as rate-limited and not for
-    // production use, and a wallet render reads a balance.
-    if (env.rhRpcUrl === RH_PUBLIC_RPC_URL) {
-      throw new Error(
-        'RH_RPC_URL must be a provider endpoint in production; the public RPC is rate-limited and unsupported',
-      );
-    }
-    if (env.rhLaunchpadAddress === ZERO_EVM_ADDRESS) {
-      throw new Error('RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in');
+    if (!staging) {
+      // Robinhood documents the public endpoint as rate-limited and not for
+      // production use, and a wallet render reads a balance.
+      if (env.rhRpcUrl === RH_PUBLIC_RPC_URL) {
+        throw new Error(
+          'RH_RPC_URL must be a provider endpoint in production; the public RPC is rate-limited and unsupported',
+        );
+      }
+      if (env.rhLaunchpadAddress === ZERO_EVM_ADDRESS) {
+        throw new Error('RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in');
+      }
     }
   }
 

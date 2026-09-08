@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.cursor
+coverage
+playwright-report
+test-results
+apps/web
+e2e
+programs
+docs
+legacy
+**/*.md
+!apps/api/README.md
+**/.env
+**/.env.*

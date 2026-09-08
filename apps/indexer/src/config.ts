@@ -117,7 +117,8 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
       SOL: int(src, 'INDEXER_SOL_REORG_DEPTH', 32),
       RH: int(src, 'INDEXER_RH_REORG_DEPTH', 64),
     },
-    httpPort: int(src, 'INDEXER_HTTP_PORT', 8788),
+    // Railway injects PORT; prefer an explicit INDEXER_HTTP_PORT, then PORT.
+    httpPort: int(src, 'INDEXER_HTTP_PORT', int(src, 'PORT', 8788)),
     httpHost: str(src, 'INDEXER_HTTP_HOST', '0.0.0.0'),
     singleReplicaLock: bool(src, 'INDEXER_SINGLE_REPLICA_LOCK', true),
     lockKey: int(src, 'INDEXER_LOCK_KEY', DEFAULT_LOCK_KEY),
