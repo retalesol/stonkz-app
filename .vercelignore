@@ -1,0 +1,19 @@
+# Vercel only needs the web workspace + shared math. Everything else
+# either is unused at build time or contains local validator sockets
+# that the upload cannot open.
+programs
+apps/api
+apps/indexer
+e2e
+legacy
+coverage
+playwright-report
+test-results
+**/.anchor
+**/test-ledger
+**/target
+**/cache
+**/out
+**/*.log
+.cursor
+.git
