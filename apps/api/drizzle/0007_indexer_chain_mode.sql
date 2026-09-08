@@ -81,10 +81,10 @@ ALTER TABLE "treasury_credits" ADD COLUMN "chain_position" bigint NOT NULL DEFAU
 --> statement-breakpoint
 CREATE INDEX "treasury_credits_position_idx" ON "treasury_credits" ("net", "chain_position");
 --> statement-breakpoint
--- The rollback walks orphaned events newest-first within a net; without this
--- it is a sort over the whole table on every reorg.
-CREATE INDEX "chain_events_rollback_idx" ON "chain_events" ("net", "chain_position", "id");
---> statement-breakpoint
+-- No index is added for the reorg rollback. It walks orphaned events by
+-- ("net", "chain_position") newest-first, which is exactly the leading edge of
+-- "chain_events_replay_idx" from 0003 — an identical index here would only
+-- give the planner two indistinguishable choices for the same scan.
 -- `tokens.mint` is how a decoded on-chain event (which names a mint/contract
 -- address, never a ticker) finds the row it belongs to.
 CREATE INDEX "tokens_mint_idx" ON "tokens" ("net", "mint");

@@ -413,7 +413,8 @@ export const chainEvents = pgTable(
   (t) => [
     uniqueIndex('chain_events_sig_uq').on(t.net, t.txSig, t.logIndex, t.kind),
     index('chain_events_cursor_idx').on(t.net, t.chainPosition),
-    index('chain_events_rollback_idx').on(t.net, t.chainPosition, t.id),
+    // Created in 0003 for the replay window; the reorg rollback reuses it.
+    index('chain_events_replay_idx').on(t.net, t.chainPosition, t.id),
   ],
 );
 
