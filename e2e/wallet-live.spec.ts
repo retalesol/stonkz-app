@@ -39,10 +39,17 @@ test.use({
   },
 });
 
-/** `index.html`'s CSP has no `http://localhost` in `connect-src` — see live.spec.ts. */
+/**
+ * `index.html`'s CSP has no `http://localhost` in `connect-src` — see live.spec.ts.
+ *
+ * Non-document requests `fallback()` rather than `continue()`: this handler
+ * matches everything, and Playwright runs the most recently registered
+ * handler first, so `continue()` here would send the chain RPC calls
+ * `stubChainRpc` is meant to answer straight out to the real network.
+ */
 async function relaxCsp(page: Page): Promise<void> {
   await page.route('**/*', async (route) => {
-    if (route.request().resourceType() !== 'document') return route.continue();
+    if (route.request().resourceType() !== 'document') return route.fallback();
     const res = await route.fetch();
     const body = await res.text();
     await route.fulfill({
@@ -197,7 +204,21 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
           amountIn: 0.2,
           amountOut: 200_000,
           minOut: 197_000,
-          hops: [],
+          // `apps/api`'s `router/compose.ts` pushes the CURVE hop
+          // unconditionally on every path, so a quote never has an empty
+          // `hops` — and `api/live.ts` reads `hops[0]` on the sell side.
+          hops: [
+            {
+              venue: 'CURVE',
+              inSymbol: 'ETH',
+              outSymbol: 'RHDOG',
+              inAmount: 0.2,
+              outAmount: 200_000,
+              impactPct: 1,
+              feeBps: 250,
+              feeAmount: 0.005,
+            },
+          ],
           routeLabel: 'CURVE',
           effFeePct: 2.5,
           impactPct: 1,
@@ -267,7 +288,21 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
           amountIn: 0.2,
           amountOut: 200_000,
           minOut: 197_000,
-          hops: [],
+          // `apps/api`'s `router/compose.ts` pushes the CURVE hop
+          // unconditionally on every path, so a quote never has an empty
+          // `hops` — and `api/live.ts` reads `hops[0]` on the sell side.
+          hops: [
+            {
+              venue: 'CURVE',
+              inSymbol: 'ETH',
+              outSymbol: 'RHDOG',
+              inAmount: 0.2,
+              outAmount: 200_000,
+              impactPct: 1,
+              feeBps: 250,
+              feeAmount: 0.005,
+            },
+          ],
           routeLabel: 'CURVE',
           effFeePct: 2.5,
           impactPct: 1,
@@ -336,7 +371,18 @@ test('a Solana trade broadcasts through the wallet and reports the real signatur
           amountIn: 0.5,
           amountOut: 500_000,
           minOut: 492_500,
-          hops: [],
+          hops: [
+            {
+              venue: 'CURVE',
+              inSymbol: 'SOL',
+              outSymbol: 'DOGGO',
+              inAmount: 0.5,
+              outAmount: 120_000,
+              impactPct: 1,
+              feeBps: 250,
+              feeAmount: 0.0125,
+            },
+          ],
           routeLabel: 'CURVE',
           effFeePct: 2.5,
           impactPct: 1,
@@ -399,7 +445,18 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
         amountIn: 200_000,
         amountOut: 0.19,
         minOut: 0.187,
-        hops: [],
+        hops: [
+          {
+            venue: 'CURVE',
+            inSymbol: 'RHDOG',
+            outSymbol: 'ETH',
+            inAmount: 200_000,
+            outAmount: 0.19,
+            impactPct: 1,
+            feeBps: 250,
+            feeAmount: 0.00475,
+          },
+        ],
         routeLabel: 'CURVE',
         effFeePct: 2.5,
         impactPct: 1,

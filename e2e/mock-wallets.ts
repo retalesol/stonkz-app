@@ -1,4 +1,8 @@
 import { expect, type Page } from '@playwright/test';
+import { ed25519 } from '@noble/curves/ed25519';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { keccak_256 } from '@noble/hashes/sha3';
+import bs58 from 'bs58';
 
 /**
  * Mock wallets for the browser, injected before any app code runs.
@@ -41,11 +45,80 @@ export interface MockWalletOptions {
   noEvm?: boolean;
 }
 
-/** Where a mock transaction "landed", for assertions and for the RPC stub. */
+/* -------------------------------------------------------------------------- */
+/* Real keys, held outside the page                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The mock wallets sign with **real keypairs**, and they have to.
+ *
+ * `apps/api`'s auth does real cryptographic verification — `auth/siws.ts` is
+ * ed25519 over the exact nonce message, `auth/siwe.ts` is secp256k1 with an
+ * EIP-191 prefix — with no fixture bypass anywhere. A canned signature is
+ * rejected with `signature does not verify`, which is the server behaving
+ * correctly, so a mock that returns one tests the sign-in handshake not at
+ * all.
+ *
+ * The keys live in the Node process and are reached over
+ * `page.exposeFunction`, rather than being bundled into the page: a signer
+ * inside `addInitScript` would mean shipping an ed25519 implementation as an
+ * inline string. The wallet the app sees is still a plain Wallet Standard /
+ * EIP-1193 object whose signing method happens to be async — which it is in
+ * every real wallet too, because a real one is talking to an extension
+ * process or a phone.
+ *
+ * Fixed private keys, so addresses are stable and assertable across runs.
+ * These are test keys with no funds and no purpose beyond this harness.
+ */
+const SOL_PRIVATE_KEY = new Uint8Array(32).fill(7);
+const EVM_PRIVATE_KEY = new Uint8Array(32).fill(11);
+
+function toChecksumAddress(lower: string): string {
+  const body = lower.replace(/^0x/, '').toLowerCase();
+  const hash = Buffer.from(keccak_256(body)).toString('hex');
+  let out = '0x';
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i] as string;
+    out += Number.parseInt(hash[i] as string, 16) >= 8 ? ch.toUpperCase() : ch;
+  }
+  return out;
+}
+
+/** Base58 pubkey the mock Solana wallet reports, derived from its real key. */
+export const MOCK_SOL_ADDRESS = bs58.encode(ed25519.getPublicKey(SOL_PRIVATE_KEY));
+
+/** EIP-55 address the mock Robinhood wallet reports, derived from its real key. */
+export const MOCK_EVM_ADDRESS = toChecksumAddress(
+  '0x' + Buffer.from(keccak_256(secp256k1.getPublicKey(EVM_PRIVATE_KEY, false).slice(1))).toString('hex').slice(24),
+);
+
+/** ed25519 over the raw message bytes — what `auth/siws.ts` verifies. */
+function signSiws(messageHex: string): string {
+  const bytes = Uint8Array.from(Buffer.from(messageHex, 'hex'));
+  return bs58.encode(ed25519.sign(bytes, SOL_PRIVATE_KEY));
+}
+
+/** EIP-191 personal_sign over the message — what `auth/siwe.ts` recovers from. */
+function signSiwe(messageHex: string): string {
+  const bytes = Uint8Array.from(Buffer.from(messageHex, 'hex'));
+  const prefix = new TextEncoder().encode('\u0019Ethereum Signed Message:\n' + bytes.length);
+  const digest = keccak_256(Uint8Array.from([...prefix, ...bytes]));
+  const sig = secp256k1.sign(digest, EVM_PRIVATE_KEY);
+  const v = (27 + sig.recovery).toString(16).padStart(2, '0');
+  return '0x' + sig.toCompactHex() + v;
+}
+
+/**
+ * Where a mock transaction "landed".
+ *
+ * These *are* canned, and unlike the sign-in signatures nothing verifies
+ * them: there is no chain in this harness to accept a transaction, so a
+ * transaction signature is only ever a handle the app carries around. What is
+ * asserted instead is that the wallet was handed the bytes the API prepared —
+ * see `walletRecord`.
+ */
 export const MOCK_SOL_SIGNATURE = '4NPvhqRP2r3vGrfvUvUAsUJoNvzYALJUmR2VuPFULsSJqacDdyMoREfEV9x9FSVEFVxUXZWs4hLdWCC1Bn9Ynz9Y';
 export const MOCK_EVM_TX_HASH = '0x9d8f7c6b5a4938271605f4e3d2c1b0a998877665544332211ffeeddccbbaa9988';
-export const MOCK_SOL_ADDRESS = 'GkTHFYSC1QpVQvXaJqrqYAWTGrjqLKKAbtcHmYUMVoYs';
-export const MOCK_EVM_ADDRESS = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
 
 /**
  * Install the mocks. Must run before `page.goto()` — EIP-6963 and Wallet
@@ -54,9 +127,26 @@ export const MOCK_EVM_ADDRESS = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
  * exist, which is exactly the behaviour being relied on here.
  */
 export async function installMockWallets(page: Page, options: MockWalletOptions = {}): Promise<void> {
+  // Real signing, done in Node with the keys above. Registered before the
+  // init script so the wallet objects can await them.
+  await page.exposeFunction('__mockSignSiws', (messageHex: string) => signSiws(messageHex));
+  await page.exposeFunction('__mockSignSiwe', (messageHex: string) => signSiwe(messageHex));
+
   await page.addInitScript(
-    (opts: MockWalletOptions & { solSig: string; evmHash: string }) => {
+    (opts: MockWalletOptions & { solSig: string; evmHash: string; solAddr: string; evmAddr: string }) => {
       const REJECTION = { code: 4001, message: 'User rejected the request.' };
+      const win = window as unknown as Record<string, unknown>;
+      const toHex = (bytes: Uint8Array): string => {
+        let out = '';
+        for (const b of bytes) out += b.toString(16).padStart(2, '0');
+        return out;
+      };
+      const signSiws = (bytes: Uint8Array): Promise<string> =>
+        (win['__mockSignSiws'] as (h: string) => Promise<string>)(toHex(bytes));
+      const signSiwe = (hexOrText: string): Promise<string> => {
+        const hex = hexOrText.startsWith('0x') ? hexOrText.slice(2) : toHex(new TextEncoder().encode(hexOrText));
+        return (win['__mockSignSiwe'] as (h: string) => Promise<string>)(hex);
+      };
 
       /* ---------------------------------------------------------------- */
       /* Solana: Wallet Standard                                          */
@@ -87,11 +177,11 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
       })();
 
       if (!opts.noSolana) {
-        const address = opts.solAddress ?? 'GkTHFYSC1QpVQvXaJqrqYAWTGrjqLKKAbtcHmYUMVoYs';
+        const address = opts.solAddress ?? opts.solAddr;
         const publicKey = bs58.decode(address);
-        // The signature bytes the app will base58-encode back into
-        // `opts.solSig`, so the app's own encoder is what is under test.
-        const signature = bs58.decode(opts.solSig);
+        // Only the *transaction* signature is canned — see the note on
+        // MOCK_SOL_SIGNATURE. The sign-in signature is real.
+        const txSignature = bs58.decode(opts.solSig);
         const account = {
           address,
           publicKey,
@@ -121,18 +211,19 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
               version: '1.0.0',
               signMessage: async (input: { message: Uint8Array }) => {
                 if (opts.reject) throw REJECTION;
-                (window as unknown as Record<string, unknown>)['__signedSiws'] = new TextDecoder().decode(
-                  input.message,
-                );
-                return [{ signedMessage: input.message, signature }];
+                win['__signedSiws'] = new TextDecoder().decode(input.message);
+                // A genuine ed25519 signature over exactly these bytes, so
+                // `apps/api`'s `auth/siws.ts` verifier accepts it.
+                const sig = await signSiws(input.message);
+                return [{ signedMessage: input.message, signature: bs58.decode(sig) }];
               },
             },
             'solana:signAndSendTransaction': {
               version: '1.0.0',
               signAndSendTransaction: async (input: { transaction: Uint8Array }) => {
                 if (opts.reject) throw REJECTION;
-                (window as unknown as Record<string, unknown>)['__sentSolBytes'] = input.transaction.length;
-                return [{ signature }];
+                win['__sentSolBytes'] = input.transaction.length;
+                return [{ signature: txSignature }];
               },
             },
           },
@@ -156,18 +247,18 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
       /* ---------------------------------------------------------------- */
 
       if (!opts.noEvm) {
-        const address = opts.evmAddress ?? '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
+        const address = opts.evmAddress ?? opts.evmAddr;
         let chainId = opts.evmChainId ?? '0x1237';
         let chainKnown = !opts.evmUnknownChain;
         const record = (key: string, value: unknown): void => {
-          (window as unknown as Record<string, unknown>)[key] = value;
+          win[key] = value;
         };
         record('__rpcCalls', []);
 
         const provider = {
           isMetaMask: false,
           async request(args: { method: string; params?: unknown[] }): Promise<unknown> {
-            ((window as unknown as Record<string, string[]>)['__rpcCalls'] as string[]).push(args.method);
+            (win['__rpcCalls'] as string[]).push(args.method);
             switch (args.method) {
               case 'eth_requestAccounts':
               case 'eth_accounts':
@@ -189,8 +280,11 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
               }
               case 'personal_sign': {
                 if (opts.reject) throw REJECTION;
-                record('__signedSiwe', args.params?.[0]);
-                return '0x' + 'ab'.repeat(64) + '1b';
+                const message = args.params?.[0] as string;
+                record('__signedSiwe', message);
+                // A genuine secp256k1 signature with the EIP-191 prefix, so
+                // `apps/api`'s `auth/siwe.ts` recovers this address from it.
+                return await signSiwe(message);
               }
               case 'eth_signTypedData_v4': {
                 if (opts.reject) throw REJECTION;
@@ -210,7 +304,7 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
           removeListener: () => undefined,
         };
 
-        (window as unknown as Record<string, unknown>)['ethereum'] = provider;
+        win['ethereum'] = provider;
 
         const detail = {
           info: {
@@ -228,7 +322,13 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
         announce();
       }
     },
-    { ...options, solSig: MOCK_SOL_SIGNATURE, evmHash: MOCK_EVM_TX_HASH },
+    {
+      ...options,
+      solSig: MOCK_SOL_SIGNATURE,
+      evmHash: MOCK_EVM_TX_HASH,
+      solAddr: MOCK_SOL_ADDRESS,
+      evmAddr: MOCK_EVM_ADDRESS,
+    },
   );
 }
 

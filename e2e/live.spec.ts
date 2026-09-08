@@ -65,7 +65,10 @@ test.beforeEach(async ({ page }) => {
 
   await page.route('**/*', async (route) => {
     const req = route.request();
-    if (req.resourceType() !== 'document') return route.continue();
+    // `fallback()`, not `continue()`: this pattern matches everything and
+    // Playwright tries the newest handler first, so continuing here would
+    // send `stubChainRpc`'s confirmation reads out to the real chain RPCs.
+    if (req.resourceType() !== 'document') return route.fallback();
     const res = await route.fetch();
     const body = await res.text();
     const patched = body.replace(
@@ -550,10 +553,14 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     // Two off-chain signatures, walked explicitly — but this is still the
     // atomic path, so the copy must not read like the non-atomic warning.
     await expect(page.locator('#txScrim')).toBeVisible();
-    await expect(page.locator('#txBody')).toContainText('one on-chain transaction');
+    await expect(page.locator('#txBody')).toContainText('one transaction');
+    await expect(page.locator('#txBody')).toContainText('Only the second one settles on chain');
     await expect(page.locator('#txBody')).not.toContainText('SEPARATE SIGNATURES');
+    // Phase B: the permit is a real EIP-712 signature over a nonce read off
+    // the chain, so the copy no longer warns that it is a stand-in.
+    await expect(page.locator('#txBody')).not.toContainText('simulated stand-in');
     await expect(page.locator('#steps-go')).toHaveText('SIGN STEP 1 OF 2');
-    await expect(page.locator('#txBody')).toContainText('permit signature');
+    await expect(page.locator('#txBody')).toContainText('EIP-712 permit');
     await page.click('#steps-go');
 
     await expect(page.locator('#steps-go')).toHaveText('SIGN STEP 2 OF 2');
