@@ -102,11 +102,10 @@ connector** rather than an optional one. That is the web track's work, but it
 is why `/auth/nonce` returns the exact message to sign instead of expecting the
 client to compose one: the mobile signing surface is not ours to control.
 
-## Production deployment (documented, not executed)
+## Production deployment
 
-Nothing below has been run. There is no cloud account, no provisioned
-resource and no deploy pipeline in this repo. Recording the intended topology
-so the env surface is designed for it:
+A first **staging** deploy is live. See [`docs/cloud-deploy.md`](../../docs/cloud-deploy.md)
+for the URLs and the `STONKZ_STAGING=1` caveats. Intended topology:
 
 | Piece | Intended host | Notes |
 | --- | --- | --- |

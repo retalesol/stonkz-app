@@ -14,6 +14,20 @@ This is a **staging** stack. `STONKZ_STAGING=1` lets the API boot in
 `NODE_ENV=production` without a deployed launchpad or a paid RH RPC.
 `INDEXER_SOURCE=fixtures`. Do not market it as live chain data.
 
+Live URLs (first deploy, 2026-09-08):
+
+| Surface | URL |
+|---|---|
+| Web | https://project-2hx9a.vercel.app |
+| API | https://stonkz-backend-production.up.railway.app |
+| Indexer health | https://stonkz-indexer-production.up.railway.app/health |
+
+The API `/health` reports `chains.*.status: degraded` on purpose: fixture
+cursors sit at the scenario heads while `SOLANA_RPC_URL` / `RH_RPC_URL`
+still point at public mainnet tips. The indexer's own `/health` reports
+`mode: "fixtures"`, `behind: 0` against the confirmed (fixture) head, and
+`behindRaw` as the live-tip gap. That is honest, not a broken deploy.
+
 ## Neon
 
 - API `DATABASE_URL`: the **pooled** host (`ep-…-pooler.…`) with
