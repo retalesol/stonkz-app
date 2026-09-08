@@ -8,8 +8,10 @@ import type { UserEvent } from '@stonkz/api/redis/channels';
 import { createTestDb, type TestDb } from '@stonkz/api/test/harness';
 import type { Net } from '@stonkz/shared';
 import { ReplayCursors } from '../cursors.js';
+import { DeadLetters } from '../deadletter.js';
 import { Ingestor } from '../ingest.js';
 import { LagMonitor } from '../lag.js';
+import { ReorgRollback } from '../rollback.js';
 import { IndexerRunner } from '../runner.js';
 import { FixtureEventSource, type EventSource } from '../source.js';
 import type { ChainEvent } from '../events.js';
@@ -26,6 +28,8 @@ export interface IndexerTestRig {
   cursors: ReplayCursors;
   ingestor: Ingestor;
   runner: IndexerRunner;
+  deadLetters: DeadLetters;
+  rollback: ReorgRollback;
   rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc };
   oracle: FakePriceOracle;
   published: { channel: string; data: unknown }[];
@@ -40,10 +44,29 @@ export interface IndexerTestRig {
 
 export const FROZEN_NOW = Date.parse('2026-09-06T12:00:00.000Z');
 
+/**
+ * Everything the durability tests need to switch on. All off by default, so a
+ * plain fixture replay gets the same runner the fixture path gets in
+ * production: no reorg detection (there are no hashes to compare) and no
+ * dead-lettering.
+ */
+export interface RigOptions {
+  startNow?: number;
+  /** Replaces the fixture sources outright, for driving the runner directly. */
+  sources?: Record<Net, EventSource>;
+  /** Enables reorg detection and rollback, as `INDEXER_SOURCE=chain` does. */
+  rollback?: boolean;
+  deadLetters?: boolean;
+  maxBatchAttempts?: number;
+  reorgDepth?: Record<Net, number>;
+  batchSize?: number;
+}
+
 export async function createIndexerRig(
   events: readonly ChainEvent[] = [],
-  startNow = FROZEN_NOW,
+  options: RigOptions = {},
 ): Promise<IndexerTestRig> {
+  const startNow = options.startNow ?? FROZEN_NOW;
   const db = await createTestDb();
   let clock = startNow;
   const now = (): number => clock;
@@ -92,10 +115,12 @@ export async function createIndexerRig(
   });
   const lag = new LagMonitor({ cursors, rpcs, metrics: built.deps.metrics, logger, tickMs: env.chainTickMs });
 
-  const sources: Record<Net, EventSource> = {
+  const sources: Record<Net, EventSource> = options.sources ?? {
     SOL: new FixtureEventSource('SOL', events),
     RH: new FixtureEventSource('RH', events),
   };
+  const deadLetters = new DeadLetters({ db: db.db, logger, now });
+  const rollback = new ReorgRollback({ db: db.db, logger, now });
   const runner = new IndexerRunner({
     cursors,
     ingestor,
@@ -103,6 +128,11 @@ export async function createIndexerRig(
     logger,
     oracle,
     sources,
+    ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
+    ...(options.maxBatchAttempts === undefined ? {} : { maxBatchAttempts: options.maxBatchAttempts }),
+    ...(options.reorgDepth === undefined ? {} : { reorgDepth: options.reorgDepth }),
+    ...(options.rollback ? { rollback } : {}),
+    ...(options.deadLetters ? { deadLetters } : {}),
   });
 
   // The lag monitor reads heads off the RPCs, so point them at the fixtures.
@@ -115,6 +145,8 @@ export async function createIndexerRig(
     cursors,
     ingestor,
     runner,
+    deadLetters,
+    rollback,
     rpcs,
     oracle,
     published,
