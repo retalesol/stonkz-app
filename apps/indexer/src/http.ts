@@ -53,7 +53,7 @@ export interface ChainHealth {
   /** Raw head minus cursor: includes the confirmation buffer, so never 0 in chain mode. */
   behindRaw: number;
   reorgs: number;
-  failedAttempts: number
+  failedAttempts: number;
   deadLetters: number;
   lastError: string | null;
   lastEventAgeSeconds: number | null;

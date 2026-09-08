@@ -72,14 +72,15 @@ reason has moved from "the client fakes it" to "nothing is deployed".
 
 | Surface | Status | Evidence |
 |---|---|---|
-| Indexer event source | **SIMULATED** | `apps/indexer/src/worker.ts` reads `INDEXER_SOURCE`, defaults to `fixtures`, and **throws** for any other value: `INDEXER_SOURCE=chain requires the Phase 2 programs; only "fixtures" works today`. Both nets use `FixtureEventSource`. |
-| Solana ingestion (Geyser / Helius) | **MISSING** | No consumer exists. See `docs/indexer-runbooks.md` §1. |
-| RH ingestion (EVM logs) | **MISSING** | Same. |
-| Reorg detection / rollback | **MISSING** | `docs/indexer-runbooks.md` §7. No confirmation-depth buffer either. |
-| Cursor behaviour on boot | **UNSAFE FOR CHAIN** | `worker.ts` rewinds cursors to `0` on every boot. Correct for fixture replay, destructive the moment ingestion is real. |
-| Dead-letter for rejected events | **MISSING** | An uncaught ingest error re-loops the same batch forever, and can stall the *other* chain's `drain()` — `docs/indexer-runbooks.md` §5. |
-| Backfill tooling | **MISSING** | Manual cursor rewind only; no CLI. |
-| REST/WS read API + frontend read path | **REAL** | `apps/api` routes and `apps/web`'s live mode consume them correctly. They are real code serving fixture-sourced rows. |
+| Indexer event source | **REAL code, defaults to fixtures** | `INDEXER_SOURCE=fixtures` (default) still replays `canonicalScenario()`. `INDEXER_SOURCE=chain` now boots real Solana + RH sources instead of throwing. Nothing in this repo has pointed chain mode at a live cluster. |
+| Solana ingestion | **REAL code, NEVER RUN** | Polling `getSignaturesForAddress` + `getTransaction` against `SOLANA_LAUNCHPAD_PROGRAM_ID`, with Anchor event decode. No Geyser/Helius webhook path — polling is the primary, by design. |
+| RH ingestion | **REAL code, NEVER RUN** | `viem` `getLogs` against the launchpad + router addresses, ABI-decoded. Requires `RH_LAUNCHPAD_ADDRESS` plus start slot/block; chain mode refuses the zero address at boot. |
+| Reorg detection / rollback | **REAL code, NEVER RUN against a live reorg** | Confirmation-depth buffer (Solana `finalized` / RH `N` blocks), cursor hashes, and `ReorgRollback` that deletes orphaned materialized rows. Ledger policy: XP/SP awards for a reorged `chain_events` row are reversed with the market data. |
+| Cursor behaviour on boot | **SAFE** | Rewind-to-0 runs only in fixture mode. Chain mode resumes the persisted cursor and will not walk from genesis. |
+| Dead-letter for rejected events | **REAL** | `indexer_dead_letters`; a batch that fails `INDEXER_MAX_BATCH_ATTEMPTS` times is recorded and skipped. Per-chain `drain()` isolation means one net cannot stall the other. |
+| Backfill tooling | **REAL CLI, NEVER RUN** | `pnpm --filter @stonkz/indexer backfill -- --net SOL\|RH --from N --to M`. Idempotent; `--dry-run` / `--rollback-first` / `--rewind` documented in `docs/indexer-runbooks.md`. |
+| Health / metrics / single-replica lock | **REAL** | `GET :8788/health`, `/metrics`, `/dead-letters`. Session-level Postgres advisory lock on a dedicated connection. The lock **must** use Neon's direct (non-pooler) host — transaction pooling breaks session locks. |
+| REST/WS read API + frontend read path | **REAL** | `apps/api` routes and `apps/web`'s live mode consume them correctly. Until chain mode is pointed at a deployment, they serve fixture-sourced rows. |
 
 **Consequence:** every price, market cap, holder count, candle, and tape row a
 user would see today traces back to a fixture scenario, not to chain state.
