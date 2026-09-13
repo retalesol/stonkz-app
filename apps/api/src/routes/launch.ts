@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { PublicKey } from '@solana/web3.js';
 import type { Address } from 'viem';
-import { and, eq, gt, isNull } from 'drizzle-orm';
-import { isValidCurveFee, isValidSupply, isValidTicker, normalizeTicker, MAJORS, STOCKS } from '@stonkz/shared';
+import { and, eq, gt, isNull, lte } from 'drizzle-orm';
+import { isValidCurveFee, isValidSupply, isValidTicker, normalizeTicker, MAJORS, STOCKS, RH_STOCKS } from '@stonkz/shared';
 import { buyQuote, freshState, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
 import { launchIntents, tokens } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
@@ -38,6 +38,7 @@ function isAllowedBaseSymbol(net: 'SOL' | 'RH', symbol: string): boolean {
   const upper = symbol.toUpperCase();
   if (MAJORS[net].some(([sym]) => sym === upper)) return true;
   if (net === 'SOL' && STOCKS.some(([sym]) => sym === upper)) return true;
+  if (net === 'RH' && RH_STOCKS.some(([sym]) => sym === upper)) return true;
   return false;
 }
 
@@ -163,8 +164,15 @@ export function launchRoutes(): Hono<AppEnv> {
       .limit(1);
     if (existingToken) return c.json({ error: 'ticker_taken' }, 409);
 
+    // Drop expired prepares, then let the same wallet replace its own
+    // unconsumed intent for this ticker (a cancelled MetaMask confirm used to
+    // leave a 409 "already in flight" until TTL). Another wallet still 409s.
+    await deps.db
+      .delete(launchIntents)
+      .where(and(eq(launchIntents.net, net), eq(launchIntents.ticker, ticker), isNull(launchIntents.consumedAt), lte(launchIntents.expiresAt, new Date(now))));
+
     const [inFlight] = await deps.db
-      .select({ id: launchIntents.id })
+      .select({ id: launchIntents.id, creator: launchIntents.creator })
       .from(launchIntents)
       .where(
         and(
@@ -175,7 +183,13 @@ export function launchRoutes(): Hono<AppEnv> {
         ),
       )
       .limit(1);
-    if (inFlight) return c.json({ error: 'ticker_taken', detail: 'a prepare for this ticker is already in flight' }, 409);
+    if (inFlight) {
+      if (inFlight.creator.toLowerCase() === wallet.toLowerCase()) {
+        await deps.db.delete(launchIntents).where(eq(launchIntents.id, inFlight.id));
+      } else {
+        return c.json({ error: 'ticker_taken', detail: 'a prepare for this ticker is already in flight' }, 409);
+      }
+    }
 
     const tokenDecimals = net === 'SOL' ? SOLANA_TOKEN_DECIMALS : EVM_TOKEN_DECIMALS;
     const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(tokenDecimals);
@@ -322,7 +336,7 @@ export function launchRoutes(): Hono<AppEnv> {
       predictedMint: null,
       to: launchpad,
       data,
-      value: '0',
+      value: '0x0',
       devBuy:
         devBuyNative > 0
           ? {
@@ -442,6 +456,7 @@ export function launchRoutes(): Hono<AppEnv> {
           lane: 'new',
           seed: Math.floor(now % 2_147_483_647),
           launchedAt: new Date(now),
+          ...(intent.uri && /^https?:\/\//i.test(intent.uri) ? { imageUrl: intent.uri } : {}),
           ...curveColumns,
         })
         .onConflictDoNothing({ target: [tokens.net, tokens.sym] });

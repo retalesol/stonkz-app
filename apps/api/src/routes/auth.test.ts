@@ -42,7 +42,7 @@ describe('SIWS — Solana', () => {
   it('completes nonce -> sign -> JWT and binds address + net', async () => {
     const w = solanaWallet('gate-1b-sol');
     const challenge = await nonce('SOL', w.address);
-    expect(challenge.chainId).toBe('solana:mainnet');
+    expect(challenge.chainId).toBe('solana:devnet');
     expect(challenge.message).toContain('wants you to sign in with your Solana account');
     expect(challenge.message).toContain(w.address);
 

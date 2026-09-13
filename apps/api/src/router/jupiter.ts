@@ -120,6 +120,8 @@ export class HttpJupiterClient implements JupiterClient {
       outputMint: req.outMint,
       amount: req.inAmountAtoms.toString(),
       slippageBps: String(Math.max(0, Math.round(req.slippagePct * 100))),
+      onlyDirectRoutes: 'false',
+      // Prefer the highest-liquidity multi-hop path Jupiter can build.
       // Never `platformFeeBps` — plan step 84 forbids Stonkz taking a cut on
       // this hop, and asking Jupiter for one is how that would happen.
     });

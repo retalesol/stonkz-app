@@ -3,43 +3,92 @@ pragma solidity ^0.8.24;
 
 import {MockERC20} from "./Mocks.sol";
 
+/// @notice Minimal WETH9 for router tests (deposit / withdraw / ERC-20).
+contract MockWETH {
+    string public name = "Wrapped Ether";
+    string public symbol = "WETH";
+    uint8 public decimals = 18;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Deposit(address indexed dst, uint256 wad);
+    event Withdrawal(address indexed src, uint256 wad);
+
+    receive() external payable {
+        deposit();
+    }
+
+    function deposit() public payable {
+        balanceOf[msg.sender] += msg.value;
+        emit Deposit(msg.sender, msg.value);
+        emit Transfer(address(0), msg.sender, msg.value);
+    }
+
+    function withdraw(uint256 wad) external {
+        require(balanceOf[msg.sender] >= wad, "balance");
+        balanceOf[msg.sender] -= wad;
+        emit Withdrawal(msg.sender, wad);
+        emit Transfer(msg.sender, address(0), wad);
+        (bool ok,) = msg.sender.call{value: wad}("");
+        require(ok, "eth");
+    }
+
+    /// @dev Unbacked mint for sell-leg tests (pair with `vm.deal` on this contract).
+    function mint(address to, uint256 value) external {
+        balanceOf[to] += value;
+        emit Transfer(address(0), to, value);
+    }
+
+    function approve(address spender, uint256 value) external returns (bool) {
+        allowance[msg.sender][spender] = value;
+        emit Approval(msg.sender, spender, value);
+        return true;
+    }
+
+    function transfer(address to, uint256 value) external returns (bool) {
+        _transfer(msg.sender, to, value);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 value) external returns (bool) {
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed != type(uint256).max) {
+            require(allowed >= value, "allowance");
+            allowance[from][msg.sender] = allowed - value;
+        }
+        _transfer(from, to, value);
+        return true;
+    }
+
+    function _transfer(address from, address to, uint256 value) private {
+        require(balanceOf[from] >= value, "balance");
+        unchecked {
+            balanceOf[from] -= value;
+            balanceOf[to] += value;
+        }
+        emit Transfer(from, to, value);
+    }
+}
+
 /// @notice A stand-in for Uniswap's Universal Router with the real call shape.
 ///
-/// The entrypoint signature is the genuine one — `execute(bytes commands,
-/// bytes[] inputs, uint256 deadline)` — and each input blob is encoded exactly
-/// as `V3_SWAP_EXACT_IN` encodes it: `(recipient, amountIn, amountOutMin, path,
-/// payerIsUser)`. That matters for this suite specifically, because the whole
-/// point of `StonkzRouter` is that **it** must be the recipient rather than the
-/// user, and the `payerIsUser = false` flag is what lets the router pay from
-/// its own balance on the sell leg. Both of those live in the encoding, so a
-/// mock that invented its own encoding would test nothing.
-///
-/// The price is a fixed rate rather than a curve — this contract exists to
-/// prove the composition, not to reimplement Uniswap.
+/// After StonkzRouter's local-wrap change, aggregator buys push WETH into this
+/// mock then call `execute` with `msg.value == 0`. Aggregator sells push base
+/// and expect WETH out (router unwraps locally — UR unwrap is broken on 46630).
 contract MockUniversalRouter {
-    /// Real Universal Router command bytes.
     bytes1 internal constant V3_SWAP_EXACT_IN = 0x00;
-    bytes1 internal constant WRAP_ETH = 0x0b;
-    bytes1 internal constant UNWRAP_WETH = 0x0c;
 
-    /// @dev The Universal Router's two recipient sentinels, and they are easy
-    /// to get backwards. `MSG_SENDER` is whoever called `execute` — for us,
-    /// `StonkzRouter`. `ADDRESS_THIS` is the **Universal Router itself**, used
-    /// to park an intermediate hop inside a multi-command sequence. Encoding
-    /// `ADDRESS_THIS` as the final recipient strands the output in the
-    /// Universal Router, where anyone can sweep it.
     address internal constant MSG_SENDER = 0x0000000000000000000000000000000000000001;
     address internal constant ADDRESS_THIS = 0x0000000000000000000000000000000000000002;
+    uint256 internal constant CONTRACT_BALANCE = 1 << 255;
 
+    MockWETH public immutable weth;
     MockERC20 public immutable base;
     /// Base atoms delivered per wei in. Set to the base token's scale.
     uint256 public rate;
 
-    /// @notice Basis points skimmed from the output before delivery.
-    /// @dev This is the `portionBips` service fee Uniswap can attach to an API
-    /// key, taken from the output token. The API is supposed to assert it is
-    /// absent on every quote; this switch is here so the router's on-chain
-    /// backstop can be tested rather than assumed.
     uint256 public feeBps;
     address public feeRecipient;
 
@@ -47,7 +96,8 @@ contract MockUniversalRouter {
 
     error Failed();
 
-    constructor(MockERC20 _base, uint256 _rate) {
+    constructor(MockWETH _weth, MockERC20 _base, uint256 _rate) {
+        weth = _weth;
         base = _base;
         rate = _rate;
         feeRecipient = address(0xFEE);
@@ -78,22 +128,29 @@ contract MockUniversalRouter {
                 abi.decode(inputs[i], (address, uint256, uint256, bytes, bool));
 
             if (command == V3_SWAP_EXACT_IN) {
-                if (msg.value > 0) {
-                    // ETH in, base out.
-                    uint256 out = _afterFee((amountIn == 0 ? msg.value : amountIn) * rate / 1 ether);
+                require(!payerIsUser, "mock: only router-paid input");
+                address to = _resolve(recipient);
+
+                // Prefer WETH→base when we hold WETH (aggregator buy after local wrap).
+                uint256 wethBal = weth.balanceOf(address(this));
+                if (wethBal > 0) {
+                    uint256 spend = amountIn >= CONTRACT_BALANCE ? wethBal : amountIn;
+                    require(wethBal >= spend, "V3InsufficientWeth");
+                    require(weth.transfer(address(0xdead), spend), "weth sink");
+                    uint256 out = _afterFee((spend * rate) / 1 ether);
                     require(out >= amountOutMin, "V3TooLittleReceived");
-                    base.mint(_resolve(recipient), out);
-                } else {
-                    // Base in, ETH out. `payerIsUser == false` means the router
-                    // spends the balance already sitting in it, which is how
-                    // `StonkzRouter` pays for its sell leg.
-                    require(!payerIsUser, "mock: only router-paid input");
-                    require(base.balanceOf(address(this)) >= amountIn, "V3InsufficientInput");
-                    uint256 out = _afterFee(amountIn * 1 ether / rate);
-                    require(out >= amountOutMin, "V3TooLittleReceived");
-                    (bool ok,) = _resolve(recipient).call{value: out}("");
-                    require(ok, "eth out");
+                    base.mint(to, out);
+                    continue;
                 }
+
+                // Otherwise base→WETH (aggregator sell).
+                uint256 baseBal = base.balanceOf(address(this));
+                uint256 spendBase = amountIn >= CONTRACT_BALANCE ? baseBal : amountIn;
+                require(baseBal >= spendBase, "V3InsufficientInput");
+                require(base.transfer(address(0xdead), spendBase), "base sink");
+                uint256 wethOut = _afterFee((spendBase * 1 ether) / rate);
+                require(wethOut >= amountOutMin, "V3TooLittleReceived");
+                weth.mint(to, wethOut);
             } else {
                 revert("mock: unsupported command");
             }
@@ -109,5 +166,50 @@ contract MockUniversalRouter {
         if (recipient == MSG_SENDER) return msg.sender;
         if (recipient == ADDRESS_THIS) return address(this);
         return recipient;
+    }
+}
+
+/// @notice SwapRouter02 stand-in for `buyViaV3` / `sellViaV3` unit tests.
+contract MockSwapRouter02 {
+    MockWETH public immutable weth;
+    MockERC20 public immutable base;
+    uint256 public rate;
+
+    constructor(MockWETH _weth, MockERC20 _base, uint256 _rate) {
+        weth = _weth;
+        base = _base;
+        rate = _rate;
+    }
+
+    function exactInputSingle(ISwapRouter02.ExactInputSingleParams calldata params)
+        external
+        payable
+        returns (uint256 amountOut)
+    {
+        if (params.tokenIn == address(weth) && params.tokenOut == address(base)) {
+            require(weth.transferFrom(msg.sender, address(0xdead), params.amountIn), "weth");
+            amountOut = (params.amountIn * rate) / 1 ether;
+            base.mint(params.recipient, amountOut);
+            return amountOut;
+        }
+        if (params.tokenIn == address(base) && params.tokenOut == address(weth)) {
+            require(base.transferFrom(msg.sender, address(0xdead), params.amountIn), "base");
+            amountOut = (params.amountIn * 1 ether) / rate;
+            weth.mint(params.recipient, amountOut);
+            return amountOut;
+        }
+        revert("pair");
+    }
+}
+
+interface ISwapRouter02 {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
     }
 }

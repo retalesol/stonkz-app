@@ -40,6 +40,7 @@ export function rewardsRoutes(): Hono<AppEnv> {
       streak: snapshot.streak,
       streakMult: snapshot.streakMult,
       achievementCount: snapshot.achievements.length,
+      achievements: snapshot.achievements,
       cratesReady: states.filter((s) => s.ready).length,
       crates: states.map((state) => {
         const def = CRATES.find((cr) => cr.k === state.tier);

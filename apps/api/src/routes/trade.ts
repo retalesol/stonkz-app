@@ -8,7 +8,13 @@ import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { composeCurveTrade } from '../router/compose.js';
-import { CapExceededError, InsufficientNativeError, RouterError, SlippageExceededError } from '../router/errors.js';
+import { CapExceededError, InsufficientNativeError, NoRouteError, RouterError, SlippageExceededError } from '../router/errors.js';
+import { isOracleHopRaw } from '../router/oracle-hop.js';
+import { isV3PoolHopRaw } from '../router/v3-pool-hop.js';
+import { syncCurveReserves, type EthCaller, type SolanaAccountSource } from '../router/curve-sync.js';
+import { toAtoms } from '../router/units.js';
+import { asErc20BalanceSource } from '../chain/types.js';
+import { SolanaRpc } from '../chain/solana.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import type { UniswapQuoteResponseRaw } from '../router/uniswap.js';
 import { asSolanaBlockhashSource, composeSolanaTradeTransaction } from '../router/solana-tx.js';
@@ -22,12 +28,31 @@ import {
 } from '../router/evm-router.js';
 import type { TokenRow } from './serialise.js';
 
-/** `settings` table's own column defaults (`db/schema.ts`) — what an authenticated wallet gets before it has ever saved a preference. */
-const DEFAULT_SETTINGS = {
-  slip: 1.5,
-  prio: 0.0005,
-  mev: 'SHIELD' as const,
-  mevTip: 0.001,
+function asEthCaller(rpc: unknown): EthCaller | undefined {
+  const candidate = rpc as Partial<EthCaller>;
+  return typeof candidate.ethCall === 'function' ? (candidate as EthCaller) : undefined;
+}
+
+function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
+  if (rpc instanceof SolanaRpc) return rpc;
+  const candidate = rpc as Partial<SolanaAccountSource>;
+  return typeof candidate.getAccountDataBase64 === 'function' ? (candidate as SolanaAccountSource) : undefined;
+}
+
+/** `settings` table defaults — aligned with web `DEFAULTS` so UI and prepare agree. */
+const DEFAULT_SETTINGS: {
+  slip: number;
+  prio: number;
+  mev: 'SHIELD' | 'RELAY' | 'OFF';
+  mevTip: number;
+  cap: number;
+  defBuy: number;
+  confirm: boolean;
+} = {
+  slip: 2.5,
+  prio: 0.0012,
+  mev: 'SHIELD',
+  mevTip: 0.0009,
   cap: 5,
   defBuy: 0.5,
   confirm: true,
@@ -37,6 +62,12 @@ interface TradePrepareBody {
   sym?: unknown;
   side?: unknown;
   amount?: unknown;
+  /** Optional override — prefers the connected client's current SET.slip. */
+  slip?: unknown;
+  prio?: unknown;
+  mev?: unknown;
+  mevTip?: unknown;
+  cap?: unknown;
   /**
    * RH sells only: a pre-signed EIP-2612 permit over `StonkzRouter`, so the
    * atomic call needs no prior `approve` transaction. Optional — omitted
@@ -47,6 +78,38 @@ interface TradePrepareBody {
    * a new endpoint. See `evm-router.ts`'s `buildSellPermitTypedData`.
    */
   permit?: unknown;
+}
+
+function clampNum(raw: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseFloat(raw) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function mergePrepareSettings(
+  row: {
+    slip: number;
+    prio: number;
+    mev: string;
+    mevTip: number;
+    cap: number;
+    defBuy: number;
+    confirm: boolean;
+  },
+  body: TradePrepareBody,
+): typeof DEFAULT_SETTINGS {
+  const mevRaw = typeof body.mev === 'string' ? body.mev.toUpperCase() : row.mev.toUpperCase();
+  const mev: 'SHIELD' | 'RELAY' | 'OFF' =
+    mevRaw === 'OFF' || mevRaw === 'RELAY' || mevRaw === 'SHIELD' ? mevRaw : 'SHIELD';
+  return {
+    slip: clampNum(body.slip, 0.1, 50, row.slip),
+    prio: clampNum(body.prio, 0, 1, row.prio),
+    mev,
+    mevTip: clampNum(body.mevTip, 0, 1, row.mevTip),
+    cap: clampNum(body.cap, 0.001, 50, row.cap),
+    defBuy: row.defBuy,
+    confirm: row.confirm,
+  };
 }
 
 function parsePermit(raw: unknown): PermitInput | null {
@@ -104,7 +167,14 @@ export function tradeRoutes(): Hono<AppEnv> {
       .limit(1);
     if (!row) return c.json({ error: 'not_found' }, 404);
 
-    if (row.graduatedAt !== null) {
+    const synced = await syncCurveReserves({
+      db: deps.db,
+      row: row as TokenRow,
+      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
+      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+    });
+
+    if (synced.graduatedAt !== null) {
       return c.json(
         {
           error: 'graduated_not_supported',
@@ -113,7 +183,7 @@ export function tradeRoutes(): Hono<AppEnv> {
         422,
       );
     }
-    if (row.curveK === '0' || !row.mint) {
+    if (synced.curveK === '0' || !synced.mint) {
       return c.json(
         { error: 'not_tradeable', detail: 'this token has no on-chain launch yet (no curve state / mint on record)' },
         422,
@@ -125,15 +195,19 @@ export function tradeRoutes(): Hono<AppEnv> {
       .from(settings)
       .where(and(eq(settings.net, net), eq(settings.wallet, wallet)))
       .limit(1);
-    const s = settingsRow ?? DEFAULT_SETTINGS;
+    const s = mergePrepareSettings(settingsRow ?? DEFAULT_SETTINGS, body);
     const now = deps.now();
 
     // Plan step 85: abort before signing if the composed cost exceeds the
     // user's cap. Only meaningful on a buy — a sell's "cost" is gas alone,
     // which `prio`/`mevTip` already represent, and native flows *in*, not out.
     if (side === 'buy') {
-      const mevCost = s.mev === 'OFF' ? 0 : s.mevTip;
-      const totalNative = amount + s.prio + mevCost;
+      // Solana priority + MEV tip are real native outflows. On RH they are
+      // UI-only (ETH gas is separate) — do not fold them into the cap or the
+      // pre-sign balance check.
+      const prioCost = net === 'SOL' ? s.prio : 0;
+      const mevCost = net === 'SOL' && s.mev !== 'OFF' ? s.mevTip : 0;
+      const totalNative = amount + prioCost + mevCost;
       if (totalNative > s.cap) {
         const err = new CapExceededError(totalNative, s.cap);
         return c.json(err.toResponse(), err.httpStatus);
@@ -146,7 +220,7 @@ export function tradeRoutes(): Hono<AppEnv> {
       }
     }
 
-    const aggregatorVenue = row.baseSymbol.toUpperCase();
+    const aggregatorVenue = synced.baseSymbol.toUpperCase();
     const usdPrice = await deps.oracle.nativeUsd(nativeUnit(net)).catch(() => null);
     const aggregator =
       net === 'SOL'
@@ -157,13 +231,32 @@ export function tradeRoutes(): Hono<AppEnv> {
           ? null
           : deps.uniswap;
 
+    // Max-sell clamp: the client stores holdings as float, so `String(tok)` →
+    // `toAtoms` can round *above* the on-chain ERC-20 balance and the token
+    // reverts with `"balance"`. Prefer the wallet's exact atoms when smaller.
+    let amountAtoms: bigint | undefined;
+    if (side === 'sell' && net === 'RH' && synced.mint) {
+      const erc20 = asErc20BalanceSource(deps.rpcs.RH);
+      if (erc20) {
+        try {
+          const bal = await erc20.erc20BalanceAtoms(synced.mint, wallet);
+          const want = toAtoms(amount, synced.tokenDecimals);
+          amountAtoms = want > bal ? bal : want;
+        } catch {
+          // RPC blip — fall through to the float amount; the chain still
+          // enforces the real balance.
+        }
+      }
+    }
+
     let trade;
     try {
       trade = await composeCurveTrade({
         net,
         side,
         amount,
-        row: row as TokenRow,
+        ...(amountAtoms !== undefined ? { amountAtoms } : {}),
+        row: synced,
         usdPrice,
         now,
         aggregator,
@@ -172,6 +265,23 @@ export function tradeRoutes(): Hono<AppEnv> {
     } catch (err) {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
       throw err;
+    }
+
+    // Oracle-priced hops make `/quote` honest when the Trading API / pool is
+    // unavailable, but they are not executable — refuse prepare rather than
+    // hand the wallet a `buyViaAggregator` leg that cannot settle.
+    if (trade.aggregatorQuote && isOracleHopRaw(trade.aggregatorQuote.raw)) {
+      const err = new NoRouteError(
+        nativeUnit(net),
+        synced.baseSymbol,
+        new Error(
+          `no on-chain Uniswap pool for ETH \u2192 ${synced.baseSymbol} on this network; ` +
+            'seed a WETH/' +
+            synced.baseSymbol +
+            ' pool (and pin RH_V3_FEE_TIER_OVERRIDES) before trading',
+        ),
+      );
+      return c.json(err.toResponse(), err.httpStatus);
     }
 
     // A composed quote's own `minOut` guards fill quality on-chain; a
@@ -190,8 +300,8 @@ export function tradeRoutes(): Hono<AppEnv> {
         const blockhash = await blockhashSource.latestBlockhash();
 
         const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
-        const mint = new PublicKey(row.mint);
-        const baseMint = new PublicKey(row.baseMint);
+        const mint = new PublicKey(synced.mint);
+        const baseMint = new PublicKey(synced.baseMint);
         const trader = new PublicKey(wallet);
 
         const jupiter = trade.aggregatorQuote
@@ -207,6 +317,9 @@ export function tradeRoutes(): Hono<AppEnv> {
             baseMint,
             curveAmountIn: trade.curveAmountInAtoms,
             curveMinOut: trade.curveMinOutAtoms,
+            prioSol: s.prio,
+            mevOn: s.mev !== 'OFF',
+            mevTipSol: s.mevTip,
             ...(jupiter ? { jupiter } : {}),
           },
           blockhash,
@@ -225,14 +338,19 @@ export function tradeRoutes(): Hono<AppEnv> {
       // Robinhood Chain.
       const isDirectPair = trade.aggregatorQuote === null;
       const weth = deps.baseMints.mintFor('RH', 'WETH');
+      const quotedFee =
+        trade.aggregatorQuote && isV3PoolHopRaw(trade.aggregatorQuote.raw)
+          ? trade.aggregatorQuote.raw.fee
+          : null;
       const route = weth
         ? stonkzRouterDecision(
             net,
             deps.env.rhRouterAddress,
             isDirectPair,
-            row.baseMint,
-            row.baseSymbol,
+            synced.baseMint,
+            synced.baseSymbol,
             deps.env.rhV3FeeTierOverrides,
+            quotedFee,
           )
         : null;
 
@@ -242,8 +360,8 @@ export function tradeRoutes(): Hono<AppEnv> {
         // calldata — see `router/universal-router.ts`'s header for why).
         const deadlineUnixSeconds = Math.floor(now / 1000) + 300;
         const routerAddress = deps.env.rhRouterAddress as Address;
-        const token = row.mint as Address;
-        const baseMint = row.baseMint as Address;
+        const token = synced.mint as Address;
+        const baseMint = synced.baseMint as Address;
         const wethAddress = weth as Address;
 
         if (side === 'buy') {
@@ -253,7 +371,7 @@ export function tradeRoutes(): Hono<AppEnv> {
             weth: wethAddress,
             baseMint,
             route,
-            ethInAtoms: trade.curveAmountInAtoms,
+            ethInAtoms: trade.nativeInAtoms ?? trade.curveAmountInAtoms,
             quotedBaseOutAtoms: trade.aggregatorQuote?.outAmountAtoms ?? trade.curveAmountInAtoms,
             minTokenOutAtoms: trade.curveMinOutAtoms,
             userSlippagePct: s.slip,
@@ -295,7 +413,7 @@ export function tradeRoutes(): Hono<AppEnv> {
           ? null
           : buildSellPermitTypedData({
               tokenAddress: token,
-              tokenName: row.name,
+              tokenName: synced.name,
               chainId: deps.env.rhChainId,
               routerAddress,
               owner: wallet as Address,
@@ -332,8 +450,8 @@ export function tradeRoutes(): Hono<AppEnv> {
       const plan = await buildEvmTradePlan({
         trader: wallet as Address,
         launchpad,
-        token: row.mint as Address,
-        baseToken: row.baseMint as Address,
+        token: synced.mint as Address,
+        baseToken: synced.baseMint as Address,
         uniswap,
         amountBaseOrToken: trade.curveAmountInAtoms,
         minOut: trade.curveMinOutAtoms,
@@ -352,6 +470,75 @@ export function tradeRoutes(): Hono<AppEnv> {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
       throw err;
     }
+  });
+
+  /**
+   * `POST /trade/confirm` — after the wallet broadcasts, re-read curve reserves
+   * from chain so the next sell quote does not depend on the indexer catching up.
+   */
+  app.post('/trade/confirm', requireAuth(), limit(RATE_LIMITS.trade), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+    const { net } = user;
+    const body = (await c.req.json().catch(() => ({}))) as {
+      sym?: unknown;
+      signature?: unknown;
+      txHash?: unknown;
+    };
+    const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
+    const proof =
+      typeof body.signature === 'string'
+        ? body.signature
+        : typeof body.txHash === 'string'
+          ? body.txHash
+          : '';
+    if (!sym || !proof) {
+      return c.json({ error: 'bad_request', detail: 'sym and signature|txHash are required' }, 400);
+    }
+
+    const [row] = await deps.db
+      .select()
+      .from(tokens)
+      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
+      .limit(1);
+    if (!row) return c.json({ error: 'not_found' }, 404);
+
+    // Best-effort proof check: confirm the tx exists / succeeded. We still
+    // sync reserves from chain even if the indexer never sees the fill.
+    if (net === 'RH') {
+      const rpc = deps.rpcs.RH as { getTransactionReceipt?: (h: string) => Promise<{ status: string } | null> };
+      if (typeof rpc.getTransactionReceipt === 'function') {
+        const receipt = await rpc.getTransactionReceipt(proof).catch(() => null);
+        if (receipt && receipt.status === 'reverted') {
+          return c.json({ error: 'tx_reverted', detail: 'transaction reverted on chain' }, 422);
+        }
+      }
+    } else {
+      const rpc = deps.rpcs.SOL as { getTransactionMessageBase64?: (s: string) => Promise<string | null> };
+      if (typeof rpc.getTransactionMessageBase64 === 'function') {
+        const msg = await rpc.getTransactionMessageBase64(proof).catch(() => null);
+        if (msg === null) {
+          // Not yet confirmed — still attempt sync; client may retry.
+        }
+      }
+    }
+
+    const synced = await syncCurveReserves({
+      db: deps.db,
+      row: row as TokenRow,
+      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
+      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+    });
+
+    return c.json({
+      ok: true,
+      net,
+      sym,
+      curveRealBase: synced.curveRealBase,
+      curveRealToken: synced.curveRealToken,
+      mc: synced.mc ?? row.mc,
+    });
   });
 
   return app;

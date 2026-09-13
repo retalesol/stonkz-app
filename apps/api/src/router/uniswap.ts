@@ -25,7 +25,7 @@ export interface UniswapQuoteRequestRaw {
   amount: string;
   type: 'EXACT_INPUT' | 'EXACT_OUTPUT';
   swapper: string;
-  slippageTolerance?: string;
+  slippageTolerance?: number;
   /**
    * Deliberately never sent. §3.2: "never populate `integratorFees`" — it
    * overrides Uniswap's own partner-fee service, and setting it (even to
@@ -86,6 +86,13 @@ export interface HttpUniswapClientOptions {
   /** Required in production — Trading API calls are key-gated. */
   apiKey?: string;
   chainId: number;
+  /**
+   * Chain-local WETH. Native ETH (`NATIVE_ETH_SENTINEL`) is rewritten to this
+   * for `/v1/quote` — the Trading API prices WETH/ETH 1:1, and Stonkz wraps
+   * locally on RH testnet where Universal Router `WRAP_ETH` targets the wrong
+   * WETH. Optional: when unset, the zero-address sentinel is sent as-is.
+   */
+  wethAddress?: string;
   fetchImpl?: FetchLike;
   timeoutMs?: number;
 }
@@ -112,6 +119,7 @@ export class HttpUniswapClient implements UniswapClient {
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
   private readonly chainId: number;
+  private readonly wethAddress: string | undefined;
   private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
 
@@ -119,12 +127,26 @@ export class HttpUniswapClient implements UniswapClient {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
     this.apiKey = opts.apiKey;
     this.chainId = opts.chainId;
+    this.wethAddress = opts.wethAddress?.toLowerCase();
     this.fetchImpl = opts.fetchImpl ?? ((u, i) => fetch(u, i));
     this.timeoutMs = opts.timeoutMs ?? 4000;
   }
 
   private headers(): Record<string, string> {
-    return { 'content-type': 'application/json', ...(this.apiKey ? { 'x-api-key': this.apiKey } : {}) };
+    return {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...(this.apiKey ? { 'x-api-key': this.apiKey } : {}),
+      // Lets the Trading API accept the zero-address native-ETH sentinel when
+      // we have not rewritten it to WETH (mainnet path with no weth pin).
+      'x-erc20eth-enabled': 'true',
+    };
+  }
+
+  /** Map native ETH sentinel → WETH for pricing; pass-through otherwise. */
+  private tradeToken(mint: string): string {
+    if (mint.toLowerCase() !== NATIVE_ETH_SENTINEL.toLowerCase()) return mint;
+    return this.wethAddress ?? mint;
   }
 
   /** `swapper` matters even for a read-only quote — a router pins pool/protocol choices per address in some configs. */
@@ -132,12 +154,13 @@ export class HttpUniswapClient implements UniswapClient {
     const body: UniswapQuoteRequestRaw = {
       tokenInChainId: this.chainId,
       tokenOutChainId: this.chainId,
-      tokenIn: req.inMint,
-      tokenOut: req.outMint,
+      tokenIn: this.tradeToken(req.inMint),
+      tokenOut: this.tradeToken(req.outMint),
       amount: req.inAmountAtoms.toString(),
       type: 'EXACT_INPUT',
       swapper: swapper ?? NATIVE_ETH_SENTINEL,
-      slippageTolerance: req.slippagePct.toString(),
+      // Trading API schema requires a number, not a stringified percent.
+      slippageTolerance: req.slippagePct,
     };
 
     let raw: UniswapQuoteResponseRaw;

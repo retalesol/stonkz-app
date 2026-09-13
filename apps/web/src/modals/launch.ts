@@ -3,6 +3,7 @@ import {
   GRAD,
   MAJORS,
   STOCKS,
+  RH_STOCKS,
   SUPPLIES,
   type SupplyOption,
   curveMc,
@@ -13,6 +14,7 @@ import {
   usd,
 } from '@stonkz/shared';
 import { api } from '../api/index.js';
+import { LiveApiError } from '../api/live.js';
 import { navigate } from '../app/route.js';
 import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isRejection } from '../wallet/index.js';
@@ -55,25 +57,25 @@ function newDefaults(): Draft {
   return {
     step: 0,
     seed: Math.floor(Math.random() * 1e6),
-    name: 'Copium Reserve',
-    tick: 'COPIUM',
-    desc: 'bottled hope for the terminally long. one puff and the chart looks fine.',
-    web: 'https://ston.kz/copium',
-    x: '@copiumreserve',
-    tg: 't.me/copiumreserve',
+    name: '',
+    tick: '',
+    desc: '',
+    web: '',
+    x: '',
+    tg: '',
     base: nativeUnit(),
     tab: 'majors',
     q: '',
     supply: 1e9,
     fee: 2,
-    buy: 0.5,
+    buy: 0,
     cashback: false,
   };
 }
 
 function baseList(): ReadonlyArray<readonly [string, string]> {
   const net = WALLET.net === 'RH' ? 'RH' : 'SOL';
-  const list = NEW.tab === 'majors' ? MAJORS[net] : STOCKS;
+  const list = NEW.tab === 'majors' ? MAJORS[net] : net === 'RH' ? RH_STOCKS : STOCKS;
   const q = NEW.q.trim().toUpperCase();
   if (!q) return list;
   return list.filter((t) => t[0].toUpperCase().indexOf(q) > -1 || t[1].toUpperCase().indexOf(q) > -1);
@@ -86,15 +88,20 @@ function ncStep1(): Html {
       <div><canvas class="av" id="nc-av" width="128" height="128"></canvas
         ><button type="button" class="chip" id="nc-roll" style="width:64px;margin-top:5px;padding:2px 0;text-align:center">REROLL</button></div
       ><div class="rowf" style="align-content:start">
-        <div class="nc-field"><span class="lbl">NAME</span><input class="fld" id="f-name" maxlength="28" value="${attr(NEW.name)}"></div
-        ><div class="nc-field"><span class="lbl">TICKER</span><input class="fld" id="f-tick" maxlength="10" value="${attr(NEW.tick)}"></div
+        <div class="nc-field"><span class="lbl">NAME</span
+          ><input class="fld" id="f-name" maxlength="28" value="${attr(NEW.name)}" placeholder="Token name" autocomplete="off"></div
+        ><div class="nc-field"><span class="lbl">TICKER</span
+          ><input class="fld" id="f-tick" maxlength="10" value="${attr(NEW.tick)}" placeholder="TICKER" autocomplete="off"></div
         ><div class="nc-field" style="grid-column:1/-1"><span class="lbl">DESCRIPTION</span
-          ><textarea class="fld" id="f-desc" maxlength="140">${NEW.desc}</textarea></div>
+          ><textarea class="fld" id="f-desc" maxlength="140" placeholder="Short description">${NEW.desc}</textarea></div>
       </div></div>
     <div class="nc-grid">
-      <div class="nc-field"><span class="lbl">WEBSITE</span><input class="fld" id="f-web" maxlength="60" value="${attr(NEW.web)}"></div
-      ><div class="nc-field"><span class="lbl">X ACCOUNT</span><input class="fld" id="f-x" maxlength="24" value="${attr(NEW.x)}"></div
-      ><div class="nc-field"><span class="lbl">TELEGRAM</span><input class="fld" id="f-tg" maxlength="40" value="${attr(NEW.tg)}"></div>
+      <div class="nc-field"><span class="lbl">WEBSITE</span
+        ><input class="fld" id="f-web" maxlength="60" value="${attr(NEW.web)}" placeholder="https://" autocomplete="off"></div
+      ><div class="nc-field"><span class="lbl">X ACCOUNT</span
+        ><input class="fld" id="f-x" maxlength="24" value="${attr(NEW.x)}" placeholder="@handle" autocomplete="off"></div
+      ><div class="nc-field"><span class="lbl">TELEGRAM</span
+        ><input class="fld" id="f-tg" maxlength="40" value="${attr(NEW.tg)}" placeholder="t.me/…" autocomplete="off"></div>
     </div>
     <p class="hint">FIXED SUPPLY ${DOT} MINT AND FREEZE AUTHORITY REVOKED AT DEPLOY ${DOT} LP BURNS AUTOMATICALLY WHEN THE
       CURVE FILLS TO ${usd(GRAD)}.</p>`;
@@ -120,7 +127,7 @@ function ncStep2(): Html {
       <p class="hint" style="margin-top:4px">PAIRS AGAINST ${NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'} ON
         ${n.name} ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.</p></div>
     <div><span class="lbl">TOTAL SUPPLY</span><div class="supply-row">${SUPPLIES.map(
-      (sp) => html`<button type="button" class="chipm${NEW.supply === sp[0] ? ' on' : ''}" data-sup="${attr(sp[0])}">${sp[1]}</button>`,
+      (sp) => html`<button type="button" class="chipm${NEW.supply === sp[0] ? ' on' : ''}" data-sup="${attr(String(sp[0]))}">${sp[1]}</button>`,
     )}</div></div>
     <div><span class="lbl">TRADING FEE</span><div class="fee-row"
       ><input type="range" id="f-fee" min="1" max="5" step="0.1" value="${attr(NEW.fee)}" aria-label="Trading fee"
@@ -131,9 +138,10 @@ function ncStep2(): Html {
 }
 
 function ncStep3(): Html {
+  const buyVal = NEW.buy > 0 ? Number(NEW.buy).toFixed(2) : '';
   return html`<div><canvas class="nc-chart" id="nc-chart"></canvas></div>
     <div class="fee-row"><span class="lbl" style="margin:0;flex:0 0 88px">DEV BUY (${NEW.base})</span
-      ><input class="fld r" id="f-buy" style="max-width:120px" value="${attr(Number(NEW.buy).toFixed(2))}" inputmode="decimal"
+      ><input class="fld r" id="f-buy" style="max-width:120px" value="${attr(buyVal)}" placeholder="0" inputmode="decimal"
       ><span class="amt-row" style="flex:1">${[0, 0.5, 1, 2, 5].map(
         (v) => html`<button type="button" class="qa" data-buy="${attr(v)}">${v ? v : 'NONE'}</button>`,
       )}</span></div>
@@ -176,6 +184,8 @@ function renderNew(): void {
     bind('f-tg', 'tg');
   }
   if (i === 1) {
+    // One delegated listener per paint; previous render's node is replaced by
+    // `render()`, so listeners do not stack.
     must('#createBody').addEventListener('click', (e) => {
       const target = e.target as Element | null;
       const t = target?.closest<HTMLElement>('[data-btab]');
@@ -189,8 +199,11 @@ function renderNew(): void {
         NEW.base = b.dataset['base'] as string;
         renderNew();
       } else if (sp) {
-        NEW.supply = Number(sp.dataset['sup']);
-        renderNew();
+        const next = Number(sp.dataset['sup']);
+        if (Number.isFinite(next) && next > 0) {
+          NEW.supply = next;
+          renderNew();
+        }
       }
     });
     const bq = must<HTMLInputElement>('#f-bq');
@@ -243,6 +256,10 @@ function renderNew(): void {
   });
   must('#nc-next').addEventListener('click', () => {
     if (NEW.step === 0) {
+      if (!NEW.name.trim()) {
+        toast('PICK A NAME FIRST');
+        return;
+      }
       const sym = normalizeTicker(NEW.tick);
       if (!sym) {
         toast('PICK A TICKER FIRST');
@@ -310,7 +327,14 @@ function previewBuy(): void {
 /* -------------------------------- launch ---------------------------------- */
 
 async function doLaunch(): Promise<void> {
-  const sym = normalizeTicker(NEW.tick) || 'COIN';
+  const name = NEW.name.trim();
+  const sym = normalizeTicker(NEW.tick);
+  if (!name || !sym) {
+    toast(!name ? 'PICK A NAME FIRST' : 'PICK A TICKER FIRST');
+    NEW.step = 0;
+    renderNew();
+    return;
+  }
   if (isTickerTaken(sym, tickers())) {
     toast('TICKER ' + sym + ' ALREADY EXISTS ' + DOT + ' PICK ANOTHER');
     NEW.step = 0;
@@ -318,8 +342,8 @@ async function doLaunch(): Promise<void> {
     return;
   }
   const buy = Math.max(0, NEW.buy || 0);
-  let xh = (NEW.x || '@' + sym.toLowerCase()).trim();
-  if (xh[0] !== '@') xh = '@' + xh.replace(/^@+/, '');
+  let xh = NEW.x.trim();
+  if (xh && xh[0] !== '@') xh = '@' + xh.replace(/^@+/, '');
   const cashback = NEW.cashback && buy <= 0;
 
   const go = must<HTMLButtonElement>('#nc-next');
@@ -330,23 +354,26 @@ async function doLaunch(): Promise<void> {
   try {
     c = await api.launch({
       sym,
-      name: NEW.name || 'Untitled Coin',
-      desc: NEW.desc || 'no description. pure vibes.',
+      name,
+      desc: NEW.desc.trim(),
       supply: NEW.supply as SupplyOption,
       tfee: Number(NEW.fee),
       buy,
       base: NEW.base,
       cashback,
       x: xh,
-      web: NEW.web,
-      tg: NEW.tg,
+      web: NEW.web.trim(),
+      tg: NEW.tg.trim(),
     });
   } catch (err) {
     go.disabled = false;
     go.textContent = restoreLabel;
     if (err instanceof SignerCancelledError) toast('LAUNCH CANCELLED');
     else if (isRejection(err)) toast('LAUNCH REJECTED IN WALLET');
-    else toast(describeWalletError(err), 'red');
+    else if (err instanceof LiveApiError) {
+      const msg = (err.message || err.code).toUpperCase();
+      toast(msg.length > 120 ? msg.slice(0, 117) + '…' : msg, 'red');
+    } else toast(describeWalletError(err), 'red');
     return;
   }
 

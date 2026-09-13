@@ -84,17 +84,63 @@ export function initEvmDiscovery(): void {
   window.dispatchEvent(new Event('eip6963:requestProvider'));
 }
 
-/** Legacy single-provider injection, for extensions with no EIP-6963 support. */
+/** Clears EIP-6963 state between unit tests. Not for production callers. */
+export function resetEvmDiscoveryForTests(): void {
+  injected.clear();
+  discoveryStarted = false;
+}
+
+/** Injects an EIP-6963 announce without needing a browser `window`. */
+export function announceEvmProviderForTests(detail: Eip6963ProviderDetail): void {
+  if (!detail?.info?.rdns || typeof detail.provider?.request !== 'function') return;
+  injected.set(detail.info.rdns, detail);
+}
+
+/** MetaMask rdns prefixes announced over EIP-6963. */
+const METAMASK_RDNS = new Set(['io.metamask', 'io.metamask.flask', 'io.metamask.flask.dev']);
+
+/** CSP only allows `data:` wallet icons (`img-src`); https CDN icons render blank. */
+const METAMASK_ICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1a1a1a"/><path fill="#E2761B" d="M26.2 5.2 17.4 11.8l1.6-3.8z"/><path fill="#E4761B" d="m5.7 5.2 8.7 6.7-1.5-3.9zm17.7 12.3-2.3 3.6 5 1.4 1.4-4.8zm-23.1.2 1.4 4.8 5-1.4-2.3-3.6z"/><path fill="#E4761B" d="m10.4 14.4-.9 2.9 4.6.2-.2-5zm11.1 0-3.7-2.1-.1 5.2 4.6-.2zM10.6 21.1l2.8 2.1 3.4-1.8v-2zm10.8 0-6.2-1.7v2l3.4 1.8z"/></svg>',
+  );
+const WALLETCONNECT_ICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#09090b"/><path fill="#3B99FC" d="M9.4 12.6a8.3 8.3 0 0 1 13.2 0l.4.5a.5.5 0 0 1 0 .6l-1.5 1.5a.4.4 0 0 1-.5 0l-.6-.6a5.7 5.7 0 0 0-9 0l-.6.6a.4.4 0 0 1-.5 0l-1.5-1.5a.5.5 0 0 1 0-.6zm16.3 3 1.3 1.4a.5.5 0 0 1 0 .6l-6 6a.9.9 0 0 1-1.2 0l-4.2-4.3a.2.2 0 0 0-.3 0l-4.2 4.3a.9.9 0 0 1-1.2 0l-6-6a.5.5 0 0 1 0-.6l1.3-1.4a.5.5 0 0 1 .6 0l4.3 4.3a.2.2 0 0 0 .3 0l4.2-4.3a.9.9 0 0 1 1.2 0l4.2 4.3a.2.2 0 0 0 .3 0l4.3-4.3a.5.5 0 0 1 .6 0z"/></svg>',
+  );
+
+function isMetaMaskDetail(d: Eip6963ProviderDetail): boolean {
+  const rdns = d.info.rdns.toLowerCase();
+  if (METAMASK_RDNS.has(rdns) || rdns.startsWith('io.metamask.')) return true;
+  if (rdns === 'window.ethereum') {
+    return !!(d.provider as Eip1193Provider & { isMetaMask?: boolean }).isMetaMask;
+  }
+  return /metamask/i.test(d.info.name);
+}
+
+function safeIcon(icon: string | undefined, fallback: string): string {
+  return icon && icon.startsWith('data:') ? icon : fallback;
+}
+
+/**
+ * Legacy `window.ethereum` — MetaMask only, and only when EIP-6963 has not
+ * already announced MetaMask. Multi-provider pages often set both; listing
+ * both produced two MetaMask rows. Non-MetaMask injections (Phantom's EVM
+ * shim, etc.) are ignored here — RH offers MetaMask + WalletConnect only.
+ */
 function legacyInjected(): Eip6963ProviderDetail | null {
+  if ([...injected.values()].some(isMetaMaskDetail)) return null;
   const eth = (globalThis as { ethereum?: Eip1193Provider & { isMetaMask?: boolean } }).ethereum;
-  if (!eth || typeof eth.request !== 'function') return null;
+  if (!eth || typeof eth.request !== 'function' || !eth.isMetaMask) return null;
   if ([...injected.values()].some((d) => d.provider === eth)) return null;
   return {
     info: {
       uuid: 'window.ethereum',
       rdns: 'window.ethereum',
-      name: eth.isMetaMask ? 'MetaMask' : 'Browser Wallet',
-      icon: '',
+      name: 'MetaMask',
+      icon: METAMASK_ICON,
     },
     provider: eth,
   };
@@ -108,27 +154,36 @@ function injectedDetails(): Eip6963ProviderDetail[] {
 }
 
 /**
- * Every way onto chain 4663 from this browser.
+ * Robinhood Chain wallets: MetaMask (desktop extension) + WalletConnect
+ * (Robinhood Wallet / mobile). Multi-chain Solana wallets that also announce
+ * an EVM provider (Phantom) are intentionally omitted — RH is EVM-only here.
  *
  * WalletConnect is always listed, even with no project id configured — as an
- * explicitly disabled row carrying the reason. Hiding it would leave a
- * desktop Robinhood Wallet user with an empty picker and no explanation,
- * which is the failure mode this whole phase exists to remove.
+ * explicitly disabled row carrying the reason.
  */
 export function listEvmWallets(): WalletChoice[] {
-  const out: WalletChoice[] = injectedDetails().map((d) => ({
-    id: 'injected:' + d.info.rdns,
-    net: 'RH' as const,
-    kind: 'evm-injected' as const,
-    name: d.info.name,
-    ...(d.info.icon.startsWith('data:') ? { icon: d.info.icon } : {}),
-  }));
+  const metamasks = injectedDetails().filter(isMetaMaskDetail);
+  // One MetaMask row: prefer a real EIP-6963 announce over the legacy shim.
+  const preferred =
+    metamasks.find((d) => METAMASK_RDNS.has(d.info.rdns.toLowerCase()) || d.info.rdns.toLowerCase().startsWith('io.metamask.')) ??
+    metamasks[0];
+  const out: WalletChoice[] = [];
+  if (preferred) {
+    out.push({
+      id: 'injected:' + preferred.info.rdns,
+      net: 'RH',
+      kind: 'evm-injected',
+      name: 'MetaMask',
+      icon: safeIcon(preferred.info.icon, METAMASK_ICON),
+    });
+  }
   const reason = walletConnectUnavailableReason();
   out.push({
     id: 'walletconnect',
     net: 'RH',
     kind: 'evm-walletconnect',
     name: 'WalletConnect (Robinhood Wallet)',
+    icon: WALLETCONNECT_ICON,
     ...(reason ? { unavailable: reason } : {}),
   });
   return out;
@@ -441,7 +496,19 @@ function normalise(address: string): string {
   }
 }
 
-async function accountsOf(provider: Eip1193Provider): Promise<string[]> {
+async function accountsOf(provider: Eip1193Provider, mode: 'prompt' | 'reconnect'): Promise<string[]> {
+  // Reconnect: prefer eth_accounts (no popup). Many injected wallets still
+  // return [] here even when the site is already authorised — fall through to
+  // eth_requestAccounts, which MetaMask/Rabby approve silently when unlocked.
+  if (mode === 'reconnect') {
+    try {
+      const existing = (await provider.request({ method: 'eth_accounts' })) as unknown;
+      const list = Array.isArray(existing) ? existing.filter((a): a is string => typeof a === 'string') : [];
+      if (list.length > 0) return list;
+    } catch {
+      /* fall through */
+    }
+  }
   const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as unknown;
   return Array.isArray(accounts) ? accounts.filter((a): a is string => typeof a === 'string') : [];
 }
@@ -449,6 +516,11 @@ async function accountsOf(provider: Eip1193Provider): Promise<string[]> {
 export interface EvmConnectHooks {
   /** Called with the `wc:` pairing URI, for the QR/deep-link panel. */
   onWalletConnectUri?: (uri: string) => void;
+  /**
+   * Boot restore: resume without a picker. Injected wallets try `eth_accounts`
+   * then `eth_requestAccounts`; WalletConnect only resumes an existing session.
+   */
+  silent?: boolean;
 }
 
 export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}): Promise<ConnectedWallet> {
@@ -457,6 +529,7 @@ export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}):
     if (reason) throw new WalletError('unconfigured', reason);
     const { provider, address, disconnect } = await connectWalletConnect({
       ...(hooks.onWalletConnectUri ? { onUri: hooks.onWalletConnectUri } : {}),
+      ...(hooks.silent ? { resumeOnly: true } : {}),
     });
     return new EvmWallet('evm-walletconnect', 'WALLETCONNECT', normalise(address), provider, true, disconnect);
   }
@@ -468,8 +541,9 @@ export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}):
   }
   let accounts: string[];
   try {
-    accounts = await accountsOf(detail.provider);
+    accounts = await accountsOf(detail.provider, hooks.silent ? 'reconnect' : 'prompt');
   } catch (err) {
+    if (err instanceof WalletError) throw err;
     throw mapWalletError(err, `${detail.info.name} did not authorise this site.`);
   }
   const account = accounts[0];

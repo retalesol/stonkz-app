@@ -22,6 +22,8 @@ interface ImportMetaEnv {
   readonly VITE_RH_CHAIN_ID: string;
   /** Robinhood Chain block explorer base, for share/verify links. */
   readonly VITE_RH_EXPLORER: string;
+  /** Launchpad / bonding-curve vault address — used to label holders. */
+  readonly VITE_RH_LAUNCHPAD_ADDRESS: string;
   /** Uniswap Trading API base, used for the ETH leg. */
   readonly VITE_UNISWAP: string;
   /**

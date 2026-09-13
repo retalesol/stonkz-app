@@ -53,7 +53,7 @@ function decodeLeg(data: Hex, fn: 'buyViaAggregator' | 'sellViaAggregator') {
 }
 
 describe('buildAtomicBuyCall', () => {
-  it('direct pair: encodes buyViaAggregator with a wrap-only leg, msg.value = ethIn, maxSlippageBps = 0', () => {
+  it('direct pair: encodes buyWithEth (local wrap), msg.value = ethIn', () => {
     const call = buildAtomicBuyCall({
       routerAddress: ROUTER,
       token: TOKEN,
@@ -71,21 +71,14 @@ describe('buildAtomicBuyCall', () => {
     expect(call.to).toBe(ROUTER);
     expect(call.value).toBe((10n ** 18n).toString());
 
-    const args = decodeLeg(call.data, 'buyViaAggregator');
-    const [token, leg, minTokenOut] = args as unknown as [
-      string,
-      { commands: Hex; inputs: readonly Hex[]; quotedOut: bigint; maxSlippageBps: bigint; amountIn: bigint },
-      bigint,
-      bigint,
-    ];
+    const decoded = decodeFunctionData({ abi: STONKZ_ROUTER_ABI, data: call.data });
+    expect(decoded.functionName).toBe('buyWithEth');
+    const [token, minTokenOut] = decoded.args as unknown as [string, bigint, bigint];
     expect(token.toLowerCase()).toBe(TOKEN.toLowerCase());
-    expect(leg.commands).toBe('0x0b');
-    expect(leg.maxSlippageBps).toBe(0n); // exact 1:1 wrap \u2014 no market risk to tolerate
-    expect(leg.amountIn).toBe(0n); // ignored on the buy path per the contract's own doc comment
     expect(minTokenOut).toBe(1n);
   });
 
-  it('aggregator hop: encodes a wrap+swap leg and clamps the caller\u2019s slippage to the contract\u2019s MAX_SLIPPAGE_BPS ceiling', () => {
+  it('aggregator hop: encodes buyViaV3 with pinned fee and clamps slippage', () => {
     const call = buildAtomicBuyCall({
       routerAddress: ROUTER,
       token: TOKEN,
@@ -95,14 +88,24 @@ describe('buildAtomicBuyCall', () => {
       ethInAtoms: 10n ** 18n,
       quotedBaseOutAtoms: 4200n * 10n ** 6n,
       minTokenOutAtoms: 1n,
-      userSlippagePct: 50, // a wide Settings.slip that would exceed the contract's own cap unclamped
+      userSlippagePct: 50,
       deadlineUnixSeconds: 2_000_000_000,
     });
-    const args = decodeLeg(call.data, 'buyViaAggregator');
-    const [, leg] = args as unknown as [string, { commands: Hex; maxSlippageBps: bigint; quotedOut: bigint }];
-    expect(leg.commands).toBe('0x0b00');
-    expect(leg.maxSlippageBps).toBe(BigInt(ROUTER_MAX_SLIPPAGE_BPS));
-    expect(leg.quotedOut).toBe(4200n * 10n ** 6n);
+    const decoded = decodeFunctionData({ abi: STONKZ_ROUTER_ABI, data: call.data });
+    expect(decoded.functionName).toBe('buyViaV3');
+    const [token, fee, quotedBaseOut, maxSlippageBps, minTokenOut] = decoded.args as unknown as [
+      string,
+      number,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+    ];
+    expect(token.toLowerCase()).toBe(TOKEN.toLowerCase());
+    expect(fee).toBe(3000);
+    expect(quotedBaseOut).toBe(4200n * 10n ** 6n);
+    expect(maxSlippageBps).toBe(BigInt(ROUTER_MAX_SLIPPAGE_BPS));
+    expect(minTokenOut).toBe(1n);
   });
 });
 
@@ -122,29 +125,29 @@ describe('buildAtomicSellCall \u2014 permit vs standing-allowance branches', () 
     deadlineUnixSeconds: 2_000_000_000,
   };
 
-  it('with no permit supplied, encodes PermitData.deadline = 0 (the standing-allowance branch)', () => {
+  it('with no permit supplied, encodes sellForEth for a direct WETH pair (local unwrap)', () => {
     const call = buildAtomicSellCall({ ...baseParams, permit: null });
     expect(call.value).toBe('0');
-    const args = decodeLeg(call.data, 'sellViaAggregator');
-    const [, amountToken, permitData, minBaseOut, leg, minEthOut] = args as unknown as [
+    const decoded = decodeFunctionData({ abi: STONKZ_ROUTER_ABI, data: call.data });
+    expect(decoded.functionName).toBe('sellForEth');
+    const [token, amountToken, permitData, minBaseOut, minEthOut] = decoded.args as unknown as [
       string,
       bigint,
-      { value: bigint; deadline: bigint; v: number; r: Hex; s: Hex },
+      { value: bigint; deadline: bigint; v: number },
       bigint,
-      { commands: Hex; amountIn: bigint; quotedOut: bigint },
+      bigint,
       bigint,
     ];
+    expect(token.toLowerCase()).toBe(TOKEN.toLowerCase());
     expect(amountToken).toBe(1000n);
     expect(permitData.deadline).toBe(0n);
     expect(permitData.value).toBe(0n);
     expect(permitData.v).toBe(0);
     expect(minBaseOut).toBe(490n);
     expect(minEthOut).toBe(490n);
-    expect(leg.commands).toBe('0x0c');
-    expect(leg.amountIn).toBe(500n); // AggregatorLeg.amountIn = curveNetBaseOutAtoms, not the floor
   });
 
-  it('with a permit supplied, embeds it verbatim in PermitData', () => {
+  it('with a permit supplied, embeds it verbatim in PermitData on sellForEth', () => {
     const permit = {
       value: '1000',
       deadline: 1_999_999_000,
@@ -153,8 +156,9 @@ describe('buildAtomicSellCall \u2014 permit vs standing-allowance branches', () 
       s: `0x${'22'.repeat(32)}` as Hex,
     };
     const call = buildAtomicSellCall({ ...baseParams, permit });
-    const args = decodeLeg(call.data, 'sellViaAggregator');
-    const [, , permitData] = args as unknown as [
+    const decoded = decodeFunctionData({ abi: STONKZ_ROUTER_ABI, data: call.data });
+    expect(decoded.functionName).toBe('sellForEth');
+    const [, , permitData] = decoded.args as unknown as [
       string,
       bigint,
       { value: bigint; deadline: bigint; v: number; r: Hex; s: Hex },
@@ -175,7 +179,7 @@ describe('buildAtomicSellCall \u2014 permit vs standing-allowance branches', () 
     expect(p.s).toBe(`0x${'00'.repeat(32)}`);
   });
 
-  it('aggregator hop: leg.amountIn is the curve\u2019s expected proceeds even though the swap operates on ADDRESS_THIS\u2019s balance', () => {
+  it('aggregator hop: encodes sellViaV3 with curve proceeds as amountInBase', () => {
     const call = buildAtomicSellCall({
       ...baseParams,
       baseMint: USDC,
@@ -184,17 +188,23 @@ describe('buildAtomicSellCall \u2014 permit vs standing-allowance branches', () 
       quotedEthOutAtoms: 1n * 10n ** 15n,
       permit: null,
     });
-    const args = decodeLeg(call.data, 'sellViaAggregator');
-    const [, , , , leg] = args as unknown as [
+    const decoded = decodeFunctionData({ abi: STONKZ_ROUTER_ABI, data: call.data });
+    expect(decoded.functionName).toBe('sellViaV3');
+    const [, , , , fee, quotedEthOut, , , amountInBase] = decoded.args as unknown as [
       string,
       bigint,
       unknown,
       bigint,
-      { commands: Hex; amountIn: bigint; quotedOut: bigint },
+      number,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
     ];
-    expect(leg.commands).toBe('0x000c');
-    expect(leg.amountIn).toBe(4200n);
-    expect(leg.quotedOut).toBe(1n * 10n ** 15n);
+    expect(fee).toBe(500);
+    expect(amountInBase).toBe(4200n);
+    expect(quotedEthOut).toBe(1n * 10n ** 15n);
   });
 });
 

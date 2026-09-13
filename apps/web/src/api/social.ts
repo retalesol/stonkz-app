@@ -67,14 +67,36 @@ export interface LiveProfile {
   createdAtMs: number;
 }
 
+export interface LiveHolding {
+  sym: string;
+  tok: number;
+  cost: number;
+  value: number;
+}
+
 export interface LiveMember {
   net: Net;
   addr: string;
+  resolvedFrom?: 'wallet' | 'username';
   profile: LiveProfile | null;
   followers: number;
   following: number;
+  /** Outgoing follow edges (wallets), when the API includes them. */
+  followingWallets?: string[];
   isFollowing: boolean;
   xp: number;
+  native?: { unit: string; balance: number | null };
+  portfolioUsd?: number;
+  holdings?: LiveHolding[];
+  holdingsSource?: 'chain' | 'index';
+  launched?: Array<{
+    sym: string;
+    name: string;
+    mc: number;
+    chg: number;
+    age: number;
+    seed: number;
+  }>;
 }
 
 export interface LiveWallPost {
@@ -91,7 +113,9 @@ export interface LiveXProfile {
   avatarUrl: string | null;
   verified: boolean;
   found: boolean;
-  source: 'x_api' | 'placeholder';
+  status?: 'ok' | 'not_found' | 'suspended' | 'unavailable';
+  reason?: string;
+  source: 'x_api' | 'none' | 'placeholder';
 }
 
 export function fetchMember(net: Net, addr: string): Promise<LiveMember> {
@@ -157,6 +181,88 @@ export function sendChatMessage(
 export function fetchChatHistory(
   net: Net,
   room: string,
-): Promise<{ room: string; messages: { id: number; wallet: string; text: string; createdAtMs: number }[] }> {
+): Promise<{
+  room: string;
+  messages: {
+    id: number;
+    wallet: string;
+    text: string;
+    createdAtMs: number;
+    username?: string | null;
+    avatarUrl?: string | null;
+  }[];
+}> {
   return getJson(`/chat/${net}/${encodeURIComponent(room)}/history`);
+}
+
+/** Multipart upload to `POST /me/avatar` → Pinata gateway URL. */
+export async function uploadAvatar(net: Net, file: File): Promise<{ avatarUrl: string }> {
+  await ensureSession(BASE, net);
+  const body = new FormData();
+  body.append('file', file);
+  const res = await fetch(BASE + '/me/avatar', {
+    method: 'POST',
+    headers: { ...authHeader(net) },
+    body,
+  });
+  if (!res.ok) {
+    const { code, detail } = await readError(res);
+    throw new SocialApiError(code, detail);
+  }
+  return (await res.json()) as { avatarUrl: string };
+}
+
+/** Multipart upload to `POST /uploads/image` → Pinata gateway URL (launch art). */
+export async function uploadImage(net: Net, file: Blob, filename = 'token.png'): Promise<{ url: string; cid: string }> {
+  await ensureSession(BASE, net);
+  const body = new FormData();
+  body.append('file', file, filename);
+  const res = await fetch(BASE + '/uploads/image', {
+    method: 'POST',
+    headers: { ...authHeader(net) },
+    body,
+  });
+  if (!res.ok) {
+    const { code, detail } = await readError(res);
+    throw new SocialApiError(code, detail);
+  }
+  return (await res.json()) as { url: string; cid: string };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Rewards — `GET /rewards`, `POST /rewards/crates/:tier/open`                 */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveRewardsSnapshot {
+  net: Net;
+  wallet: string;
+  xp: number;
+  sp: number;
+  optionz: number;
+  streak: number;
+  streakMult: number;
+  crates: { tier: string; readyAt: number; ready: boolean; opens: number }[];
+  dropLog: { at: number; tier: string; rarity: string; label: string; optionz: number; item: string | null }[];
+  achievements: { key: string; unlockedAt: number }[];
+}
+
+export interface LiveCrateOpenResult {
+  tier: string;
+  rarity: string;
+  label: string;
+  optionz: number;
+  optionzTotal: number;
+  item: string | null;
+  xp: number;
+  rankedUp: boolean;
+  readyAt: number;
+  cooldownHours: number;
+}
+
+export function fetchRewards(net: Net): Promise<LiveRewardsSnapshot> {
+  return authedJson(`/rewards`, net);
+}
+
+export function openCrateLive(net: Net, tier: string): Promise<LiveCrateOpenResult> {
+  return authedJson(`/rewards/crates/${encodeURIComponent(tier)}/open`, net, { method: 'POST', body: '{}' });
 }

@@ -6,6 +6,12 @@ import { limit, requireAuth } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 
+function clampSetting(raw: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseFloat(raw) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
 /**
  * `GET /me` — plan steps 52 and 120.
  *
@@ -63,6 +69,7 @@ export function meRoutes(): Hono<AppEnv> {
       wallet,
       username: profileRow?.username ?? null,
       bio: profileRow?.bio ?? null,
+      avatarUrl: profileRow?.avatarUrl ?? null,
       createdAt: profileRow?.createdAt.getTime() ?? null,
       native: {
         unit,
@@ -91,6 +98,47 @@ export function meRoutes(): Hono<AppEnv> {
           }
         : null,
     });
+  });
+
+  /**
+   * Persist trade settings for the authenticated wallet so `/trade/prepare`
+   * and the web UI stay aligned across devices/reloads.
+   */
+  app.put('/me/settings', requireAuth(), limit(RATE_LIMITS.social), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+
+    const slip = clampSetting(body['slip'], 0.1, 50, 2.5);
+    const prio = clampSetting(body['prio'], 0, 1, 0.0012);
+    const mevTip = clampSetting(body['mevTip'], 0, 1, 0.0009);
+    const cap = clampSetting(body['cap'], 0.001, 50, 5);
+    const defBuy = clampSetting(body['defBuy'], 0.01, 999, 0.5);
+    const mevRaw = typeof body['mev'] === 'string' ? body['mev'].toUpperCase() : 'SHIELD';
+    const mev = mevRaw === 'OFF' || mevRaw === 'RELAY' || mevRaw === 'SHIELD' ? mevRaw : 'SHIELD';
+    const confirm = typeof body['confirm'] === 'boolean' ? body['confirm'] : true;
+
+    await deps.db
+      .insert(settings)
+      .values({
+        net: user.net,
+        wallet: user.wallet,
+        slip,
+        prio,
+        mev,
+        mevTip,
+        cap,
+        defBuy,
+        confirm,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [settings.net, settings.wallet],
+        set: { slip, prio, mev, mevTip, cap, defBuy, confirm, updatedAt: new Date() },
+      });
+
+    return c.json({ slip, prio, mev, mevTip, cap, defBuy, confirm });
   });
 
   /**

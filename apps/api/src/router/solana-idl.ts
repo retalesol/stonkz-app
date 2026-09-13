@@ -31,6 +31,7 @@ export const LAUNCHPAD_SEEDS = {
   bucketBaseVault: 'bucket_base',
   bucketTokenVault: 'bucket_token',
   stakeEscrow: 'stake_escrow',
+  stakePosition: 'stake',
   protocolVault: 'protocol_vault',
   opsVault: 'ops_vault',
   oracle: 'oracle',
@@ -89,6 +90,18 @@ export function derivePdas(programId: PublicKey, mint: PublicKey, baseMint: Publ
 /** `create_token`'s mint PDA is seeded on the ticker, not on itself. */
 export function deriveMintPda(programId: PublicKey, ticker: string): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([Buffer.from(LAUNCHPAD_SEEDS.mint), Buffer.from(ticker)], programId);
+}
+
+/** Per-wallet stake position PDA — seeds `[b"stake", mint, owner]`. */
+export function deriveStakePositionPda(
+  programId: PublicKey,
+  mint: PublicKey,
+  owner: PublicKey,
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(LAUNCHPAD_SEEDS.stakePosition), mint.toBuffer(), owner.toBuffer()],
+    programId,
+  );
 }
 
 /* ---------------------------------------------------------------- borsh-lite encoding */

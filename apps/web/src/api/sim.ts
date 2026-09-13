@@ -85,6 +85,10 @@ function beat(): void {
   beats++;
   const now = Date.now();
   NATIVE_PRICE.usd = Math.max(120, NATIVE_PRICE.usd * (1 + (Math.random() - 0.5) * 0.0018));
+  NATIVE_PRICE.sol = Math.max(120, NATIVE_PRICE.sol * (1 + (Math.random() - 0.5) * 0.0018));
+  NATIVE_PRICE.eth = Math.max(800, NATIVE_PRICE.eth * (1 + (Math.random() - 0.5) * 0.0018));
+  if (WALLET.net === 'RH') NATIVE_PRICE.usd = NATIVE_PRICE.eth;
+  else NATIVE_PRICE.usd = NATIVE_PRICE.sol;
 
   for (const c of COINS) {
     c.lastMc = c.mc;
@@ -490,6 +494,13 @@ export const simApi: StonkzApi = {
     saveUser();
     emit('wallet');
     return out;
+  },
+
+  async pushSettings() {
+    /* sim: localStorage only via saveSettings */
+  },
+  async hydrateStake() {
+    /* sim: USER.stake is already local */
   },
 
   /** TODO(Phase 3.C): the server rolls the drop and writes the ledger. */

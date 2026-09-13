@@ -344,6 +344,44 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     expect(trade?.nativeAmount).toBeCloseTo(0.123456789, 15);
     // The USDC base leg is unchanged: 0.4e18 atoms is 4e11 USDC at 6 decimals.
     expect(trade?.baseAmount).toBeCloseTo(Number(FILL.grossBase) / 1e6, 0);
+    // Trade.trader on chain is the router when buy() is called via StonkzRouter;
+    // AtomicBuy carries the wallet that actually paid ETH.
+    expect(trade?.trader).toBe(TRADER);
+  });
+
+  it('attributes a routed fill to AtomicBuy.trader even when Trade.trader is the router', async () => {
+    const ROUTER_AS_TRADER = ROUTER;
+    const usdcLaunch = launchLog({
+      baseToken: USDC_RH,
+      basePrice1e6: 1_000_000n,
+      gradMcapBase: (69_000_000_000n * 10n ** 6n) / 1_000_000n,
+    });
+    const atomic = encodeLog(
+      'AtomicBuy',
+      {
+        trader: TRADER,
+        token: DOGGO,
+        ethIn: 10_000_000_000_000_000n,
+        baseFromAggregator: FILL.grossBase,
+        tokensOut: FILL.tokensOut,
+      },
+      {
+        address: ROUTER,
+        blockNumber: 1_001,
+        blockHash: hash32('b1001'),
+        txHash: TX_FILL,
+        logIndex: 2,
+      },
+    );
+    const { source } = makeSource([
+      usdcLaunch,
+      atomic,
+      tradeLog({ trader: ROUTER_AS_TRADER }),
+      feeLog(),
+    ]);
+    const { events } = await source.pollRange(999, 1_001);
+    const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
+    expect(trade?.trader).toBe(TRADER);
   });
 
   it('reconstructs the ETH leg through the oracle when no router log is present', async () => {

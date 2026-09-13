@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { and, desc, eq } from 'drizzle-orm';
-import { MAJORS, STOCKS, nativeUnit, type Net } from '@stonkz/shared';
+import { MAJORS, STOCKS, RH_STOCKS, nativeUnit, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -85,12 +85,8 @@ export function marketRoutes(): Hono<AppEnv> {
   });
 
   /**
-   * Plan step 60 — majors per net, plus Solana's tokenized stocks.
-   *
-   * `STOCKS` in `packages/shared` is a 2026-09-06 snapshot; the GeckoTerminal
-   * cron that replaces it is Phase 1.C-live work and does not exist yet, so the
-   * response says which source it came from rather than pretending it is fresh.
-   * Robinhood returns majors only until that market is confirmed (plan step 51).
+   * Plan step 60 — majors per net, plus tokenized stocks.
+   * Solana uses `STOCKS` (xStock tickers); Robinhood uses `RH_STOCKS`.
    */
   app.get('/base-tokens', (c) => {
     const net = parseNet(c.req.query('network')) ?? parseNet(c.req.query('net')) ?? 'SOL';
@@ -98,7 +94,7 @@ export function marketRoutes(): Hono<AppEnv> {
     const stocks =
       net === 'SOL'
         ? STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }))
-        : [];
+        : RH_STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }));
 
     return c.json({
       net,

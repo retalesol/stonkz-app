@@ -29,6 +29,7 @@ const hub = new WsHub({
   metrics: deps.metrics,
   chat: deps.chat,
   publisher: deps.publisher,
+  db: deps.db,
 });
 await hub.attach(server as unknown as Server);
 

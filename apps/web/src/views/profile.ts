@@ -1,14 +1,25 @@
 import { GRAD, RANKS, ago, inCashback, num, pct, price, rankOf, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
-import { follow as liveFollow, postWallTip, unfollow as liveUnfollow, SocialApiError } from '../api/social.js';
+import {
+  follow as liveFollow,
+  postWallTip,
+  unfollow as liveUnfollow,
+  fetchMember,
+  fetchWall,
+  SocialApiError,
+  type LiveMember,
+  type LiveWallPost,
+} from '../api/social.js';
 import { back, navigate } from '../app/route.js';
 import { TipBroadcastError, attemptTip } from '../app/tip.js';
 import { showView } from '../app/view.js';
 import { pix } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
+import { paintAvatar } from '../lib/avatar.js';
 import { $, $$, must } from '../lib/dom.js';
 import { ARR, DOT, clockSec, ud } from '../lib/fmt.js';
 import { type Html, attr, html, render, replaceWith } from '../lib/html.js';
+import { displayName, myDisplayName, rememberIdentity } from '../lib/identity.js';
 import { type SimCoin, bySym, coinsBy, myCoins } from '../state/coins.js';
 import { HOLD, MYTRADES, pfValue } from '../state/holdings.js';
 import { stakedList, yourShare } from '../state/stake.js';
@@ -26,6 +37,7 @@ import {
   minTip,
   myBio,
   myName,
+  myProfileAddr,
   postToWall,
   toggleFollow,
   wallOf,
@@ -38,8 +50,17 @@ import { openRewards } from './rewards.js';
 
 /**
  * Member profiles: your own wallet, or anyone whose address appears in a
- * table, on a card or on the tape. `index.html:3338`
+ * table, on a card or on the tape.
+ *
+ * Live mode reads `GET /users/:net/:addr` and `GET /wall/:net/:addr` rather
+ * than the RNG `memberOf` / `wallOf` generators. Sim keeps those generators.
  */
+
+/** Live profile cache so re-renders after follow/tip do not flash RNG flavour. */
+const LIVE_MEMBERS = new Map<string, LiveMember>();
+const LIVE_WALLS = new Map<string, LiveWallPost[]>();
+const LIVE_HYDRATED = new Set<string>();
+
 
 export interface ProfileState {
   addr: string | null;
@@ -60,7 +81,30 @@ export function feeTokensTotal(): number {
 
 /* -------------------------------- blocks ---------------------------------- */
 
-function quadHTML(own: boolean, m: SimMember | null): Html {
+function liveQuadHTML(mem: LiveMember): Html {
+  const r = rankOf(mem.xp);
+  const launched = mem.launched?.length ?? 0;
+  const bal = mem.native?.balance;
+  const unit = mem.native?.unit || nativeUnit();
+  return html`<div class="quad" id="pfQuad">
+    <div><div class="lbl">${unit} BALANCE</div><div class="val up">${bal == null ? '—' : Number(bal).toFixed(2)}</div></div
+    ><div><div class="lbl">PORTFOLIO</div><div class="val am">${usd(mem.portfolioUsd ?? 0)}</div></div
+    ><div><div class="lbl">COINS LAUNCHED</div><div class="val gd">${launched}</div></div
+    ><div><div class="lbl">TOTAL XP</div><div class="val">${num(mem.xp)}<span class="hint"> ${DOT} LV ${r.i + 1}</span></div></div>
+  </div>`;
+}
+
+function quadHTML(own: boolean, m: SimMember | null, liveMem?: LiveMember): Html {
+  if (api.mode === 'live' && liveMem) return liveQuadHTML(liveMem);
+  if (api.mode === 'live' && !own) {
+    // Loading / unknown member — never invent sim portfolio numbers.
+    return html`<div class="quad" id="pfQuad">
+      <div><div class="lbl">${nativeUnit()} BALANCE</div><div class="val up">—</div></div
+      ><div><div class="lbl">PORTFOLIO</div><div class="val am">—</div></div
+      ><div><div class="lbl">COINS LAUNCHED</div><div class="val gd">—</div></div
+      ><div><div class="lbl">TOTAL XP</div><div class="val">—</div></div>
+    </div>`;
+  }
   const r = own ? rankOf(USER.xp) : rankOf((m as SimMember).xp);
   if (own) {
     return html`<div class="quad five" id="pfQuad">
@@ -87,17 +131,19 @@ function quadHTML(own: boolean, m: SimMember | null): Html {
   </div>`;
 }
 
-function holdRows(list: Array<{ sym: string; tok: number; cost: number }>): Html {
+function holdRows(list: Array<{ sym: string; tok: number; cost: number; value?: number }>): Html {
   if (!list.length) return html`<div class="empty">NO POSITIONS</div>`;
   return html`<table class="tbl"><thead><tr><th scope="col">TOKEN</th><th scope="col" class="r">AMOUNT</th
     ><th scope="col" class="r">VALUE</th><th scope="col" class="r">COST</th><th scope="col" class="r">PNL</th></tr></thead><tbody
     >${list.map((h) => {
       const c = bySym(h.sym);
-      if (!c) return '';
-      const v = h.tok * price(c);
-      const p = (v / h.cost - 1) * 100;
+      const v = h.value ?? (c ? h.tok * price(c) : 0);
+      const cost = h.cost || 0;
+      const p = cost > 0 ? (v / cost - 1) * 100 : 0;
       return html`<tr><td class="gd">${h.sym}</td><td class="r">${num(h.tok)}</td><td class="r">${usd(v)}</td
-        ><td class="r dm">${usd(h.cost)}</td><td class="r ${ud(p)}">${pct(p)}</td></tr>`;
+        ><td class="r dm">${cost > 0 ? usd(cost) : '—'}</td><td class="r ${cost > 0 ? ud(p) : 'dm'}">${
+          cost > 0 ? pct(p) : '—'
+        }</td></tr>`;
     })}</tbody></table>`;
 }
 
@@ -127,10 +173,45 @@ function stakedPanelHTML(): Html {
   })}`;
 }
 
-function shoutHTML(addr: string, own: boolean): Html {
-  const w = wallOf(addr);
-  const who = own ? 'YOU' : memberOf(addr).name;
+function shoutHTML(addr: string, own: boolean, livePosts?: LiveWallPost[] | null): Html {
   const tip = minTip();
+  const live = api.mode === 'live';
+  const liveWho = LIVE_MEMBERS.get(addr)?.profile?.username?.trim();
+  const who = own
+    ? myDisplayName()
+    : liveWho || displayName(addr);
+
+  const postsHtml =
+    live && livePosts === undefined
+      ? [html`<div class="empty">LOADING WALL…</div>`]
+      : live && livePosts
+        ? livePosts.length
+          ? livePosts.map((o) => {
+              const mine = isMe(o.from) || o.from === WALLET.full;
+              const fromName = displayName(o.from);
+              return html`<div class="shout${mine ? ' mine' : ''}"><div class="sh-hd"
+                ><span class="who addrlink" data-addr="${attr(o.from)}">${fromName}</span
+                ><span class="tip">+${Number(o.tip).toFixed(4)} ${nativeUnit()}</span
+                ><span class="t">${clockSec(new Date(o.createdAtMs))}</span></div
+                ><p>${o.text}</p></div>`;
+            })
+          : [html`<div class="empty">NO SHOUTS YET</div>`]
+        : live
+          ? [html`<div class="empty">LOADING WALL…</div>`]
+          : (() => {
+              const w = wallOf(addr);
+              return w.length
+                ? w.map(
+                    (o) => html`<div class="shout${o.mine ? ' mine' : ''}"><div class="sh-hd"
+                      ><span class="who addrlink" data-addr="${attr(o.from)}">${
+                        o.mine ? myDisplayName() : memberOf(o.from).name
+                      }</span
+                      ><span class="tip">+${Number(o.tip).toFixed(4)} ${nativeUnit()}</span><span class="t">${o.t}</span></div
+                      ><p>${o.text}</p></div>`,
+                  )
+                : [html`<div class="empty">NO SHOUTS YET</div>`];
+            })();
+
   return html`<div class="pnl-bd"
     >${own
       ? html`<p class="hint">THIS IS YOUR WALL ${DOT} OTHERS TIP ${tip} ${nativeUnit()} OR MORE TO POST HERE.</p>`
@@ -139,17 +220,31 @@ function shoutHTML(addr: string, own: boolean): Html {
           value="${attr(tip.toFixed(4))}" inputmode="decimal"><button class="send" type="submit">TIP + POST</button></form
         ><p class="hint">MINIMUM ${tip} ${nativeUnit()} ${DOT} 100% OF THE TIP GOES STRAIGHT TO ${who}.</p>`}<div
       class="scrolly" style="display:flex;flex-direction:column;gap:7px"
-      >${w.length
-        ? w.map(
-            (o) => html`<div class="shout${o.mine ? ' mine' : ''}"><div class="sh-hd"
-              ><span class="who addrlink" data-addr="${attr(o.from)}">${o.mine ? 'YOU' : memberOf(o.from).name}</span
-              ><span class="tip">+${Number(o.tip).toFixed(4)} ${nativeUnit()}</span><span class="t">${o.t}</span></div
-              ><p>${o.text}</p></div>`,
-          )
-        : html`<div class="empty">NO SHOUTS YET</div>`}</div></div>`;
+      >${postsHtml}</div></div>`;
 }
 
 function friendsHTML(addr: string): Html {
+  if (api.mode === 'live') {
+    const liveMem = LIVE_MEMBERS.get(addr);
+    const followed = liveMem?.followingWallets?.length
+      ? liveMem.followingWallets
+      : Object.keys(follows());
+    if (!followed.length) {
+      return html`<div class="empty">${
+        liveMem ? 'FOLLOW SOMEONE TO SEE THEM HERE' : 'LOADING…'
+      }</div>`;
+    }
+    return html`${followed.slice(0, 6).map(
+      (a) => {
+        const lm = LIVE_MEMBERS.get(a);
+        const name = lm?.profile?.username || a.slice(0, 8) + '…';
+        return html`<div class="friend" data-addr="${attr(a)}"><canvas width="60" height="60" data-seed="${attr(
+          (hashSeed(a)),
+        )}" aria-hidden="true"></canvas><div><div class="fn">${name}</div><div class="fa">${a.slice(0, 10)}…</div></div
+          ><div class="fp dm">—<span>LIVE</span></div></div>`;
+      },
+    )}`;
+  }
   const list = friendAddrs(addr)
     .map((a) => ({ a, m: memberOf(a), p: memProfit(a, PF.win) }))
     .sort((x, y) => y.p - x.p)
@@ -160,6 +255,12 @@ function friendsHTML(addr: string): Html {
       aria-hidden="true"></canvas><div><div class="fn">${o.m.name}</div><div class="fa">${o.a}</div></div
       ><div class="fp ${ud(o.p)}">${o.p >= 0 ? '+' : '-'}${usd(Math.abs(o.p))}<span>${PF.win.toUpperCase()}</span></div></div>`,
   )}`;
+}
+
+function hashSeed(addr: string): number {
+  let h = 0;
+  for (let i = 0; i < addr.length; i++) h = (h * 31 + addr.charCodeAt(i)) | 0;
+  return Math.abs(h) % 1_000_000;
 }
 
 function minedHTML(list: SimCoin[]): Html {
@@ -175,39 +276,120 @@ function minedHTML(list: SimCoin[]): Html {
 /* --------------------------------- page ----------------------------------- */
 
 export function renderProfile(addr?: string): void {
-  PF.addr = addr || PF.addr || WALLET.addr;
-  const own = isMe(PF.addr);
-  const m = own ? null : memberOf(PF.addr);
-  const r = own ? rankOf(USER.xp) : rankOf((m as SimMember).xp);
-  const name = own ? myName() : (m as SimMember).name;
-  const bio = own ? myBio() : (m as SimMember).bio;
-  const holdings = own ? HOLD : memHold(m as SimMember, price);
-  const acts = own ? MYTRADES : memTrades(m as SimMember);
-  const mine = own ? myCoins() : coinsBy(PF.addr);
-  // Sim mode's `.fee` is a live client-side accrual, so gating the button on
-  // it is honest. Live mode's `SimCoin.fee` is never touched by the real
-  // `creator_vaults` ledger — `GET /fees` is the only source of truth, and
-  // that only gets fetched once the claim modal itself opens — so the
-  // button always opens it there and lets `claim.ts` say "nothing to claim"
-  // rather than guessing wrong from stale local state.
+  PF.addr = addr || PF.addr || myProfileAddr() || WALLET.addr;
+  const own = isMe(PF.addr as string);
+  const live = api.mode === 'live';
+  const liveMem = live
+    ? LIVE_MEMBERS.get(PF.addr as string) ||
+      [...LIVE_MEMBERS.values()].find(
+        (m) => m.addr === PF.addr || m.profile?.username?.toLowerCase() === String(PF.addr).toLowerCase(),
+      )
+    : undefined;
+  const liveWall = live
+    ? LIVE_WALLS.get(PF.addr as string) || (liveMem ? LIVE_WALLS.get(liveMem.addr) : undefined)
+    : undefined;
+
+  const m = own
+    ? null
+    : liveMem
+      ? ({
+          addr: liveMem.addr,
+          seed: hashSeed(liveMem.addr),
+          name: liveMem.profile?.username || liveMem.addr.slice(0, 8) + '…',
+          bio: liveMem.profile?.bio || 'NO BIO YET.',
+          followers: liveMem.followers,
+          following: liveMem.following,
+          joined: '—',
+          xp: liveMem.xp,
+        } satisfies SimMember)
+      : live
+        ? ({
+            addr: PF.addr as string,
+            seed: hashSeed(PF.addr as string),
+            name: (PF.addr as string).slice(0, 8) + '…',
+            bio: 'LOADING…',
+            followers: 0,
+            following: 0,
+            joined: '—',
+            xp: 0,
+          } satisfies SimMember)
+        : memberOf(PF.addr as string);
+
+  const r = own ? rankOf(USER.xp) : rankOf(liveMem?.xp ?? (m as SimMember).xp);
+  const name = own
+    ? liveMem?.profile?.username || myName() || myDisplayName()
+    : (m as SimMember).name;
+  const bio = own
+    ? liveMem?.profile?.bio || myBio()
+    : liveMem?.profile?.bio || (live ? (liveMem ? 'NO BIO YET.' : 'LOADING…') : (m as SimMember).bio);
+
+  if (liveMem?.profile) {
+    rememberIdentity(liveMem.addr, {
+      username: liveMem.profile.username,
+      avatarUrl: liveMem.profile.avatarUrl,
+    });
+  }
+
+  const holdings = live
+    ? // Only fall back to local HOLD before the first successful hydrate
+      // (`liveMem` missing). An empty server list means empty — do not invent.
+      own && !liveMem
+      ? HOLD
+      : (liveMem?.holdings ?? [])
+    : own
+      ? HOLD
+      : memHold(m as SimMember, price);
+  const acts = own ? MYTRADES : live ? [] : memTrades(m as SimMember);
+  const mine = live
+    ? (liveMem?.launched ?? []).map(
+        (t) =>
+          ({
+            sym: t.sym,
+            name: t.name,
+            mc: t.mc,
+            chg: t.chg,
+            age: t.age,
+            seed: t.seed,
+          }) as SimCoin,
+      )
+    : own
+      ? myCoins()
+      : coinsBy(PF.addr as string);
   const fees = feeTotal();
   const canClaim = api.mode === 'live' || fees >= 0.01;
+
+  const followers = live
+    ? liveMem?.followers ?? (own ? Object.keys(follows()).length : 0)
+    : own
+      ? SOCIAL.followers + Object.keys(follows()).length
+      : (m as SimMember).followers + (isFollowing(PF.addr as string) ? 1 : 0);
+  const following = live
+    ? liveMem?.following ?? (own ? Object.keys(follows()).length : 0)
+    : own
+      ? SOCIAL.following + Object.keys(follows()).length
+      : (m as SimMember).following;
+
+  const sessionHint = live
+    ? own
+      ? 'YOUR PROFILE'
+      : 'MEMBER PROFILE'
+    : own
+      ? 'YOUR PROFILE ' + DOT + ' SIMULATED WALLET SESSION'
+      : 'MEMBER PROFILE ' + DOT + ' JOINED ' + (m as SimMember).joined + ' DAYS AGO';
+
+  const displayAddr = liveMem?.addr || (PF.addr as string);
 
   render(
     must('#profileView'),
     html`<div style="display:flex;align-items:center;gap:10px">
         <button class="back" id="pf-back">${ARR} BACK</button
-        ><span class="hint">${own ? 'YOUR PROFILE ' + DOT + ' SIMULATED WALLET SESSION' : 'MEMBER PROFILE ' + DOT + ' JOINED ' + (m as SimMember).joined + ' DAYS AGO'}</span></div>
+        ><span class="hint">${sessionHint}</span></div>
       <div class="pf-bar"><canvas width="128" height="128" id="pfAv" aria-hidden="true"></canvas
-        ><div class="pf-id"><div class="pf-name"><h1>${name}</h1><span class="addr">${PF.addr}</span></div
-          ><div class="pf-bio">${bio}</div></div
+        ><div class="pf-id"><div class="pf-name"><h1>${name}</h1><span class="addr">${displayAddr}</span></div
+          ><div class="pf-bio">${bio || 'NO BIO YET.'}</div></div
         ><div class="pf-social">
-          <div><span class="lbl">FOLLOWERS</span><div class="v">${num(
-            own ? SOCIAL.followers + Object.keys(follows()).length : (m as SimMember).followers + (isFollowing(PF.addr) ? 1 : 0),
-          )}</div></div
-          ><div><span class="lbl">FOLLOWING</span><div class="v">${num(
-            own ? SOCIAL.following + Object.keys(follows()).length : (m as SimMember).following,
-          )}</div></div>
+          <div><span class="lbl">FOLLOWERS</span><div class="v">${num(followers)}</div></div
+          ><div><span class="lbl">FOLLOWING</span><div class="v">${num(following)}</div></div>
         </div
       >${own
         ? html`<button class="pf-rank" id="pfRank" title="Open rewards"><span class="lv">${r.i + 1}</span
@@ -215,10 +397,16 @@ export function renderProfile(addr?: string): void {
             ><span class="pf-acts"><button class="editbtn" id="pfEdit">EDIT PROFILE</button></span>`
         : html`<div class="pf-rank"><span class="lv">${r.i + 1}</span
             ><div><div class="nm">${r.name}</div><div class="sub">RANK ${r.i + 1} OF ${RANKS.length}</div></div></div
-            ><span class="pf-acts"><button class="followbtn${isFollowing(PF.addr) ? ' on' : ''}" id="pfFollow">${
-              isFollowing(PF.addr) ? 'FOLLOWING' : 'FOLLOW'
+            ><span class="pf-acts"><button class="followbtn${
+              (live ? !!liveMem?.isFollowing : isFollowing(displayAddr)) ? ' on' : ''
+            }" id="pfFollow"${live && !liveMem ? ' disabled' : ''}>${
+              live && !liveMem
+                ? 'LOADING…'
+                : (live ? !!liveMem?.isFollowing : isFollowing(displayAddr))
+                  ? 'FOLLOWING'
+                  : 'FOLLOW'
             }</button></span>`}</div
-      >${quadHTML(own, m)}
+      >${quadHTML(own, m, liveMem)}
       <div class="pf-grid">
         <div style="display:flex;flex-direction:column;gap:10px">
           <section class="pnl"><div class="pnl-hd"><h2>Portfolio</h2
@@ -235,7 +423,7 @@ export function renderProfile(addr?: string): void {
           ><section class="pnl"><div class="pnl-hd"><h2>Wall</h2
             ><span class="pnl-tabs"><button class="tab${PF.tabAct === 'shout' ? ' on' : ''}" data-atab="shout">SHOUTBOX</button
               ><button class="tab${PF.tabAct === 'act' ? ' on' : ''}" data-atab="act">RECENT ACTIVITY</button></span></div
-            ><div id="pfAct">${PF.tabAct === 'shout' ? shoutHTML(PF.addr, own) : actRows(acts)}</div></section>
+            ><div id="pfAct">${PF.tabAct === 'shout' ? shoutHTML(displayAddr, own, liveWall) : actRows(acts)}</div></section>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <section class="pnl"><div class="pnl-hd"><h2>${own ? 'Coins You Launched' : 'Coins Launched'}</h2
@@ -246,12 +434,19 @@ export function renderProfile(addr?: string): void {
             ><span class="pnl-tabs">${(['24h', '7d', '1m'] as const).map(
               (w) => html`<button class="tab${PF.win === w ? ' on' : ''}" data-fwin="${w}">${w.toUpperCase()}</button>`,
             )}</span></div
-            ><div id="pfFriends">${friendsHTML(PF.addr)}</div></section>
+            ><div id="pfFriends">${friendsHTML(displayAddr)}</div></section>
         </div>
       </div>`,
   );
 
-  pix($<HTMLCanvasElement>('#pfAv'), own ? WALLET.seed : (m as SimMember).seed);
+  const avUrl = own
+    ? USER.avatarUrl ?? liveMem?.profile?.avatarUrl ?? null
+    : liveMem?.profile?.avatarUrl ?? null;
+  paintAvatar($<HTMLCanvasElement>('#pfAv'), {
+    seed: own ? WALLET.full || WALLET.seed : liveMem ? liveMem.addr : (m as SimMember).addr || (PF.addr as string),
+    avatarUrl: avUrl,
+    size: 52,
+  });
   paintMine();
   paintFriends();
   must('#pf-back').addEventListener('click', () => back());
@@ -265,17 +460,56 @@ export function renderProfile(addr?: string): void {
     $('#claimAllBtn')?.addEventListener('click', () => void claimAllStakes());
   } else {
     $('#pfFollow')?.addEventListener('click', () => {
-      void onFollowClick(PF.addr as string);
+      void onFollowClick(displayAddr);
     });
     $('#shoutForm')?.addEventListener('submit', (e) => {
       e.preventDefault();
-      postShout(PF.addr as string);
+      postShout(displayAddr);
+    });
+  }
+
+  // Live: hydrate from the API after first paint so we never flash RNG flavour.
+  if (live && PF.addr && !LIVE_HYDRATED.has(PF.addr) && !(liveMem && LIVE_HYDRATED.has(liveMem.addr))) {
+    const target = PF.addr;
+    void Promise.all([
+      fetchMember(WALLET.net, target).catch(() => null),
+      fetchWall(WALLET.net, target).catch(() => null),
+    ]).then(([mem, wall]) => {
+      if (PF.addr !== target && (!mem || (PF.addr !== mem.addr && PF.addr !== target))) return;
+      if (!mem) {
+        toast('PROFILE LOAD FAILED', 'red');
+        LIVE_WALLS.set(target, []);
+        renderProfile(target);
+        return;
+      }
+      LIVE_HYDRATED.add(target);
+      LIVE_MEMBERS.set(target, mem);
+      LIVE_MEMBERS.set(mem.addr, mem);
+      if (mem.profile?.username) {
+        LIVE_MEMBERS.set(mem.profile.username, mem);
+        LIVE_HYDRATED.add(mem.profile.username);
+      }
+      LIVE_HYDRATED.add(mem.addr);
+      // Mirror *own* outgoing follows into local state for friendsHTML.
+      // Never copy another member's following list into USER.follow.
+      if (own && mem.followingWallets) {
+        for (const w of mem.followingWallets) {
+          if (!isFollowing(w)) toggleFollow(w);
+        }
+      }
+      PF.addr = mem.addr;
+      const wallKey = mem.addr;
+      LIVE_WALLS.set(wallKey, wall?.posts ?? []);
+      LIVE_WALLS.set(target, wall?.posts ?? []);
+      renderProfile(mem.addr);
     });
   }
 }
 
 function paintFriends(): void {
-  for (const cv of $$<HTMLCanvasElement>('#pfFriends canvas')) pix(cv, Number(cv.dataset['seed']));
+  for (const cv of $$<HTMLCanvasElement>('#pfFriends canvas')) {
+    paintAvatar(cv, { seed: cv.dataset['seed'] || '0', size: 40 });
+  }
 }
 
 function paintMine(): void {
@@ -290,25 +524,46 @@ function paintMine(): void {
  * sim-only reads (friend PnL, avatars) that Phase 5 does not replace.
  */
 async function onFollowClick(addr: string): Promise<void> {
-  const wasFollowing = isFollowing(addr);
+  if (api.mode === 'live' && !WALLET.on) {
+    toast('CONNECT A WALLET TO FOLLOW', 'red');
+    return;
+  }
+  const liveMem = LIVE_MEMBERS.get(addr);
+  if (api.mode === 'live' && !liveMem) {
+    toast('PROFILE STILL LOADING', 'red');
+    return;
+  }
+  const target = liveMem?.addr || addr;
+  // Live mode: the server's `isFollowing` is truth. Local `USER.follow` can
+  // lag after a reload and was making every click look like a fresh FOLLOW.
+  const wasFollowing = api.mode === 'live' ? !!liveMem?.isFollowing : isFollowing(target);
   if (api.mode === 'live') {
     try {
-      const res = wasFollowing ? await liveUnfollow(WALLET.net, addr) : await liveFollow(WALLET.net, addr);
-      if (res.following !== wasFollowing) toggleFollow(addr);
+      const res = wasFollowing
+        ? await liveUnfollow(WALLET.net, target)
+        : await liveFollow(WALLET.net, target);
+      const mem = LIVE_MEMBERS.get(target) || liveMem;
+      if (mem) mem.isFollowing = res.following;
+      // Keep the local mirror aligned for sim-only friend lists.
+      if (res.following !== isFollowing(target)) toggleFollow(target);
+      // Optimistically bump follower counts on the cached member.
+      if (mem && res.following !== wasFollowing) {
+        mem.followers = Math.max(0, (mem.followers ?? 0) + (res.following ? 1 : -1));
+      }
+      const now = !!mem?.isFollowing;
+      toast((now ? 'FOLLOWING ' : 'UNFOLLOWED ') + (mem?.profile?.username || displayName(target)));
+      if (now && !wasFollowing) unlock('social');
+      renderProfile(target);
     } catch (err) {
-      toast(err instanceof SocialApiError ? err.message : 'FOLLOW FAILED');
-      return;
+      toast(err instanceof SocialApiError ? err.message : 'FOLLOW FAILED', 'red');
     }
-  } else {
-    toggleFollow(addr);
+    return;
   }
-  const now = isFollowing(addr);
-  toast((now ? 'FOLLOWING ' : 'UNFOLLOWED ') + memberOf(addr).name);
-  if (now && !wasFollowing) {
-    addXP(6, 'FOLLOW');
-    unlock('social');
-  }
-  renderProfile(addr);
+  toggleFollow(target);
+  const now = isFollowing(target);
+  toast((now ? 'FOLLOWING ' : 'UNFOLLOWED ') + displayName(target));
+  if (now && !wasFollowing) unlock('social');
+  renderProfile(target);
 }
 
 /**
@@ -324,20 +579,33 @@ async function liveShout(addr: string, txt: string, tip: number): Promise<void> 
   try {
     sig = await attemptTip(WALLET.net, addr, tip);
   } catch (err) {
-    toast(err instanceof TipBroadcastError ? err.message : 'TIP FAILED ' + DOT + ' NO FUNDED WALLET');
+    toast(err instanceof TipBroadcastError ? err.message : 'TIP FAILED ' + DOT + ' NO FUNDED WALLET', 'red');
     return;
   }
   try {
-    const res = await postWallTip(WALLET.net, addr, txt, sig);
-    toast('TIPPED ' + tip.toFixed(4) + ' ' + nativeUnit() + ' TO ' + memberOf(addr).name);
-    if (res.xpAwarded) addXP(res.xpAwarded, 'WALL POST');
+    await postWallTip(WALLET.net, addr, txt, sig);
+    toast(
+      'TIPPED ' +
+        tip.toFixed(4) +
+        ' ' +
+        nativeUnit() +
+        ' TO ' +
+        (LIVE_MEMBERS.get(addr)?.profile?.username || addr.slice(0, 8)),
+    );
     unlock('social');
+    LIVE_HYDRATED.delete(addr);
+    renderProfile(addr);
   } catch (err) {
-    toast(err instanceof SocialApiError ? err.message : 'WALL POST FAILED');
+    toast(
+      err instanceof SocialApiError
+        ? err.message + ' ' + DOT + ' TIP ALREADY SENT ON CHAIN'
+        : 'WALL POST FAILED ' + DOT + ' TIP ALREADY SENT ON CHAIN',
+      'red',
+    );
   }
 }
 
-/** TODO(Phase 5.C): send the tip, then `POST /wall` with its signature. `index.html:3322` */
+/** Sim wall tip + post. Live uses `liveShout`. */
 function postShout(addr: string): void {
   const txt = (($('#shout-txt') as HTMLInputElement | null)?.value || '').trim();
   const tip = parseFloat(($('#shout-tip') as HTMLInputElement | null)?.value ?? '') || 0;
@@ -367,19 +635,23 @@ function postShout(addr: string): void {
 }
 
 async function claimStakeFor(sym: string): Promise<void> {
-  const res = await api.claimStake(sym);
-  if (res.tokens <= 0 && res.native <= 0) {
-    toast('NOTHING TO CLAIM YET');
-    return;
+  try {
+    const res = await api.claimStake(sym);
+    if (res.tokens <= 0 && res.native <= 0) {
+      toast('NOTHING TO CLAIM YET');
+      return;
+    }
+    const parts = [
+      res.tokens > 0 ? num(res.tokens) + ' ' + sym : '',
+      res.tokens > 0 && res.native > 0 ? ' + ' : '',
+      res.native > 0 ? res.native.toFixed(4) + ' ' + nativeUnit() : '',
+    ];
+    toast('CLAIMED ' + parts.join(''));
+    saveUser();
+    renderProfile(PF.addr as string);
+  } catch (err) {
+    toast(err instanceof Error ? err.message.toUpperCase() : 'CLAIM FAILED', 'red');
   }
-  const parts = [
-    res.tokens > 0 ? num(res.tokens) + ' ' + sym : '',
-    res.tokens > 0 && res.native > 0 ? ' + ' : '',
-    res.native > 0 ? res.native.toFixed(4) + ' ' + nativeUnit() : '',
-  ];
-  toast('CLAIMED ' + parts.join(''));
-  saveUser();
-  renderProfile(PF.addr as string);
 }
 
 async function claimAllStakes(): Promise<void> {
@@ -388,21 +660,44 @@ async function claimAllStakes(): Promise<void> {
     toast('NOTHING TO CLAIM YET');
     return;
   }
-  for (const o of list) await api.claimStake(o.c.sym);
-  toast('CLAIMED ' + list.length + ' POSITION' + (list.length > 1 ? 'S' : ''));
+  let ok = 0;
+  for (const o of list) {
+    try {
+      await api.claimStake(o.c.sym);
+      ok += 1;
+    } catch (err) {
+      toast(err instanceof Error ? err.message.toUpperCase() : 'CLAIM FAILED', 'red');
+      break;
+    }
+  }
+  if (ok > 0) toast('CLAIMED ' + ok + ' POSITION' + (ok > 1 ? 'S' : ''));
   renderProfile(PF.addr as string);
 }
 
-/** Patch the numbers that move under a live profile. `index.html:3506` */
+/** Patch the numbers that move under a live profile. Never inject sim memberOf data. */
 export function syncProfile(): void {
   if (must('#profileView').hidden) return;
   const addr = PF.addr;
   if (!addr) return;
   const own = isMe(addr);
+  const live = api.mode === 'live';
+  const liveMem = live
+    ? LIVE_MEMBERS.get(addr) ||
+      [...LIVE_MEMBERS.values()].find(
+        (m) => m.addr === addr || m.profile?.username?.toLowerCase() === addr.toLowerCase(),
+      )
+    : undefined;
   const q = $('#pfQuad');
-  if (q) replaceWith(q, quadHTML(own, own ? null : memberOf(addr)));
+  if (q) replaceWith(q, quadHTML(own, own || live ? null : memberOf(addr), liveMem));
   if (PF.tabHold === 'holdings') {
-    render($('#pfHold'), holdRows(own ? HOLD : memHold(memberOf(addr), price)));
+    const holdings = live
+      ? own && !liveMem
+        ? HOLD
+        : (liveMem?.holdings ?? [])
+      : own
+        ? HOLD
+        : memHold(memberOf(addr), price);
+    render($('#pfHold'), holdRows(holdings));
   } else if (own) {
     render($('#pfHold'), stakedPanelHTML());
   }
@@ -422,7 +717,9 @@ export function openProfile(addr?: string): void {
     toast('CONNECT A WALLET FIRST');
     return;
   }
-  PF.addr = addr || WALLET.addr;
+  PF.addr = addr || myProfileAddr() || WALLET.addr;
+  // Re-fetch when reopening so follow counts stay fresh.
+  if (api.mode === 'live' && PF.addr) LIVE_HYDRATED.delete(PF.addr);
   renderProfile(PF.addr);
   showView('profile');
   window.scrollTo(0, 0);

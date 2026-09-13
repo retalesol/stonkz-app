@@ -22,13 +22,15 @@
 .chat-log::-webkit-scrollbar{width:8px}
 .chat-log::-webkit-scrollbar-thumb{background:#2b3342}
 .chat-log::-webkit-scrollbar-track{background:#06070a}
-.cm{border-left:2px solid var(--line2);padding:1px 0 2px 7px}
-.cm .who{font-size:10px;letter-spacing:.05em}
+.cm{display:grid;grid-template-columns:28px 1fr;gap:6px 8px;border-left:2px solid var(--line2);padding:2px 0 3px 7px;align-items:start}
+.cm .av{width:28px;height:28px;border:1px solid var(--line2);image-rendering:pixelated;display:block;grid-row:1 / span 2}
+.cm .who{font-size:10px;letter-spacing:.05em;grid-column:2}
 .cm .who span{color:var(--dim);margin-left:6px;font-size:9px}
-.cm p{font-size:11.5px;color:var(--txt2);margin-top:1px;word-break:break-word}
+.cm p{font-size:11.5px;color:var(--txt2);margin:0;word-break:break-word;grid-column:2}
 .cm.mine{border-left-color:var(--amber)}
-.cm.sys{border-left-color:var(--up)}
-.cm.sys p{color:var(--up)}
+.cm.sys{border-left-color:var(--up);grid-template-columns:1fr}
+.cm.sys .av,.cm.sys .who{display:none}
+.cm.sys p{color:var(--up);grid-column:1}
 .cm.in{animation:cmin .3s ease-out}
 @keyframes cmin{0%{opacity:0;transform:translateX(-8px)}100%{opacity:1;transform:none}}
 .chat-in{display:flex;gap:4px;padding:6px 8px;border-top:1px solid var(--line2);background:var(--pnl2)}

@@ -71,6 +71,11 @@ interface ConnectOpts {
   onUri?: (uri: string) => void;
   /** Abort the pairing wait — the picker's cancel button. */
   signal?: AbortSignal;
+  /**
+   * Boot restore: only reuse a relay session UniversalProvider already loaded
+   * from storage. Never open a new QR pairing.
+   */
+  resumeOnly?: boolean;
 }
 
 function appMetadata(): { name: string; description: string; url: string; icons: string[] } {
@@ -132,6 +137,9 @@ export async function connectWalletConnect(opts: ConnectOpts = {}): Promise<Wall
 
   try {
     if (!provider.session) {
+      if (opts.resumeOnly) {
+        throw new WalletError('not_connected', 'No WalletConnect session to resume.');
+      }
       const connecting = provider.connect({
         optionalNamespaces: {
           eip155: {
@@ -157,6 +165,7 @@ export async function connectWalletConnect(opts: ConnectOpts = {}): Promise<Wall
       }
     }
   } catch (err) {
+    if (err instanceof WalletError) throw err;
     throw mapWalletError(err, 'The WalletConnect pairing did not complete.');
   } finally {
     provider.removeListener('display_uri', onDisplayUri);

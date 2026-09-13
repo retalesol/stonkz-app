@@ -31,7 +31,9 @@ let beats = 0;
 export function startLoop(): void {
   on('tick', () => {
     beats++;
-    must('#solpx').textContent = '$' + NATIVE_PRICE.usd.toFixed(2);
+    must('#solpx').textContent = '$' + NATIVE_PRICE.sol.toFixed(2);
+    const ethEl = document.getElementById('ethpx');
+    if (ethEl) ethEl.textContent = '$' + NATIVE_PRICE.eth.toFixed(2);
     for (const c of COINS) paint(c);
     king();
     syncProfile();

@@ -55,7 +55,9 @@ test('the shell renders the oracle element order', async ({ page }) => {
     'walletScrim',
     'txScrim',
     'practiceBadge',
-    'toasts',
+    // Mememan replaced the bottom-centre `#toasts` stack — same slot in the
+    // overlay order (above rank-up), different chrome.
+    'mmAgent',
     'rankup',
   ]);
 });

@@ -40,11 +40,13 @@ function card(c: SimCoin): HTMLElement {
       ><div>
         <div class="cn"><b>${c.sym}</b><span class="nm">${c.name}</span
           ><span class="chg ${ud(c.chg)}" data-f="chg">${pct(c.chg)}</span></div
-        ><div class="cmeta">by <i class="addrlink" data-addr="${attr(c.dev)}">${c.dev}</i> ${DOT} ${ago(c.age)} ${DOT}
-          <span data-f="rep">${c.reps}</span> replies</div
+        ><div class="cmeta">by <i class="addrlink" data-addr="${attr(c.dev)}">${c.dev}</i> ${DOT} ${ago(c.age)}</div
         ><p class="cdesc">${c.desc}</p
-        ><div class="cstats"><span class="mc" data-f="mc">${usd(c.mc)}</span><span>HOLDERS ${num(c.hold)}</span
-          ><span class="cv" data-f="cv">${curve(c) >= 100 ? 'GRADUATED' : curve(c).toFixed(0) + '%'}</span></div
+        ><div class="cstats"
+          ><span class="cv" data-f="cv">${curve(c) >= 100 ? 'GRADUATED' : curve(c).toFixed(0) + '%'}</span
+          ><span data-f="hold">HOLDERS ${num(c.hold)}</span
+          ><span data-f="rep">REPLIES ${num(c.reps)}</span
+          ><span class="mc" data-f="mc">${usd(c.mc)}</span></div
         ></div
       ><i class="cbar" data-f="bar" style="width:${attr(curve(c))}%"></i>`,
   );
@@ -82,7 +84,9 @@ export function paint(c: SimCoin): void {
     ch.className = 'chg ' + ud(c.chg);
   }
   const rep = $('[data-f="rep"]', e);
-  if (rep) rep.textContent = String(c.reps);
+  if (rep) rep.textContent = 'REPLIES ' + num(c.reps);
+  const hold = $('[data-f="hold"]', e);
+  if (hold) hold.textContent = 'HOLDERS ' + num(c.hold);
   const cv = curve(c);
   const cvEl = $('[data-f="cv"]', e);
   if (cvEl) cvEl.textContent = cv >= 100 ? 'GRADUATED' : cv.toFixed(0) + '%';

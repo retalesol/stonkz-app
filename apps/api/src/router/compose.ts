@@ -48,6 +48,13 @@ export interface ComposeQuoteInput {
    * of an ambiguous plan line — flagged in the phase report, not a bug.
    */
   amount: number;
+  /**
+   * Optional atom-precise override for the sell (or buy) input. When set,
+   * `compose` uses this instead of `toAtoms(amount, …)` — needed so a max
+   * sell that survived a float round-trip on the client cannot exceed the
+   * wallet's on-chain ERC-20 balance (which reverts with `"balance"`).
+   */
+  amountAtoms?: bigint;
   row: TokenRow;
   usdPrice: number | null;
   now: number;
@@ -139,6 +146,14 @@ export interface CurveTradeComposition {
   quote: ComposedQuote;
   /** `amount_base` (buy) / `amount_token` (sell) — the curve instruction's own input. */
   curveAmountInAtoms: bigint;
+  /**
+   * Buy only (`null` on sell): the native SOL/ETH atoms the trader pays into
+   * hop 1. Distinct from `curveAmountInAtoms`, which after an aggregator hop
+   * is denominated in *base* (e.g. USDG). `StonkzRouter.buyViaAggregator`
+   * takes this as `msg.value` — passing base atoms there underpays by orders
+   * of magnitude on stable-paired coins.
+   */
+  nativeInAtoms: bigint | null;
   /** The curve instruction's own `min_out`, after `input.slippagePct`. */
   curveMinOutAtoms: bigint;
   /** `null` on the direct-pair fast path; otherwise hop 1's full aggregator response. */
@@ -202,19 +217,27 @@ async function composeCurveQuote(
   let aggregatorQuote: AggregatorQuote | null = null;
   let curveNetBaseOutAtoms: bigint | null = null;
   let curveMinBaseOutAtoms: bigint | null = null;
+  let nativeInAtoms: bigint | null = null;
 
   if (side === 'buy') {
     let baseAtoms: bigint;
     let hop1ImpactPct = 0;
+    const nativeAtoms = toAtoms(amount, nativeDecimals);
+    nativeInAtoms = nativeAtoms;
     if (aggregatorVenue) {
       const client = await requireAggregator(input, aggregatorVenue);
-      const nativeAtoms = toAtoms(amount, nativeDecimals);
-      const agg = await client.quote({
-        inMint: nativeAggregatorMint(net),
-        outMint: row.baseMint,
-        inAmountAtoms: nativeAtoms,
-        slippagePct,
-      });
+      let agg: AggregatorQuote;
+      try {
+        agg = await client.quote({
+          inMint: nativeAggregatorMint(net),
+          outMint: row.baseMint,
+          inAmountAtoms: nativeAtoms,
+          slippagePct,
+        });
+      } catch (err) {
+        if (err instanceof NoRouteError) throw new NoRouteError(native, row.baseSymbol, err);
+        throw err;
+      }
       aggregatorQuote = agg;
       baseAtoms = agg.outAmountAtoms;
       hop1ImpactPct = agg.priceImpactPct;
@@ -231,7 +254,7 @@ async function composeCurveQuote(
     } else {
       // Direct-pair fast path (plan step 86): base already is the native
       // unit, so its atoms are native atoms by construction.
-      baseAtoms = toAtoms(amount, nativeDecimals);
+      baseAtoms = nativeAtoms;
     }
 
     const fill = buyQuote(state, bps, baseAtoms);
@@ -255,7 +278,8 @@ async function composeCurveQuote(
     minOut = fromAtoms(curveMinOutAtoms, row.tokenDecimals);
     impactPct = hop1ImpactPct + curveImpactPct;
   } else {
-    const tokenAtoms = toAtoms(amount, row.tokenDecimals);
+    const tokenAtoms = input.amountAtoms ?? toAtoms(amount, row.tokenDecimals);
+    const tokenInHuman = fromAtoms(tokenAtoms, row.tokenDecimals);
     const fill = sellQuote(state, bps, tokenAtoms);
     if (!fill) throw new NoRouteError(row.sym, row.baseSymbol);
 
@@ -267,21 +291,35 @@ async function composeCurveQuote(
 
     if (aggregatorVenue) {
       const client = await requireAggregator(input, aggregatorVenue);
-      const agg = await client.quote({
-        inMint: row.baseMint,
-        outMint: nativeAggregatorMint(net),
-        inAmountAtoms: fill.netBase,
-        slippagePct,
-      });
+      let agg: AggregatorQuote;
+      try {
+        agg = await client.quote({
+          inMint: row.baseMint,
+          outMint: nativeAggregatorMint(net),
+          inAmountAtoms: fill.netBase,
+          slippagePct,
+        });
+      } catch (err) {
+        if (err instanceof NoRouteError) throw new NoRouteError(row.baseSymbol, native, err);
+        throw err;
+      }
       aggregatorQuote = agg;
       nativeAtoms = agg.outAmountAtoms;
       hop1ImpactPct = agg.priceImpactPct;
     }
 
-    // Pushed in the same [aggregator, curve] order as the buy side and the
-    // legacy indicative path, so `routeLabel` always reads
-    // `JUPITER \u2192 CURVE` / `UNISWAP \u2192 CURVE` / `CURVE` regardless of
-    // which leg the chain executes first.
+    // Chronological execution order on sells: curve first (token → base),
+    // then aggregator (base → native). Buys stay native → base → token.
+    hops.push({
+      venue: 'CURVE',
+      inSymbol: row.sym,
+      outSymbol: row.baseSymbol,
+      inAmount: tokenInHuman,
+      outAmount: fromAtoms(fill.netBase, row.baseDecimals),
+      impactPct: curveImpactPct,
+      feeBps: bps,
+      feeAmount: fromAtoms(fill.fee, row.baseDecimals),
+    });
     if (aggregatorVenue) {
       hops.push({
         venue: aggregatorVenue,
@@ -294,16 +332,6 @@ async function composeCurveQuote(
         feeAmount: 0,
       });
     }
-    hops.push({
-      venue: 'CURVE',
-      inSymbol: row.sym,
-      outSymbol: row.baseSymbol,
-      inAmount: amount,
-      outAmount: fromAtoms(fill.netBase, row.baseDecimals),
-      impactPct: curveImpactPct,
-      feeBps: bps,
-      feeAmount: fromAtoms(fill.fee, row.baseDecimals),
-    });
 
     amountOut = fromAtoms(nativeAtoms, nativeDecimals);
     curveAmountInAtoms = tokenAtoms;
@@ -320,7 +348,7 @@ async function composeCurveQuote(
     net,
     side,
     nativeUnit: native,
-    amountIn: amount,
+    amountIn: side === 'sell' && input.amountAtoms !== undefined ? fromAtoms(input.amountAtoms, row.tokenDecimals) : amount,
     amountOut,
     minOut,
     hops,
@@ -331,7 +359,7 @@ async function composeCurveQuote(
     indicative: false,
     nativeUsd: usdPrice,
   };
-  return { quote, curveAmountInAtoms, curveMinOutAtoms, aggregatorQuote, curveNetBaseOutAtoms, curveMinBaseOutAtoms };
+  return { quote, curveAmountInAtoms, curveMinOutAtoms, aggregatorQuote, curveNetBaseOutAtoms, curveMinBaseOutAtoms, nativeInAtoms };
 }
 
 /**
@@ -442,34 +470,58 @@ async function composeIndicativeQuote(
   const feePct = effFeePctForRow(row, now);
   const hops: QuoteHop[] = [];
   const baseAmount = amount;
-  if (aggregatorVenue) {
-    hops.push({
-      venue: aggregatorVenue,
-      inSymbol: side === 'buy' ? native : row.baseSymbol,
-      outSymbol: side === 'buy' ? row.baseSymbol : native,
-      inAmount: amount,
-      outAmount: baseAmount,
-      impactPct: 0,
-      feeBps: 0,
-      feeAmount: 0,
-    });
-  }
-
   const feeAmount = baseAmount * (feePct / 100);
   const netOfFee = baseAmount - feeAmount;
   const tokenPrice = row.mc / row.supply;
   const tokensOut = tokenPrice > 0 && usdPrice ? (netOfFee * usdPrice) / tokenPrice : 0;
 
-  hops.push({
-    venue: 'CURVE',
-    inSymbol: side === 'buy' ? row.baseSymbol : row.sym,
-    outSymbol: side === 'buy' ? row.sym : row.baseSymbol,
-    inAmount: baseAmount,
-    outAmount: tokensOut,
-    impactPct: 0,
-    feeBps: Math.round(feePct * 100),
-    feeAmount,
-  });
+  if (side === 'buy') {
+    if (aggregatorVenue) {
+      hops.push({
+        venue: aggregatorVenue,
+        inSymbol: native,
+        outSymbol: row.baseSymbol,
+        inAmount: amount,
+        outAmount: baseAmount,
+        impactPct: 0,
+        feeBps: 0,
+        feeAmount: 0,
+      });
+    }
+    hops.push({
+      venue: 'CURVE',
+      inSymbol: row.baseSymbol,
+      outSymbol: row.sym,
+      inAmount: baseAmount,
+      outAmount: tokensOut,
+      impactPct: 0,
+      feeBps: Math.round(feePct * 100),
+      feeAmount,
+    });
+  } else {
+    hops.push({
+      venue: 'CURVE',
+      inSymbol: row.sym,
+      outSymbol: row.baseSymbol,
+      inAmount: baseAmount,
+      outAmount: tokensOut,
+      impactPct: 0,
+      feeBps: Math.round(feePct * 100),
+      feeAmount,
+    });
+    if (aggregatorVenue) {
+      hops.push({
+        venue: aggregatorVenue,
+        inSymbol: row.baseSymbol,
+        outSymbol: native,
+        inAmount: amount,
+        outAmount: baseAmount,
+        impactPct: 0,
+        feeBps: 0,
+        feeAmount: 0,
+      });
+    }
+  }
 
   const label = hops.map((h) => h.venue).join(' \u2192 ');
   return {

@@ -56,6 +56,46 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
     return res.value / LAMPORTS_PER_SOL;
   }
 
+  /**
+   * SPL token balances for an owner, keyed by mint address.
+   * Used by public profiles so holdings are chain-truth when RPC is up.
+   */
+  async splTokenBalances(owner: string): Promise<Map<string, number>> {
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+    const res = await this.call<{
+      value: Array<{
+        account: {
+          data: {
+            parsed?: {
+              info?: {
+                mint?: string;
+                tokenAmount?: { uiAmount: number | null; uiAmountString?: string };
+              };
+            };
+          };
+        };
+      }>;
+    }>('getTokenAccountsByOwner', [
+      owner,
+      { programId: TOKEN_PROGRAM },
+      { encoding: 'jsonParsed', commitment: 'confirmed' },
+    ]);
+    const out = new Map<string, number>();
+    for (const row of res.value ?? []) {
+      const info = row.account?.data?.parsed?.info;
+      const mint = info?.mint;
+      if (!mint) continue;
+      const amt = info?.tokenAmount?.uiAmount;
+      const n =
+        typeof amt === 'number'
+          ? amt
+          : Number(info?.tokenAmount?.uiAmountString ?? 0);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      out.set(mint, (out.get(mint) ?? 0) + n);
+    }
+    return out;
+  }
+
   async healthy(): Promise<boolean> {
     try {
       await this.head();
@@ -63,6 +103,15 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
     } catch {
       return false;
     }
+  }
+
+  /** Raw account data (base64) for curve/PDA reads — `null` when missing. */
+  async getAccountDataBase64(address: string): Promise<string | null> {
+    const res = await this.call<{
+      value: { data: [string, string] } | null;
+    }>('getAccountInfo', [address, { encoding: 'base64', commitment: 'confirmed' }]);
+    const data = res.value?.data?.[0];
+    return typeof data === 'string' && data.length > 0 ? data : null;
   }
 
   /** `getLatestBlockhash` — what `router/solana-tx.ts` stamps onto every composed transaction. */

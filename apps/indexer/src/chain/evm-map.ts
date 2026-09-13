@@ -117,6 +117,16 @@ function routerNative(logs: readonly EvmTxLog[], token: string): number | null {
   return null;
 }
 
+/** Real wallet behind an atomic router trade (Trade.trader is the router). */
+function routerTrader(logs: readonly EvmTxLog[], token: string): string | null {
+  for (const { event } of logs) {
+    if (event.name !== 'AtomicBuy' && event.name !== 'AtomicSell') continue;
+    if (addr(event.args, 'token') !== token) continue;
+    return addr(event.args, 'trader');
+  }
+  return null;
+}
+
 export async function mapEvmTransaction(
   logs: readonly EvmTxLog[],
   ctx: EvmMapContext,
@@ -237,7 +247,9 @@ export async function mapEvmTransaction(
           kind: 'Trade',
           logIndex,
           sym: meta.sym,
-          trader: addr(args, 'trader'),
+          // Routed fills call the launchpad from StonkzRouter, so Trade.trader
+          // is the router. Prefer AtomicBuy/Sell.trader (the wallet).
+          trader: routerTrader(logs, token) ?? addr(args, 'trader'),
           side: bool(args, 'isBuy') ? 'buy' : 'sell',
           nativeAmount:
             routerNative(logs, token) ??

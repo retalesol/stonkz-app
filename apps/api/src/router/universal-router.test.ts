@@ -62,37 +62,28 @@ describe('universal-router: recipient sentinels', () => {
     expect(decoded.amount).toBe(0n);
   });
 
-  it('aggregator buy leg: WRAP_ETH parks WETH at ADDRESS_THIS (intermediate hop), the swap delivers to MSG_SENDER', () => {
+  it('aggregator buy leg: V3_SWAP_EXACT_IN only (local wrap in StonkzRouter), delivers to MSG_SENDER', () => {
     const leg = buildBuyAggregatorLeg(WETH, BASE, FEE_TIER);
-    expect(leg.commands).toBe('0x0b00'); // WRAP_ETH then V3_SWAP_EXACT_IN
-    expect(leg.inputs).toHaveLength(2);
+    expect(leg.commands).toBe('0x00');
+    expect(leg.inputs).toHaveLength(1);
 
-    const wrap = decodeWrapUnwrapInput(leg.inputs[0] as Hex);
-    expect(wrap.recipient.toLowerCase()).toBe(ADDRESS_THIS.toLowerCase());
-    expect(wrap.amount).toBe(CONTRACT_BALANCE);
-
-    const swap = decodeV3SwapInput(leg.inputs[1] as Hex);
+    const swap = decodeV3SwapInput(leg.inputs[0] as Hex);
     expect(swap.recipient.toLowerCase()).toBe(MSG_SENDER.toLowerCase());
     expect(swap.recipient.toLowerCase()).not.toBe(ADDRESS_THIS.toLowerCase());
     expect(swap.payerIsUser).toBe(false);
+    expect(swap.amountIn).toBe(CONTRACT_BALANCE);
     expect(swap.path).toBe(encodeV3Path(WETH, FEE_TIER, BASE));
   });
 
-  it('aggregator sell leg: the swap parks WETH at ADDRESS_THIS with payerIsUser=false, UNWRAP_WETH delivers to MSG_SENDER', () => {
+  it('aggregator sell leg: V3_SWAP_EXACT_IN only (local unwrap in StonkzRouter), delivers WETH to MSG_SENDER', () => {
     const leg = buildSellAggregatorLeg(BASE, WETH, FEE_TIER);
-    expect(leg.commands).toBe('0x000c'); // V3_SWAP_EXACT_IN then UNWRAP_WETH
-    expect(leg.inputs).toHaveLength(2);
+    expect(leg.commands).toBe('0x00');
+    expect(leg.inputs).toHaveLength(1);
 
     const swap = decodeV3SwapInput(leg.inputs[0] as Hex);
-    expect(swap.recipient.toLowerCase()).toBe(ADDRESS_THIS.toLowerCase());
-    // The router just transferred the curve's base proceeds to the Universal
-    // Router itself, so the swap must spend from that balance, not pull from
-    // whoever signed the outer transaction.
+    expect(swap.recipient.toLowerCase()).toBe(MSG_SENDER.toLowerCase());
     expect(swap.payerIsUser).toBe(false);
     expect(swap.path).toBe(encodeV3Path(BASE, FEE_TIER, WETH));
-
-    const unwrap = decodeWrapUnwrapInput(leg.inputs[1] as Hex);
-    expect(unwrap.recipient.toLowerCase()).toBe(MSG_SENDER.toLowerCase());
   });
 
   it('a swap recipient of the trader\u2019s own EOA (the Trading API\u2019s own calldata shape) is never produced by this module', () => {

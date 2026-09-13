@@ -17,3 +17,16 @@
 .foot-legal:hover {
   color: var(--txt);
 }
+
+/* Expandable multi-hop trade rows on the token activity table. */
+tr.tr-hop{cursor:pointer}
+tr.tr-hop:hover td{background:#12161f}
+tr.tr-hop .ven-cell{color:var(--amber2)}
+tr.tr-hop.open .ven-cell{color:var(--amber)}
+.ven-chev{display:inline-block;margin-left:5px;font-size:9px;opacity:.8}
+tr.tr-hops td{padding:0;border-bottom:1px solid #1a2230;background:#080a0e}
+.hop-detail{display:flex;flex-direction:column;gap:3px;padding:6px 10px 8px 18px}
+.hop-leg{display:flex;align-items:baseline;gap:10px;font-size:10.5px;color:var(--txt2)}
+.hop-n{color:var(--amber2);letter-spacing:.08em;min-width:42px}
+.hop-v{color:var(--amber);font-weight:600;min-width:64px}
+.hop-path{color:var(--dim);letter-spacing:.02em}

@@ -2,6 +2,7 @@ import type { Net } from '@stonkz/shared';
 import { WalletError } from './errors.js';
 import { connectEvmWallet, initEvmDiscovery, listEvmWallets, onEvmWalletsChange, type EvmConnectHooks } from './evm.js';
 import { PRACTICE_WALLET_ID, connectPracticeWallet, practiceWalletChoice, practiceWalletEnabled } from './practice.js';
+import { clearLastWallet, rememberLastWallet } from './persist.js';
 import { connectSolanaWallet, listSolanaWallets, onSolanaWalletsChange } from './solana.js';
 import type { ConnectedWallet, WalletChoice } from './types.js';
 
@@ -99,6 +100,7 @@ function adopt(wallet: ConnectedWallet): ConnectedWallet {
     if (address === null) {
       // The wallet locked or revoked us. Drop the session rather than keep
       // rendering an address that can no longer sign.
+      clearLastWallet();
       void disconnectActive();
       return;
     }
@@ -113,25 +115,75 @@ export interface ConnectOptions extends EvmConnectHooks {
   id?: string;
 }
 
+/**
+ * Wait until EIP-6963 / Wallet Standard has announced `id`, or time out.
+ * Extensions often inject a tick after first paint.
+ *
+ * Also resolves MetaMask id drift (`injected:io.metamask` ↔ `injected:window.ethereum`)
+ * and case-insensitive Solana wallet names.
+ */
+export function resolveWalletChoice(net: Net, walletId: string): WalletChoice | undefined {
+  const choices = availableWallets(net).filter((c) => !c.unavailable);
+  const exact = choices.find((c) => c.id === walletId);
+  if (exact) return exact;
+  const lower = walletId.toLowerCase();
+  const byCase = choices.find((c) => c.id.toLowerCase() === lower);
+  if (byCase) return byCase;
+  // MetaMask can announce as EIP-6963 or legacy window.ethereum across reloads.
+  if (lower.includes('metamask') || lower === 'injected:window.ethereum' || lower.startsWith('injected:io.metamask')) {
+    return choices.find((c) => c.kind === 'evm-injected' && /metamask/i.test(c.name));
+  }
+  return undefined;
+}
+
+export function waitForWalletChoice(net: Net, id: string, timeoutMs = 5000): Promise<WalletChoice | null> {
+  const found = (): WalletChoice | undefined => resolveWalletChoice(net, id);
+  const hit = found();
+  if (hit) return Promise.resolve(hit);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      off();
+      resolve(found() ?? null);
+    }, timeoutMs);
+    const off = onAvailableWalletsChange(() => {
+      const next = found();
+      if (!next) return;
+      clearTimeout(timer);
+      off();
+      resolve(next);
+    });
+  });
+}
+
 export async function connectWalletFor(net: Net, opts: ConnectOptions = {}): Promise<ConnectedWallet> {
   const choices = availableWallets(net);
   const id = opts.id ?? preferRealWallet(choices)?.id;
   if (id === undefined) {
     throw new WalletError('no_wallet', noWalletMessage(net));
   }
-  const choice = choices.find((c) => c.id === id);
-  if (choice?.unavailable) throw new WalletError('unconfigured', choice.unavailable);
+  const choice = resolveWalletChoice(net, id) ?? choices.find((c) => c.id === id);
+  if (!choice) {
+    throw new WalletError('no_wallet', noWalletMessage(net));
+  }
+  if (choice.unavailable) throw new WalletError('unconfigured', choice.unavailable);
 
   // Only one live session, so drop the previous one first — otherwise a net
   // switch leaves an authorised extension listening for account changes it
   // will never be asked about again.
   if (active) await disconnectActive();
 
-  if (id === PRACTICE_WALLET_ID) return adopt(connectPracticeWallet(net));
-  if (net === 'SOL') return adopt(await connectSolanaWallet(id));
-  return adopt(
-    await connectEvmWallet(id, opts.onWalletConnectUri ? { onWalletConnectUri: opts.onWalletConnectUri } : {}),
-  );
+  let wallet: ConnectedWallet;
+  if (choice.id === PRACTICE_WALLET_ID) wallet = connectPracticeWallet(net);
+  else if (net === 'SOL') wallet = await connectSolanaWallet(choice.id, { silent: !!opts.silent });
+  else {
+    wallet = await connectEvmWallet(choice.id, {
+      ...(opts.onWalletConnectUri ? { onWalletConnectUri: opts.onWalletConnectUri } : {}),
+      ...(opts.silent ? { silent: true } : {}),
+    });
+  }
+
+  rememberLastWallet({ net, walletId: choice.id, address: wallet.address });
+  return adopt(wallet);
 }
 
 function noWalletMessage(net: Net): string {

@@ -7,8 +7,9 @@ been broadcast to a real chain, and no board data has ever come from a real
 chain event.
 
 Phase B closed the client half of the first gap: real wallets sign and
-broadcast now (§1). What remains is that there is nothing deployed to
-broadcast to (§3), and no chain to read from (§2).
+broadcast now (§1). Robinhood **testnet** now has a live launchpad (§3);
+Solana cluster deploy and RH mainnet remain outstanding. Board data still
+defaults to fixtures until the indexer points at a live cluster (§2).
 
 This file is the single place that says which is which. Every row is checked
 against code, not against a phase's exit notes.
@@ -34,10 +35,10 @@ reports a fill without a wallet having signed one.
 Two caveats apply to every **REAL** in this section, and neither is a
 formality:
 
-1. **No transaction from this repo has ever been broadcast to a real chain by
-   a real wallet.** There is no deployment (§3) and no funded wallet, so there
-   is nothing to broadcast *to*. The code is complete and tested; the last
-   mile is untested by definition.
+1. **End-user wallet broadcast through the product UI is still unproven.**
+   RH **testnet** contracts are deployed and operator-smoked (§3); Solana
+   cluster and RH mainnet are not. A funded browser wallet has not yet driven
+   the staging UI end to end.
 2. **No real wallet has ever driven it.** CI cannot install and authorise a
    browser extension, and Robinhood Wallet is a phone app. `e2e/mock-wallets.ts`
    implements the same standards a real wallet does — the Wallet Standard
@@ -62,11 +63,11 @@ formality:
 | Tip verification (server) | **REAL** | `apps/api/src/social/tips.ts::verifyTip` re-derives sender/recipient/amount from the RPC. A client cannot assert a tip happened or inflate the amount. |
 | Practice keypair | **SIMULATED, hard-gated** | `apps/web/src/wallet/practice.ts` keeps the browser-local keypair as a development convenience and nothing more. Four gates: `VITE_PRACTICE_WALLET=1` (unset by default, and not even `=true` opts in); `vite.config.ts` **fails a production build** with it set unless `VITE_PRACTICE_WALLET_ACK=1`; `wallet/manager.ts` ranks it behind every real wallet and never auto-selects it; and every result carries `simulated: true` behind a persistent, non-dismissible UI badge. It signs real SIWS/SIWE (the cryptography is genuine) and broadcasts nothing. `e2e/wallet.spec.ts` asserts it cannot activate in a default build. |
 
-**Consequence:** the app can now build, sign and broadcast a real transaction
-with a real wallet — but there is nothing deployed for it to transact against
-(§3), and the board it would trade from is fixture-sourced (§2). Trading,
-launching, fee claims and tips still cannot move real funds today, and the
-reason has moved from "the client fakes it" to "nothing is deployed".
+**Consequence:** the client can build and sign real txs. RH **testnet** now
+has contracts to hit (§3); Solana and RH mainnet do not. The public board still
+defaults to fixtures (§2) — staging seeded `BETADOG` for API prepare smoke
+only. Indexer stays `INDEXER_SOURCE=fixtures` until Solana start-slot + chain
+mode can be enabled together.
 
 ## 2. Chain data (board, tape, KOTH, charts)
 
@@ -85,6 +86,10 @@ reason has moved from "the client fakes it" to "nothing is deployed".
 **Consequence:** every price, market cap, holder count, candle, and tape row a
 user would see today traces back to a fixture scenario, not to chain state.
 
+**Solana cluster default:** web and API default to **devnet**
+(`VITE_CLUSTER` / `SOLANA_CLUSTER` + matching RPC URLs). Mainnet is an
+environment switch only — flip cluster + RPC; no code change.
+
 ## 3. On-chain programs
 
 | Surface | Status | Evidence |
@@ -94,8 +99,9 @@ user would see today traces back to a fixture scenario, not to chain state.
 | EVM launchpad + Uniswap v2 migrator + LP burn | **REAL** | `programs/evm`, Foundry tests. |
 | `StonkzRouter` (atomic RH native-in trades) | **REAL** | `programs/evm/src/StonkzRouter.sol`, 20 passing tests, plus one fork test skipped unless `RH_RPC_URL` is set. |
 | 20/70/10 fee split | **REAL, asserted on every fill** | `require!`/`require` identity checks in both chains' buy/sell paths, not just tests. |
-| Deployment tooling | **REAL** | `programs/evm/script/Deploy.s.sol` (chain-guarded, verifies pinned dependencies hold code, authorities required with no defaults) and `programs/solana/scripts/init-deployment.ts` (`initialize` + Raydium config, with the `AmmConfig` derivation cross-checked). Runbook: [`deployment.md`](deployment.md). |
-| Any actual deployment (devnet/testnet/mainnet) | **MISSING** | Nothing in this repo records a deployed program ID or contract address for either chain. The tooling above has never been run against a live cluster. |
+| Deployment tooling | **REAL** | `programs/evm/script/Deploy.s.sol` (mainnet), `DeployTestnet.s.sol` (46630), and `programs/solana/scripts/init-deployment.ts`. Runbook: [`deployment.md`](deployment.md). |
+| Robinhood **testnet** (46630) deployment | **REAL** | Addresses in [`programs/evm/deployments/46630.json`](../programs/evm/deployments/46630.json): UUPS `StonkzLaunchpad` + `PushPriceSource`, `StonkzRouter`, self-deployed V2 factory + migrator. Smoke: create/buy/sell `$BETADOG`, oracle `graduate` + `migrateLiquidity` (LP at `0x…dEaD`), and `upgradeToAndCall` succeeded on-chain. |
+| Solana / RH **mainnet** deployment | **MISSING** | No mainnet program ID or contract address recorded. Solana bytecode remains upgradeable until authority is revoked (`docs/deployment.md` §1.1). |
 | Third-party audit | **MISSING** | Internal review only (`docs/security-review-findings.md`). |
 
 ## 4. Trade routing
@@ -103,7 +109,7 @@ user would see today traces back to a fixture scenario, not to chain state.
 | Surface | Status | Evidence |
 |---|---|---|
 | Solana native-in route (Jupiter quote + curve, atomic) | **REAL** | `apps/api/src/router/`, `routes/trade.ts`. |
-| RH atomic route via `StonkzRouter` | **REAL, UNCONFIGURED** | `routes/trade.ts` returns `atomic: true` when `stonkzRouterDecision` resolves; `RH_ROUTER_ADDRESS` defaults to the zero address, so today every RH trade takes the non-atomic `EvmStep[]` fallback. |
+| RH atomic route via `StonkzRouter` | **REAL on RH testnet staging** | Railway `RH_ROUTER_ADDRESS` / `RH_LAUNCHPAD_ADDRESS` point at 46630 deploy. `POST /trade/prepare` for seeded `BETADOG` returned `atomic: true` → router `0xC414…9513`. Mainnet still defaults to the zero address / non-atomic fallback until a 4663 deploy. |
 | Pinned RH Uniswap v3 fee tiers | **REAL, UNCONFIGURED** | `RH_V3_FEE_TIER_OVERRIDES` is deliberately empty. Required per aggregator-hop base asset, and deliberately never guessed — see `docs/robinhood-chain.md` on the ~1,900 hookless v4 pools carrying 88-100% LP fees. |
 | Non-atomic `EvmStep[]` fallback | **REAL** | Kept intentionally, with a user-visible warning, for the two config gaps above. |
 
@@ -111,18 +117,19 @@ user would see today traces back to a fixture scenario, not to chain state.
 
 | Surface | Status | Evidence |
 |---|---|---|
-| XP / SP / Stonk Optionz ledger | **REAL, server-authoritative** | `apps/api/src/game/ledger.ts` refuses any reason in `CHAIN_VERIFIED_REASONS` without a matching `chain_events` row. No client-mint path found in review. |
-| Streaks, achievements, ranks | **REAL** | Server-side, tested. |
-| Crate opening | **REAL, but HMAC not VRF** | `apps/api/src/game/crates.ts` rolls `HMAC-SHA256(secret, net\|wallet\|tier\|nonce)` with a server nonce. Not client-manipulable, but auditable-only, not publicly verifiable. Security finding M2: **do not market odds until this is a commit-reveal VRF.** |
+| XP / SP / Stonk Optionz ledger | **REAL, server-authoritative** | `apps/api/src/game/ledger.ts` refuses any reason in `CHAIN_VERIFIED_REASONS` without a matching `chain_events` row. Live web hydrates from `GET /rewards` / `GET /me` and never seeds a guest LV-4 ledger (`state/user.ts`). |
+| Streaks, achievements, ranks | **REAL** | Server-side, tested. Client `addXP`/`unlock`/`touchStreak` are no-ops in live mode. |
+| Crate opening | **REAL, but HMAC not VRF** | Live `POST /rewards/crates/:tier/open`. `apps/api/src/game/crates.ts` rolls `HMAC-SHA256(secret, net\|wallet\|tier\|nonce)` with a server nonce. Not client-manipulable, but auditable-only, not publicly verifiable. Security finding M2: **do not market odds until this is a commit-reveal VRF.** |
 | Crate/XP source events | **SIMULATED upstream** | The ledger is real, but the chain events feeding it come from fixtures (§2). |
+| Per-memecoin staking (client/API) | **REAL prepare path, AWAITING DEPLOY** | `POST /stake/{prepare,unstake/prepare,claim/prepare}` compose launchpad instructions (Solana + RH). Settlement fails until programs are deployed (§3). Live UI no longer invents `otherStake` pool weight. |
 
 ## 6. Social
 
 | Surface | Status | Evidence |
 |---|---|---|
 | Follows, wall posts, profile edits (writes) | **REAL** | Live REST against `apps/api` in live mode. |
-| Profile reads / flavour text | **PARTLY SIMULATED** | `docs/phase5-social-notes.md`: other users' profiles still render sim-sourced flavour; only writes are live. |
-| Chat | **REAL** | REST backfill + WS send/receive, with rate limiting and moderation hooks. |
+| Profile reads | **REAL in live mode** | `views/profile.ts` loads `GET /users/:net/:addr` + `GET /wall/:net/:addr`. Sim still uses RNG `memberOf` / `wallOf`. |
+| Chat | **REAL** | REST backfill + WS receive; send requires SIWS/SIWE. Live does not seed fake chatter. Unauthorized toasts ask the user to sign in. |
 | X (Twitter) profile cache | **SIMULATED provider** | Structured for a real API key via env var; runs against a placeholder provider until one is supplied. |
 | OG tags for crawlers | **REAL, unverified in prod** | `apps/api` OG routes + `apps/web/vercel.json` bot rewrite. `/u/:addr` has no net segment so it defaults to `SOL`. Never exercised against a live Vercel deploy. |
 | Legal / risk disclosure | **PLACEHOLDER TEXT** | Footer-linked modal exists. Copy is explicitly placeholder and has had no legal review. |

@@ -2,8 +2,6 @@ import {
   SUPPLY,
   inCashback,
   liq,
-  xpForFeeClaim,
-  xpForTrade,
   type CrateTier,
   type Fill,
   type Lane,
@@ -11,17 +9,38 @@ import {
   type Quote,
   type QuoteHop,
   type Wallet,
+  crateBy,
+  RAR,
 } from '@stonkz/shared';
-import { authHeader, ensureSession, sessionWallet } from '../app/session.js';
+import {
+  authHeader,
+  clearSession,
+  ensureSession,
+  invalidateAccessToken,
+  sessionWallet,
+} from '../app/session.js';
 import { signAndConfirm, signPermit, type SellPermit, type SignPayload, type UiStep } from '../app/signer.js';
 import { emit } from '../lib/bus.js';
-import { shortAddr } from '../lib/fmt.js';
+import { clock, shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
-import { COINS, bySym, pushTrade, toFill as fillFromTrade, type Holder, type SimCoin, type Trade } from '../state/coins.js';
-import { creditTokens, noteTrade } from '../state/holdings.js';
-import { addXP, saveUser, unlock, USER } from '../state/user.js';
+import { COINS, bySym, pushTrade, toFill as fillFromTrade, type Holder, type SimCoin, type Trade, type TradeHop } from '../state/coins.js';
+import { creditTokens, holdOf, noteTrade, HOLD } from '../state/holdings.js';
+import { syncHoldingFromChain } from './live-holding.js';
+import { ensureStake, stakeOf } from '../state/stake.js';
+import { rememberIdentity } from '../lib/identity.js';
+import {
+  USER,
+  hydrateRewards,
+  pushDrop,
+  resetLiveRewards,
+  saveUser,
+  unlock,
+} from '../state/user.js';
+import { applySettings, saveSettings, settingsPayload } from '../state/settings.js';
+import { fillCandleGaps, mergeFillIntoSeries } from '../lib/candles.js';
 import { NATIVE_PRICE, WALLET, selectNet } from '../state/wallet.js';
 import { activeWallet } from '../wallet/index.js';
+import { fetchRewards, openCrateLive, type LiveRewardsSnapshot } from './social.js';
 import { simApi } from './sim.js';
 import type {
   ClaimResult,
@@ -35,7 +54,7 @@ import type {
 } from './types.js';
 
 /**
- * The live adapter — read path (plan step 62-70).
+ * The live adapter — read path (plan step 62-70) plus write path.
  *
  * `ready()`, `startStream()`/`stopStream()`, `watchToken()`/`unwatchToken()`
  * and `search()` are real: they replace `COINS`/`RAW`, `histOf`/`seedSeries`,
@@ -43,29 +62,14 @@ import type {
  * `GET /tokens`, `GET /tokens/:sym/{candles,trades,holders}`, `GET /tape` and
  * the `board`/`tape`/`token:{sym}` WS channels.
  *
- * `quote`/`trade`/`connect`/`launch`/`claimCreatorFees`/`claimableFees` are
- * real as of Phase 2.C: `GET /tokens/:sym/quote`, `POST /trade/prepare`,
- * `POST /launch/{prepare,confirm}` and `GET /fees` + `POST
- * /fees/claim/prepare`. `disconnect`/`stake`/`unstake`/`claimStake`/
- * `openCrate` stay on `simApi` — staking, crates and XP ceremonies have no
- * live endpoint yet, which is why `api/index.ts`'s footer disclosure still
- * names them.
+ * Writes (`quote`/`trade`/`connect`/`launch`/`claimCreatorFees`/`claimableFees`/
+ * `stake`/`unstake`/`claimStake`/`openCrate`) hit the API. Staking prepares
+ * real program instructions; settlement still awaits program deploy (§3).
+ * Crates and XP hydrate from `GET /rewards` — never from the sim seed.
  *
  * Every write here needs a session (`app/session.ts`'s SIWS/SIWE JWT, signed
  * by the connected wallet as of Phase B) and a real signature and broadcast
  * (`app/signer.ts`, or `modals/steps.ts` when a plan is more than one step).
- * The prepared transaction that leaves this module is the one the wallet
- * signs, byte for byte — nothing here re-composes a payload.
- *
- * One thing is still local: the post-fill *state patch*. `applyConfirmedTrade`
- * moves the coin's market cap from the numbers `/trade/prepare` composed
- * rather than re-reading the curve off chain, because §2 of
- * `docs/real-vs-simulated.md` is still open — the board's numbers come from
- * the indexer, and the indexer still reads fixtures. The transaction is real;
- * the number that appears a moment later is the API's own arithmetic, and it
- * gets overwritten by the next `refreshBoard()` poll either way.
- *
- * @see plan step 30, plan step 62-70, plan step 95-99
  */
 
 const BASE = import.meta.env['VITE_API_URL'] ?? '';
@@ -99,6 +103,9 @@ interface ApiToken {
   x?: string;
   web?: string;
   tg?: string;
+  image?: string;
+  mint?: string;
+  tradeable?: boolean;
 }
 
 interface ApiTokensResponse {
@@ -129,6 +136,9 @@ interface ApiTradeRow {
   w: string;
   v: number;
   cb: boolean;
+  sig?: string;
+  /** Base-asset amount when known (curve hop size). */
+  base?: number;
 }
 
 interface ApiTradesResponse {
@@ -139,10 +149,16 @@ interface ApiHolderRow {
   wallet: string;
   amount: number;
   pct: number;
+  costNative?: number;
+  curve?: boolean;
 }
 
 interface ApiHoldersResponse {
   holders: ApiHolderRow[];
+  holderCount?: number;
+  source?: 'explorer' | 'rpc' | 'db';
+  /** Launchpad / curve vault address when known (RH). */
+  curveWallet?: string;
 }
 
 interface ApiFillPayload {
@@ -165,7 +181,10 @@ interface ApiTapeResponse {
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path);
-  if (!res.ok) throw new Error(`live api: GET ${path} -> ${res.status}`);
+  if (!res.ok) {
+    const { code, detail } = await readErrorBody(res);
+    throw new LiveApiError(code, detail || `GET ${path} -> ${res.status}`, res.status);
+  }
   return (await res.json()) as T;
 }
 
@@ -197,7 +216,12 @@ async function readErrorBody(res: Response): Promise<{ code: string; detail: str
 /** An authenticated `GET` — `/me`, `/fees` — behind the SIWS/SIWE session. */
 async function getJsonAuthed<T>(path: string, net: Net): Promise<T> {
   await ensureSession(BASE, net);
-  const res = await fetch(BASE + path, { headers: authHeader(net) });
+  let res = await fetch(BASE + path, { headers: authHeader(net) });
+  if (res.status === 401) {
+    invalidateAccessToken();
+    await ensureSession(BASE, net);
+    res = await fetch(BASE + path, { headers: authHeader(net) });
+  }
   if (!res.ok) {
     const { code, detail } = await readErrorBody(res);
     throw new LiveApiError(code, detail, res.status);
@@ -208,11 +232,20 @@ async function getJsonAuthed<T>(path: string, net: Net): Promise<T> {
 /** An authenticated `POST` with a JSON body — every write in this module. */
 async function postJson<T>(path: string, body: unknown, net: Net): Promise<T> {
   await ensureSession(BASE, net);
-  const res = await fetch(BASE + path, {
+  let res = await fetch(BASE + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader(net) },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) {
+    invalidateAccessToken();
+    await ensureSession(BASE, net);
+    res = await fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader(net) },
+      body: JSON.stringify(body),
+    });
+  }
   if (!res.ok) {
     const { code, detail } = await readErrorBody(res);
     throw new LiveApiError(code, detail, res.status);
@@ -343,7 +376,19 @@ interface ApiClaimPrepareRh {
 type ApiClaimPrepare = ApiClaimPrepareSol | ApiClaimPrepareRh;
 
 interface ApiMeResponse {
+  username?: string | null;
+  bio?: string | null;
+  avatarUrl?: string | null;
   native: { unit: string; balance: number | null; usdPrice: number | null; usdValue: number | null };
+  settings?: {
+    slip: number;
+    prio: number;
+    mev: string;
+    mevTip: number;
+    cap: number;
+    defBuy: number;
+    confirm: boolean;
+  } | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -352,9 +397,13 @@ interface ApiMeResponse {
 /* (`apps/api/src/routes/serialise.ts`), so this is a reshape, not a guess.    */
 /* -------------------------------------------------------------------------- */
 
+function isApiToken(t: unknown): t is ApiToken {
+  return !!t && typeof t === 'object' && typeof (t as ApiToken).sym === 'string';
+}
+
 function toSimCoin(t: ApiToken): SimCoin {
   return {
-    id: t.id,
+    id: t.id ?? t.seed ?? 0,
     sym: t.sym,
     name: t.name,
     desc: t.desc,
@@ -376,6 +425,9 @@ function toSimCoin(t: ApiToken): SimCoin {
     ...(t.x !== undefined ? { x: t.x } : {}),
     ...(t.web !== undefined ? { web: t.web } : {}),
     ...(t.tg !== undefined ? { tg: t.tg } : {}),
+    ...(t.image ? { image: t.image } : {}),
+    ...(t.mint ? { mint: t.mint } : {}),
+    ...(t.tradeable !== undefined ? { tradeable: t.tradeable } : {}),
     el: null,
     h: null,
     hv: null,
@@ -396,6 +448,8 @@ function patchCoin(c: SimCoin, t: ApiToken): void {
   c.cashback = !!t.cashback;
   if (t.cbStart !== undefined) c.cbStart = t.cbStart;
   if (t.tfee !== undefined) c.tfee = t.tfee;
+  if (t.mint) c.mint = t.mint;
+  if (t.tradeable !== undefined) c.tradeable = t.tradeable;
   const prevLane = c.lane;
   c.lane = t.lane;
   if (prevLane !== t.lane) emit('lane', { sym: c.sym, lane: t.lane });
@@ -404,17 +458,63 @@ function patchCoin(c: SimCoin, t: ApiToken): void {
 /** Candle closes -> the market-cap series `drawTokenChart` already draws. */
 function applyCandles(c: SimCoin, candles: ApiCandle[]): void {
   const supply = c.supply || SUPPLY;
-  c.h = candles.map((k) => k.c * supply);
-  // `v` is USD notional per bucket — the same scale the sim's synthetic
-  // volume bars approximated, now the real thing. `plan step 63`
-  c.hv = candles.map((k) => k.v);
+  const filled = fillCandleGaps(
+    candles.map((k) => ({ t: k.t, c: k.c, v: k.v })),
+    60_000,
+  );
+  c.h = filled.map((k) => k.c * supply);
+  c.hv = filled.map((k) => k.v);
 }
 
 function venueFor(c: SimCoin): string {
-  return c.lane === 'grad' ? 'DEX' : 'CURVE';
+  if (c.lane === 'grad') return 'DEX';
+  const base = (c.base || '').toUpperCase();
+  const native = c.net === 'RH' ? 'ETH' : 'SOL';
+  const wrapped = c.net === 'RH' ? 'WETH' : 'WSOL';
+  if (!base || base === native || base === wrapped) return 'CURVE';
+  return c.net === 'RH' ? 'UNISWAP \u2192 CURVE' : 'JUPITER \u2192 CURVE';
+}
+
+/** Rebuild hop legs for a fill when the quote is gone but the base is known. */
+function hopsForTrade(
+  c: SimCoin,
+  side: 'buy' | 'sell',
+  nativeInOut: number,
+  tok: number,
+  baseAmt?: number,
+): TradeHop[] | undefined {
+  const route = venueFor(c);
+  if (!route.includes('\u2192')) return undefined;
+  const native = c.net === 'RH' ? 'ETH' : 'SOL';
+  const base = (c.base || (c.net === 'RH' ? 'USDG' : 'BASE')).toUpperCase();
+  const agg = c.net === 'RH' ? 'UNISWAP' : 'JUPITER';
+  const mid = baseAmt && baseAmt > 0 ? baseAmt : nativeInOut;
+  if (side === 'buy') {
+    return [
+      { venue: agg, inSymbol: native, outSymbol: base, inAmount: nativeInOut, outAmount: mid },
+      { venue: 'CURVE', inSymbol: base, outSymbol: c.sym, inAmount: mid, outAmount: tok },
+    ];
+  }
+  return [
+    { venue: 'CURVE', inSymbol: c.sym, outSymbol: base, inAmount: tok, outAmount: mid },
+    { venue: agg, inSymbol: base, outSymbol: native, inAmount: mid, outAmount: nativeInOut },
+  ];
+}
+
+function hopsFromQuote(quote: Quote): TradeHop[] | undefined {
+  if (!quote.hops.length || quote.hops.length < 2) return undefined;
+  return quote.hops.map((h) => ({
+    venue: h.venue,
+    inSymbol: h.inSymbol,
+    outSymbol: h.outSymbol,
+    inAmount: h.inAmount,
+    outAmount: h.outAmount,
+  }));
 }
 
 function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
+  const side = r.buy ? 'buy' : 'sell';
+  const hops = hopsForTrade(c, side, r.sol, r.tok, r.base);
   return {
     t: new Date(r.t),
     buy: r.buy,
@@ -423,22 +523,50 @@ function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
     mc: r.mc,
     cb: !!r.cb,
     w: r.cb ? 'CASHBACK' : shortAddr(r.w),
+    ...(r.cb ? {} : { addr: r.w }),
     v: venueFor(c),
+    ...(hops ? { hops } : {}),
+    ...(r.sig ? { sig: r.sig } : {}),
   };
 }
 
-function mapHolders(c: SimCoin, rows: ApiHolderRow[]): Holder[] {
-  let left = 100;
+function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Holder[] {
+  const curveAddr = (curveWallet || import.meta.env['VITE_RH_LAUNCHPAD_ADDRESS'] || '').toLowerCase();
+  let covered = 0;
+  let sawCurve = false;
+
   const out: Holder[] = rows.map((r) => {
-    left -= r.pct;
-    const isDev = r.wallet === c.dev;
+    covered += r.pct;
+    const addr = (r.wallet || '').toLowerCase();
+    const isCurve = !!r.curve || (!!curveAddr && addr === curveAddr);
+    if (isCurve) sawCurve = true;
+    const isDev =
+      !isCurve &&
+      !!c.dev &&
+      (r.wallet === c.dev ||
+        (!!c.mint && r.wallet === c.mint) ||
+        addr === c.dev.toLowerCase());
     return {
-      w: shortAddr(r.wallet),
+      w: isCurve ? 'BONDING CURVE' : shortAddr(r.wallet),
+      ...(isCurve ? {} : { addr: r.wallet }),
       p: r.pct,
-      tag: isDev ? (['DEV', 'dev'] as const) : r.pct > 3 ? (['WHALE', 'whl'] as const) : null,
+      tag: isCurve
+        ? (['CURVE', 'bc'] as const)
+        : isDev
+          ? (['DEV', 'dev'] as const)
+          : r.pct > 3
+            ? (['WHALE', 'whl'] as const)
+            : null,
+      ...(isCurve ? { curve: true as const } : {}),
     };
   });
-  out.push({ w: 'BONDING CURVE', p: Math.max(0, left), tag: ['CURVE', 'bc'], curve: true });
+
+  // Residual only when the API omitted the vault and a meaningful share is
+  // unaccounted for — never invent a 0% CURVE row beside a mis-tagged whale.
+  const left = 100 - covered;
+  if (!sawCurve && left > 0.5) {
+    out.push({ w: 'BONDING CURVE', p: left, tag: ['CURVE', 'bc'], curve: true });
+  }
   return out;
 }
 
@@ -462,9 +590,33 @@ function toFill(p: ApiFillPayload): Fill {
 /* REST                                                                        */
 /* -------------------------------------------------------------------------- */
 
-async function fetchTokens(net: Net): Promise<ApiToken[]> {
-  const res = await getJson<ApiTokensResponse>('/tokens?net=' + net + '&limit=500');
-  return res.tokens;
+/** Disconnected guests see both chains; a connected wallet scopes the board. */
+type BoardScope = Net | 'ALL';
+
+function boardScope(): BoardScope {
+  return WALLET.on ? WALLET.net : 'ALL';
+}
+
+async function fetchTokens(net: BoardScope): Promise<ApiToken[]> {
+  try {
+    const res = await getJson<ApiTokensResponse>('/tokens?net=' + net + '&limit=500');
+    return Array.isArray(res.tokens) ? res.tokens.filter(isApiToken) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Footer SOL + ETH marks from `GET /native-price`. */
+async function refreshNativePrices(): Promise<void> {
+  try {
+    const res = await getJson<{ SOL: number | null; ETH: number | null }>('/native-price');
+    if (typeof res.SOL === 'number' && res.SOL > 0) NATIVE_PRICE.sol = res.SOL;
+    if (typeof res.ETH === 'number' && res.ETH > 0) NATIVE_PRICE.eth = res.ETH;
+    NATIVE_PRICE.usd = WALLET.net === 'RH' ? NATIVE_PRICE.eth : NATIVE_PRICE.sol;
+    emit('tick');
+  } catch {
+    // Keep last marks; the footer just stays stale until the next poll.
+  }
 }
 
 async function fetchToken(net: Net, sym: string): Promise<ApiToken | null> {
@@ -538,7 +690,9 @@ function disconnectWs(): void {
 function onWsFrame(frame: { channel: string; data: Record<string, unknown> }): void {
   const { channel, data } = frame;
   const net = data['net'] as Net | undefined;
-  if (net !== undefined && net !== WALLET.net) return;
+  const scope = boardScope();
+  // Guest board is cross-chain; connected board only accepts the wallet's net.
+  if (net !== undefined && scope !== 'ALL' && net !== scope) return;
 
   if (channel === 'board') return onBoardEvent(data);
   if (channel === 'tape') return onTapeEvent(data);
@@ -556,6 +710,8 @@ export interface LiveChatFrame {
   wallet: string;
   text: string;
   createdAtMs: number;
+  username?: string | null;
+  avatarUrl?: string | null;
 }
 
 const chatHandlers = new Map<string, Set<(msg: LiveChatFrame) => void>>();
@@ -569,6 +725,8 @@ function onChatFrame(channel: string, data: Record<string, unknown>): void {
     wallet: String(data['wallet']),
     text: String(data['text']),
     createdAtMs: Number(data['createdAtMs']),
+    username: data['username'] != null ? String(data['username']) : null,
+    avatarUrl: data['avatarUrl'] != null ? String(data['avatarUrl']) : null,
   };
   for (const h of handlers) h(msg);
 }
@@ -594,9 +752,10 @@ export function subscribeChatRoom(net: Net, room: string, onMessage: (msg: LiveC
 
 function onBoardEvent(data: Record<string, unknown>): void {
   const sym = data['sym'] as string | undefined;
+  const eventNet = (data['net'] as Net | undefined) ?? WALLET.net;
   switch (data['type']) {
     case 'token_created':
-      if (sym && !bySym(sym)) void handleTokenCreated(sym);
+      if (sym && !bySym(sym)) void handleTokenCreated(sym, eventNet);
       return;
     case 'lane_move': {
       const c = sym ? bySym(sym) : null;
@@ -629,8 +788,8 @@ function onBoardEvent(data: Record<string, unknown>): void {
   }
 }
 
-async function handleTokenCreated(sym: string): Promise<void> {
-  const t = await fetchToken(WALLET.net, sym);
+async function handleTokenCreated(sym: string, net: Net): Promise<void> {
+  const t = await fetchToken(net, sym);
   if (!t || bySym(t.sym)) return;
   const c = toSimCoin(t);
   COINS.push(c);
@@ -651,6 +810,8 @@ function onTokenEvent(sym: string, data: Record<string, unknown>): void {
       const f = data['payload'] as ApiFillPayload;
       c.lastMc = c.mc;
       c.mc = f.mc;
+      const side = f.buy ? 'buy' : 'sell';
+      const hops = hopsForTrade(c, side, f.sol, f.tok);
       pushTrade(c, {
         buy: f.buy,
         sol: f.sol,
@@ -658,8 +819,20 @@ function onTokenEvent(sym: string, data: Record<string, unknown>): void {
         mc: f.mc,
         cb: !!f.cb,
         w: f.cb ? 'CASHBACK' : shortAddr(f.w),
+        ...(f.cb ? {} : { addr: f.w }),
         v: venueFor(c),
+        ...(hops ? { hops } : {}),
+        ...(f.sig ? { sig: f.sig } : {}),
       });
+      // Keep the open chart moving with the tape — merge into the last bucket
+      // so we do not invent a new "candle" per fill.
+      if (c.h && c.hv) {
+        mergeFillIntoSeries(c.h, c.hv, f.mc, f.sol * (NATIVE_PRICE.usd || 0));
+        if (c.h.length > 240) {
+          c.h.shift();
+          c.hv.shift();
+        }
+      }
       emit('tick');
       return;
     }
@@ -696,14 +869,14 @@ function onTokenEvent(sym: string, data: Record<string, unknown>): void {
 }
 
 async function refreshBoard(): Promise<void> {
-  const net = WALLET.net;
+  const scope = boardScope();
   let list: ApiToken[];
   try {
-    list = await fetchTokens(net);
+    list = await fetchTokens(scope);
   } catch {
     return; // A transient poll failure is not worth surfacing mid-session.
   }
-  if (net !== WALLET.net) return; // The user switched nets while this was in flight.
+  if (scope !== boardScope()) return; // Connect/disconnect (or net switch) while in flight.
 
   let grew = false;
   for (const t of list) {
@@ -715,13 +888,28 @@ async function refreshBoard(): Promise<void> {
       grew = true;
     }
   }
+  // Connected scope is a filter — drop coins from the other chain that lingered.
+  if (scope !== 'ALL') {
+    for (let i = COINS.length - 1; i >= 0; i--) {
+      const c = COINS[i]!;
+      if (c.net && c.net !== scope) {
+        COINS.splice(i, 1);
+        grew = true;
+      }
+    }
+  }
   if (grew) emit('coins');
   else emit('tick');
 }
 
 function startPolling(): void {
   stopPolling();
-  pollTimer = window.setInterval(() => void refreshBoard(), 5000);
+  let n = 0;
+  pollTimer = window.setInterval(() => {
+    void refreshBoard();
+    // Native marks change slowly — refresh every ~30s with the board poll.
+    if (++n % 6 === 0) void refreshNativePrices();
+  }, 5000);
 }
 
 function stopPolling(): void {
@@ -732,7 +920,7 @@ function stopPolling(): void {
 }
 
 /** Seed the tape with the last real fills before the WS starts pushing more. */
-async function seedTape(net: Net): Promise<void> {
+async function seedTape(net: BoardScope): Promise<void> {
   try {
     const res = await getJson<ApiTapeResponse>('/tape?net=' + net + '&limit=16');
     for (const f of [...res.fills].reverse()) emit('fill', { fill: toFill(f), animate: false });
@@ -742,19 +930,19 @@ async function seedTape(net: Net): Promise<void> {
   }
 }
 
-/** Full reload on a net switch: new board, fresh tape seed, same WS/poll. */
-async function reloadForNet(net: Net): Promise<void> {
+/** Full reload for connect / disconnect / net switch: new board + tape seed. */
+async function reloadBoard(scope: BoardScope): Promise<void> {
   let list: ApiToken[];
   try {
-    list = await fetchTokens(net);
+    list = await fetchTokens(scope);
   } catch {
     list = [];
   }
-  if (net !== WALLET.net) return;
+  if (scope !== boardScope()) return;
   COINS.length = 0;
   for (const t of list) COINS.push(toSimCoin(t));
   emit('coins');
-  void seedTape(net);
+  void seedTape(scope);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -804,14 +992,14 @@ async function signTradePlan(
   title: string,
   sym: string,
   body: Record<string, unknown>,
-): Promise<Quote> {
+): Promise<{ quote: Quote; signature: string | null }> {
   if (!prep.atomic) {
     const steps: UiStep[] = prep.steps.map((s) => ({
       description: s.description,
       payload: () => evmPayload(s),
     }));
     await openSteps(net, title, steps, prep.warning);
-    return prep.quote;
+    return { quote: prep.quote, signature: null };
   }
   if (prep.net === 'RH' && prep.permitTypedData) {
     const permitTypedData = prep.permitTypedData;
@@ -823,7 +1011,7 @@ async function signTradePlan(
       call: null,
       permit: null,
     };
-    await openSteps(
+    const last = await openSteps(
       net,
       title,
       [
@@ -851,37 +1039,51 @@ async function signTradePlan(
       'Two signatures, one transaction: the first is an off-chain permit so the router can move your ' +
         'tokens without a separate approval transaction. Only the second one settles on chain.',
     );
-    return confirmed.quote;
+    return { quote: confirmed.quote, signature: last.signature };
   }
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
-  return prep.quote;
+  const { signature } = await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  return { quote: prep.quote, signature };
 }
 
 /** Apply a confirmed trade to local state from the exact numbers `/trade/prepare` composed. */
-function applyConfirmedTrade(c: SimCoin, side: 'buy' | 'sell', amountIn: number, quote: Quote, net: Net): Fill {
+function applyConfirmedTrade(
+  c: SimCoin,
+  side: 'buy' | 'sell',
+  amountIn: number,
+  quote: Quote,
+  net: Net,
+  signature?: string,
+): Fill {
   const buy = side === 'buy';
-  // No real chain to read the post-trade curve back from (see this module's
-  // header comment) — approximate the price move the same way `sim.ts`'s
-  // `trade()` always has, except the size of the move is real: `amountIn`
-  // and `liq(c)` both come from this fill, not a random walk.
+  // Prefer server `/trade/confirm` + chain sync for the next quote; the local
+  // mc nudge is display-only until the board refresh lands.
   const push = (amountIn * NATIVE_PRICE.usd) / Math.max(1, liq(c));
   c.lastMc = c.mc;
   c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
   const tok = buy ? quote.amountOut : (quote.hops[0] as QuoteHop).inAmount;
+  const hops = hopsFromQuote(quote) ?? hopsForTrade(c, side, amountIn, tok);
   const t = pushTrade(c, {
     buy,
     sol: amountIn,
     tok,
     mc: c.mc,
     w: shortAddr(sessionWallet(net)),
-    v: quote.routeLabel,
+    addr: sessionWallet(net),
+    v: quote.routeLabel || venueFor(c),
+    ...(hops ? { hops } : {}),
+    ...(signature ? { sig: signature } : {}),
   });
-  noteTrade(c, buy, amountIn);
-  addXP(xpForTrade(amountIn), (buy ? 'BUY ' : 'SELL ') + c.sym);
+  noteTrade(c, buy, amountIn, tok);
+  // XP is server-authoritative in live mode — `addXP` is a no-op, and the
+  // ledger credits on the matching chain_events row once the indexer sees it.
   unlock('first');
   if (amountIn * NATIVE_PRICE.usd >= 1000) unlock('whale');
   if (inCashback(c)) unlock('cashback');
   emit('coins');
+  // Prefer the chain balance over optimistic math — MetaMask is the truth.
+  if (net === 'RH' && c.mint) {
+    void syncHoldingFromChain(c, sessionWallet(net));
+  }
   return fillFromTrade(c, t);
 }
 
@@ -889,11 +1091,21 @@ async function liveTrade(quote: Quote): Promise<Fill> {
   const c = bySym(quote.sym);
   if (!c) throw new Error('unknown ticker ' + quote.sym);
   const net = quote.net;
-  const body = { sym: quote.sym, side: quote.side, amount: quote.amountIn };
+  const body = {
+    sym: quote.sym,
+    side: quote.side,
+    amount: quote.amountIn,
+    ...settingsPayload(),
+  };
   const prep = await postJson<ApiTradePrepare>('/trade/prepare', body, net);
   const title = (quote.side === 'buy' ? 'BUY ' : 'SELL ') + c.sym + (net === 'RH' ? ' \u00b7 ROBINHOOD CHAIN' : '');
-  const confirmedQuote = await signTradePlan(net, prep, title, c.sym, body);
-  return applyConfirmedTrade(c, quote.side, quote.amountIn, confirmedQuote, net);
+  const { quote: confirmedQuote, signature } = await signTradePlan(net, prep, title, c.sym, body);
+  // Re-sync curve reserves from chain so the next sell quote is not stuck on
+  // empty DB reserves if the indexer lags.
+  if (signature) {
+    void postJson('/trade/confirm', { sym: c.sym, signature, txHash: signature }, net).catch(() => undefined);
+  }
+  return applyConfirmedTrade(c, quote.side, quote.amountIn, confirmedQuote, net, signature ?? undefined);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -995,8 +1207,6 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
     noteTrade(c, true, draft.buy);
   }
 
-  addXP(150, 'LAUNCH ' + c.sym);
-  if (draft.cashback) addXP(150, 'CASHBACK LAUNCH');
   unlock('deploy');
   emit('coins');
   return c;
@@ -1080,11 +1290,203 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
   if (res.native > 0) {
     WALLET.sol += res.native;
     USER.feesClaimed = (USER.feesClaimed ?? 0) + res.native;
-    addXP(xpForFeeClaim(res.native), 'FEE CLAIM');
     saveUser();
     emit('wallet');
   }
   return res;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Rewards hydrate + crates                                                    */
+/* -------------------------------------------------------------------------- */
+
+function applyRewardsSnap(snap: LiveRewardsSnapshot): void {
+  hydrateRewards({
+    xp: snap.xp,
+    sp: snap.sp,
+    optionz: snap.optionz,
+    streak: snap.streak,
+    crates: snap.crates.map((c) => ({ tier: c.tier as CrateTier, readyAt: c.readyAt })),
+    dropLog: snap.dropLog.map((d) => ({ at: d.at, tier: d.tier, label: d.label })),
+    achievements: snap.achievements.map((a) => ({
+      key: a.key as import('@stonkz/shared').AchievementKey,
+      unlockedAt: a.unlockedAt,
+    })),
+  });
+}
+
+async function hydrateLiveRewards(net: Net): Promise<void> {
+  try {
+    const snap = await fetchRewards(net);
+    applyRewardsSnap(snap);
+  } catch {
+    // Guest / declined sign-in — stay at empty guest ledger.
+  }
+}
+
+async function liveOpenCrate(tier: CrateTier): Promise<CrateResult> {
+  const net = WALLET.net;
+  const res = await openCrateLive(net, tier);
+  const crate = crateBy(tier);
+  const dropIndex = Math.max(
+    0,
+    RAR.findIndex((r) => r[0] === res.rarity),
+  );
+  const kind: 'S' | 'I' = res.item ? 'I' : 'S';
+  const out: CrateResult = {
+    tier,
+    kind,
+    amount: res.optionz,
+    item: res.item ?? '',
+    label: res.label,
+    dropIndex: dropIndex < 0 ? 0 : dropIndex,
+    xp: res.xp,
+  };
+  USER.optionz = res.optionzTotal;
+  USER.crates[tier] = res.readyAt;
+  if (crate) pushDrop({ t: clock(), k: tier, r: res.label, col: crate.col });
+  saveUser();
+  // Re-hydrate rank/XP from the server so ceremonies match the ledger.
+  await hydrateLiveRewards(net);
+  return out;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stake — prepare + sign; settlement awaits program deploy                    */
+/* -------------------------------------------------------------------------- */
+
+interface ApiStakePrepareSol {
+  net: 'SOL';
+  sym: string;
+  action: string;
+  transaction: string;
+  lastValidBlockHeight: number;
+  amount?: number;
+  days?: number;
+}
+
+interface ApiStakePrepareRh {
+  net: 'RH';
+  sym: string;
+  action: string;
+  to: string;
+  data: string;
+  value: string;
+  amount?: number;
+  days?: number;
+}
+
+type ApiStakePrepare = ApiStakePrepareSol | ApiStakePrepareRh;
+
+async function liveStake(input: StakeInput): Promise<void> {
+  const net = WALLET.net;
+  const prep = await postJson<ApiStakePrepare>(
+    '/stake/prepare',
+    { sym: input.sym, amount: input.amount, days: input.days },
+    net,
+  );
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  const c = bySym(input.sym);
+  if (!c) return;
+  const st = ensureStake(input.sym);
+  const h = holdOf(input.sym);
+  const amt = Math.min(input.amount, h ? h.tok : 0);
+  if (amt <= 0) return;
+  st.amt += amt;
+  st.days = input.days;
+  st.mult = input.mult;
+  st.until = input.days ? Date.now() + input.days * 24 * 60 * 60 * 1000 : 0;
+  if (h) {
+    h.cost *= Math.max(0, 1 - amt / h.tok);
+    h.tok -= amt;
+    if (h.tok < 1) HOLD.splice(HOLD.indexOf(h), 1);
+  }
+  saveUser();
+  emit('portfolio');
+  await hydrateLiveStake(input.sym);
+}
+
+async function liveUnstake(sym: string): Promise<number> {
+  const st = stakeOf(sym);
+  if (!st || st.amt <= 0) return 0;
+  if (st.until && Date.now() < st.until) {
+    throw new LiveApiError('still_locked', 'LOCKED UNTIL ' + new Date(st.until).toLocaleDateString(), 422);
+  }
+  const amt = st.amt;
+  const net = WALLET.net;
+  const prep = await postJson<ApiStakePrepare>('/stake/unstake/prepare', { sym, amount: amt }, net);
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  st.amt = 0;
+  st.mult = 1;
+  st.days = 0;
+  st.until = 0;
+  creditTokens(sym, amt);
+  saveUser();
+  await hydrateLiveStake(sym);
+  return amt;
+}
+
+async function liveClaimStake(sym: string): Promise<StakeClaim> {
+  const net = WALLET.net;
+  await hydrateLiveStake(sym);
+  const st = stakeOf(sym);
+  // Always attempt the on-chain claim — pending rewards live on the program,
+  // not only in the indexer columns. Local zeros must not block a claim.
+  const prep = await postJson<ApiStakePrepare>('/stake/claim/prepare', { sym }, net);
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  const out: StakeClaim = { tokens: st?.rewTok ?? 0, native: st?.rewSol ?? 0 };
+  if (out.tokens > 0) creditTokens(sym, out.tokens);
+  if (out.native > 0) WALLET.sol += out.native;
+  if (st) {
+    st.rewTok = 0;
+    st.rewSol = 0;
+  }
+  await hydrateLiveStake(sym);
+  saveUser();
+  emit('wallet');
+  return out;
+}
+
+interface ApiStakeRow {
+  amt: number;
+  mult: number;
+  days: number;
+  until: number;
+  rewTok: number;
+  rewSol: number;
+}
+
+async function hydrateLiveStake(sym: string): Promise<void> {
+  const net = WALLET.net;
+  try {
+    const row = await getJsonAuthed<ApiStakeRow>(`/stake/${encodeURIComponent(sym)}`, net);
+    const st = ensureStake(sym);
+    st.amt = row.amt;
+    st.mult = row.mult;
+    st.days = row.days;
+    st.until = row.until;
+    st.rewTok = row.rewTok;
+    st.rewSol = row.rewSol;
+    saveUser();
+    emit('portfolio');
+  } catch {
+    /* leave local stake as-is */
+  }
+}
+
+async function pushLiveSettings(settings: import('@stonkz/shared').Settings): Promise<void> {
+  applySettings(settings);
+  saveSettings();
+  await ensureSession(BASE, WALLET.net);
+  const res = await fetch(BASE + '/me/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeader(WALLET.net) },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const { code, detail } = await readErrorBody(res);
+    throw new LiveApiError(code, detail, res.status);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1095,7 +1497,9 @@ export const liveApi: StonkzApi = {
   mode: 'live',
 
   async ready(): Promise<void> {
-    const list = await fetchTokens(WALLET.net);
+    // Guests land on both chains; connect() narrows to the wallet's net.
+    await refreshNativePrices();
+    const list = await fetchTokens(boardScope());
     COINS.length = 0;
     for (const t of list) COINS.push(toSimCoin(t));
   },
@@ -1107,7 +1511,8 @@ export const liveApi: StonkzApi = {
     subscribed.add('tape');
     connectWs();
     startPolling();
-    void seedTape(WALLET.net);
+    void seedTape(boardScope());
+    void refreshNativePrices();
   },
 
   stopStream(): void {
@@ -1118,7 +1523,7 @@ export const liveApi: StonkzApi = {
   },
 
   async watchToken(c: SimCoin): Promise<void> {
-    const net = WALLET.net;
+    const net = c.net ?? WALLET.net;
     const [candlesRes, tradesRes, holdersRes] = await Promise.all([
       getJson<ApiCandlesResponse>(`/tokens/${c.sym}/candles?net=${net}&tf=1m&limit=200`).catch(
         () => ({ candles: [] }),
@@ -1126,13 +1531,18 @@ export const liveApi: StonkzApi = {
       getJson<ApiTradesResponse>(`/tokens/${c.sym}/trades?net=${net}&limit=40`).catch(() => ({
         trades: [],
       })),
-      getJson<ApiHoldersResponse>(`/tokens/${c.sym}/holders?net=${net}&limit=50`).catch(() => ({
-        holders: [],
-      })),
+      getJson<ApiHoldersResponse>(`/tokens/${c.sym}/holders?net=${net}&limit=50`).catch(
+        (): ApiHoldersResponse => ({ holders: [] }),
+      ),
     ]);
     applyCandles(c, candlesRes.candles);
     c.trades = tradesRes.trades.map((r) => mapTradeRow(c, r));
-    c.liveHolders = mapHolders(c, holdersRes.holders);
+    c.liveHolders = mapHolders(c, holdersRes.holders, holdersRes.curveWallet);
+    if (typeof holdersRes.holderCount === 'number') {
+      c.hold = holdersRes.holderCount;
+    } else {
+      c.hold = holdersRes.holders.filter((h) => !h.curve).length;
+    }
     subscribeChannel('token:' + c.sym);
   },
 
@@ -1146,13 +1556,21 @@ export const liveApi: StonkzApi = {
     let list: ApiToken[];
     try {
       const res = await getJson<ApiTokensResponse>(
-        '/tokens?net=' + WALLET.net + '&q=' + encodeURIComponent(q),
+        '/tokens?net=' + boardScope() + '&q=' + encodeURIComponent(q),
       );
-      list = res.tokens;
-    } catch {
-      return [];
+      list = Array.isArray(res.tokens) ? res.tokens.filter(isApiToken) : [];
+    } catch (err) {
+      throw err instanceof Error ? err : new Error('search_failed');
     }
-    return list.map((t) => bySym(t.sym) ?? toSimCoin(t));
+    // Merge into COINS so route apply() / bySym() can open tokens that were
+    // not on the initial board page.
+    return list.map((t) => {
+      const existing = bySym(t.sym);
+      if (existing) return existing;
+      const coin = toSimCoin(t);
+      COINS.push(coin);
+      return coin;
+    });
   },
 
   async quote(input: QuoteInput): Promise<Quote> {
@@ -1171,6 +1589,11 @@ export const liveApi: StonkzApi = {
     selectNet(net);
     WALLET.on = true;
     const wallet = activeWallet();
+    // Profile is per-wallet. Clear before SIWE so a prior Solana username
+    // cannot paint the RH chip while /me is in flight.
+    delete USER.name;
+    delete USER.bio;
+    delete USER.avatarUrl;
     if (wallet?.net === net) {
       // Show the connected wallet's real address immediately, before the
       // sign-in round trip: it is already known and already true.
@@ -1183,24 +1606,71 @@ export const liveApi: StonkzApi = {
       WALLET.addr = shortAddr(session.wallet);
       WALLET.full = session.wallet;
       const me = await getJsonAuthed<ApiMeResponse>('/me', net).catch(() => null);
+      if (me?.settings) {
+        applySettings({
+          ...me.settings,
+          mev:
+            me.settings.mev === 'OFF' || me.settings.mev === 'RELAY' || me.settings.mev === 'SHIELD'
+              ? me.settings.mev
+              : 'SHIELD',
+        });
+        saveSettings();
+      } else if (me) {
+        // /me succeeded but no settings row yet — seed from this device.
+        // Do not push when /me itself failed (me === null); that would
+        // clobber a good server row after a transient error.
+        void pushLiveSettings(settingsPayload()).catch(() => undefined);
+      }
       // Prefer the server's read (it uses the operator's provider endpoint,
       // not the public rate-limited RPC), and fall back to asking the wallet's
       // own chain client directly.
       WALLET.sol = me?.native.balance ?? (await wallet?.nativeBalance().catch(() => null)) ?? 0;
-      // The footer's USD figure is the connected chain's own price, not a
-      // constant that reads $214.08 next to an ETH balance.
-      if (me?.native.usdPrice) NATIVE_PRICE.usd = me.native.usdPrice;
+      // Keep both footer marks fresh; `usd` tracks the connected chain.
+      await refreshNativePrices();
+      if (me?.native.usdPrice) {
+        NATIVE_PRICE.usd = me.native.usdPrice;
+        if (net === 'RH') NATIVE_PRICE.eth = me.native.usdPrice;
+        else NATIVE_PRICE.sol = me.native.usdPrice;
+      }
+      if (me) {
+        // Always replace profile fields for this wallet — never keep a prior
+        // net's username (e.g. Solana "Mememan") after an RH SIWE session.
+        if (me.username) USER.name = me.username;
+        else delete USER.name;
+        if (me.bio) USER.bio = me.bio;
+        else delete USER.bio;
+        if (me.avatarUrl) USER.avatarUrl = me.avatarUrl;
+        else delete USER.avatarUrl;
+        rememberIdentity(session.wallet, {
+          username: me.username ?? null,
+          avatarUrl: me.avatarUrl ?? null,
+        });
+        saveUser();
+      } else {
+        delete USER.name;
+        delete USER.bio;
+        delete USER.avatarUrl;
+        saveUser();
+      }
+      await hydrateLiveRewards(net);
     } catch {
       // No session yet (API unreachable, signature declined) — the board
       // still loads; every authenticated write below fails loudly on its own.
       WALLET.sol = (await wallet?.nativeBalance().catch(() => null)) ?? 0;
     }
     emit('wallet');
-    await reloadForNet(net);
+    // Narrow the cross-chain guest board to this wallet's network.
+    await reloadBoard(net);
     return WALLET;
   },
   disconnect(): void {
+    // Tokens are cleared by `logoutSession` / `clearSession` at the call site
+    // (explicit disconnect vs wallet revoke). Avoid a second logout race here.
+    clearSession();
+    resetLiveRewards();
     simApi.disconnect();
+    // Back to the guest board: Solana + Robinhood together.
+    void reloadBoard('ALL');
   },
   async launch(draft: LaunchDraft): Promise<SimCoin> {
     return liveLaunch(draft);
@@ -1212,16 +1682,22 @@ export const liveApi: StonkzApi = {
     return liveClaimCreatorFees(sym);
   },
   async stake(input: StakeInput): Promise<void> {
-    return simApi.stake(input);
+    return liveStake(input);
   },
   async unstake(sym: string): Promise<number> {
-    return simApi.unstake(sym);
+    return liveUnstake(sym);
   },
   async claimStake(sym: string): Promise<StakeClaim> {
-    return simApi.claimStake(sym);
+    return liveClaimStake(sym);
+  },
+  async pushSettings(settings): Promise<void> {
+    return pushLiveSettings(settings);
+  },
+  async hydrateStake(sym: string): Promise<void> {
+    return hydrateLiveStake(sym);
   },
   async openCrate(tier: CrateTier): Promise<CrateResult> {
-    return simApi.openCrate(tier);
+    return liveOpenCrate(tier);
   },
 };
 

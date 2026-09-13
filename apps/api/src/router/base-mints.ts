@@ -1,21 +1,11 @@
 import type { Net } from '@stonkz/shared';
 
 /**
- * Symbol -> mint/contract address, per net. Plan step 90's "base mint
- * allow-list from `/base-tokens`" needs actual addresses; `MAJORS`/`STOCKS`
- * in `packages/shared` (reused here, not duplicated — see that import) only
- * carry `[symbol, name]`, because the read path never needed to resolve one
- * to an address.
+ * Symbol -> mint/contract address, per net.
  *
- * **Solana majors are the canonical, permanent mainnet mint addresses** —
- * these do not change and are safe to hardcode. **Robinhood Chain entries are
- * deliberately sparse.** `docs/robinhood-chain.md` §row 43 could not confirm
- * canonical USDC/USDT contract addresses on chain 4663, and this phase does
- * not invent them. Only `ETH` (native, no ERC-20 address — see
- * `router/compose.ts`'s `NATIVE_ETH_MINT`) and `WETH` are configured for RH;
- * every other RH major/stock in `packages/shared` is present in
- * `/base-tokens` for display but rejected by `/launch/prepare`'s allow-list
- * until a real address is added here or via `BASE_MINT_OVERRIDES_<NET>`.
+ * Solana majors are permanent mainnet mints. Robinhood defaults below are the
+ * **testnet (46630)** pins Robinhood documents + verified live — staging runs
+ * on testnet. Mainnet cutover overrides via `BASE_MINT_OVERRIDES_RH`.
  */
 const BASE_MINTS: Record<Net, Record<string, string>> = {
   SOL: {
@@ -33,7 +23,15 @@ const BASE_MINTS: Record<Net, Record<string, string>> = {
   },
   RH: {
     ETH: '0x0000000000000000000000000000000000000000',
-    WETH: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', // aeWETH — docs/robinhood-chain.md row 25
+    // Testnet WETH / USDG (docs.robinhood.com/chain/contracts)
+    WETH: '0x7943e237c7F95DA44E0301572D358911207852Fa',
+    USDG: '0x7E955252E15c84f5768B83c41a71F9eba181802F',
+    // Documented RH testnet stock tokens
+    TSLA: '0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E',
+    AMZN: '0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02',
+    PLTR: '0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0',
+    NFLX: '0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93',
+    AMD: '0x71178BAc73cBeb415514eB542a8995b82669778d',
   },
 };
 

@@ -19,7 +19,10 @@ import type { RedisLike } from '../redis/types.js';
 import { Publisher } from '../ws/publisher.js';
 import { createBaseMintRegistry, parseBaseMintOverrides, type BaseMintRegistry } from '../router/base-mints.js';
 import { HttpJupiterClient, type JupiterClient } from '../router/jupiter.js';
+import { OracleHopClient } from '../router/oracle-hop.js';
+import { ResilientUniswapClient } from '../router/resilient-uniswap.js';
 import { HttpUniswapClient, type UniswapClient } from '../router/uniswap.js';
+import { V3PoolHopClient } from '../router/v3-pool-hop.js';
 import { ChatService } from '../social/chat.js';
 import { XProfileCacheService } from '../social/x-cache.js';
 import { HttpXProvider, PlaceholderXProvider, type XProvider } from '../social/x-provider.js';
@@ -121,6 +124,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     domain: env.siwsDomain,
     uri: `https://${env.siwsDomain}`,
     rhChainId: env.rhChainId,
+    solanaSiwsChainId: env.solanaSiwsChainId,
     allowedRhChainIds: env.allowedRhChainIds,
     nonceTtlSeconds: env.nonceTtlSeconds,
     accessTtlSeconds: env.accessTokenTtlSeconds,
@@ -152,19 +156,40 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       baseUrl: env.jupiterApiBaseUrl,
       ...(env.jupiterApiKey ? { apiKey: env.jupiterApiKey } : {}),
     });
-  const uniswap: UniswapClient =
-    overrides.uniswap ??
-    new HttpUniswapClient({
-      baseUrl: env.uniswapApiBaseUrl,
-      ...(env.uniswapApiKey ? { apiKey: env.uniswapApiKey } : {}),
-      chainId: env.rhChainId,
-    });
   const baseMints: BaseMintRegistry =
     overrides.baseMints ??
     createBaseMintRegistry({
       SOL: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_SOL']),
       RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
     });
+  const uniswap: UniswapClient =
+    overrides.uniswap ??
+    (() => {
+      const weth = baseMints.mintFor('RH', 'WETH') ?? undefined;
+      const http = new HttpUniswapClient({
+        baseUrl: env.uniswapApiBaseUrl,
+        ...(env.uniswapApiKey ? { apiKey: env.uniswapApiKey } : {}),
+        chainId: env.rhChainId,
+        ...(weth ? { wethAddress: weth } : {}),
+      });
+      // Trading API (mainnet) → on-chain V3 pool quoter (testnet seed) →
+      // oracle-priced display hop. Prepare rejects oracle-only hops.
+      if (!weth) return http;
+      const oracleHop = new OracleHopClient({ oracle, baseMints, wethMint: weth });
+      const eth = asEthCaller(rpcs.RH);
+      if (!eth) {
+        return new ResilientUniswapClient(http, oracleHop);
+      }
+      const v3Hop = new V3PoolHopClient({
+        eth,
+        factory: env.rhV3FactoryAddress,
+        quoter: env.rhV3QuoterAddress,
+        wethMint: weth,
+        baseMints,
+        feeTierOverrides: env.rhV3FeeTierOverrides,
+      });
+      return new ResilientUniswapClient(new ResilientUniswapClient(http, v3Hop), oracleHop);
+    })();
 
   const xProvider: XProvider =
     overrides.xProvider ??

@@ -9,9 +9,10 @@ import {StonkzRouter} from "../src/StonkzRouter.sol";
 import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {ChainlinkPriceSource} from "../src/oracle/ChainlinkPriceSource.sol";
 import {IPriceSource} from "../src/oracle/IPriceSource.sol";
-import {IUniversalRouter} from "../src/StonkzRouter.sol";
+import {IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
 import {IUniswapV2Factory} from "../src/UniswapV2Migrator.sol";
 import {RobinhoodChain} from "../src/config/RobinhoodChain.sol";
+import {DeployPad} from "./DeployPad.sol";
 
 /// @title Robinhood Chain deployment for the Stonkz launchpad.
 ///
@@ -96,9 +97,13 @@ contract Deploy is Script {
         //    execute; printed as calldata at the end rather than attempted and
         //    reverted. See `docs/deployment.md` step 4.
 
-        // 3) Launchpad. Migrator is wired in step 5, so pass zero here.
-        StonkzLaunchpad launchpad = new StonkzLaunchpad(
-            admin, protocolWithdrawAuthority, opsWithdrawAuthority, IPriceSource(address(priceSource)), address(0)
+        // 3) Launchpad (UUPS proxy). Migrator is wired in step 5, so pass zero here.
+        StonkzLaunchpad launchpad = DeployPad.launchpad(
+            admin,
+            protocolWithdrawAuthority,
+            opsWithdrawAuthority,
+            IPriceSource(address(priceSource)),
+            address(0)
         );
 
         // 4) Migrator. Takes the launchpad as its only permitted caller, and
@@ -107,8 +112,12 @@ contract Deploy is Script {
             new UniswapV2Migrator(IUniswapV2Factory(RobinhoodChain.UNISWAP_V2_FACTORY), address(launchpad));
 
         // 5) Router. Both of its targets are immutable at construction.
-        StonkzRouter router =
-            new StonkzRouter(IUniversalRouter(RobinhoodChain.UNIVERSAL_ROUTER), StonkzLaunchpad(address(launchpad)));
+        StonkzRouter router = new StonkzRouter(
+            IUniversalRouter(RobinhoodChain.UNIVERSAL_ROUTER),
+            StonkzLaunchpad(address(launchpad)),
+            IWETH9(RobinhoodChain.WETH9),
+            ISwapRouter02(RobinhoodChain.UNISWAP_V3_SWAP_ROUTER02)
+        );
 
         vm.stopBroadcast();
 

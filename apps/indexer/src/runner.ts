@@ -86,16 +86,22 @@ export class IndexerRunner {
     const cursor = await this.opts.cursors.read(net);
 
     // A zeroed cursor means "never indexed"; start at the deployment position
-    // rather than walking 250 million empty Solana slots.
-    const from =
-      cursor.position > 0 ? cursor.position : Math.max(0, (await source.startPosition()) - 1);
+    // rather than walking empty history. A cursor that somehow sits *below*
+    // the configured start (e.g. leftover fixture progress) is jumped forward
+    // to that start — crawling millions of pre-deployment blocks forever is
+    // never useful and makes `/health` look permanently degraded.
+    const startExclusive = Math.max(0, (await source.startPosition()) - 1);
+    const from = cursor.position > 0 ? Math.max(cursor.position, startExclusive) : startExclusive;
 
     // Hand the source its resume hint before it polls. Solana's signature
     // paging needs the last committed signature as `until`; without it every
     // pass re-scans from the tip.
     source.restoreBookmark?.(cursor.positionSignature);
 
-    const reorg = await this.detectReorg(net, source, cursor.position, cursor.positionHash);
+    const reorg =
+      cursor.position >= startExclusive
+        ? await this.detectReorg(net, source, cursor.position, cursor.positionHash)
+        : null;
     if (reorg) return reorg;
 
     const to = Math.min(confirmed, from + this.batchSize);

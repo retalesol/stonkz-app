@@ -7,6 +7,7 @@ import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 import {MockERC20, MockFalseReturnERC20, MockNoReturnERC20} from "./mocks/Mocks.sol";
+import {DeployPad} from "../script/DeployPad.sol";
 
 /// @notice `SafeErc20` is an internal library, so its reverts happen in the
 /// caller's own frame — `vm.expectRevert` only observes reverts from an
@@ -55,8 +56,8 @@ contract SafeErc20Test is Test {
 
     function setUp() public {
         vm.warp(1_800_000_000);
-        oracle = new PushPriceSource(admin, oracleAuth, 90_000);
-        pad = new StonkzLaunchpad(admin, protocolCold, opsCold, oracle, migAuth);
+        oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
+        pad = DeployPad.launchpad(admin, protocolCold, opsCold, oracle, migAuth);
         harness = new SafeErc20Harness();
     }
 

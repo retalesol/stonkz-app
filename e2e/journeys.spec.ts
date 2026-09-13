@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { acceptConfirmDialogs } from './accept-dialogs.js';
 
 /**
  * The Phase 0.E sim journeys.
@@ -31,6 +32,7 @@ const trade = async (page: Page, side: 'BUY' | 'SELL', amount: string): Promise<
 };
 
 test.beforeEach(async ({ page }) => {
+  acceptConfirmDialogs(page);
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
 });
@@ -94,7 +96,7 @@ test('buying then selling pays XP and moves the position', async ({ page }) => {
   const xpBefore = await page.locator('#rk-xp').textContent();
   await trade(page, 'BUY', '1.5');
 
-  await expect(page.locator('#toasts')).toContainText('XP');
+  await expect(page.locator('#mmBubbles')).toContainText('XP');
   await expect(page.locator('#t-pos')).toBeVisible();
   await expect(page.locator('#t-pos')).toContainText(sym);
   await expect(page.locator('#rk-xp')).not.toHaveText(xpBefore ?? '');
@@ -103,7 +105,7 @@ test('buying then selling pays XP and moves the position', async ({ page }) => {
   await expect(page.locator('#tabbody tbody tr').first()).toContainText('YOU..7xKQ');
 
   await trade(page, 'SELL', '0.5');
-  await expect(page.locator('#toasts')).toContainText('REALIZED');
+  await expect(page.locator('#mmBubbles')).toContainText(/realized|locked/i);
 });
 
 test('an opened crate stays on cooldown across a reload', async ({ page }) => {

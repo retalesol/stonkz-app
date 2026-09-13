@@ -85,13 +85,19 @@ let forgetCaches: (net: Net) => void = () => {};
 
 if (config.mode === 'chain') {
   const built = buildChainSources({ config, env, db: deps.db, oracle: deps.oracle, logger });
-  sources = built.sources;
+  sources = {
+    SOL: config.chainNets.includes('SOL')
+      ? built.sources.SOL
+      : new FixtureEventSource('SOL', []),
+    RH: config.chainNets.includes('RH') ? built.sources.RH : new FixtureEventSource('RH', []),
+  };
   rollback = new ReorgRollback({ db: deps.db, logger, now: deps.now });
   // A rollback can delete the `tokens` row a launch created, so the registry's
   // mint→ticker cache has to drop that chain's entries or the re-ingest would
   // resolve fills against a token that no longer exists.
   forgetCaches = (net) => built.registry.forget(net);
   logger.info('running on CHAIN events', {
+    chainNets: config.chainNets,
     solanaProgramId: config.solanaProgramId,
     solanaStartSlot: config.solanaStartSlot,
     rhLaunchpad: config.rhLaunchpadAddress,
@@ -100,6 +106,11 @@ if (config.mode === 'chain') {
     confirmations: config.confirmations,
     reorgDepth: config.reorgDepth,
   });
+  // Idle nets that stay on empty fixtures still need a cursor rewind so they
+  // do not pretend to be mid-history from a prior fixtures deploy.
+  for (const net of ['SOL', 'RH'] as const) {
+    if (!config.chainNets.includes(net)) await cursors.rewind(net, 0);
+  }
 } else {
   const scenario = canonicalScenario();
   logger.warn('running on FIXTURE events, not chain data', {

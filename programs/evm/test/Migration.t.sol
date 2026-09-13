@@ -7,6 +7,7 @@ import {StonkzToken} from "../src/StonkzToken.sol";
 import {UniswapV2Migrator, IUniswapV2Factory} from "../src/UniswapV2Migrator.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 import {MockERC20, MockV2Factory, MockV2Pair} from "./mocks/Mocks.sol";
+import {DeployPad} from "../script/DeployPad.sol";
 
 /// @notice Graduation into a burned Uniswap v2 position.
 ///
@@ -38,8 +39,8 @@ contract MigrationTest is Test {
     function setUp() public {
         vm.warp(1_800_000_000);
         base = new MockERC20("Global Dollar", "USDG", BASE_DECIMALS);
-        oracle = new PushPriceSource(admin, oracleAuth, 90_000);
-        pad = new StonkzLaunchpad(admin, admin, admin, oracle, migAuth);
+        oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
+        pad = DeployPad.launchpad(admin, admin, admin, oracle, migAuth);
         factory = new MockV2Factory();
         migrator = new UniswapV2Migrator(IUniswapV2Factory(address(factory)), address(pad));
 

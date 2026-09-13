@@ -16,6 +16,9 @@ const KNOWN_DISCRIMINATORS: Record<string, number[]> = {
   buy: [102, 6, 61, 18, 1, 218, 235, 234],
   sell: [51, 230, 133, 164, 1, 127, 131, 173],
   claim_creator_fees: [0, 23, 125, 234, 156, 118, 134, 89],
+  stake: [206, 176, 202, 18, 200, 209, 179, 108],
+  unstake: [90, 95, 107, 42, 205, 124, 50, 225],
+  claim_stake: [62, 145, 133, 242, 244, 59, 53, 139],
 };
 
 describe('anchorDiscriminator', () => {

@@ -1,40 +1,33 @@
 import { type Net, num } from '@stonkz/shared';
 import { api } from '../api/index.js';
-import { pix } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
+import { paintAvatar } from '../lib/avatar.js';
 import { $, must, reflow } from '../lib/dom.js';
 import { DOT, shortAddr } from '../lib/fmt.js';
 import { copyText, selectText } from '../lib/clipboard.js';
+import { myDisplayName } from '../lib/identity.js';
 import { reducedMotion } from '../lib/motion.js';
 import { NATIVE_PRICE, NETS, WALLET, nativeUnit, netOf, selectNet } from '../state/wallet.js';
-import { USER } from '../state/user.js';
+import { USER, saveUser } from '../state/user.js';
 import { netOpen } from '../modals/netpicker.js';
 import { WalletPickerCancelledError, openWalletPicker } from '../modals/walletpicker.js';
-import { addChat } from '../views/chat.js';
 import {
   activeWallet,
+  clearLastWallet,
+  connectWalletFor,
   describeWalletError,
   disconnectActive,
   isPracticeSession,
+  loadLastWallet,
   onActiveWalletChange,
+  waitForWalletChoice,
 } from '../wallet/index.js';
-import { clearSession } from './session.js';
+import { clearSession, logoutSession } from './session.js';
+
+const API_BASE = (import.meta.env['VITE_API_URL'] as string | undefined) ?? '';
 
 /**
  * The wallet chip, its menu, the connect flow and the practice-mode badge.
- *
- * Phase B replaced the connect flow's centrepiece. It used to be a 460ms
- * `setTimeout` labelled "CONNECTING SOLANA…" in front of a keypair that was
- * already sitting in `localStorage`; it is now `modals/walletpicker.ts` —
- * the wallets this browser really has, a real authorisation prompt, and for
- * Robinhood Chain a WalletConnect QR, because Robinhood Wallet is mobile-only
- * (`docs/robinhood-chain.md` row 32). `api.connect()` then runs the SIWS/SIWE
- * handshake with that wallet's own key.
- *
- * In sim mode none of that happens: `simApi.connect()` still fabricates an
- * address, which is correct for a sandbox with no server to authenticate
- * against, and `renderWallet()` renders whatever the adapter reports either
- * way. `index.html:2498`
  */
 
 let afterChange: () => void = () => undefined;
@@ -49,12 +42,23 @@ export function renderWallet(): void {
   }
   if (on) {
     const n = netOf();
-    pix($<HTMLCanvasElement>('#wchip canvas'), WALLET.seed);
+    const seed = WALLET.full || WALLET.addr || WALLET.seed;
+    paintAvatar($<HTMLCanvasElement>('#wchip canvas'), {
+      seed,
+      avatarUrl: USER.avatarUrl ?? null,
+      size: 18,
+    });
+    const menuAv = $<HTMLCanvasElement>('#wMenuAv');
+    if (menuAv) {
+      paintAvatar(menuAv, { seed, avatarUrl: USER.avatarUrl ?? null, size: 40 });
+    }
+    const uname = $('#wUserName');
+    if (uname) uname.textContent = myDisplayName();
     must('#wNetDot').style.background = n.col;
     must('#wNetDot2').style.background = n.col;
     must('#wNetName').textContent = n.name;
     must('#wchip').title = n.name + ' ' + DOT + ' ' + n.sub;
-    must('#wAddr').textContent = WALLET.addr;
+    must('#wAddr').textContent = myDisplayName();
     const unit = nativeUnit();
     must('#wBal').textContent = WALLET.sol.toFixed(2) + ' ' + unit;
     must('#wUsd').textContent = '\u2248 $' + num(WALLET.sol * NATIVE_PRICE.usd);
@@ -66,7 +70,6 @@ export function renderWallet(): void {
   if (hello) hello.hidden = on || !!USER.seenHello;
   const l = must('#createBtn');
   l.classList.toggle('on', on);
-  // Never leave the CTA lit while it is disabled.
   if (!on) l.classList.remove('wake', 'nudge');
   l.setAttribute('aria-disabled', on ? 'false' : 'true');
   l.title = on ? '' : 'CONNECT A WALLET FIRST';
@@ -83,13 +86,6 @@ export function isWmenuOpen(): boolean {
   return !must('#wmenu').hidden;
 }
 
-/**
- * The persistent practice-mode badge.
- *
- * Not dismissible and not conditional on anything the user can change: if the
- * active signer is `wallet/practice.ts`, this strip states that nothing
- * settles for as long as the session lasts.
- */
 export function renderPracticeBadge(): void {
   const badge = must('#practiceBadge');
   const on = isPracticeSession();
@@ -106,9 +102,6 @@ export async function connectWallet(netKey: Net): Promise<void> {
   netOpen(false);
   const b = must('#connectBtn');
 
-  // Sim mode has no wallet to pick: `simApi.connect()` fabricates an address
-  // for a sandbox with no server behind it, and asking a real extension to
-  // authorise that would be worse than not asking.
   if (api.mode === 'live') {
     try {
       await openWalletPicker(n.k, b);
@@ -144,19 +137,64 @@ export async function connectWallet(netKey: Net): Promise<void> {
   }
   const suffix = api.mode !== 'live' ? ' ' + DOT + ' SIMULATED' : isPracticeSession() ? ' ' + DOT + ' PRACTICE KEY' : '';
   toast(n.name + ' CONNECTED ' + DOT + ' ' + WALLET.addr + suffix);
-  addChat('GLOBAL', { sys: true, who: '', text: 'WALLET CONNECTED ' + DOT + ' ' + n.name + ' ' + DOT + ' ' + WALLET.addr }, true);
 }
 
 export function disconnectWallet(): void {
-  // Release the wallet session and the JWT it signed for, not just the chip:
-  // leaving an authorised extension listening, or a bearer token in memory
-  // for an address the user just walked away from, would both be wrong.
+  clearLastWallet();
   void disconnectActive();
-  clearSession();
+  void logoutSession(API_BASE);
   api.disconnect();
   renderWallet();
   renderPracticeBadge();
   toast('WALLET DISCONNECTED');
+}
+
+/**
+ * After a reload: reconnect the last wallet (no picker) and refresh the
+ * SIWS/SIWE session so the user is not asked to sign again for ≥24h.
+ */
+export async function restoreWalletSession(): Promise<boolean> {
+  if (api.mode !== 'live') return false;
+  const pref = loadLastWallet();
+  if (!pref) {
+    console.info('[stonkz] wallet restore: no saved wallet');
+    return false;
+  }
+
+  const choice = await waitForWalletChoice(pref.net, pref.walletId, 6000);
+  if (!choice || choice.unavailable) {
+    console.warn('[stonkz] wallet restore: wallet not available', pref.walletId, pref.net);
+    return false;
+  }
+
+  try {
+    // Paint the chip immediately from storage so a slow extension does not
+    // look like a logged-out reload.
+    selectNet(pref.net);
+    WALLET.on = true;
+    WALLET.addr = shortAddr(pref.address);
+    WALLET.full = pref.address;
+    renderWallet();
+
+    const wallet = await connectWalletFor(pref.net, { id: choice.id, silent: true });
+    const same =
+      pref.net === 'RH'
+        ? wallet.address.toLowerCase() === pref.address.toLowerCase()
+        : wallet.address === pref.address;
+    if (!same) {
+      clearSession();
+    }
+    await api.connect(pref.net);
+    renderWallet();
+    renderPracticeBadge();
+    return WALLET.on;
+  } catch (err) {
+    console.warn('[stonkz] wallet restore failed', err);
+    WALLET.on = false;
+    renderWallet();
+    renderPracticeBadge();
+    return false;
+  }
 }
 
 export function initWalletChip(opts: {
@@ -167,12 +205,10 @@ export function initWalletChip(opts: {
 }): void {
   afterChange = opts.onChange;
 
-  // A wallet can drop us on its own — locked, account switched away, or the
-  // WalletConnect session ended from the phone. Reflect that immediately
-  // rather than keep rendering an address that can no longer sign.
   onActiveWalletChange(() => {
     const wallet = activeWallet();
     if (api.mode === 'live' && WALLET.on && !wallet) {
+      clearLastWallet();
       clearSession();
       api.disconnect();
       renderWallet();
@@ -181,9 +217,13 @@ export function initWalletChip(opts: {
       return;
     }
     if (wallet && WALLET.on && WALLET.full !== wallet.address) {
-      // Account switched inside the wallet: the old JWT is bound to the old
-      // address, so it has to go.
       clearSession();
+      // Drop the previous wallet's display name so the chip cannot keep
+      // showing e.g. Solana "Mememan" under a new RH address.
+      delete USER.name;
+      delete USER.bio;
+      delete USER.avatarUrl;
+      saveUser();
       WALLET.addr = shortAddr(wallet.address);
       WALLET.full = wallet.address;
       renderWallet();
@@ -201,7 +241,6 @@ export function initWalletChip(opts: {
         el.textContent = 'ADDRESS COPIED';
         toast('ADDRESS COPIED ' + DOT + ' ' + WALLET.addr);
       } else {
-        // Clipboard blocked: hand them a selection instead.
         el.textContent = WALLET.full;
         selectText(el);
         toast('SELECT AND PRESS CTRL+C ' + DOT + ' CLIPBOARD BLOCKED HERE');

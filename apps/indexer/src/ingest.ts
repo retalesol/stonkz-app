@@ -724,11 +724,13 @@ export class Ingestor {
   }
 
   private async onStakeClaimed(event: StakeClaimedEvent, report: IngestReport): Promise<void> {
+    // On-chain claim zeros unclaimed; these columns are the *claimable*
+    // balance shown by GET /stake — set to 0, do not accumulate claimed totals.
     await this.db
       .update(stakePositions)
       .set({
-        rewardNative: sql`${stakePositions.rewardNative} + ${event.rewardNative}`,
-        rewardTokens: sql`${stakePositions.rewardTokens} + ${event.rewardTokens}`,
+        rewardNative: 0,
+        rewardTokens: 0,
         updatedAt: new Date(this.now()),
       })
       .where(

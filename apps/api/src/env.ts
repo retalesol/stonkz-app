@@ -39,7 +39,17 @@ export interface ApiEnv {
   trustedProxyDepth: number;
 
   solanaRpcUrl: string;
+  /**
+   * `mainnet-beta` | `devnet` | `testnet` | `localnet`. Defaults to **devnet**
+   * so staging can settle against a free cluster; mainnet is an RPC + cluster
+   * env switch only.
+   */
+  solanaCluster: 'mainnet-beta' | 'devnet' | 'testnet' | 'localnet';
+  /** CAIP-2 id written into SIWS messages (`solana:devnet`, `solana:mainnet`, …). */
+  solanaSiwsChainId: string;
   rhRpcUrl: string;
+  /** Blockscout / RH explorer base (no trailing slash). Used for live token holders. */
+  rhExplorerUrl: string;
   rhChainId: number;
   /** Chain ids a SIWE message may name. See `AuthServiceOptions`. */
   allowedRhChainIds: readonly number[];
@@ -104,6 +114,17 @@ export interface ApiEnv {
    * already takes for RH base addresses.
    */
   rhV3FeeTierOverrides: Record<string, number>;
+  /**
+   * Uniswap V3 factory used by `V3PoolHopClient` for `getPool` on RH.
+   * Defaults: testnet 46630 factory from `RobinhoodChainTestnet.sol`, else
+   * mainnet 4663 factory.
+   */
+  rhV3FactoryAddress: string;
+  /**
+   * Deployed `V3ExactInputQuoter` (or QuoterV2) for executable on-chain hops.
+   * Zero address disables the V3 pool hop (Trading API / oracle only).
+   */
+  rhV3QuoterAddress: string;
 
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
@@ -118,6 +139,11 @@ export interface ApiEnv {
   tipMaxAgeSeconds: number;
   /** Canonical origin OG crawlers should be told the shareable page lives at. */
   publicWebOrigin: string;
+
+  /** Pinata JWT for `POST /me/avatar`. Absent → avatar uploads return 503. */
+  pinataJwt: string | undefined;
+  /** Dedicated gateway host, e.g. `indigo-hollow-catfish-851.mypinata.cloud`. */
+  pinataGateway: string;
 }
 
 export const ZERO_EVM_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -234,8 +260,33 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
 
     trustedProxyDepth: int(src, 'TRUSTED_PROXY_DEPTH', 1),
 
-    solanaRpcUrl: str(src, 'SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
+    solanaRpcUrl: str(src, 'SOLANA_RPC_URL', 'https://api.devnet.solana.com'),
+    solanaCluster: oneOf(
+      src,
+      'SOLANA_CLUSTER',
+      ['mainnet-beta', 'devnet', 'testnet', 'localnet'] as const,
+      'devnet',
+    ),
+    solanaSiwsChainId: (() => {
+      const cluster = oneOf(
+        src,
+        'SOLANA_CLUSTER',
+        ['mainnet-beta', 'devnet', 'testnet', 'localnet'] as const,
+        'devnet',
+      );
+      if (cluster === 'devnet') return 'solana:devnet';
+      if (cluster === 'testnet') return 'solana:testnet';
+      if (cluster === 'localnet') return 'solana:localnet';
+      return 'solana:mainnet';
+    })(),
     rhRpcUrl: str(src, 'RH_RPC_URL', RH_PUBLIC_RPC_URL),
+    rhExplorerUrl: str(
+      src,
+      'RH_EXPLORER_URL',
+      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID) === 46630
+        ? 'https://explorer.testnet.chain.robinhood.com'
+        : 'https://robinhoodchain.blockscout.com',
+    ).replace(/\/$/, ''),
     rhChainId: int(src, 'RH_CHAIN_ID', RH_CHAIN_ID),
     allowedRhChainIds: ints(src, 'RH_ALLOWED_CHAIN_IDS', [
       int(src, 'RH_CHAIN_ID', RH_CHAIN_ID),
@@ -272,7 +323,24 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     solanaLaunchpadProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', 'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg'),
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
-    rhV3FeeTierOverrides: intMap(src, 'RH_V3_FEE_TIER_OVERRIDES'),
+    rhV3FeeTierOverrides: (() => {
+      const mapped = intMap(src, 'RH_V3_FEE_TIER_OVERRIDES');
+      // Testnet WETH/USDG pool is fee 3000 — pin when unset so aggregator hops
+      // stay atomic on 46630 without requiring every operator to copy the pin.
+      if (Object.keys(mapped).length === 0 && int(src, 'RH_CHAIN_ID', 4663) === 46630) {
+        return { USDG: 3000 };
+      }
+      return mapped;
+    })(),
+    rhV3FactoryAddress: str(
+      src,
+      'RH_V3_FACTORY_ADDRESS',
+      // Testnet factory from RobinhoodChainTestnet; mainnet from Uniswap docs.
+      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID) === 46630
+        ? '0xdf9e3D6ffaC4513dD7b053212bbECcbCD15ec932'
+        : '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
+    ),
+    rhV3QuoterAddress: str(src, 'RH_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
 
     launchIntentTtlSeconds: int(src, 'LAUNCH_INTENT_TTL_SECONDS', 120),
     launchRateLimitPerWallet: int(src, 'LAUNCH_RATE_LIMIT_PER_WALLET', 5),
@@ -282,6 +350,12 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     xCacheTtlSeconds: int(src, 'X_CACHE_TTL_SECONDS', 6 * 3600),
     tipMaxAgeSeconds: int(src, 'TIP_MAX_AGE_SECONDS', 24 * 3600),
     publicWebOrigin: str(src, 'PUBLIC_WEB_ORIGIN', 'https://ston.kz'),
+
+    pinataJwt: src['PINATA_JWT']?.trim() || undefined,
+    pinataGateway: str(src, 'PINATA_GATEWAY', 'indigo-hollow-catfish-851.mypinata.cloud').replace(
+      /^https?:\/\//,
+      '',
+    ),
   };
 
   /**

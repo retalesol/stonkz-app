@@ -2,28 +2,26 @@ import { hash, rng } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { type LiveChatFrame, subscribeChatRoom } from '../api/live.js';
 import { SocialApiError, fetchChatHistory, sendChatMessage } from '../api/social.js';
-import { sessionWallet } from '../app/session.js';
+import { ensureSession, hasSession, sessionWallet } from '../app/session.js';
 import { toast } from '../fx/toast.js';
-import { $, must } from '../lib/dom.js';
+import { paintAvatar } from '../lib/avatar.js';
+import { $, $$, must } from '../lib/dom.js';
 import { ARR, clock } from '../lib/fmt.js';
 import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
 import { type Html, attr, html, node, render } from '../lib/html.js';
+import { avatarUrlOf, displayName, rememberIdentity } from '../lib/identity.js';
 import { reducedMotion } from '../lib/motion.js';
 import { CHAT, type ChatMsg, GLINES, HANDLES, TLINES, logFor, randomHandle } from '../state/chat.js';
 import type { SimCoin } from '../state/coins.js';
-import { memberOf } from '../state/social.js';
 import { WALLET } from '../state/wallet.js';
 
+const API_BASE = import.meta.env['VITE_API_URL'] ?? '';
+
 /**
- * The chat drawer. `index.html:3579`
+ * The chat drawer.
  *
- * Live mode (`api.mode === 'live'`) replaces the seeded/random `HANDLES`/
- * `GLINES`/`TLINES` chatter with `GET /chat/:net/:room/history` for backscroll
- * and `api/live.ts`'s `subscribeChatRoom` (the shared board/tape WS) for new
- * messages; sending goes through `POST /chat/:net/:room` (`api/social.ts`'s
- * `sendChatMessage`) rather than the WS `send_chat` path, since this drawer
- * never needs its own socket message type — one send per submit, no reason
- * to hold a round-trip open for it.
+ * Live mode uses history + WS frames that carry username / avatarUrl.
+ * Own messages always show the set username (or short address) — never "YOU".
  */
 
 let trap: FocusTrap | null = null;
@@ -35,7 +33,7 @@ export function roomOf(c: { sym: string }): string {
   return '$' + c.sym;
 }
 
-/** The server's room key: uppercase, no leading `$`. `chat.ts`'s `normaliseRoom`. */
+/** The server's room key: uppercase, no leading `$`. */
 function liveRoomKey(room: string): string {
   return room.replace(/^\$/, '').toUpperCase();
 }
@@ -44,11 +42,29 @@ function colorFor(wallet: string): string {
   return (HANDLES[hash(wallet) % HANDLES.length] as [string, string])[1];
 }
 
-function pushLiveFrame(room: string, wallet: string, text: string, createdAtMs: number, live: boolean): void {
-  const mine = wallet === sessionWallet(WALLET.net);
+function pushLiveFrame(
+  room: string,
+  wallet: string,
+  text: string,
+  createdAtMs: number,
+  live: boolean,
+  meta?: { username?: string | null; avatarUrl?: string | null },
+): void {
+  if (meta?.username || meta?.avatarUrl) {
+    rememberIdentity(wallet, { username: meta.username ?? null, avatarUrl: meta.avatarUrl ?? null });
+  }
+  const mine = wallet === sessionWallet(WALLET.net) || wallet === WALLET.full;
   addChat(
     room,
-    { who: mine ? 'YOU' : memberOf(wallet).name, col: mine ? '#ffa22b' : colorFor(wallet), text, mine, t: clock(new Date(createdAtMs)) },
+    {
+      who: displayName(wallet),
+      col: mine ? '#ffa22b' : colorFor(wallet),
+      text,
+      mine,
+      t: clock(new Date(createdAtMs)),
+      wallet,
+      avatarUrl: meta?.avatarUrl ?? avatarUrlOf(wallet),
+    },
     live,
   );
 }
@@ -57,20 +73,27 @@ function pushLiveFrame(room: string, wallet: string, text: string, createdAtMs: 
 function joinLiveRoom(room: string): void {
   liveUnsub?.();
   liveUnsub = subscribeChatRoom(WALLET.net, liveRoomKey(room), (msg: LiveChatFrame) =>
-    pushLiveFrame(room, msg.wallet, msg.text, msg.createdAtMs, true),
+    pushLiveFrame(room, msg.wallet, msg.text, msg.createdAtMs, true, {
+      username: msg.username ?? null,
+      avatarUrl: msg.avatarUrl ?? null,
+    }),
   );
   if (liveHistoryLoaded.has(room)) return;
   liveHistoryLoaded.add(room);
   fetchChatHistory(WALLET.net, liveRoomKey(room))
     .then((res) => {
       if (!logFor(room).length) {
-        for (const m of res.messages) pushLiveFrame(room, m.wallet, m.text, m.createdAtMs, false);
+        for (const m of res.messages) {
+          pushLiveFrame(room, m.wallet, m.text, m.createdAtMs, false, {
+            username: m.username ?? null,
+            avatarUrl: m.avatarUrl ?? null,
+          });
+        }
         if (CHAT.room === room) chatRender();
       }
     })
     .catch(() => {
-      // A failed backscroll load is not worth surfacing — the room just
-      // opens with the live messages that arrive from here on.
+      /* empty room until live frames arrive */
     });
 }
 
@@ -81,7 +104,10 @@ function leaveLiveRoom(): void {
 
 function chatTitle(): void {
   must('#chatTitle').textContent = CHAT.room === 'GLOBAL' ? 'GLOBAL CHAT' : CHAT.room + ' CHAT';
-  must('#chatOnline').textContent = (CHAT.room === 'GLOBAL' ? 41 : 8 + (hash(CHAT.room) % 60)) + ' ONLINE';
+  must('#chatOnline').textContent =
+    api.mode === 'live'
+      ? 'LIVE'
+      : (CHAT.room === 'GLOBAL' ? 41 : 8 + (hash(CHAT.room) % 60)) + ' ONLINE';
 }
 
 function chatChips(): void {
@@ -97,11 +123,25 @@ function chatChips(): void {
 }
 
 function msgHTML(m: ChatMsg): Html {
+  const seed = m.wallet || m.who;
   return html`<div class="cm${m.mine ? ' mine' : ''}${m.sys ? ' sys' : ''}"
     >${m.sys
       ? ''
-      : html`<div class="who" style="color:${attr(m.col || '#4d9bff')}">${m.who}<span>${m.t || clock()}</span></div>`}<p
+      : html`<canvas class="av" width="28" height="28" data-seed="${attr(String(seed))}" data-av="${attr(
+          m.avatarUrl || '',
+        )}" aria-hidden="true"></canvas
+        ><div class="who" style="color:${attr(m.col || '#4d9bff')}">${m.who}<span>${m.t || clock()}</span></div>`}<p
       >${m.text}</p></div>`;
+}
+
+function paintChatAvatars(root: ParentNode = must('#chatLog')): void {
+  for (const cv of $$<HTMLCanvasElement>('canvas.av', root as ParentNode)) {
+    paintAvatar(cv, {
+      seed: cv.dataset['seed'] || '0',
+      avatarUrl: cv.dataset['av'] || null,
+      size: 28,
+    });
+  }
 }
 
 export function chatRender(): void {
@@ -109,12 +149,18 @@ export function chatRender(): void {
   chatChips();
   const log = must('#chatLog');
   render(log, html`${logFor(CHAT.room).map(msgHTML)}`);
+  paintChatAvatars(log);
   log.scrollTop = log.scrollHeight;
 }
 
-/** Append one message. `live` marks it as arriving now rather than replayed. `index.html:3605` */
+/** Append one message. `live` marks it as arriving now rather than replayed. */
 export function addChat(room: string, m: ChatMsg, live = false): void {
   m.t = m.t || clock();
+  if (m.mine && !m.who) {
+    m.who = displayName(WALLET.full || WALLET.addr);
+  }
+  if (m.mine && !m.wallet) m.wallet = WALLET.full || WALLET.addr;
+  if (m.mine && m.avatarUrl === undefined) m.avatarUrl = avatarUrlOf(m.wallet || WALLET.full);
   const l = logFor(room);
   l.push(m);
   if (l.length > 90) l.shift();
@@ -124,6 +170,7 @@ export function addChat(room: string, m: ChatMsg, live = false): void {
     const el = node(msgHTML(m));
     if (live && !reducedMotion()) el.classList.add('in');
     log.appendChild(el);
+    paintChatAvatars(el);
     while (log.children.length > 90) log.removeChild(log.firstChild as ChildNode);
     if (near || m.mine) log.scrollTop = log.scrollHeight;
     if (!CHAT.open && live) bumpUnread();
@@ -152,15 +199,17 @@ export function setChatToken(c: SimCoin | null): void {
     const r = roomOf(c);
     if (!CHAT.logs[r]) {
       CHAT.logs[r] = [];
-      const rr = rng(c.seed + 17);
-      for (let i = 0; i < 3; i++) {
-        const h = HANDLES[(rr() * HANDLES.length) | 0] as [string, string];
-        logFor(r).push({
-          who: h[0],
-          col: h[1],
-          text: (TLINES[(rr() * TLINES.length) | 0] as string).replace(/\$SYM/g, '$' + c.sym),
-          t: String(9 + i) + ':' + String(12 + i * 7).padStart(2, '0'),
-        });
+      if (api.mode !== 'live') {
+        const rr = rng(c.seed + 17);
+        for (let i = 0; i < 3; i++) {
+          const h = HANDLES[(rr() * HANDLES.length) | 0] as [string, string];
+          logFor(r).push({
+            who: h[0],
+            col: h[1],
+            text: (TLINES[(rr() * TLINES.length) | 0] as string).replace(/\$SYM/g, '$' + c.sym),
+            t: String(9 + i) + ':' + String(12 + i * 7).padStart(2, '0'),
+          });
+        }
       }
     }
     CHAT.room = r;
@@ -209,15 +258,34 @@ export function initChat(): void {
     input.value = '';
     if (api.mode === 'live') {
       const room = CHAT.room;
-      sendChatMessage(WALLET.net, liveRoomKey(room), v).catch((err) => {
-        toast(err instanceof SocialApiError ? err.message : 'MESSAGE FAILED');
-      });
-      // The room's own subscriber (this tab included) echoes the message
-      // back over `chat:{net}:{room}` once the server has persisted it, so
-      // it is not appended locally here — appending both would double it.
+      void (async () => {
+        if (!WALLET.on) {
+          toast('CONNECT A WALLET TO CHAT');
+          return;
+        }
+        try {
+          if (!hasSession(WALLET.net)) await ensureSession(API_BASE, WALLET.net);
+          await sendChatMessage(WALLET.net, liveRoomKey(room), v);
+        } catch (err) {
+          const raw = err instanceof SocialApiError ? err.message : 'MESSAGE FAILED';
+          const code = err instanceof SocialApiError ? err.code : '';
+          if (code === 'unauthorized' || /unauthori[sz]ed/i.test(raw)) {
+            toast('SIGN IN WITH YOUR WALLET TO CHAT');
+          } else {
+            toast(raw);
+          }
+        }
+      })();
       return;
     }
-    addChat(CHAT.room, { who: 'YOU', col: '#ffa22b', text: v, mine: true });
+    addChat(CHAT.room, {
+      who: displayName(WALLET.full || WALLET.addr),
+      col: '#ffa22b',
+      text: v,
+      mine: true,
+      wallet: WALLET.full || WALLET.addr,
+      avatarUrl: avatarUrlOf(WALLET.full || WALLET.addr),
+    });
     if (Math.random() > 0.45) {
       const h = randomHandle();
       const room = CHAT.room;
@@ -246,8 +314,6 @@ export function initChat(): void {
     return;
   }
 
-  // Seven lines of backscroll so the room does not open empty. Seeded, so the
-  // same handles say the same things on every load. `index.html:4105`
   const r = rng(4242);
   for (let i = 0; i < 7; i++) {
     const h = HANDLES[(r() * HANDLES.length) | 0] as [string, string];

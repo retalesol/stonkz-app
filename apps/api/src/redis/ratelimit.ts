@@ -35,10 +35,14 @@ export const RATE_LIMITS = {
    */
   launchIp: { bucket: 'launch_ip', limit: 30, windowSeconds: 3600 },
   fees: { bucket: 'fees', limit: 60, windowSeconds: 60 },
+  /** Stake / unstake / claim-stake prepare — same cadence as fees. */
+  stake: { bucket: 'stake', limit: 60, windowSeconds: 60 },
   /** Plan step 144/148 — profile writes and follows are cheap but should not be scriptable. */
   social: { bucket: 'social', limit: 30, windowSeconds: 60 },
   /** `POST /wall` also pays for a chain RPC read (`verifyTip`), so it is capped tighter than a plain write. */
   wall: { bucket: 'wall', limit: 12, windowSeconds: 60 },
+  /** Avatar uploads hit Pinata; keep this tight. */
+  avatar: { bucket: 'avatar', limit: 10, windowSeconds: 3600 },
   /** `GET /x/:handle` — cache absorbs most of this, but a cold cache still costs an outbound call. */
   x: { bucket: 'x', limit: 30, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitRule>;

@@ -44,6 +44,12 @@ export interface AuthServiceOptions {
   uri: string;
   rhChainId: number;
   /**
+   * CAIP-2 chain id for Solana SIWS (`solana:devnet` / `solana:mainnet`).
+   * Defaults to mainnet for backward-compatible unit tests; production
+   * wiring passes `env.solanaSiwsChainId`.
+   */
+  solanaSiwsChainId?: string;
+  /**
    * Chain ids a signed message may name, checked server-side. A client that
    * sends any other value is refused rather than trusted, because a
    * mismatched chain id is the classic replay vector between an operator's
@@ -112,7 +118,7 @@ export class AuthService {
     const issuedAtMs = this.now();
     const expiresAtMs = issuedAtMs + this.opts.nonceTtlSeconds * 1000;
     const issuedAt = new Date(issuedAtMs).toISOString();
-    const chainId = chainLabel(net, this.opts.rhChainId);
+    const chainId = chainLabel(net, this.opts.rhChainId, this.solanaChainId());
 
     await this.db.insert(authNonces).values({
       nonce,
@@ -152,6 +158,10 @@ export class AuthService {
     return this.opts.db;
   }
 
+  private solanaChainId(): string {
+    return this.opts.solanaSiwsChainId ?? 'solana:mainnet';
+  }
+
   /** The allow-list defaults to the single configured chain id. */
   private allowedChainIds(): readonly number[] {
     return this.opts.allowedRhChainIds ?? [this.opts.rhChainId];
@@ -159,7 +169,7 @@ export class AuthService {
 
   private assertChainAllowed(net: Net, chainId: string): void {
     if (net === 'SOL') {
-      if (chainId !== chainLabel('SOL', this.opts.rhChainId)) {
+      if (chainId !== chainLabel('SOL', this.opts.rhChainId, this.solanaChainId())) {
         throw new AuthError('chain_mismatch', 'unexpected chain id for a Solana sign-in');
       }
       return;
@@ -203,7 +213,7 @@ export class AuthService {
       uri: this.opts.uri,
       nonce: row.nonce,
       issuedAt: parsed.issuedAt,
-      chainId: chainLabel(input.net, this.opts.rhChainId),
+      chainId: chainLabel(input.net, this.opts.rhChainId, this.solanaChainId()),
     });
     if (expected !== input.message) throw new AuthError('message_mismatch', 'signed message does not match the challenge');
     if (parsed.issuedAt !== row.issuedAt.toISOString()) {

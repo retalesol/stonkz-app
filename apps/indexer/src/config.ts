@@ -15,6 +15,8 @@ export type IndexerSourceMode = 'fixtures' | 'chain';
 
 export interface IndexerConfig {
   mode: IndexerSourceMode;
+  /** Which nets ingest from chain when `mode === 'chain'`. Fixtures still cover the rest. */
+  chainNets: Net[];
   pollMs: number;
   sweepMs: number;
   /** Positions consumed per pass, per chain. */
@@ -103,8 +105,18 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     throw new Error(`INDEXER_SOURCE must be "fixtures" or "chain", got ${JSON.stringify(mode)}`);
   }
 
+  const chainNetsRaw = str(src, 'INDEXER_CHAIN_NETS', 'SOL,RH')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const chainNets = [...new Set(chainNetsRaw)].filter((n): n is Net => n === 'SOL' || n === 'RH');
+  if (mode === 'chain' && chainNets.length === 0) {
+    throw new Error('INDEXER_CHAIN_NETS must list SOL and/or RH when INDEXER_SOURCE=chain');
+  }
+
   const config: IndexerConfig = {
     mode,
+    chainNets: mode === 'chain' ? chainNets : [],
     pollMs: int(src, 'INDEXER_POLL_MS', 2_000),
     sweepMs: int(src, 'INDEXER_SWEEP_MS', 60_000),
     batchSize: int(src, 'INDEXER_BATCH_SIZE', 5_000),
@@ -145,20 +157,24 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
  * look healthy while the board stayed empty.
  */
 export function assertChainModeConfigured(config: IndexerConfig): void {
-  if (config.rhLaunchpadAddress.toLowerCase() === ZERO_EVM_ADDRESS) {
-    throw new Error(
-      'INDEXER_SOURCE=chain needs RH_LAUNCHPAD_ADDRESS; the zero address means "not deployed here"',
-    );
+  if (config.chainNets.includes('RH')) {
+    if (config.rhLaunchpadAddress.toLowerCase() === ZERO_EVM_ADDRESS) {
+      throw new Error(
+        'INDEXER_SOURCE=chain needs RH_LAUNCHPAD_ADDRESS; the zero address means "not deployed here"',
+      );
+    }
+    if (config.rhStartBlock <= 0) {
+      throw new Error('INDEXER_SOURCE=chain needs INDEXER_RH_START_BLOCK (the deployment block)');
+    }
   }
-  if (config.solanaStartSlot <= 0) {
-    throw new Error(
-      'INDEXER_SOURCE=chain needs INDEXER_SOL_START_SLOT (the deployment slot); a fresh cursor must not walk Solana from genesis',
-    );
+  if (config.chainNets.includes('SOL')) {
+    if (config.solanaStartSlot <= 0) {
+      throw new Error(
+        'INDEXER_SOURCE=chain needs INDEXER_SOL_START_SLOT (the deployment slot); a fresh cursor must not walk Solana from genesis',
+      );
+    }
   }
-  if (config.rhStartBlock <= 0) {
-    throw new Error('INDEXER_SOURCE=chain needs INDEXER_RH_START_BLOCK (the deployment block)');
-  }
-  for (const net of ['SOL', 'RH'] as const) {
+  for (const net of config.chainNets) {
     if (config.confirmations[net] < 0) throw new Error(`INDEXER_${net}_CONFIRMATIONS must not be negative`);
     if (config.reorgDepth[net] < 1) throw new Error(`INDEXER_${net}_REORG_DEPTH must be at least 1`);
   }

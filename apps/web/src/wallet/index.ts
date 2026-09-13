@@ -29,8 +29,11 @@ export {
   preferRealWallet,
   requireWallet,
   sortChoices,
+  waitForWalletChoice,
+  resolveWalletChoice,
   type ConnectOptions,
 } from './manager.js';
+export { clearLastWallet, loadLastWallet, rememberLastWallet } from './persist.js';
 export { PRACTICE_WALLET_ID, practiceWalletChoice, practiceWalletEnabled } from './practice.js';
 export { WALLETCONNECT_PROJECT_ID, walletConnectUnavailableReason } from './walletconnect.js';
 export type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice, WalletKind } from './types.js';

@@ -146,6 +146,8 @@ export const tokens = pgTable(
     xHandle: text('x_handle'),
     website: text('website'),
     telegram: text('telegram'),
+    /** IPFS gateway URL for the launch image (Pinata). */
+    imageUrl: text('image_url'),
     launchedAt: timestamp('launched_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     /**

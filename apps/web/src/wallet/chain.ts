@@ -45,11 +45,15 @@ export const RH_ADD_CHAIN_PARAMS = {
 
 export const SOLANA_RPC_URL: string = envStr(
   'VITE_HELIUS_RPC',
-  envStr('VITE_SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
+  envStr('VITE_SOLANA_RPC_URL', 'https://api.devnet.solana.com'),
 );
 
-/** `mainnet-beta` | `devnet` | `testnet` | `localnet`, as `VITE_CLUSTER` names it. */
-export const SOLANA_CLUSTER: string = envStr('VITE_CLUSTER', 'mainnet-beta');
+/**
+ * `mainnet-beta` | `devnet` | `testnet` | `localnet`, as `VITE_CLUSTER` names it.
+ * Defaults to **devnet** so staging and local builds settle against a free
+ * cluster; flipping to mainnet is an RPC + cluster env switch only.
+ */
+export const SOLANA_CLUSTER: string = envStr('VITE_CLUSTER', 'devnet');
 
 /**
  * The Wallet Standard chain identifier for the configured cluster. A wallet

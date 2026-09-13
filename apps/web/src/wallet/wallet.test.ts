@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Wallet } from '@wallet-standard/base';
 import { RH_CHAIN_ID, RH_CHAIN_ID_HEX, chainLabel, solanaWalletStandardChain } from './chain.js';
 import { WalletError, describeWalletError, isRejection, mapWalletError, walletErrorHeadline } from './errors.js';
-import { enforceRhChain, listEvmWallets, toHexWei, type ChainRequest, type Eip1193Provider } from './evm.js';
+import { enforceRhChain, announceEvmProviderForTests, listEvmWallets, resetEvmDiscoveryForTests, toHexWei, type ChainRequest, type Eip1193Provider } from './evm.js';
+import { WALLETCONNECT_PROJECT_ID, walletConnectUnavailableReason } from './walletconnect.js';
 import { availableWallets, connectWalletFor, disconnectActive, preferRealWallet, requireWallet, sortChoices } from './manager.js';
 import { PRACTICE_WALLET_ID, connectPracticeWallet, practiceWalletChoice, practiceWalletEnabled } from './practice.js';
 import { openSolanaWallet, solanaWalletChoice } from './solana.js';
 import type { WalletChoice } from './types.js';
-import { walletConnectUnavailableReason } from './walletconnect.js';
 
 /**
  * The wallet layer's unit tests.
@@ -489,18 +489,23 @@ describe('WalletConnect availability', () => {
     expect(walletConnectUnavailableReason('abc123')).toBeNull();
   });
 
-  it('still lists WalletConnect as a disabled row with the reason', () => {
-    // No project id is set in the test environment, which is the deployment
-    // mistake this row exists to explain.
+  it('still lists WalletConnect; disables it only when the project id is missing', () => {
     const wc = listEvmWallets().find((c) => c.id === 'walletconnect');
     expect(wc).toBeDefined();
-    expect(wc?.unavailable).toContain('VITE_WALLETCONNECT_PROJECT_ID');
+    expect(wc?.icon?.startsWith('data:')).toBe(true);
+    if (!WALLETCONNECT_PROJECT_ID) {
+      expect(wc?.unavailable).toContain('VITE_WALLETCONNECT_PROJECT_ID');
+    } else {
+      expect(wc?.unavailable).toBeUndefined();
+    }
+    expect(walletConnectUnavailableReason('')).toContain('VITE_WALLETCONNECT_PROJECT_ID');
   });
 });
 
 describe('injected EVM discovery', () => {
   afterEach(async () => {
     delete (globalThis as { ethereum?: unknown }).ethereum;
+    resetEvmDiscoveryForTests();
     await disconnectActive();
   });
 
@@ -510,15 +515,42 @@ describe('injected EVM discovery', () => {
     expect(listEvmWallets().find((c) => c.id === 'injected:window.ethereum')?.name).toBe('MetaMask');
   });
 
+  it('lists only MetaMask + WalletConnect on Robinhood (no Phantom / multi-chain noise)', () => {
+    announceEvmProviderForTests({
+      info: {
+        uuid: 'phantom',
+        name: 'Phantom',
+        icon: 'https://phantom.app/icon.png',
+        rdns: 'app.phantom',
+      },
+      provider: { request: async () => [] },
+    });
+    announceEvmProviderForTests({
+      info: {
+        uuid: 'mm',
+        name: 'MetaMask',
+        icon: 'data:image/svg+xml,mm',
+        rdns: 'io.metamask',
+      },
+      provider: { request: async () => [] },
+    });
+    (globalThis as { ethereum?: unknown }).ethereum = { request: async () => [], isMetaMask: true };
+    const ids = listEvmWallets().map((c) => c.id);
+    expect(ids).toEqual(['injected:io.metamask', 'walletconnect']);
+    expect(listEvmWallets().every((c) => c.icon?.startsWith('data:'))).toBe(true);
+  });
+
   it('ignores an `ethereum` global that is not a provider', () => {
     (globalThis as { ethereum?: unknown }).ethereum = { notAProvider: true };
     expect(listEvmWallets().map((c) => c.id)).not.toContain('injected:window.ethereum');
   });
 
+
   it('connects it, checksums the account, and reports it as real', async () => {
-    const provider: Eip1193Provider = {
+    const provider: Eip1193Provider & { isMetaMask: boolean } = {
       request: async ({ method }) =>
         method === 'eth_requestAccounts' ? ['0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'] : null,
+      isMetaMask: true,
     };
     (globalThis as { ethereum?: unknown }).ethereum = provider;
     const wallet = await connectWalletFor('RH', { id: 'injected:window.ethereum' });
@@ -534,6 +566,7 @@ describe('injected EVM discovery', () => {
       request: async () => {
         throw { code: 4001, message: 'User rejected the request.' };
       },
+      isMetaMask: true,
     };
     await expect(connectWalletFor('RH', { id: 'injected:window.ethereum' })).rejects.toMatchObject({
       kind: 'rejected',
@@ -541,19 +574,24 @@ describe('injected EVM discovery', () => {
   });
 
   it('reports an empty account list as a rejection rather than connecting to nothing', async () => {
-    (globalThis as { ethereum?: unknown }).ethereum = { request: async () => [] };
+    (globalThis as { ethereum?: unknown }).ethereum = { request: async () => [], isMetaMask: true };
     await expect(connectWalletFor('RH', { id: 'injected:window.ethereum' })).rejects.toMatchObject({
       kind: 'rejected',
     });
   });
 
-  it('refuses to connect an unavailable choice, with its reason', async () => {
+  it('refuses to connect WalletConnect when the project id is missing', async () => {
+    if (WALLETCONNECT_PROJECT_ID) return;
     await expect(connectWalletFor('RH', { id: 'walletconnect' })).rejects.toMatchObject({ kind: 'unconfigured' });
   });
 });
 
 describe('the connected-wallet requirement', () => {
-  afterEach(() => disconnectActive());
+  afterEach(async () => {
+    delete (globalThis as { ethereum?: unknown }).ethereum;
+    resetEvmDiscoveryForTests();
+    await disconnectActive();
+  });
 
   it('asks for a connection instead of throwing something opaque', () => {
     const err = caught(() => requireWallet('SOL'));
@@ -564,12 +602,12 @@ describe('the connected-wallet requirement', () => {
   it('will not sign a Solana action with a Robinhood wallet connected', async () => {
     (globalThis as { ethereum?: unknown }).ethereum = {
       request: async () => ['0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'],
+      isMetaMask: true,
     };
     await connectWalletFor('RH', { id: 'injected:window.ethereum' });
     const err = caught(() => requireWallet('SOL'));
     expect(err.kind).toBe('not_connected');
     expect(err.message).toContain('Switch networks');
-    delete (globalThis as { ethereum?: unknown }).ethereum;
   });
 
   it('explains that Robinhood Wallet is mobile-only when nothing is detected', async () => {
@@ -617,7 +655,7 @@ function standardWallet(over: {
     version: '1.0.0',
     name: over.name ?? 'Phantom',
     icon: 'data:image/svg+xml;base64,AA==',
-    chains: (over.chains ?? ['solana:mainnet']) as `${string}:${string}`[],
+    chains: (over.chains ?? ['solana:devnet']) as `${string}:${string}`[],
     features,
     accounts: [account],
   } as unknown as Wallet;
@@ -637,7 +675,7 @@ describe('solanaWalletChoice', () => {
   });
 
   it('hides a wallet on the wrong cluster rather than failing on click', () => {
-    expect(solanaWalletChoice(standardWallet({ signAndSend: true, chains: ['solana:devnet'] }))).toBeNull();
+    expect(solanaWalletChoice(standardWallet({ signAndSend: true, chains: ['solana:mainnet'] }))).toBeNull();
   });
 
   it('hides a wallet that cannot sign a message, since SIWS would be impossible', () => {
@@ -665,7 +703,7 @@ describe('openSolanaWallet', () => {
   });
 
   it('refuses a wallet whose cluster does not match ours', async () => {
-    await expect(openSolanaWallet(standardWallet({ signAndSend: true, chains: ['solana:devnet'] }))).rejects.toMatchObject(
+    await expect(openSolanaWallet(standardWallet({ signAndSend: true, chains: ['solana:mainnet'] }))).rejects.toMatchObject(
       { kind: 'unsupported_method' },
     );
   });

@@ -16,6 +16,28 @@ interface IUniversalRouter {
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
 }
 
+interface IWETH9 {
+    function deposit() external payable;
+    function withdraw(uint256 wad) external;
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function balanceOf(address owner) external view returns (uint256);
+}
+
+interface ISwapRouter02 {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
+    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+}
+
 /// @title Atomic native-in / native-out trading for Robinhood Chain.
 /// @notice Closes the gap recorded in `docs/rh-trade-atomicity-gap.md`.
 ///
@@ -79,6 +101,15 @@ contract StonkzRouter {
     /// @notice The curve. Also immutable, and the only contract this one
     /// approves.
     StonkzLaunchpad public immutable launchpad;
+    /// @notice Chain-local WETH. The Universal Router on RH **testnet** still
+    /// pins mainnet aeWETH (`0x0Bd7…`), which has no code on 46630 — so
+    /// `WRAP_ETH`/`UNWRAP_WETH` via UR revert. Direct WETH pairs use this
+    /// address with `buyWithEth` / `sellForEth` instead.
+    IWETH9 public immutable weth;
+    /// @notice Uniswap SwapRouter02 for `buyViaV3` / `sellViaV3`. On RH testnet
+    /// the Universal Router's CREATE2 pool address does not match the live V3
+    /// factory, so pinned-fee aggregator hops use SwapRouter02 instead.
+    ISwapRouter02 public immutable swapRouter02;
 
     /// @notice Ceiling on the tolerance a caller may declare against the
     /// aggregator's quote.
@@ -154,31 +185,199 @@ contract StonkzRouter {
         _;
     }
 
-    constructor(IUniversalRouter _universalRouter, StonkzLaunchpad _launchpad) {
-        require(address(_universalRouter) != address(0) && address(_launchpad) != address(0), "zero");
+    constructor(
+        IUniversalRouter _universalRouter,
+        StonkzLaunchpad _launchpad,
+        IWETH9 _weth,
+        ISwapRouter02 _swapRouter02
+    ) {
+        require(
+            address(_universalRouter) != address(0) && address(_launchpad) != address(0)
+                && address(_weth) != address(0) && address(_swapRouter02) != address(0),
+            "zero"
+        );
         universalRouter = _universalRouter;
         launchpad = _launchpad;
+        weth = _weth;
+        swapRouter02 = _swapRouter02;
     }
 
-    /// @dev Only the Universal Router may push ETH here, and only mid-trade.
-    /// A stray transfer from anyone else would sit in a contract with no sweep
-    /// function and be lost, so refuse it rather than accept it silently.
+    /* ------------------------------------------------------ direct WETH pair */
+
+    /// @notice Native ETH → WETH (chain-local) → curve buy. One signature.
+    /// @dev Prefer this over `buyViaAggregator`+`WRAP_ETH` whenever the coin's
+    /// base is this contract's `weth` — UR wrap is not trustworthy on RH testnet.
+    function buyWithEth(address token, uint256 minTokenOut, uint256 deadline)
+        external
+        payable
+        nonReentrant
+        before(deadline)
+        returns (uint256 tokensOut)
+    {
+        if (msg.value == 0) revert NothingIn();
+        address base = _baseOf(token);
+        require(base == address(weth), "not weth pair");
+
+        weth.deposit{value: msg.value}();
+        SafeErc20.safeApprove(address(weth), address(launchpad), msg.value);
+        tokensOut = launchpad.buy(token, msg.value, minTokenOut);
+        SafeErc20.safeApprove(address(weth), address(launchpad), 0);
+
+        require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
+        emit AtomicBuy(msg.sender, token, msg.value, msg.value, tokensOut);
+    }
+
+    /// @notice Native ETH → local WETH → SwapRouter02 V3 → curve buy.
+    /// @dev Prefer this over `buyViaAggregator` on RH testnet: UR's V3 CREATE2
+    /// pool address does not match the factory SwapRouter02 uses.
+    function buyViaV3(
+        address token,
+        uint24 fee,
+        uint256 quotedBaseOut,
+        uint256 maxSlippageBps,
+        uint256 minTokenOut,
+        uint256 deadline
+    ) external payable nonReentrant before(deadline) returns (uint256 tokensOut) {
+        if (msg.value == 0) revert NothingIn();
+        address base = _baseOf(token);
+
+        weth.deposit{value: msg.value}();
+        SafeErc20.safeApprove(address(weth), address(swapRouter02), msg.value);
+        uint256 delivered = swapRouter02.exactInputSingle(
+            ISwapRouter02.ExactInputSingleParams({
+                tokenIn: address(weth),
+                tokenOut: base,
+                fee: fee,
+                recipient: address(this),
+                amountIn: msg.value,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            })
+        );
+        SafeErc20.safeApprove(address(weth), address(swapRouter02), 0);
+        _requireQuoteHonouredValues(quotedBaseOut, maxSlippageBps, delivered);
+
+        SafeErc20.safeApprove(base, address(launchpad), delivered);
+        tokensOut = launchpad.buy(token, delivered, minTokenOut);
+        SafeErc20.safeApprove(base, address(launchpad), 0);
+
+        require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
+        if (address(this).balance > 0) _sendEth(msg.sender, address(this).balance);
+        emit AtomicBuy(msg.sender, token, msg.value, delivered, tokensOut);
+    }
+
+    /// @notice Curve sell → SwapRouter02 V3 → local WETH unwrap → ETH.
+    function sellViaV3(
+        address token,
+        uint256 amountToken,
+        PermitData calldata permitData,
+        uint256 minBaseOut,
+        uint24 fee,
+        uint256 quotedEthOut,
+        uint256 maxSlippageBps,
+        uint256 minEthOut,
+        uint256 amountInBase,
+        uint256 deadline
+    ) external nonReentrant before(deadline) returns (uint256 ethOut) {
+        if (amountToken == 0) revert NothingIn();
+        address base = _baseOf(token);
+
+        if (permitData.deadline != 0) {
+            StonkzToken(token).permit(
+                msg.sender,
+                address(this),
+                permitData.value,
+                permitData.deadline,
+                permitData.v,
+                permitData.r,
+                permitData.s
+            );
+        }
+        require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "token pull");
+        require(StonkzToken(token).approve(address(launchpad), amountToken), "approve");
+        uint256 baseOut = launchpad.sell(token, amountToken, minBaseOut);
+        if (baseOut < amountInBase) revert CurveShortfall(amountInBase, baseOut);
+        uint256 surplus = baseOut - amountInBase;
+
+        SafeErc20.safeApprove(base, address(swapRouter02), amountInBase);
+        uint256 wethOut = swapRouter02.exactInputSingle(
+            ISwapRouter02.ExactInputSingleParams({
+                tokenIn: base,
+                tokenOut: address(weth),
+                fee: fee,
+                recipient: address(this),
+                amountIn: amountInBase,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            })
+        );
+        SafeErc20.safeApprove(base, address(swapRouter02), 0);
+        _requireQuoteHonouredValues(quotedEthOut, maxSlippageBps, wethOut);
+        require(wethOut >= minEthOut, "slippage");
+
+        if (surplus > 0) SafeErc20.safeTransfer(base, msg.sender, surplus);
+        weth.withdraw(wethOut);
+        ethOut = wethOut;
+        _sendEth(msg.sender, ethOut);
+        emit AtomicSell(msg.sender, token, amountToken, baseOut, ethOut);
+    }
+
+    /// @notice Curve sell → unwrap WETH → native ETH. One signature with permit.
+    function sellForEth(
+        address token,
+        uint256 amountToken,
+        PermitData calldata permitData,
+        uint256 minBaseOut,
+        uint256 minEthOut,
+        uint256 deadline
+    ) external nonReentrant before(deadline) returns (uint256 ethOut) {
+        if (amountToken == 0) revert NothingIn();
+        address base = _baseOf(token);
+        require(base == address(weth), "not weth pair");
+
+        if (permitData.deadline != 0) {
+            StonkzToken(token).permit(
+                msg.sender,
+                address(this),
+                permitData.value,
+                permitData.deadline,
+                permitData.v,
+                permitData.r,
+                permitData.s
+            );
+        }
+        require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "token pull");
+        require(StonkzToken(token).approve(address(launchpad), amountToken), "approve");
+        uint256 baseOut = launchpad.sell(token, amountToken, minBaseOut);
+        require(baseOut >= minEthOut, "slippage");
+
+        weth.withdraw(baseOut);
+        ethOut = baseOut;
+        _sendEth(msg.sender, ethOut);
+        emit AtomicSell(msg.sender, token, amountToken, baseOut, ethOut);
+    }
+
+    /// @dev Only the Universal Router (mid-trade unwrap via UR) or chain-local
+    /// WETH (`withdraw`) may push ETH here. A stray transfer from anyone else
+    /// would sit in a contract with no sweep function and be lost, so refuse
+    /// it rather than accept it silently.
     receive() external payable {
-        require(msg.sender == address(universalRouter), "unexpected eth");
+        require(msg.sender == address(universalRouter) || msg.sender == address(weth), "unexpected eth");
     }
 
     /* ------------------------------------------------------------------ buy */
 
     /// @notice Native ETH in, launched token out, atomically.
     ///
-    /// Swaps `msg.value` to the coin's base token through the Universal Router
-    /// with **this contract** as recipient, then spends the whole delivered
-    /// amount on the curve and forwards the result to the caller.
+    /// Wraps `msg.value` into chain-local WETH here (UR `WRAP_ETH` on RH
+    /// testnet still targets mainnet aeWETH and reverts), pushes that WETH to
+    /// the Universal Router, swaps to the coin's base with **this contract**
+    /// as recipient, then spends the whole delivered amount on the curve.
     ///
     /// @param token The launched coin.
-    /// @param leg The aggregator hop. `leg.quotedOut` is denominated in the
-    ///        base token; `leg.amountIn` is unused because the input is
-    ///        `msg.value`.
+    /// @param leg The aggregator hop. Must be a V3-only swap (no WRAP_ETH) —
+    ///        WETH is already on the Universal Router's balance. `leg.quotedOut`
+    ///        is denominated in the base token; `leg.amountIn` is unused.
     /// @param minTokenOut Floor on the curve hop, enforced by the launchpad.
     ///        Independent of the aggregator bound: the two legs move for
     ///        unrelated reasons and collapsing them into one number would let
@@ -194,8 +393,12 @@ contract StonkzRouter {
         if (msg.value == 0) revert NothingIn();
         address base = _baseOf(token);
 
+        // Local wrap — do not send ETH into UR (broken WRAP_ETH on 46630).
+        weth.deposit{value: msg.value}();
+        require(weth.transfer(address(universalRouter), msg.value), "weth push");
+
         uint256 baseBefore = IERC20(base).balanceOf(address(this));
-        universalRouter.execute{value: msg.value}(leg.commands, leg.inputs, leg.deadline);
+        universalRouter.execute(leg.commands, leg.inputs, leg.deadline);
         uint256 delivered = IERC20(base).balanceOf(address(this)) - baseBefore;
         _requireQuoteHonoured(leg, delivered);
 
@@ -276,16 +479,20 @@ contract StonkzRouter {
 
         // The Universal Router spends from its own balance when the command is
         // encoded with `payerIsUser = false`, which is the shape this path
-        // requires: the payer is this contract, not the signer.
+        // requires: the payer is this contract, not the signer. Leg must be
+        // V3-only (no UNWRAP_WETH) — UR unwrap targets mainnet aeWETH on 46630.
         SafeErc20.safeTransfer(base, address(universalRouter), leg.amountIn);
 
-        uint256 ethBefore = address(this).balance;
+        uint256 wethBefore = weth.balanceOf(address(this));
         universalRouter.execute(leg.commands, leg.inputs, leg.deadline);
-        ethOut = address(this).balance - ethBefore;
-        _requireQuoteHonoured(leg, ethOut);
-        require(ethOut >= minEthOut, "slippage");
+        uint256 wethOut = weth.balanceOf(address(this)) - wethBefore;
+        _requireQuoteHonoured(leg, wethOut);
+        require(wethOut >= minEthOut, "slippage");
 
         if (surplus > 0) SafeErc20.safeTransfer(base, msg.sender, surplus);
+
+        weth.withdraw(wethOut);
+        ethOut = wethOut;
         _sendEth(msg.sender, ethOut);
 
         emit AtomicSell(msg.sender, token, amountToken, baseOut, ethOut);
@@ -305,8 +512,12 @@ contract StonkzRouter {
     /// price, and neither is acceptable past the declared tolerance — so one
     /// check is honest and two would be theatre.
     function _requireQuoteHonoured(AggregatorLeg calldata leg, uint256 received) private pure {
-        uint256 floor_ = shortfallFloor(leg.quotedOut, leg.maxSlippageBps);
-        if (received < floor_) revert AggregatorShortfall(leg.quotedOut, floor_, received);
+        _requireQuoteHonouredValues(leg.quotedOut, leg.maxSlippageBps, received);
+    }
+
+    function _requireQuoteHonouredValues(uint256 quotedOut, uint256 maxSlippageBps, uint256 received) private pure {
+        uint256 floor_ = shortfallFloor(quotedOut, maxSlippageBps);
+        if (received < floor_) revert AggregatorShortfall(quotedOut, floor_, received);
     }
 
     function _baseOf(address token) private view returns (address base) {

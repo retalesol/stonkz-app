@@ -3,6 +3,7 @@ import {
   CURVE_MC_BASE,
   CURVE_MC_COEFF,
   CURVE_MC_EXP,
+  CURVE_START_MC,
   GRAD,
   LANE_GRAD_PCT,
   LANE_SOON_PCT,
@@ -27,15 +28,24 @@ export function curveMc(sol: number): number {
   return CURVE_MC_BASE + CURVE_MC_COEFF * Math.pow(Math.max(0, sol), CURVE_MC_EXP);
 }
 
-/** Board lane from market cap. `index.html:1132` */
-export function laneOf(c: Pick<CurveCoin, 'mc'>): Lane {
-  const v = (c.mc / GRAD) * 100;
-  return v >= LANE_GRAD_PCT ? 'grad' : v >= LANE_SOON_PCT ? 'soon' : 'new';
+/**
+ * Bonding-curve fill as progress from launch floor → graduation.
+ *
+ * Virtual reserves imply ~$4.3K mcap at mint (`CURVE_START_MC`). Measuring
+ * against `GRAD` alone made every empty launch look ~6% filled. Buys raise
+ * mc (and fill); sells lower both.
+ */
+export function curve(c: Pick<CurveCoin, 'mc'>): number {
+  const span = GRAD - CURVE_START_MC;
+  if (span <= 0) return c.mc >= GRAD ? 100 : 0;
+  const raw = ((c.mc - CURVE_START_MC) / span) * 100;
+  return Math.max(0, Math.min(100, raw));
 }
 
-/** Curve fill percentage, capped at 100. `index.html:1133` */
-export function curve(c: Pick<CurveCoin, 'mc'>): number {
-  return Math.min(100, (c.mc / GRAD) * 100);
+/** Board lane from curve fill progress. `index.html:1132` */
+export function laneOf(c: Pick<CurveCoin, 'mc'>): Lane {
+  const v = curve(c);
+  return v >= LANE_GRAD_PCT ? 'grad' : v >= LANE_SOON_PCT ? 'soon' : 'new';
 }
 
 /** USD price per token. `index.html:1134` */

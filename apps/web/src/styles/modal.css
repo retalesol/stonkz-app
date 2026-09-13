@@ -8,6 +8,8 @@
 .win-hd .x{margin-left:auto;color:var(--dim);letter-spacing:.2em;padding:0 3px}
 .win-hd .x:hover{color:var(--down)}
 .win-bd{padding:11px 12px 13px;display:flex;flex-direction:column;gap:11px}
+.ed-av{display:flex;align-items:center;gap:12px}
+.ed-av canvas{width:96px;height:96px;border:1px solid var(--line2);image-rendering:pixelated;flex:0 0 auto;display:block}
 .det{display:grid;grid-template-columns:64px 1fr;gap:11px}
 .det canvas.av{image-rendering:pixelated;border:1px solid var(--line2);width:64px;height:64px;display:block}
 .rowf{display:grid;grid-template-columns:1fr 1fr;gap:8px}

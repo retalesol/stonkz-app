@@ -54,6 +54,34 @@ export const LAUNCHPAD_ABI = [
   },
   {
     type: 'function',
+    name: 'stake',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'lockDays', type: 'uint16' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'unstake',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimStake',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'token', type: 'address' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
     name: 'coinInfo',
     stateMutability: 'view',
     inputs: [{ name: 'token', type: 'address' }],
@@ -165,6 +193,83 @@ export const ERC20_ABI = [
  * to import from.
  */
 export const STONKZ_ROUTER_ABI = [
+  {
+    type: 'function',
+    name: 'buyWithEth',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'minTokenOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'tokensOut', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'sellForEth',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amountToken', type: 'uint256' },
+      {
+        name: 'permitData',
+        type: 'tuple',
+        components: [
+          { name: 'value', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+        ],
+      },
+      { name: 'minBaseOut', type: 'uint256' },
+      { name: 'minEthOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'ethOut', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'buyViaV3',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'fee', type: 'uint24' },
+      { name: 'quotedBaseOut', type: 'uint256' },
+      { name: 'maxSlippageBps', type: 'uint256' },
+      { name: 'minTokenOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'tokensOut', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'sellViaV3',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amountToken', type: 'uint256' },
+      {
+        name: 'permitData',
+        type: 'tuple',
+        components: [
+          { name: 'value', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'v', type: 'uint8' },
+          { name: 'r', type: 'bytes32' },
+          { name: 's', type: 'bytes32' },
+        ],
+      },
+      { name: 'minBaseOut', type: 'uint256' },
+      { name: 'fee', type: 'uint24' },
+      { name: 'quotedEthOut', type: 'uint256' },
+      { name: 'maxSlippageBps', type: 'uint256' },
+      { name: 'minEthOut', type: 'uint256' },
+      { name: 'amountInBase', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'ethOut', type: 'uint256' }],
+  },
   {
     type: 'function',
     name: 'buyViaAggregator',

@@ -109,3 +109,16 @@ export class RpcError extends Error {
 
 /** Injected so tests never touch the network and prod can swap in a pooled agent. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Optional ERC-20 balance read. Real `EvmRpc` implements it; fakes may omit it,
+ * in which case `/trade/prepare` skips the max-sell clamp.
+ */
+export interface Erc20BalanceSource {
+  erc20BalanceAtoms(token: string, owner: string): Promise<bigint>;
+}
+
+export function asErc20BalanceSource(rpc: ChainRpc): Erc20BalanceSource | undefined {
+  const candidate = rpc as Partial<Erc20BalanceSource>;
+  return typeof candidate.erc20BalanceAtoms === 'function' ? (candidate as Erc20BalanceSource) : undefined;
+}

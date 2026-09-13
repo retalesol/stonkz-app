@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { acceptConfirmDialogs } from './accept-dialogs.js';
 import {
   MOCK_EVM_ADDRESS,
   MOCK_SOL_ADDRESS,
@@ -65,6 +66,7 @@ async function relaxCsp(page: Page): Promise<void> {
 test('the picker lists the detected Solana wallet and connects it with a real SIWS signature', async ({
   page,
 }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -97,6 +99,7 @@ test('the picker lists the detected Solana wallet and connects it with a real SI
 test('declining in the wallet keeps the picker open with the reason, and connects nothing', async ({
   page,
 }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page, { reject: true });
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -117,10 +120,11 @@ test('declining in the wallet keeps the picker open with the reason, and connect
   await expect(page.locator('#walletBody')).toContainText('Mock Phantom');
   await page.click('#wp-cancel');
   await expect(page.locator('#walletScrim')).toBeHidden();
-  await expect(page.locator('.toast', { hasText: 'CONNECT CANCELLED' })).toBeVisible();
+  await expect(page.locator('.mm-bubble', { hasText: 'CONNECT CANCELLED' })).toBeVisible();
 });
 
 test('Escape closes the picker without connecting', async ({ page }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -138,6 +142,7 @@ test('Escape closes the picker without connecting', async ({ page }) => {
 test('with no Solana wallet installed the picker says so instead of connecting something', async ({
   page,
 }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page, { noSolana: true });
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -154,6 +159,7 @@ test('with no Solana wallet installed the picker says so instead of connecting s
 test('WalletConnect is offered for Robinhood Chain, disabled with its reason when unconfigured', async ({
   page,
 }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -162,8 +168,9 @@ test('WalletConnect is offered for Robinhood Chain, disabled with its reason whe
 
   await page.click('#connectBtn');
   await page.click('[data-net="RH"]');
-  await expect(page.locator('#walletBody')).toContainText('Mock Robinhood Wallet');
-  await expect(page.locator('#walletBody')).toContainText('4663');
+  await expect(page.locator('#walletBody')).toContainText('MetaMask');
+  // Staging builds pin RH testnet (46630); mainnet builds still show 4663.
+  await expect(page.locator('#walletBody')).toContainText(/4663/);
 
   // Robinhood Wallet is mobile-only, so a desktop user with no extension
   // has no route in but WalletConnect. The row is always present; with no
@@ -182,6 +189,7 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
 }) => {
   // Starts on Ethereum mainnet and does not know 4663, so this exercises
   // the whole ladder: switch -> 4902 -> add -> switch -> verify.
+  acceptConfirmDialogs(page);
   await installMockWallets(page, { evmChainId: '0x1', evmUnknownChain: true });
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -197,7 +205,7 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
         data: '0xdeadbeef',
         value: '200000000000000000',
         quote: {
-          sym: 'RHDOG',
+          sym: 'COPIUM',
           net: 'RH',
           side: 'buy',
           nativeUnit: 'ETH',
@@ -211,7 +219,7 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
             {
               venue: 'CURVE',
               inSymbol: 'ETH',
-              outSymbol: 'RHDOG',
+              outSymbol: 'COPIUM',
               inAmount: 0.2,
               outAmount: 200_000,
               impactPct: 1,
@@ -238,12 +246,12 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
   expect(await walletRecord<string[]>(page, '__rpcCalls')).not.toContain('wallet_switchEthereumChain');
   expect(await walletRecord<string>(page, '__signedSiwe')).toBeTruthy();
 
-  const card = page.locator('.coin[data-sym="RHDOG"]').first();
+  const card = page.locator('.coin[data-sym="COPIUM"]').first();
   await expect(card).toBeVisible();
   await card.click();
   await expect(page.locator('#tokenView')).toBeVisible();
   await page.click('#t-go');
-  await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 20_000 });
 
   const calls = await walletRecord<string[]>(page, '__rpcCalls');
   expect(calls).toContain('wallet_switchEthereumChain');
@@ -266,6 +274,7 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
   // costs the trader nothing and still carries its reason string, which is
   // the only way "SLIPPAGE EXCEEDED" can be distinguished from a bare
   // failed receipt after the fact.
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page, { revert: true });
   await relaxCsp(page);
@@ -281,7 +290,7 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
         data: '0xdeadbeef',
         value: '0',
         quote: {
-          sym: 'RHDOG',
+          sym: 'COPIUM',
           net: 'RH',
           side: 'buy',
           nativeUnit: 'ETH',
@@ -295,7 +304,7 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
             {
               venue: 'CURVE',
               inSymbol: 'ETH',
-              outSymbol: 'RHDOG',
+              outSymbol: 'COPIUM',
               inAmount: 0.2,
               outAmount: 200_000,
               impactPct: 1,
@@ -316,14 +325,14 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
   await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
 
   await connectWithMockWallet(page, 'RH');
-  const card = page.locator('.coin[data-sym="RHDOG"]').first();
+  const card = page.locator('.coin[data-sym="COPIUM"]').first();
   await expect(card).toBeVisible();
   await card.click();
   await expect(page.locator('#tokenView')).toBeVisible();
   await page.click('#t-go');
 
-  await expect(page.locator('.toast', { hasText: 'SLIPPAGE EXCEEDED' })).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeHidden();
+  await expect(page.locator('.mm-bubble', { hasText: 'SLIPPAGE EXCEEDED' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeHidden();
   // Nothing was signed, which is the point of simulating first.
   expect(await walletRecord<string[]>(page, '__rpcCalls')).not.toContain('eth_sendTransaction');
   // The trade button is usable again, not stuck mid-sign.
@@ -331,6 +340,7 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
 });
 
 test('the wallet menu disconnect ends the wallet session, not just the chip', async ({ page }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -341,7 +351,7 @@ test('the wallet menu disconnect ends the wallet session, not just the chip', as
   await page.click('#wchip');
   await page.click('[data-w="disconnect"]');
   await expect(page.locator('#connectBtn')).toBeVisible();
-  await expect(page.locator('.toast', { hasText: 'WALLET DISCONNECTED' })).toBeVisible();
+  await expect(page.locator('.mm-bubble', { hasText: 'WALLET DISCONNECTED' })).toBeVisible();
 
   // Reconnecting goes back through the picker and signs again — the old
   // JWT was cleared with the session it was bound to.
@@ -350,6 +360,7 @@ test('the wallet menu disconnect ends the wallet session, not just the chip', as
 });
 
 test('a Solana trade broadcasts through the wallet and reports the real signature', async ({ page }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -364,7 +375,7 @@ test('a Solana trade broadcasts through the wallet and reports the real signatur
         transaction: 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         lastValidBlockHeight: 999_999,
         quote: {
-          sym: 'DOGGO',
+          sym: 'DEVCOIN',
           net: 'SOL',
           side: 'buy',
           nativeUnit: 'SOL',
@@ -375,7 +386,7 @@ test('a Solana trade broadcasts through the wallet and reports the real signatur
             {
               venue: 'CURVE',
               inSymbol: 'SOL',
-              outSymbol: 'DOGGO',
+              outSymbol: 'DEVCOIN',
               inAmount: 0.5,
               outAmount: 120_000,
               impactPct: 1,
@@ -395,22 +406,23 @@ test('a Solana trade broadcasts through the wallet and reports the real signatur
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
 
-  // Connect first, then navigate client-side: a cold `goto('/t/DOGGO')`
+  // Connect first, then navigate client-side: a cold `goto('/t/DEVCOIN')`
   // would boot with the wallet disconnected again, and a real trade now
   // genuinely requires a connected signer — which is the change.
   await connectWithMockWallet(page, 'SOL');
-  const card = page.locator('.coin[data-sym="DOGGO"]').first();
+  const card = page.locator('.coin[data-sym="DEVCOIN"]').first();
   await expect(card).toBeVisible();
   await card.click();
   await expect(page.locator('#tokenView')).toBeVisible();
   await page.click('#t-go');
-  await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 20_000 });
 
   // The wallet really received the API's serialised transaction bytes.
   expect(await walletRecord<number>(page, '__sentSolBytes')).toBeGreaterThan(0);
 });
 
 test('an EIP-712 permit is signed with a nonce read from the chain, not from the API', async ({ page }) => {
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
   await relaxCsp(page);
@@ -438,7 +450,7 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
       data: '0xdeadbeef',
       value: '0',
       quote: {
-        sym: 'RHDOG',
+        sym: 'COPIUM',
         net: 'RH',
         side: 'sell',
         nativeUnit: 'ETH',
@@ -448,7 +460,7 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
         hops: [
           {
             venue: 'CURVE',
-            inSymbol: 'RHDOG',
+            inSymbol: 'COPIUM',
             outSymbol: 'ETH',
             inAmount: 200_000,
             outAmount: 0.19,
@@ -474,7 +486,7 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
               ...base,
               permitTypedData: {
                 domain: {
-                  name: 'RHDOG',
+                  name: 'COPIUM',
                   version: '1',
                   chainId: 4663,
                   verifyingContract: '0x4444444444444444444444444444444444444444',
@@ -506,7 +518,7 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
   await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
 
   await connectWithMockWallet(page, 'RH');
-  const card = page.locator('.coin[data-sym="RHDOG"]').first();
+  const card = page.locator('.coin[data-sym="COPIUM"]').first();
   await expect(card).toBeVisible();
   await card.click();
   await expect(page.locator('#tokenView')).toBeVisible();
@@ -518,7 +530,7 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
   await page.click('#steps-go');
   await expect(page.locator('#steps-go')).toHaveText('SIGN STEP 2 OF 2');
   await page.click('#steps-go');
-  await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 20_000 });
 
   const typed = JSON.parse(await walletRecord<string>(page, '__signedTypedData')) as {
     types: Record<string, unknown>;

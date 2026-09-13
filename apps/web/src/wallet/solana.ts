@@ -312,22 +312,33 @@ class SolanaStandardWallet implements ConnectedWallet {
 }
 
 /** Connect the named wallet and authorise one account. */
-export async function connectSolanaWallet(id: string): Promise<ConnectedWallet> {
+export async function connectSolanaWallet(
+  id: string,
+  opts: { silent?: boolean } = {},
+): Promise<ConnectedWallet> {
   const wallet = registeredWallets().find((w) => w.name === id);
   if (!wallet) {
     throw new WalletError('no_wallet', `${id} is no longer available. Is the extension still enabled?`);
   }
-  return openSolanaWallet(wallet);
+  return openSolanaWallet(wallet, opts);
 }
 
 /** The connect half, against an already-resolved registry entry. */
-export async function openSolanaWallet(wallet: Wallet): Promise<ConnectedWallet> {
+export async function openSolanaWallet(
+  wallet: Wallet,
+  opts: { silent?: boolean } = {},
+): Promise<ConnectedWallet> {
   const features = readFeatures(wallet);
   if (!features) {
     throw new WalletError(
       'unsupported_method',
       `${wallet.name} cannot sign for ${solanaWalletStandardChain()}. Switch its network, or use another wallet.`,
     );
+  }
+  // Already authorised accounts stay on the Wallet Standard entry across
+  // reloads — reuse them on restore so we do not re-prompt.
+  if (opts.silent && wallet.accounts.length > 0) {
+    return new SolanaStandardWallet(wallet, features, wallet.accounts[0]!);
   }
   let accounts: readonly WalletAccount[];
   try {

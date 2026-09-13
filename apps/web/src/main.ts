@@ -7,7 +7,10 @@ import './styles/phase5.css';
 // Phase B: the real wallet picker and the practice-mode badge.
 import './styles/wallet-connect.css';
 
+import { markSplashShown } from './app/splash.js';
 import { boot } from './app/shell.js';
+
+markSplashShown();
 
 /**
  * Entry point. Everything is in `app/shell.ts`; this file only picks the

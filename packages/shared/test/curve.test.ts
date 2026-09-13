@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CIRC_FRACTION, GRAD, SUPPLY } from '../src/constants.js';
+import { CIRC_FRACTION, CURVE_START_MC, GRAD, SUPPLY } from '../src/constants.js';
 import { circ, curve, curveMc, laneOf, liq, price, vol24 } from '../src/curve.js';
 
 describe('curveMc', () => {
@@ -33,24 +33,39 @@ describe('laneOf', () => {
     expect(laneOf({ mc: 3020000 })).toBe('grad');
   });
 
-  it('puts 55% to 100% of the curve in soon', () => {
-    expect(laneOf({ mc: GRAD * 0.55 })).toBe('soon');
+  it('puts 55% to 100% of fill progress in soon', () => {
+    const soonMc = CURVE_START_MC + (GRAD - CURVE_START_MC) * 0.55;
+    expect(laneOf({ mc: soonMc })).toBe('soon');
     expect(laneOf({ mc: 67900 })).toBe('soon');
     expect(laneOf({ mc: GRAD - 1 })).toBe('soon');
   });
 
-  it('puts everything below 55% in new', () => {
-    expect(laneOf({ mc: GRAD * 0.55 - 1 })).toBe('new');
-    expect(laneOf({ mc: 4200 })).toBe('new');
+  it('puts everything below 55% fill in new', () => {
+    const soonMc = CURVE_START_MC + (GRAD - CURVE_START_MC) * 0.55;
+    expect(laneOf({ mc: soonMc - 1 })).toBe('new');
+    expect(laneOf({ mc: CURVE_START_MC })).toBe('new');
     expect(laneOf({ mc: 0 })).toBe('new');
   });
 });
 
 describe('curve', () => {
-  it('reports fill as a percentage of the graduation cap', () => {
+  it('reads 0% at launch floor and below (virtual-reserve implied mcap)', () => {
     expect(curve({ mc: 0 })).toBe(0);
-    expect(curve({ mc: GRAD / 2 })).toBe(50);
+    expect(curve({ mc: CURVE_START_MC })).toBe(0);
+    expect(CURVE_START_MC).toBeCloseTo(GRAD / 16, 12);
+  });
+
+  it('reports fill as progress from launch floor to graduation', () => {
+    const mid = CURVE_START_MC + (GRAD - CURVE_START_MC) / 2;
+    expect(curve({ mc: mid })).toBeCloseTo(50, 9);
     expect(curve({ mc: GRAD })).toBe(100);
+  });
+
+  it('moves with buys and sells relative to the floor', () => {
+    const afterBuy = CURVE_START_MC + (GRAD - CURVE_START_MC) * 0.1;
+    expect(curve({ mc: afterBuy })).toBeCloseTo(10, 9);
+    expect(curve({ mc: afterBuy })).toBeGreaterThan(curve({ mc: CURVE_START_MC }));
+    expect(curve({ mc: CURVE_START_MC + 1 })).toBeLessThan(curve({ mc: afterBuy }));
   });
 
   it('caps at 100 after graduation', () => {

@@ -31,6 +31,8 @@ export interface LaunchDraft {
   buy: number;
   base: string;
   cashback: boolean;
+  /** IPFS gateway URL for the launch image. */
+  uri?: string;
   x?: string;
   web?: string;
   tg?: string;
@@ -118,6 +120,10 @@ export interface StonkzApi {
   stake(input: StakeInput): Promise<void>;
   unstake(sym: string): Promise<number>;
   claimStake(sym: string): Promise<StakeClaim>;
+  /** Live: persist SET to PUT /me/settings. Sim: no-op. */
+  pushSettings?(settings: import('@stonkz/shared').Settings): Promise<void>;
+  /** Live: hydrate USER.stake from GET /stake/:sym. Sim: no-op. */
+  hydrateStake?(sym: string): Promise<void>;
 
   openCrate(tier: CrateTier): Promise<CrateResult>;
 }

@@ -1,0 +1,58 @@
+{
+  "chainId": 46630,
+  "network": "robinhood-testnet",
+  "rpc": "https://rpc.testnet.chain.robinhood.com",
+  "explorer": "https://explorer.testnet.chain.robinhood.com",
+  "deployedAt": "2026-09-08",
+  "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
+  "contracts": {
+    "PushPriceSource": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
+    "StonkzLaunchpad": "0x2588E500B1e5fCF18253F44b6f2607BF2B14161C",
+    "StonkzV2Factory": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+    "UniswapV2Migrator": "0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45",
+    "StonkzRouter": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883"
+  },
+  "tokens": {
+    "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
+    "USDG": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
+    "UniversalRouter": "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+    "TSLA": "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E",
+    "AMZN": "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02",
+    "PLTR": "0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0",
+    "NFLX": "0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93",
+    "AMD": "0x71178BAc73cBeb415514eB542a8995b82669778d",
+    "TestnetUsdg": "0x4bfBc27516EdCf36a93060A3c42Ef0c1cDB9E267",
+    "V3ExactInputQuoter": "0xB69f73bc96f8315bcd4d3332Cb88822197045345",
+    "WethUsdgV3Pool": "0xB195fBc3204967e126A733b3A90C5Eb3A1946528",
+    "WethUsdgV3Fee": 3000
+  },
+  "smoke": {
+    "BETADOG": "0x7Fb46AFa7aD4835Be52C02d26541174b2A09070D",
+    "BETADOG_note": "graduated + migrated; curve closed",
+    "RHLIVE": "0xB9C37853787b71d91Db900E10CA96231aC0Df429",
+    "RHLIVE_createTx": "0xc6c8716b1e67e063975e250416655603dcebf0a10939bce62a24b6e942183757",
+    "createTx": "0x31fbd4ab68546680a78af31242bb13cdc56ad86a7f340f506387446e6732222d",
+    "buyTx": "0x04905653aa53ae9ef9799d75a66f80911027e103d46dabc2d75a9f85e69ce316",
+    "sellTx": "0xc184e0151c85a276bff09ad3a45952f017deb5e6467b712ab095155a1d1a7164",
+    "pushPriceTx": "0x4b9f5e91112977aa85d7fd27aa8ecc6df63ce4dcb0209732029c49909e75ae14",
+    "graduateTx": "0xdd534cd563c7219bb92063cb69e54877e2d29d3b11b7557d02381fec6dce57e8",
+    "migrateTx": "0x07db173ef39b0086e7c1cd39353719308b7d87807d70ef0c18b5b7fc82b1447c",
+    "v2Pair": "0xcEF66c6955d6F27B712CC52700a835307AeFbF58",
+    "deadLp": "985854938711039069469",
+    "apiPrepareAtomic": true,
+    "buyWithEthEthCallOk": true,
+    "buyViaV3Router": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883",
+    "copiumBuyViaV3EthCallOk": true
+  },
+  "notes": [
+    "Launchpad and PushPriceSource are UUPS proxies (admin can upgradeToAndCall).",
+    "StonkzRouter is immutable; redeploy + update RH_ROUTER_ADDRESS to change logic.",
+    "UR WRAP_ETH on 46630 still targets mainnet aeWETH \u2014 use buyWithEth/sellForEth for WETH pairs.",
+    "StonkzV2Factory is a Stonkz-deployed Uniswap V2\u2013compatible factory (no public V2 on 46630).",
+    "Deployer private key used for this deploy was shared in chat \u2014 treat as burned for mainnet.",
+    "TestnetUsdg is a mintable stand-in: real USDG is owner-gated; COPIUM retargeted via LaunchpadRetargetPatch then impl restored.",
+    "Aggregator buys use buyViaV3/sellViaV3 via SwapRouter02 (UR V3 CREATE2 pool address is wrong on 46630).",
+    "Pin RH_V3_FEE_TIER_OVERRIDES=USDG:3000 and RH_V3_QUOTER_ADDRESS for executable ETH\u2194USDG hops.",
+    "BASE_MINT_OVERRIDES_RH maps USDG to TestnetUsdg for COPIUM staging (real USDG not faucetable)."
+  ]
+}

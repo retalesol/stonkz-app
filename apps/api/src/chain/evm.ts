@@ -19,6 +19,14 @@ export const RH_TESTNET_CHAIN_ID = 46630;
  */
 export const RH_PUBLIC_RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
 
+/** `balanceOf(address)` selector — used to clamp max-sell amounts to the wallet. */
+const BALANCE_OF_SELECTOR = '70a08231';
+
+function encodeBalanceOfCall(owner: string): string {
+  const addr = owner.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  return `0x${BALANCE_OF_SELECTOR}${addr}`;
+}
+
 export interface EvmRpcOptions {
   url: string;
   chainId: number;
@@ -76,11 +84,22 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
   }
 
   /**
-   * `eth_call` at head. Used by the SIWE verifier's ERC-1271 fallback, which
-   * is why it is read-only and takes raw calldata rather than an ABI.
+   * `eth_call` at head. Used by the SIWE verifier's ERC-1271 fallback and by
+   * `erc20BalanceAtoms` — read-only, raw calldata.
    */
   async ethCall(to: string, data: string): Promise<string> {
     return this.call<string>('eth_call', [{ to, data }, 'latest']);
+  }
+
+  /**
+   * ERC-20 `balanceOf(owner)` in atoms. Used to clamp max-sell prepares so a
+   * float-rounded client amount cannot exceed the wallet and revert `"balance"`.
+   */
+  async erc20BalanceAtoms(token: string, owner: string): Promise<bigint> {
+    const data = encodeBalanceOfCall(owner);
+    const raw = await this.ethCall(token, data);
+    if (!raw || raw === '0x') return 0n;
+    return BigInt(raw);
   }
 
   /** `routes/launch.ts`'s `/launch/confirm` — status + calldata + logs, to verify and to find the `TokenCreated` address. */

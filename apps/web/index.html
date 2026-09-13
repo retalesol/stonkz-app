@@ -13,21 +13,128 @@
   frame-ancestors is deliberately absent: browsers ignore it in a <meta> tag, so
   it has to ship as a response header from the host alongside this policy.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws: wss: https:; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://*.mypinata.cloud https://indigo-hollow-catfish-851.mypinata.cloud; connect-src 'self' ws: wss: https:; base-uri 'self'; form-action 'self'; object-src 'none'">
 <title>Stonkz Launchpad</title>
+<link rel="icon" type="image/png" href="/images/stonkz_head.png">
+<link rel="apple-touch-icon" href="/images/stonkz_head.png">
+<link rel="preload" href="/images/mememan.png" as="image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@400;600;700&family=Silkscreen:wght@400;700&display=swap">
+<style>
+  /* Boot splash — inline so it paints before the JS/CSS module graph. */
+  #bootSplash{
+    position:fixed;inset:0;z-index:10000;
+    display:flex;align-items:center;justify-content:center;
+    background:#000;
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    color:#ffa22b;
+    transition:opacity .45s ease,visibility .45s ease;
+  }
+  #bootSplash.boot-done{opacity:0;visibility:hidden;pointer-events:none}
+  #bootSplash::before{
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.12;
+    background:repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255,162,43,.07) 2px,
+      rgba(255,162,43,.07) 3px
+    );
+  }
+  .boot-frame{
+    position:relative;
+    width:min(420px,92vw);
+    border:1px solid #c87c14;
+    background:linear-gradient(180deg,#120c04,#050505 55%);
+    box-shadow:0 0 0 1px #2a1804,0 0 48px rgba(255,162,43,.12);
+    padding:28px 22px 22px;
+  }
+  .boot-chrome{
+    position:absolute;left:0;right:0;top:0;
+    display:flex;align-items:center;gap:8px;
+    padding:6px 10px;
+    border-bottom:1px solid #3a2408;
+    background:#1a1104;
+    font-size:10px;letter-spacing:.14em;color:#c87c14;text-transform:uppercase;
+  }
+  .boot-chrome i{
+    width:7px;height:7px;border-radius:1px;background:#c87c14;opacity:.55;
+  }
+  .boot-body{
+    display:flex;flex-direction:column;align-items:center;gap:18px;
+    padding-top:22px;
+  }
+  .boot-head{
+    width:88px;height:88px;object-fit:contain;
+    image-rendering:pixelated;
+    animation:boot-spin 1.15s linear infinite;
+    filter:drop-shadow(0 0 12px rgba(255,162,43,.35));
+  }
+  .boot-line{
+    display:flex;align-items:baseline;gap:8px;
+    font-size:15px;font-weight:600;letter-spacing:.06em;
+    color:#ffa22b;
+  }
+  .boot-prompt{color:#c87c14}
+  .boot-msg{color:#ffa22b}
+  .boot-dots::after{
+    content:"...";
+    display:inline-block;
+    width:0;
+    overflow:hidden;
+    vertical-align:bottom;
+    animation:boot-dots 1.2s steps(4,end) infinite;
+  }
+  .boot-cursor{
+    display:inline-block;width:.65ch;color:#ffa22b;
+    animation:boot-blink 1s steps(1,end) infinite;
+  }
+  .boot-sub{
+    font-size:10px;letter-spacing:.16em;color:#c87c14;opacity:.85;
+    text-transform:uppercase;
+  }
+  @keyframes boot-spin{
+    to{transform:rotate(360deg)}
+  }
+  @keyframes boot-blink{
+    0%,49%{opacity:1}
+    50%,100%{opacity:0}
+  }
+  @keyframes boot-dots{
+    0%{width:0}
+    100%{width:1.8em}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .boot-head{animation:none}
+    .boot-dots::after{animation:none;width:1.8em}
+    .boot-cursor{animation:none}
+  }
+</style>
 <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
+<div id="bootSplash" role="status" aria-live="polite" aria-busy="true" aria-label="Loading Stonkz">
+  <div class="boot-frame">
+    <div class="boot-chrome"><i></i><i></i><i></i><span>stonkz://boot</span></div>
+    <div class="boot-body">
+      <img class="boot-head" src="/images/mememan.png" width="88" height="88" alt="">
+      <div class="boot-line">
+        <span class="boot-prompt">$</span>
+        <span class="boot-msg">Loading Stonkz<span class="boot-dots"></span></span>
+        <span class="boot-cursor" aria-hidden="true">█</span>
+      </div>
+      <div class="boot-sub">initializing terminal</div>
+    </div>
+  </div>
+</div>
 <div id="app">
 
 <canvas id="fx" aria-hidden="true"></canvas>
 
 <header class="top">
   <button class="brand" id="homeBtn" aria-label="Back to the board">
-    <canvas id="brandFace" width="256" height="256" aria-hidden="true"></canvas>
+    <img class="brand-mark" src="/images/stonkz_head.png" width="32" height="32" alt="">
     <span class="mark">STONKZ</span><span class="dom">STON.KZ</span>
   </button>
   <form class="search" id="searchform" autocomplete="off">
@@ -68,6 +175,8 @@
         <span class="addr" id="wAddr"></span><span class="car">&#9662;</span>
       </button>
       <span class="wmenu" id="wmenu" hidden>
+        <span class="wuser" id="wUserRow"><canvas width="40" height="40" id="wMenuAv" aria-hidden="true"></canvas
+          ><span><span class="lbl">SIGNED IN AS</span><b id="wUserName">—</b></span></span>
         <span class="netrow"><i class="netdot" id="wNetDot2"></i>NETWORK <b id="wNetName">SOLANA</b></span>
         <span class="wbal"><span class="lbl">SOL BALANCE</span>
           <span class="wrow"><span class="v" id="wBal">0.00 SOL</span>
@@ -135,8 +244,9 @@
   <span>STON.KZ</span>
   <span>FAIR LAUNCH</span>
   <span class="sol"><span class="led"></span>SOL <b id="solpx">$0.00</b></span>
+  <span class="sol eth"><span class="led"></span>ETH <b id="ethpx">$0.00</b></span>
   <span class="grad">GRADUATION: <b id="gradCap">$69K</b></span>
-  <span class="demo">STAKING, CRATES &amp; XP ARE SIMULATED &#183; NOT FINANCIAL ADVICE</span>
+  <span class="demo">DEVNET STAGING &#183; PROGRAMS NOT DEPLOYED YET &#183; NOT FINANCIAL ADVICE</span>
   <span class="brk" id="count">0 COINS</span>
   <button type="button" class="foot-legal" id="legalLink">RISK &amp; LEGAL DISCLOSURE</button>
 </footer>
@@ -191,10 +301,19 @@
     <div class="win-hd"><h2>Edit Profile</h2><span class="sub">PUBLIC ON YOUR WALL</span>
       <button class="x" id="ed-x" aria-label="Close">&#10005;</button></div>
     <form class="win-bd" id="editForm" autocomplete="off">
+      <div class="ed-av">
+        <canvas id="ed-av" width="96" height="96" aria-hidden="true"></canvas>
+        <div>
+          <span class="lbl">PROFILE PICTURE</span>
+          <input type="file" id="ed-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+          <button type="button" class="wiz-btn" id="ed-upload">UPLOAD PFP</button>
+          <p class="hint" style="margin-top:6px">DEFAULT IS MEMEMAN ON A COLOUR UNIQUE TO YOUR WALLET. UPLOADS GO TO IPFS.</p>
+        </div>
+      </div>
       <div><span class="lbl">USERNAME</span><input class="fld" id="ed-name" maxlength="22" placeholder="TRENCHRAT"></div>
       <div><span class="lbl">BIO</span><textarea class="fld" id="ed-bio" maxlength="160"
         placeholder="say something about yourself"></textarea></div>
-      <p class="hint">SHOWN TO ANYONE WHO OPENS YOUR PROFILE &#183; SAVED ON THIS DEVICE.</p>
+      <p class="hint">SHOWN IN CHAT, TRADES AND YOUR PROFILE.</p>
       <button type="submit" class="big">SAVE PROFILE</button>
     </form>
   </div>
@@ -275,7 +394,13 @@
   <b>PRACTICE WALLET</b><span id="practiceBadgeText">BROWSER-LOCAL KEY &#183; NOTHING SETTLES ON CHAIN</span>
 </div>
 
-<div class="toasts" id="toasts"></div>
+<div class="mm-agent" id="mmAgent" aria-live="polite">
+  <div class="mm-bubbles" id="mmBubbles"></div>
+  <button type="button" class="mm-body" id="mmBody" aria-label="Mememan notifications" aria-pressed="false" title="QUIET MODE">
+    <span class="mm-badge" id="mmBadge" hidden>0</span>
+    <img class="mm-img" src="/images/mememan.png" width="132" height="168" alt="">
+  </button>
+</div>
 <div class="rankup" id="rankup" aria-live="polite"></div>
 
 </div>

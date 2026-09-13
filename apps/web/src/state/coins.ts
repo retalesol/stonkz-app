@@ -19,11 +19,23 @@ export interface Comment {
 }
 
 export interface Holder {
+  /** Display label (short addr, or "BONDING CURVE"). */
   w: string;
+  /** Full wallet for profile links; absent for curve row. */
+  addr?: string;
   /** Percent of supply. */
   p: number;
   tag: readonly [label: string, cls: string] | null;
   curve?: boolean;
+}
+
+/** One leg of a multi-hop fill shown under an expanded trade row. */
+export interface TradeHop {
+  venue: string;
+  inSymbol: string;
+  outSymbol: string;
+  inAmount: number;
+  outAmount: number;
 }
 
 /** A row on the trades tab. `mine` is a render hint, not a claim of ownership. */
@@ -33,9 +45,18 @@ export interface Trade {
   sol: number;
   tok: number;
   mc: number;
+  /** Display label (short addr or CASHBACK). */
   w: string;
-  /** Venue label: PUMP / RAY / JUP / ORCA / METE, or CB inside a cashback window. */
+  /** Full wallet for profile links when known. */
+  addr?: string;
+  /** Venue / route label: `CURVE`, `UNISWAP → CURVE`, etc. */
   v: string;
+  /** Ordered hops when the route is multi-leg (native → base → token). */
+  hops?: TradeHop[];
+  /** Chain tx signature / hash when known — used to dedupe optimistic + WS. */
+  sig?: string;
+  /** UI: expanded hop detail. */
+  open?: boolean;
   cb?: boolean;
   fresh?: boolean;
 }
@@ -182,24 +203,6 @@ export function seedTrades(c: SimCoin): void {
   }
 }
 
-const COMMENT_POOL = [
-  'in at the first candle. not selling until my landlord calls',
-  'holders up 400 in ten minutes, something is actually happening here',
-  'who keeps buying the exact same 0.7 sol every single block',
-  'curve is close. hold the line and stop paper handing',
-  'third time i have bought this and the third time i am early',
-];
-
-export function seedComments(c: SimCoin): void {
-  if (c.comments) return;
-  c.comments = COMMENT_POOL.slice(0, 4).map((t, i) => ({
-    who: fakeAddr(c.seed + i * 29),
-    t: (i + 1) * 4 + 'm',
-    text: t,
-    mine: false,
-  }));
-}
-
 const HOLDER_TAGS: Array<readonly [string, string]> = [
   ['DEV', 'dev'],
   ['SNIPER', 'snp'],
@@ -238,20 +241,83 @@ export function holdersOf(c: SimCoin): Holder[] {
  */
 export function pushTrade(
   c: SimCoin,
-  o: { buy: boolean; sol: number; cb?: boolean; mine?: boolean; tok?: number; mc?: number; w?: string; v?: string },
+  o: {
+    buy: boolean;
+    sol: number;
+    cb?: boolean;
+    mine?: boolean;
+    tok?: number;
+    mc?: number;
+    w?: string;
+    addr?: string;
+    v?: string;
+    hops?: TradeHop[];
+    sig?: string;
+  },
 ): Trade {
   seedTrades(c);
   const trades = c.trades as Trade[];
+  const tok = o.tok ?? (o.sol * NATIVE_PRICE.usd) / price(c);
+  const sig = o.sig?.toLowerCase();
+
+  // Same on-chain fill often arrives twice: optimistic apply after wallet
+  // confirm, then the indexer WS echo. Prefer merging into the existing row
+  // so multi-hop routes stay a single expandable entry.
+  const existingIdx = trades.findIndex((t) => {
+    if (sig && t.sig && t.sig.toLowerCase() === sig) return true;
+    if (t.buy !== o.buy) return false;
+    const ageMs = Date.now() - t.t.getTime();
+    if (ageMs < 0 || ageMs > 45_000) return false;
+    const solClose = Math.abs(t.sol - o.sol) / Math.max(o.sol, 1e-12) < 0.02;
+    const tokClose = Math.abs(t.tok - tok) / Math.max(tok, 1e-9) < 0.02;
+    return solClose && tokClose;
+  });
+  if (existingIdx >= 0) {
+    const prev = trades[existingIdx]!;
+    const preferPrevRoute = !!(prev.v.includes('\u2192') && !(o.v && o.v.includes('\u2192')));
+    const preferPrevHops = !!(prev.hops && prev.hops.length > 1 && !(o.hops && o.hops.length > 1));
+    // Keep the wallet from the optimistic confirm when the WS echo still
+    // attributes the fill to the router contract.
+    const preferPrevWallet = !!(prev.addr && o.addr && prev.addr.toLowerCase() !== o.addr.toLowerCase() && preferPrevHops);
+    const hops = preferPrevHops ? prev.hops : o.hops ?? prev.hops;
+    const merged: Trade = {
+      ...prev,
+      t: prev.t,
+      buy: o.buy,
+      sol: o.sol || prev.sol,
+      tok,
+      mc: o.mc ?? prev.mc,
+      ...(o.cb !== undefined || prev.cb !== undefined ? { cb: o.cb ?? prev.cb } : {}),
+      w: preferPrevWallet ? prev.w : o.cb ? 'CASHBACK' : o.w ?? prev.w,
+      ...(preferPrevWallet || o.addr || prev.addr
+        ? { addr: preferPrevWallet ? prev.addr : o.addr ?? prev.addr }
+        : {}),
+      v: preferPrevRoute ? prev.v : o.v ?? prev.v,
+      ...(hops ? { hops } : {}),
+      ...(sig || prev.sig ? { sig: sig ?? prev.sig } : {}),
+      ...(prev.open !== undefined ? { open: prev.open } : {}),
+      // Merges are WS echoes of an already-shown fill — do not re-flash.
+      fresh: false,
+    };
+    trades.forEach((t) => (t.fresh = false));
+    trades.splice(existingIdx, 1);
+    trades.unshift(merged);
+    return merged;
+  }
+
   trades.forEach((t) => (t.fresh = false));
   const t: Trade = {
     t: new Date(),
     buy: o.buy,
     sol: o.sol,
-    tok: o.tok ?? (o.sol * NATIVE_PRICE.usd) / price(c),
+    tok,
     mc: o.mc ?? c.mc,
     cb: !!o.cb,
     w: o.cb ? 'CASHBACK' : o.w ?? (o.mine ? 'YOU..7xKQ' : fakeAddr((Math.random() * 1e6) | 0)),
+    ...(o.addr ? { addr: o.addr } : {}),
     v: o.v ?? (o.cb ? 'CB' : randomVenue()),
+    ...(o.hops && o.hops.length ? { hops: o.hops } : {}),
+    ...(sig ? { sig } : {}),
     fresh: true,
   };
   trades.unshift(t);

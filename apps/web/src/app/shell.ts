@@ -1,12 +1,12 @@
 import { GRAD, usd } from '@stonkz/shared';
 import { api, DISCLOSURE } from '../api/index.js';
-import { drawFace } from '../canvas/face.js';
 import { initFx } from '../fx/debris.js';
-import { toast } from '../fx/toast.js';
+import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { closeClaim, initClaim, isClaimOpen } from '../modals/claim.js';
 import { closeEdit, initEdit, isEditOpen } from '../modals/edit.js';
 import { closeLaunch, initLaunch, isLaunchOpen, openLaunch } from '../modals/launch.js';
+import { dismissSplash } from './splash.js';
 import { closeLegal, initLegal, isLegalOpen } from '../modals/legal.js';
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
 import { initSettings, isSetOpen, openSet } from '../modals/settings.js';
@@ -36,8 +36,10 @@ import {
   isWmenuOpen,
   renderPracticeBadge,
   renderWallet,
+  restoreWalletSession,
   wmenu,
 } from './wallet.js';
+
 
 /**
  * The app shell: header, search, escape stack, footer and boot.
@@ -120,8 +122,8 @@ export async function boot(): Promise<void> {
   // EIP-6963 announcements only arrive in response to our request event, and
   // wallets that load after us re-announce, so ask as early as possible.
   initWalletDiscovery();
-  drawFace(must<HTMLCanvasElement>('#brandFace'));
   initFx();
+  initMememan();
   loadUser();
   loadSettings();
   touchStreak();
@@ -130,7 +132,11 @@ export async function boot(): Promise<void> {
   must('#gradCap').textContent = usd(GRAD);
   must('.foot .demo').textContent = DISCLOSURE;
 
-  await api.ready();
+  try {
+    await api.ready();
+  } catch (err) {
+    console.warn('api.ready failed', err);
+  }
 
   initBoard();
   initTape();
@@ -144,7 +150,9 @@ export async function boot(): Promise<void> {
     if (TV.c) drawTChart();
   });
   initEdit(() => {
+    renderWallet();
     if (currentView() === 'profile') renderProfile();
+    chatRender();
   });
   initLegal();
   initClaim(() => renderWallet());
@@ -160,6 +168,13 @@ export async function boot(): Promise<void> {
   });
   renderWallet();
   renderPracticeBadge();
+
+  // Silent reconnect + JWT refresh so a reload does not force another SIWS/SIWE.
+  try {
+    await restoreWalletSession();
+  } catch (err) {
+    console.warn('wallet restore failed', err);
+  }
 
   /* header */
   must('#howBtn').addEventListener('click', () => openWiz(must('#howBtn')));
@@ -188,20 +203,37 @@ export async function boot(): Promise<void> {
 
   /* search */
   // Enter goes through `api.search()` — a local `COINS` filter in sim, the
-  // server's `GET /tokens?q=` in live, so a symbol beyond the board's
-  // initial page still opens. `plan step 66`
+  // server's `GET /tokens?q=` in live. Live search merges hits into `COINS`
+  // so symbols beyond the initial board page can still open.
   must('#searchform').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = must<HTMLInputElement>('#q');
     const query = q.value.trim();
-    const sym = query.toUpperCase();
-    q.value = '';
-    filterBoard('');
-    if (!sym) return;
-    void api.search(query).then((matches) => {
-      const c = matches.find((m) => m.sym === sym);
-      if (c) navigate({ view: 'token', sym: c.sym });
-    });
+    if (!query) return;
+    const exact = query.toUpperCase();
+    void api
+      .search(query)
+      .then((matches) => {
+        if (!matches.length) {
+          toast('NO COIN MATCHES ' + exact);
+          return;
+        }
+        const c =
+          matches.find((m) => m.sym === exact) ||
+          matches.find((m) => m.sym.startsWith(exact)) ||
+          matches.find((m) => m.name.toUpperCase().includes(exact)) ||
+          matches[0];
+        if (!c) {
+          toast('NO COIN MATCHES ' + exact);
+          return;
+        }
+        q.value = '';
+        filterBoard('');
+        navigate({ view: 'token', sym: c.sym });
+      })
+      .catch(() => {
+        toast('SEARCH FAILED', 'red');
+      });
   });
   // The as-you-type filter only ever hides/shows cards already on the
   // rendered board, so it stays a local scan in both modes.
@@ -229,5 +261,8 @@ export async function boot(): Promise<void> {
   const hello = $('#hello');
   if (hello) hello.hidden = WALLET.on || !!USER.seenHello;
   must('#count').textContent = COINS.length + ' COINS';
+  // Dismiss before `data-booted` so e2e (and early clicks) never hit a
+  // full-screen splash that still has pointer-events.
+  await dismissSplash();
   document.documentElement.dataset['booted'] = 'true';
 }

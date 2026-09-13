@@ -22,8 +22,13 @@ export interface SignInMessageParams {
 
 export const SIWS_STATEMENT = 'Sign in to Stonkz. This request will not trigger a blockchain transaction or cost any gas.';
 
-export function chainLabel(net: Net, rhChainId: number): string {
-  return net === 'SOL' ? 'solana:mainnet' : String(rhChainId);
+/**
+ * CAIP-2 chain id written into the SIWS/SIWE message.
+ * Solana uses `solanaSiwsChainId` (e.g. `solana:devnet` / `solana:mainnet`)
+ * so a staging signature cannot replay into production.
+ */
+export function chainLabel(net: Net, rhChainId: number, solanaSiwsChainId = 'solana:mainnet'): string {
+  return net === 'SOL' ? solanaSiwsChainId : String(rhChainId);
 }
 
 export function buildSignInMessage(p: SignInMessageParams): string {

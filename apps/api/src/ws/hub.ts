@@ -1,11 +1,14 @@
 import type { Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { and, eq } from 'drizzle-orm';
 import type { Net } from '@stonkz/shared';
 import { CHANNELS, CHANNEL_PATTERNS } from '../redis/channels.js';
 import type { RedisLike, RedisUnsubscribe } from '../redis/types.js';
 import type { JwtService } from '../auth/jwt.js';
 import type { Logger } from '../observability/logger.js';
 import type { Metrics } from '../observability/metrics.js';
+import type { Db } from '../db/client.js';
+import { users } from '../db/schema.js';
 import type { ChatService } from '../social/chat.js';
 import type { Publisher } from './publisher.js';
 
@@ -24,6 +27,8 @@ export interface HubOptions {
    */
   chat?: ChatService;
   publisher?: Publisher;
+  /** Optional: enrich chat frames with username / avatar. */
+  db?: Db;
 }
 
 interface Client {
@@ -182,6 +187,17 @@ export class WsHub {
         }
         this.send(client, { type: 'send_chat', ok: true });
         if (!result.message?.flagged) {
+          let username: string | null = null;
+          let avatarUrl: string | null = null;
+          if (this.opts.db) {
+            const [profile] = await this.opts.db
+              .select({ username: users.username, avatarUrl: users.avatarUrl })
+              .from(users)
+              .where(and(eq(users.net, net), eq(users.wallet, wallet)))
+              .limit(1);
+            username = profile?.username ?? null;
+            avatarUrl = profile?.avatarUrl ?? null;
+          }
           await this.opts.publisher.chat(net, result.message?.room ?? msg.room, {
             type: 'message',
             net,
@@ -190,6 +206,8 @@ export class WsHub {
             wallet,
             text: result.message?.text ?? msg.text,
             createdAtMs: result.message?.createdAtMs ?? Date.now(),
+            username,
+            avatarUrl,
           });
         }
         return;

@@ -3,24 +3,45 @@ import type { PriceOracle } from '../chain/types.js';
 
 /**
  * `POST /launch/prepare` needs a USD price for the chosen base asset to
- * derive the curve (`@stonkz/curve-sim`'s `deriveCurve` sizes the $69K
- * graduation cap off it). `chain/types.ts`'s `PriceOracle` only ever priced
- * the two native gas tokens (`nativeUsd(unit)`) — nothing in Phase 1 needed
- * more — so this phase does not invent a general price feed for every
- * `MAJORS`/`STOCKS` entry `router/base-mints.ts` knows an address for.
- *
- * **Known, documented gap**: only the two native units and the two USD
- * stablecoins below are launch-able base assets in this phase. Every other
- * `MAJORS`/`STOCKS` symbol (`BONK`, `JUP`, tokenized stocks, …) is rejected by
- * `/launch/prepare` with `base_mint_not_allowed` even though
- * `router/base-mints.ts` has an address for several of them — the address is
- * necessary but not sufficient without a price. A real deploy needs a price
- * feed (Pyth/Switchboard on Solana, Chainlink/the RH oracle contract on
- * Robinhood — see `programs/evm/ASSUMPTIONS.md`'s heartbeat note) wired in
- * here before those symbols can launch against.
+ * derive the $69K graduation curve. Natives come from `PriceOracle`; USD
+ * stables are $1; RH stock / other bases use a static USD table that must
+ * match what `PushPriceSource` was seeded with on testnet (see
+ * `script/PushBasePrices.s.sol`).
  */
 
-const USD_STABLES = new Set(['USDC', 'USDT']);
+const USD_STABLES = new Set(['USDC', 'USDT', 'USDG']);
+
+/** Indicative whole-USD prices for RH testnet launch bases (1e0 dollars). */
+const RH_BASE_USD: Record<string, number> = {
+  BTC: 95_000,
+  SOL: 180,
+  XRP: 0.6,
+  DOGE: 0.15,
+  ADA: 0.7,
+  AVAX: 35,
+  LINK: 15,
+  LTC: 90,
+  TSLA: 250,
+  AMZN: 200,
+  PLTR: 40,
+  NFLX: 700,
+  AMD: 160,
+  AAPL: 220,
+  NVDA: 120,
+  MSFT: 420,
+  GOOGL: 180,
+  META: 550,
+  COIN: 220,
+  HOOD: 40,
+  SPY: 560,
+  QQQ: 480,
+  MSTR: 350,
+  CRCL: 100,
+  GLD: 240,
+  INTC: 25,
+  KO: 65,
+  GME: 25,
+};
 
 export interface BasePriceInfo {
   price1e6: bigint;
@@ -43,7 +64,12 @@ export async function basePriceFor(net: Net, baseSymbol: string, oracle: PriceOr
     return { price1e6: BigInt(Math.round(usd * 1e6)), baseDecimals: nativeDecimals(net) };
   }
   if (USD_STABLES.has(sym)) {
+    // USDG is 6 decimals on RH; USDC/USDT treated as 6 for curve sizing.
     return { price1e6: 1_000_000n, baseDecimals: 6 };
+  }
+  if (net === 'RH' && RH_BASE_USD[sym] !== undefined) {
+    const usd = RH_BASE_USD[sym]!;
+    return { price1e6: BigInt(Math.round(usd * 1e6)), baseDecimals: 18 };
   }
   return null;
 }

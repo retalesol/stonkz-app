@@ -32,8 +32,13 @@ export function ensureStake(sym: string): Stake {
   return fresh;
 }
 
-/** Everyone else's stake. Memoised per coin. Phase 4 reads it from chain. `index.html:1576` */
+/**
+ * Everyone else's stake. Sim invents a pool so the fee pie looks lived-in.
+ * Live mode returns 0 until the indexer fills real pool weight — inventing
+ * a random fraction here would look like on-chain stake that does not exist.
+ */
 export function otherStake(c: SimCoin): number {
+  if ((import.meta.env['VITE_API_MODE'] as string) === 'live') return 0;
   if (c._oth === undefined) c._oth = circ(c) * (0.05 + rng(c.seed + 404)() * 0.28);
   return c._oth;
 }

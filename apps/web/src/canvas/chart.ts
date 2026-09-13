@@ -32,6 +32,16 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   const d = input.series.slice(-input.range);
   const v = input.volume.slice(-input.range);
   const n = d.length;
+  if (n < 1) {
+    g.fillStyle = '#040507';
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = '#6b675c';
+    g.font = '11px "IBM Plex Mono", monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('NO CANDLE HISTORY YET', w / 2, h / 2);
+    return html`<span class="dm">WAITING FOR FIRST PRINT</span>`;
+  }
   const pl = 6;
   const pr = 72;
   const pt = 16;
@@ -40,14 +50,15 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   const plotH = h - pt - pb - volH - 6;
   let mn = Math.min(...d);
   let mx = Math.max(...d);
-  let rg = mx - mn || mx * 0.1;
+  let rg = mx - mn || mx * 0.1 || 1;
   mn -= rg * 0.1;
   mx += rg * 0.1;
   rg = mx - mn;
-  const vmx = Math.max(...v) || 1;
-  const X = (i: number): number => pl + (i * (w - pl - pr)) / (n - 1);
+  const vmx = Math.max(...v, 0) || 1;
+  const X = (i: number): number => (n === 1 ? pl + (w - pl - pr) / 2 : pl + (i * (w - pl - pr)) / (n - 1));
   const Y = (p: number): number => pt + ((mx - p) / rg) * plotH;
   const base = h - pb;
+  const supply = input.coin.supply || SUPPLY;
 
   g.font = '9px "IBM Plex Mono", monospace';
   g.textBaseline = 'middle';
@@ -131,7 +142,8 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
     ><span><b>SUPPLY</b> ${fmtSupply(input.coin.supply || SUPPLY)}</span>`;
 
   if (input.cross !== null) {
-    const idx = Math.max(0, Math.min(n - 1, Math.round((input.cross - pl) / ((w - pl - pr) / (n - 1)))));
+    const step = n <= 1 ? 1 : (w - pl - pr) / (n - 1);
+    const idx = Math.max(0, Math.min(n - 1, Math.round((input.cross - pl) / step)));
     const cx = X(idx);
     const cy = Y(d[idx] as number);
     g.strokeStyle = 'rgba(202,198,186,.45)';
@@ -148,7 +160,7 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
     g.fillStyle = '#ffd23f';
     g.fillRect(cx - 2, cy - 2, 4, 4);
     hud = html`<span><b>T-</b>${n - 1 - idx}m</span><span><b>MCAP</b> ${usd(d[idx] as number)}</span
-      ><span><b>PRICE</b> ${px((d[idx] as number) / SUPPLY)}</span><span><b>VOL</b> ${usd(v[idx] as number)}</span>`;
+      ><span><b>PRICE</b> ${px((d[idx] as number) / supply)}</span><span><b>VOL</b> ${usd(v[idx] as number)}</span>`;
   }
   return hud;
 }

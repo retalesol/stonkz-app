@@ -1,6 +1,8 @@
 /* ---------- launch flow ---------- */
 .nc-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .nc-field .lbl{margin-bottom:3px}
+#createBody .fld::placeholder,
+#createBody textarea.fld::placeholder{color:#9a6a28;opacity:.72;font-weight:500}
 .base-hd{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .base-hd .netbadge{display:flex;align-items:center;gap:5px;border:1px solid var(--line2);background:#12161f;
   padding:1px 8px;font-size:10px;letter-spacing:.08em;color:var(--txt2)}
@@ -20,7 +22,9 @@
 .base-opt .bn{font-size:9.5px;color:var(--dim);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .base-empty{grid-column:1/-1;background:var(--pnl2);padding:14px;text-align:center;font-size:11px;color:var(--dim)}
 .supply-row{display:flex;gap:5px;flex-wrap:wrap}
-.supply-row .chipm{flex:1;text-align:center;padding:4px 0}
+.supply-row .chipm{flex:1;text-align:center;padding:4px 0;border:1px solid var(--line2);background:#12161f;color:var(--txt2);letter-spacing:.05em;cursor:pointer}
+.supply-row .chipm:hover{border-color:var(--amber);color:var(--amber)}
+.supply-row .chipm.on{background:var(--amber);border-color:var(--amber);color:#150d00;font-weight:700}
 .fee-row{display:flex;align-items:center;gap:10px}
 .fee-row input[type=range]{flex:1;accent-color:var(--amber);height:4px}
 .fee-val{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:19px;color:var(--amber);

@@ -17,13 +17,6 @@ import { encodeFunctionData, type Address, type Hex } from 'viem';
 import type { Net } from '@stonkz/shared';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import { STONKZ_ROUTER_ABI } from './evm-abi.js';
-import {
-  buildBuyAggregatorLeg,
-  buildSellAggregatorLeg,
-  buildUnwrapOnlyLeg,
-  buildWrapOnlyLeg,
-  type UniversalRouterLeg,
-} from './universal-router.js';
 
 /** `StonkzRouter.sol`'s `MAX_SLIPPAGE_BPS` — the ceiling the contract itself enforces on `AggregatorLeg.maxSlippageBps` (`SlippageTooWide` otherwise). Mirrored here so a caller with a wide `Settings.slip` gets a working, clamped call instead of a guaranteed on-chain revert. */
 export const ROUTER_MAX_SLIPPAGE_BPS = 500;
@@ -75,7 +68,8 @@ export function pinnedV3FeeTierFor(
 /**
  * `isDirectPair`: `aggregatorFor(net, baseSymbol) === null` — the base asset
  * already is wrapped-native, so no v3 pool is needed at all (`buildWrapOnlyLeg`
- * / `buildUnwrapOnlyLeg`). Otherwise a pinned fee tier is required.
+ * / `buildUnwrapOnlyLeg`). Otherwise a fee tier is required — prefer the
+ * quote's winning V3 fee when present, else the operator pin.
  */
 export function stonkzRouterDecision(
   net: Net,
@@ -84,10 +78,12 @@ export function stonkzRouterDecision(
   baseMint: string,
   baseSymbol: string,
   feeTierOverrides: Record<string, number>,
+  quotedFeeTier?: number | null,
 ): RouterRoute | null {
   if (net !== 'RH') return null;
   if (!routerAddress || routerAddress.toLowerCase() === ZERO_EVM_ADDRESS) return null;
   if (isDirectPair) return { mode: 'direct' };
+  if (quotedFeeTier && quotedFeeTier > 0) return { mode: 'aggregator', feeTier: quotedFeeTier };
   const feeTier = pinnedV3FeeTierFor(baseMint, baseSymbol, feeTierOverrides);
   return feeTier === null ? null : { mode: 'aggregator', feeTier };
 }
@@ -95,13 +91,6 @@ export function stonkzRouterDecision(
 function clampSlippageBps(userSlippagePct: number): number {
   const bps = Math.round(userSlippagePct * 100);
   return Math.max(0, Math.min(ROUTER_MAX_SLIPPAGE_BPS, bps));
-}
-
-function legFor(route: RouterRoute, side: 'buy' | 'sell', weth: Address, base: Address): UniversalRouterLeg {
-  if (route.mode === 'direct') return side === 'buy' ? buildWrapOnlyLeg() : buildUnwrapOnlyLeg();
-  return side === 'buy'
-    ? buildBuyAggregatorLeg(weth, base, route.feeTier)
-    : buildSellAggregatorLeg(base, weth, route.feeTier);
 }
 
 export interface BuildAtomicBuyParams {
@@ -121,26 +110,31 @@ export interface BuildAtomicBuyParams {
   deadlineUnixSeconds: number;
 }
 
-/** `StonkzRouter.buyViaAggregator(token, leg, minTokenOut, deadline)`, `atomic: true`. */
+/** `StonkzRouter.buyWithEth` for direct WETH pairs; `buyViaAggregator` otherwise. */
 export function buildAtomicBuyCall(p: BuildAtomicBuyParams): EvmAtomicCall {
-  const leg = legFor(p.route, 'buy', p.weth, p.baseMint);
-  const maxSlippageBps = p.route.mode === 'direct' ? 0 : clampSlippageBps(p.userSlippagePct);
   const deadline = BigInt(p.deadlineUnixSeconds);
 
+  if (p.route.mode === 'direct') {
+    // Chain-local WETH deposit inside the router — UR WRAP_ETH on RH testnet
+    // still targets mainnet aeWETH and reverts (no code at 0x0Bd7…).
+    const data = encodeFunctionData({
+      abi: STONKZ_ROUTER_ABI,
+      functionName: 'buyWithEth',
+      args: [p.token, p.minTokenOutAtoms, deadline],
+    });
+    return { atomic: true, chain: 'RH', to: p.routerAddress, data, value: p.ethInAtoms.toString() };
+  }
+
+  // Pinned V3 fee — SwapRouter02 path (UR CREATE2 pool address is wrong on 46630).
+  const maxSlippageBps = clampSlippageBps(p.userSlippagePct);
   const data = encodeFunctionData({
     abi: STONKZ_ROUTER_ABI,
-    functionName: 'buyViaAggregator',
+    functionName: 'buyViaV3',
     args: [
       p.token,
-      {
-        commands: leg.commands,
-        inputs: [...leg.inputs],
-        deadline,
-        // Ignored on the buy path per the contract's own doc comment — the input is `msg.value`.
-        amountIn: 0n,
-        quotedOut: p.quotedBaseOutAtoms,
-        maxSlippageBps: BigInt(maxSlippageBps),
-      },
+      p.route.feeTier,
+      p.quotedBaseOutAtoms,
+      BigInt(maxSlippageBps),
       p.minTokenOutAtoms,
       deadline,
     ],
@@ -171,32 +165,36 @@ export interface BuildAtomicSellParams {
   permit: PermitInput | null;
 }
 
-/** `StonkzRouter.sellViaAggregator(token, amountToken, permitData, minBaseOut, leg, minEthOut, deadline)`, `atomic: true`. */
+/** `StonkzRouter.sellForEth` for direct WETH pairs; `sellViaAggregator` otherwise. */
 export function buildAtomicSellCall(p: BuildAtomicSellParams): EvmAtomicCall {
-  const leg = legFor(p.route, 'sell', p.weth, p.baseMint);
-  const maxSlippageBps = p.route.mode === 'direct' ? 0 : clampSlippageBps(p.userSlippagePct);
   const deadline = BigInt(p.deadlineUnixSeconds);
   const permitData = p.permit
     ? { value: BigInt(p.permit.value), deadline: BigInt(p.permit.deadline), v: p.permit.v, r: p.permit.r, s: p.permit.s }
     : noPermit();
 
+  if (p.route.mode === 'direct') {
+    const data = encodeFunctionData({
+      abi: STONKZ_ROUTER_ABI,
+      functionName: 'sellForEth',
+      args: [p.token, p.amountTokenAtoms, permitData, p.minBaseOutAtoms, p.minEthOutAtoms, deadline],
+    });
+    return { atomic: true, chain: 'RH', to: p.routerAddress, data, value: '0' };
+  }
+
+  const maxSlippageBps = clampSlippageBps(p.userSlippagePct);
   const data = encodeFunctionData({
     abi: STONKZ_ROUTER_ABI,
-    functionName: 'sellViaAggregator',
+    functionName: 'sellViaV3',
     args: [
       p.token,
       p.amountTokenAtoms,
       permitData,
       p.minBaseOutAtoms,
-      {
-        commands: leg.commands,
-        inputs: [...leg.inputs],
-        deadline,
-        amountIn: p.netBaseOutAtoms,
-        quotedOut: p.quotedEthOutAtoms,
-        maxSlippageBps: BigInt(maxSlippageBps),
-      },
+      p.route.feeTier,
+      p.quotedEthOutAtoms,
+      BigInt(maxSlippageBps),
       p.minEthOutAtoms,
+      p.netBaseOutAtoms,
       deadline,
     ],
   });

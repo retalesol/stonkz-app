@@ -49,3 +49,4 @@ pnpm-debug.log*
 # into, and results/ holds this machine's k6 JSON summaries.
 apps/api/loadtest/fixtures/*.json
 apps/api/loadtest/results/
+.vercel

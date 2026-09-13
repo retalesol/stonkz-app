@@ -67,7 +67,14 @@ export function memberOf(addr: string): SimMember {
 }
 
 export function isMe(addr: string): boolean {
-  return WALLET.on && addr === WALLET.addr;
+  if (!WALLET.on) return false;
+  if (addr === WALLET.addr || addr === WALLET.full) return true;
+  return !!WALLET.full && addr.toLowerCase() === WALLET.full.toLowerCase();
+}
+
+/** Own profile uses the full address in live mode so API lookups resolve. */
+export function myProfileAddr(): string {
+  return WALLET.full || WALLET.addr;
 }
 
 export function myName(): string {

@@ -69,10 +69,10 @@ export function selectNet(net: Net): NetworkOption {
 }
 
 /**
- * Native price feed for the footer and USD conversions.
+ * Native price feeds for the footer and USD conversions.
  *
- * Hard-coded as the sim's seed value, then overwritten in live mode by
- * `GET /me`'s `native.usdPrice` for the connected chain (`api/live.ts`'s
- * `connect()`), so the footer stops claiming a SOL price on Robinhood.
+ * `usd` is the *connected* chain's mark (wallet USD ≈ balance × usd).
+ * `sol` / `eth` are both kept so the footer can show SOL and ETH together.
+ * Live mode overwrites these from `GET /native-price` and `/me`.
  */
-export const NATIVE_PRICE = { usd: 214.08 };
+export const NATIVE_PRICE = { usd: 214.08, sol: 214.08, eth: 3500 };

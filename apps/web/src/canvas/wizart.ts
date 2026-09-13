@@ -1,13 +1,18 @@
+import { MEMEMAN_FULL_SRC } from '../lib/avatar.js';
 import { paintFace } from './face.js';
 import { fitCanvas, miniAv } from './pix.js';
 
 /**
  * Drawn stand-ins for the how-it-works wizard.
  *
- * Swap in real art by putting a data: URI or same-origin path in `WIZART`;
- * `wizArt()` renders an <img> instead and these never run. `index.html:2805`
+ * Real art paths in `WIZART` render as <img>; otherwise canvas drawings run.
  */
-export const WIZART: Record<string, string> = { pick: '', buy: '', grad: '', finish: '' };
+export const WIZART: Record<string, string> = {
+  pick: '',
+  buy: '',
+  grad: '',
+  finish: MEMEMAN_FULL_SRC,
+};
 
 /** The little arrow cursor drawn into the board panel. `index.html:2826` */
 function cursor(g: CanvasRenderingContext2D, x: number, y: number): void {

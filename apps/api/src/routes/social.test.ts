@@ -28,8 +28,23 @@ describe('PATCH /me', () => {
     expect(body.profile).toMatchObject({ username: 'TRENCHRAT', bio: 'gm', xHandle: 'degen' });
 
     const pub = await h.app.request(`/users/SOL/${address}`);
-    const pubBody = (await pub.json()) as { profile: { username: string } };
+    const pubBody = (await pub.json()) as { profile: { username: string; bio: string }; addr: string };
     expect(pubBody.profile.username).toBe('TRENCHRAT');
+
+    const byName = await h.app.request('/users/SOL/TRENCHRAT');
+    expect(byName.status).toBe(200);
+    const named = (await byName.json()) as {
+      addr: string;
+      resolvedFrom: string;
+      profile: { username: string; bio: string };
+      holdings: unknown[];
+      launched: unknown[];
+    };
+    expect(named.addr).toBe(address);
+    expect(named.resolvedFrom).toBe('username');
+    expect(named.profile).toMatchObject({ username: 'TRENCHRAT', bio: 'gm' });
+    expect(Array.isArray(named.holdings)).toBe(true);
+    expect(Array.isArray(named.launched)).toBe(true);
   });
 
   it('rejects a duplicate username with 409', async () => {

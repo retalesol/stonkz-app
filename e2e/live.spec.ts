@@ -1,5 +1,12 @@
 import { expect, type Page, test } from '@playwright/test';
-import { connectWithMockWallet, installMockWallets, stubChainRpc, walletRecord } from './mock-wallets.js';
+import { acceptConfirmDialogs } from './accept-dialogs.js';
+import {
+  connectWithMockWallet,
+  installMockWallets,
+  MOCK_EVM_ADDRESS,
+  stubChainRpc,
+  walletRecord,
+} from './mock-wallets.js';
 
 /**
  * Phase 1.D live-mode journeys (plan steps 62-70).
@@ -36,6 +43,12 @@ test.skip(
 
 test.describe.configure({ mode: 'serial' });
 
+/** Wait until the shell is interactive (booted and splash gone). */
+async function waitBooted(page: Page): Promise<void> {
+  await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
+  await expect(page.locator('#bootSplash')).toHaveCount(0);
+}
+
 // Two local-only-testing wrinkles, neither of which is a production concern:
 //
 // 1. `index.html`'s CSP is `connect-src 'self' ws: wss: https:` — right for a
@@ -60,6 +73,7 @@ test.beforeEach(async ({ page }) => {
   // implement the real Wallet Standard and EIP-1193/EIP-6963 interfaces, so
   // the app's own discovery, signing and confirmation code runs unmodified;
   // `stubChainRpc` answers the confirmation reads that code then makes.
+  acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
 
@@ -79,7 +93,7 @@ test.beforeEach(async ({ page }) => {
   });
 
   await page.goto('/');
-  await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
+  await waitBooted(page);
 });
 
 test('land on the board and see real fixture coins with no console errors', async ({ page }) => {
@@ -104,6 +118,7 @@ test('opening a shareable /t/:sym URL cold loads real candles, trades and holder
   // A fresh navigation, not a client-side route change: this is what a
   // pasted link actually does.
   await page.goto(`/t/${sym}`);
+    await waitBooted(page);
   await expect(page.locator('#tokenView')).toBeVisible();
   await expect(page.locator('.tk-id h1')).toContainText(sym);
   await expect(page.locator('#tabbody')).toBeVisible();
@@ -153,10 +168,17 @@ test('the KOTH crown opens its coin on click', async ({ page }) => {
 });
 
 test('a net switch reloads the board from the other chain', async ({ page }) => {
+  // Start on SOL so the board is filtered to one net before we switch.
+  await connectWithMockWallet(page, 'SOL');
+  await expect(page.locator('#wNetName')).toHaveText('SOLANA');
   const solSyms = await page
     .locator('.coin')
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-sym')));
   expect(solSyms.length).toBeGreaterThan(0);
+
+  await page.click('#wchip');
+  await page.click('[data-w="disconnect"]');
+  await expect(page.locator('#connectBtn')).toBeVisible();
 
   await connectWithMockWallet(page, 'RH');
   await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
@@ -347,11 +369,12 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
   test('SOL buy — native-paired quote is a single curve hop, and the fill only renders after the signed prepare response resolves', async ({
     page,
   }) => {
-    const sym = 'DOGGO';
+    const sym = 'DEVCOIN';
     const quote = nativePairedQuote(sym, 'buy', 0.5);
     await mockTradePrepareAtomicSol(page, quote);
 
     await page.goto(`/t/${sym}`);
+    await waitBooted(page);
     await expect(page.locator('#tokenView')).toBeVisible();
     // Phase B: signing needs a connected wallet, so there is nothing to
     // press until there is one. That refusal is the feature.
@@ -364,18 +387,19 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     const go = page.locator('#t-go');
     await go.click();
     await expect(go).toBeDisabled();
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
     await expect(go).toBeEnabled();
   });
 
   test('SOL buy — a base-hop quote shows the aggregator leg and still fills atomically', async ({ page }) => {
-    const sym = 'DOGGO';
+    const sym = 'DEVCOIN';
     const amount = 0.5;
     const quote = baseHopBuyQuote(sym, amount);
     await mockQuote(page, sym, 'buy', quote);
     await mockTradePrepareAtomicSol(page, quote);
 
     await page.goto(`/t/${sym}`);
+    await waitBooted(page);
     await expect(page.locator('#tokenView')).toBeVisible();
     await connectWithMockWallet(page, 'SOL');
     await expect(page.locator('#t-quote')).toContainText('HOP 1');
@@ -383,28 +407,30 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('#t-quote')).toContainText('JUP');
 
     await page.click('#t-go');
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
   });
 
   test('SOL sell fills after the signed prepare response resolves', async ({ page }) => {
-    const sym = 'DOGGO';
+    const sym = 'DEVCOIN';
     const quote = nativePairedQuote(sym, 'sell', 0.5);
     await mockTradePrepareAtomicSol(page, quote);
 
     await page.goto(`/t/${sym}`);
+    await waitBooted(page);
     await expect(page.locator('#tokenView')).toBeVisible();
     await connectWithMockWallet(page, 'SOL');
     await page.click('#t-side [data-s="SELL"]');
+    await page.fill('#t-amt', '0.5');
     await expect(page.locator('#t-quote')).toContainText('YOU SELL');
 
     await page.click('#t-go');
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
   });
 
   test('Robinhood non-atomic EvmStep[] plan walks every step in order with the multi-signature notice visible', async ({
     page,
   }) => {
-    const sym = 'RHDOG';
+    const sym = 'COPIUM';
     const amount = 0.2;
     const quote = nativePairedQuote(sym, 'buy', amount);
     quote.net = 'RH';
@@ -412,13 +438,13 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     const warning =
       'ROBINHOOD CHAIN HAS NO ATOMIC ROUTER CONFIGURED FOR THIS BASE ASSET YET. THIS TRADE REQUIRES 3 SEPARATE ' +
       'SIGNATURES. STOPPING PARTWAY LEAVES YOU HOLDING AN INTERMEDIATE ASSET, NOT ETH.';
-    const descriptions = ['Wrap ETH', 'Approve WETH spend', 'Buy RHDOG on StonkzLaunchpad'];
+    const descriptions = ['Wrap ETH', 'Approve WETH spend', 'Buy COPIUM on StonkzLaunchpad'];
     await mockTradePrepareSteps(page, quote, descriptions, warning);
 
-    // RHDOG only exists on the Robinhood board — `GET /tokens?net=SOL` (the
+    // COPIUM only exists on the Robinhood board — `GET /tokens?net=SOL` (the
     // default) never has it, and `bySym()` only ever searches whatever `net`
     // is currently loaded into `COINS`. A client-side net switch reloads
-    // that in place; a cold `page.goto('/t/RHDOG')` would instead boot fresh
+    // that in place; a cold `page.goto('/t/COPIUM')` would instead boot fresh
     // on the default SOL net and 404. Click into it the same way a trader
     // actually would: switch chains, then click the card.
     await connectWithMockWallet(page, 'RH');
@@ -444,7 +470,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     }
 
     await expect(page.locator('#txScrim')).toBeHidden({ timeout: 15_000 });
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible();
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible();
   });
 
   /** The `StonkzRouter` path — `docs/rh-trade-atomicity-gap.md`'s "closed" case: one `to`/`data`/`value` call, no `EvmStep[]`. */
@@ -496,18 +522,43 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
             ? base
             : {
                 ...base,
-                permitTypedData: { domain: { name: 'RHDOG', version: '1' }, message: {} },
+                permitTypedData: {
+                  domain: {
+                    name: 'COPIUM',
+                    version: '1',
+                    chainId: 46630,
+                    verifyingContract: '0x4444444444444444444444444444444444444444',
+                  },
+                  types: {
+                    Permit: [
+                      { name: 'owner', type: 'address' },
+                      { name: 'spender', type: 'address' },
+                      { name: 'value', type: 'uint256' },
+                      { name: 'nonce', type: 'uint256' },
+                      { name: 'deadline', type: 'uint256' },
+                    ],
+                  },
+                  primaryType: 'Permit',
+                  message: {
+                    owner: MOCK_EVM_ADDRESS,
+                    spender: '0x1111111111111111111111111111111111111111',
+                    value: '200000000000000000000000',
+                    nonce: null,
+                    deadline: 1893456000,
+                  },
+                  note: 'nonce is not pre-fetched: read nonces(owner) before signing.',
+                },
                 note: 'Sign the EIP-712 permit, then resend with `permit` set.',
               },
-        ),
-      });
-    });
-  }
+            ),
+          });
+        });
+      }
 
   test('Robinhood atomic buy — one StonkzRouter call, no step walker, fills like an atomic Solana trade', async ({
     page,
   }) => {
-    const sym = 'RHDOG';
+    const sym = 'COPIUM';
     const amount = 0.2;
     const quote = nativePairedQuote(sym, 'buy', amount);
     quote.net = 'RH';
@@ -526,14 +577,14 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     // Atomic on RH means exactly what it means on SOL: no step modal, one
     // wallet-adapter signature.
     await expect(page.locator('#txScrim')).toBeHidden();
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
     await expect(go).toBeEnabled();
   });
 
   test('Robinhood atomic sell with no standing permit walks the two off-chain signatures, then fills in one on-chain transaction', async ({
     page,
   }) => {
-    const sym = 'RHDOG';
+    const sym = 'COPIUM';
     const amount = 0.2;
     const quote = nativePairedQuote(sym, 'sell', amount);
     quote.net = 'RH';
@@ -547,6 +598,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await card.click();
     await expect(page.locator('#tokenView')).toBeVisible();
     await page.click('#t-side [data-s="SELL"]');
+    await page.fill('#t-amt', String(amount));
     await expect(page.locator('#t-quote')).toContainText('YOU SELL');
 
     await page.click('#t-go');
@@ -568,7 +620,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await page.click('#steps-go');
 
     await expect(page.locator('#txScrim')).toBeHidden({ timeout: 15_000 });
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible();
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible();
   });
 
   test('launching a coin with a dev buy runs the prepare -> sign -> confirm stepper and lands on the new token', async ({
@@ -608,13 +660,14 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
 
     await page.click('#createBtn');
     await expect(page.locator('#newScrim')).toBeVisible();
+    await page.fill('#f-name', 'E2E Launch Coin');
     await page.fill('#f-tick', sym);
     await page.click('#nc-next'); // step 1 -> 2
     await page.click('#nc-next'); // step 2 -> 3 (defaults: native base, default supply/fee)
     await page.fill('#f-buy', '0.50');
     await page.click('#nc-next'); // launch
 
-    await expect(page.locator('.toast', { hasText: 'DEPLOYED ' + sym })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: 'DEPLOYED ' + sym })).toBeVisible({ timeout: 15_000 });
     await expect(page).toHaveURL(new RegExp(`/t/${sym}$`));
     await expect(page.locator('.tk-id h1')).toContainText(sym);
   });
@@ -632,7 +685,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
           nativeUnit: 'SOL',
           vaults: [
             {
-              sym: 'DOGGO',
+              sym: 'DEVCOIN',
               unclaimedNative: 0.42,
               unclaimedTokens: 0,
               stakerPoolNative: 0.1,
@@ -648,7 +701,7 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ net: 'SOL', sym: 'DOGGO', transaction: FAKE_SOL_TX, lastValidBlockHeight: 999_999 }),
+        body: JSON.stringify({ net: 'SOL', sym: 'DEVCOIN', transaction: FAKE_SOL_TX, lastValidBlockHeight: 999_999 }),
       });
     });
 
@@ -662,11 +715,11 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('#profileView')).toBeVisible();
     await page.click('#claimBtn');
     await expect(page.locator('#claimScrim')).toBeVisible();
-    await expect(page.locator('#claimBody')).toContainText('DOGGO');
+    await expect(page.locator('#claimBody')).toContainText('DEVCOIN');
     await expect(page.locator('#claimBody')).toContainText('0.420 SOL');
 
     await page.click('#claim-go');
-    await expect(page.locator('.toast', { hasText: 'CLAIMED 0.420 SOL' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: 'CLAIMED 0.420 SOL' })).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('#claimScrim')).toBeHidden();
   });
 });
@@ -713,7 +766,7 @@ test.describe('Phase 5 — social layer', () => {
     await followBtn.click();
     expect((await followed).ok()).toBe(true);
     await expect(followBtn).toHaveText('FOLLOWING');
-    await expect(page.locator('.toast', { hasText: 'FOLLOWING' })).toBeVisible();
+    await expect(page.locator('.mm-bubble', { hasText: 'FOLLOWING' })).toBeVisible();
 
     const unfollowed = page.waitForResponse(
       (res) => res.url().includes(`/follow/SOL/${addr}`) && res.request().method() === 'DELETE',
@@ -721,7 +774,7 @@ test.describe('Phase 5 — social layer', () => {
     await followBtn.click();
     expect((await unfollowed).ok()).toBe(true);
     await expect(followBtn).toHaveText('FOLLOW');
-    await expect(page.locator('.toast', { hasText: 'UNFOLLOWED' })).toBeVisible();
+    await expect(page.locator('.mm-bubble', { hasText: 'UNFOLLOWED' })).toBeVisible();
   });
 
   test('tipping on a wall really signs a transfer with the wallet, and never claims success the server refused', async ({
@@ -744,8 +797,8 @@ test.describe('Phase 5 — social layer', () => {
     // A toast either way, and it must not be a success one: the wallet's
     // signature is real, but the transfer behind it never settled, and
     // `verifyTip` is the thing that knows the difference.
-    await expect(page.locator('.toast').first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('.toast', { hasText: 'TIPPED' })).toBeHidden();
+    await expect(page.locator('.mm-bubble').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: 'TIPPED' })).toBeHidden();
 
     // The transfer was genuinely built and handed to the wallet — the old
     // build would have refused a Robinhood tip outright and signed a SOL one

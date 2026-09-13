@@ -8,6 +8,11 @@ export interface QuoteCacheKey {
   nativeAmount: number;
   baseMint: string;
   sym: string;
+  /**
+   * Curve reserve fingerprint (`realBase:realToken`). Required so a post-buy
+   * sync cannot serve an 8s-cached quote sized against empty reserves.
+   */
+  reserves: string;
 }
 
 /**
@@ -35,6 +40,7 @@ export function quoteCacheKey(k: QuoteCacheKey): string {
     k.side,
     quantiseNativeAmount(k.nativeAmount),
     k.baseMint,
+    k.reserves,
   ].join(':');
 }
 

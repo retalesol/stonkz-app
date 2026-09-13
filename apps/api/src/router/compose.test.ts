@@ -203,8 +203,10 @@ describe('composeCurveTrade — fee application', () => {
     });
 
     const [hop1, hop2] = trade.quote.hops;
-    expect(hop1).toMatchObject({ inSymbol: 'BONK', outSymbol: 'SOL', feeBps: 0 });
-    expect(hop2).toMatchObject({ inSymbol: 'SELLMATH', outSymbol: 'BONK', feeBps: 400 });
+    // Chronological sell path: token → base on the curve, then base → native.
+    expect(hop1).toMatchObject({ inSymbol: 'SELLMATH', outSymbol: 'BONK', feeBps: 400 });
+    expect(hop2).toMatchObject({ inSymbol: 'BONK', outSymbol: 'SOL', feeBps: 0 });
+    expect(trade.quote.routeLabel).toBe('CURVE → JUPITER');
   });
 
   it('propagates the fee-trap guard as a structured RouterError rather than silently accepting a smuggled fee', async () => {

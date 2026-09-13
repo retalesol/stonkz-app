@@ -21,6 +21,12 @@ wallet = "~/.config/solana/id.json"
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 
+# Keep the local validator's program copy upgradeable so authority-gated
+# instructions can be tested. Never ship a cluster deploy with --final until
+# public beta exit (see docs/deployment.md §1.1).
+[test]
+upgradeable = true
+
 # The local validator clones the real Raydium CPMM (devnet) program plus the
 # accounts `migrate_liquidity`'s tests need it to already have on chain: the
 # default `AmmConfig` (index 0, permissionless, no OpenBook requirement) and

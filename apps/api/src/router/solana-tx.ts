@@ -7,6 +7,7 @@ import {
 } from '@solana/spl-token';
 import type { ChainRpc, SolanaBlockhashSource, SolanaTransactionSource } from '../chain/types.js';
 import type { JupiterInstruction, JupiterSwapInstructionsResponse } from './jupiter.js';
+import { buildSolanaFeeInstructions } from './solana-fees.js';
 import { buildBuyInstruction, buildSellInstruction, traderAtas } from './solana-instructions.js';
 
 /** Mirrors `app/deps.ts`'s `asEthCaller` — narrows a `ChainRpc` to the blockhash capability only the real Solana RPC (and `FakeChainRpc`) implement. */
@@ -49,6 +50,12 @@ export interface SolanaTradeComposition {
   curveMinOut: bigint;
   /** Present when `aggregatorFor(net, baseSymbol)` selected Jupiter; absent on the direct-pair fast path. */
   jupiter?: JupiterHop;
+  /** Priority fee budget in whole SOL (settings `prio`). */
+  prioSol?: number;
+  /** When true and `mevTipSol` > 0, tip a Jito account. */
+  mevOn?: boolean;
+  /** MEV tip in whole SOL (settings `mevTip`). */
+  mevTipSol?: number;
 }
 
 export interface ComposedSolanaTransaction {
@@ -100,6 +107,17 @@ export function composeSolanaTradeTransaction(
     blockhash: blockhash.blockhash,
     lastValidBlockHeight: blockhash.lastValidBlockHeight,
   });
+
+  // Priority / tip first so they apply even if a later ix fails simulation
+  // after CU accounting. Skip CU ixs when Jupiter already packed them.
+  const feeIxs = buildSolanaFeeInstructions({
+    prioSol: c.prioSol ?? 0,
+    mevOn: !!c.mevOn,
+    mevTipSol: c.mevTipSol ?? 0,
+    payer: c.trader,
+    skipComputeBudget: !!c.jupiter,
+  });
+  if (feeIxs.length) tx.add(...feeIxs);
 
   const atas = traderAtas({ programId: c.programId, mint: c.mint, baseMint: c.baseMint, trader: c.trader });
   // Idempotent: a no-op if the trader already has either account. Included

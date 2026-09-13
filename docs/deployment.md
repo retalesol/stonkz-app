@@ -55,6 +55,27 @@ anchor build
 anchor deploy --provider.cluster devnet
 ```
 
+**Keep the program upgradeable through public beta.** Solana deploys through the
+BPF Upgradeable Loader by default. Do **not** pass `--final` to
+`anchor deploy` / `solana program deploy` until beta exit — that revokes the
+upgrade authority permanently. After deploy:
+
+```bash
+solana program show <PROGRAM_ID> -u devnet
+# Confirm "Authority" is the intended key (deployer or admin), not "none".
+```
+
+To rotate the authority to a multisig without freezing upgrades:
+
+```bash
+solana program set-upgrade-authority <PROGRAM_ID> \
+  --new-upgrade-authority <MULTISIG_OR_ADMIN> \
+  -u devnet
+```
+
+At beta exit, revoke with `--final` (or `set-upgrade-authority ... --new-upgrade-authority none`)
+only after an external audit and a deliberate immutability decision.
+
 The checked-in program ID (`FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg`) is a
 placeholder from local development. Generate a real one for any shared cluster
 and update `Anchor.toml`, `declare_id!`, and `SOLANA_LAUNCHPAD_PROGRAM_ID`
@@ -119,7 +140,44 @@ comfortably inside that window or graduations stall.
 
 ## 2. Robinhood Chain
 
-### 2.1 Deploy
+### 2.0 Testnet (46630) — preferred first deploy
+
+Mainnet pins in `RobinhoodChain.sol` do **not** hold code on testnet for WETH,
+Uniswap V2, or Chainlink. Use `script/DeployTestnet.s.sol` instead:
+
+```bash
+cd programs/evm
+export PRIVATE_KEY=0x...   # funded testnet key; never commit
+export STONKZ_ADMIN=$(cast wallet address --private-key "$PRIVATE_KEY")
+export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...   # distinct throwaway
+export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...        # distinct from protocol
+forge script script/DeployTestnet.s.sol:DeployTestnet \
+  --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+```
+
+That script deploys UUPS proxies for `PushPriceSource` + `StonkzLaunchpad`, a
+`StonkzV2Factory` (V2 is missing on 46630), migrator, and `StonkzRouter`, then
+seeds WETH/USDG prices. Addresses are printed for Railway env. Recorded deploy:
+[`programs/evm/deployments/46630.json`](../programs/evm/deployments/46630.json).
+
+Operational smoke after deploy (funded admin key):
+
+```bash
+# Oracle-graduate + migrate an existing token (LP → 0x…dEaD)
+forge script script/SmokeGraduate.s.sol:SmokeGraduate \
+  --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vv
+```
+
+Set Railway `RH_CHAIN_ID=46630`, `RH_RPC_URL`, `RH_LAUNCHPAD_ADDRESS`,
+`RH_ROUTER_ADDRESS`, `BASE_MINT_OVERRIDES_RH`, and
+`INDEXER_RH_START_BLOCK` (deployment block). Keep `INDEXER_SOURCE=fixtures`
+until Solana has an `INDEXER_SOL_START_SLOT` — chain mode requires both nets.
+
+EVM launchpad / push-oracle stay **UUPS-upgradeable through public beta**
+(`upgradeToAndCall`, admin-gated). `StonkzRouter` stays immutable by design —
+redeploy and update `RH_ROUTER_ADDRESS` if its logic must change.
+
+### 2.1 Mainnet deploy
 
 ```bash
 cd programs/evm

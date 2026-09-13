@@ -3,13 +3,14 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {CurveMath} from "../src/CurveMath.sol";
-import {StonkzRouter, IUniversalRouter} from "../src/StonkzRouter.sol";
+import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 import {RobinhoodChain} from "../src/config/RobinhoodChain.sol";
 import {MockERC20} from "./mocks/Mocks.sol";
-import {MockUniversalRouter} from "./mocks/MockUniversalRouter.sol";
+import {MockUniversalRouter, MockWETH, MockSwapRouter02} from "./mocks/MockUniversalRouter.sol";
+import {DeployPad} from "../script/DeployPad.sol";
 
 /// @notice Atomic native-in / native-out trading, the gap
 /// `docs/rh-trade-atomicity-gap.md` was opened to track.
@@ -23,6 +24,7 @@ contract RouterTest is Test {
     StonkzLaunchpad pad;
     StonkzRouter router;
     MockUniversalRouter ur;
+    MockWETH weth;
     PushPriceSource oracle;
     MockERC20 base;
     address token;
@@ -52,10 +54,14 @@ contract RouterTest is Test {
         trader = vm.addr(traderKey);
 
         base = new MockERC20("Global Dollar", "USDG", BASE_DECIMALS);
-        oracle = new PushPriceSource(admin, oracleAuth, 90_000);
-        pad = new StonkzLaunchpad(admin, admin, admin, oracle, admin);
-        ur = new MockUniversalRouter(base, RATE);
-        router = new StonkzRouter(IUniversalRouter(address(ur)), pad);
+        weth = new MockWETH();
+        oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
+        pad = DeployPad.launchpad(admin, admin, admin, oracle, admin);
+        ur = new MockUniversalRouter(weth, base, RATE);
+        MockSwapRouter02 sr02 = new MockSwapRouter02(weth, base, RATE);
+        router = new StonkzRouter(
+            IUniversalRouter(address(ur)), pad, IWETH9(address(weth)), ISwapRouter02(address(sr02))
+        );
 
         vm.prank(oracleAuth);
         oracle.pushPrice(address(base), 1_000_000, 0);
@@ -64,7 +70,7 @@ contract RouterTest is Test {
         token = pad.createToken("Coin", "ATOM", "u", 1_000_000_000, address(base), 250, false);
 
         vm.deal(trader, 100 ether);
-        vm.deal(address(ur), 1_000 ether); // the router's ETH side of the pool
+        vm.deal(address(weth), 1_000 ether);
     }
 
     /* ------------------------------------------------------------- encoding */
@@ -82,11 +88,11 @@ contract RouterTest is Test {
     function _buyLeg(uint256 ethIn) internal view returns (StonkzRouter.AggregatorLeg memory) {
         uint256 quoted = (ethIn * RATE) / 1 ether;
         return StonkzRouter.AggregatorLeg({
-            // Recipient is MSG_SENDER, which the Universal Router resolves to
-            // its own caller — StonkzRouter — so the base lands in the contract
-            // that is about to spend it rather than in the trader's wallet.
+            // V3-only: StonkzRouter already wrapped + pushed WETH to the UR.
+            // Recipient is MSG_SENDER (= StonkzRouter). payerIsUser=false spends
+            // the UR's WETH balance.
             commands: CMD,
-            inputs: _input(MSG_SENDER, ethIn, 0, true),
+            inputs: _input(MSG_SENDER, ethIn, 0, false),
             deadline: block.timestamp + 300,
             amountIn: 0,
             quotedOut: quoted,
@@ -393,7 +399,7 @@ contract RouterTest is Test {
     /// transaction rather than the trade.
     function test_AMisEncodedRecipientReverts() public {
         StonkzRouter.AggregatorLeg memory leg = _buyLeg(1 ether);
-        leg.inputs = _input(ADDRESS_THIS, 1 ether, 0, true);
+        leg.inputs = _input(ADDRESS_THIS, 1 ether, 0, false);
 
         uint256 floor_ = router.shortfallFloor(leg.quotedOut, leg.maxSlippageBps);
         vm.prank(trader);
@@ -412,7 +418,7 @@ contract RouterTest is Test {
     /// caught rather than silently producing a half-finished trade.
     function test_ARecipientOfTheTraderReverts() public {
         StonkzRouter.AggregatorLeg memory leg = _buyLeg(1 ether);
-        leg.inputs = _input(trader, 1 ether, 0, true);
+        leg.inputs = _input(trader, 1 ether, 0, false);
 
         vm.prank(trader);
         vm.expectRevert();

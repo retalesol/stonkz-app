@@ -7,6 +7,7 @@ import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 import {MockERC20} from "./mocks/Mocks.sol";
+import {DeployPad} from "../script/DeployPad.sol";
 
 /// @notice The EVM half of review gate 2.A, plus the Phase 4 gates.
 ///
@@ -47,8 +48,8 @@ contract LaunchpadTest is Test {
         vm.warp(1_800_000_000);
 
         base = new MockERC20("Global Dollar", "USDG", BASE_DECIMALS);
-        oracle = new PushPriceSource(admin, oracleAuth, 90_000);
-        pad = new StonkzLaunchpad(admin, protocolCold, opsCold, oracle, migAuth);
+        oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
+        pad = DeployPad.launchpad(admin, protocolCold, opsCold, oracle, migAuth);
 
         vm.prank(oracleAuth);
         oracle.pushPrice(address(base), BASE_PRICE_1E6, 0);

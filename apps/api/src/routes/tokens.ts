@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { and, desc, eq, gt, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { laneOf, nativeUnit, type Lane, type Net } from '@stonkz/shared';
+import { fetchEvmHoldersFromExplorer, fetchSolHoldersFromRpc } from '../chain/token-holders.js';
 import { candles, holdersSnapshot, tokens, trades } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -49,6 +50,12 @@ export function tokenRoutes(): Hono<AppEnv> {
     const filters: SQL[] = [];
     if (net) filters.push(eq(tokens.net, net));
     if (lane) filters.push(eq(tokens.lane, lane));
+    // Hide fixture placeholders (empty mint / no curve) from the live board.
+    // Operators can still look them up by exact symbol via /tokens/:sym.
+    const includeFixtures = c.req.query('fixtures') === '1';
+    if (!includeFixtures) {
+      filters.push(sql`${tokens.mint} <> ''`);
+    }
     if (q) {
       const like = `${q}%`;
       const contains = `%${q}%`;
@@ -164,6 +171,7 @@ export function tokenRoutes(): Hono<AppEnv> {
         buy: r.side === 'buy',
         sol: r.nativeAmount,
         tok: r.tokenAmount,
+        base: r.baseAmount,
         mc: r.mc,
         w: r.trader,
         v: r.usdValue,
@@ -179,29 +187,143 @@ export function tokenRoutes(): Hono<AppEnv> {
     const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
     const max = clampLimit(c.req.query('limit'), 50, 200);
 
-    const rows = await deps.db
-      .select()
-      .from(holdersSnapshot)
-      .where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym), gt(holdersSnapshot.tokenAmount, 0)))
-      .orderBy(desc(holdersSnapshot.tokenAmount))
-      .limit(max);
-
     const [token] = await deps.db
-      .select({ supply: tokens.supply })
+      .select()
       .from(tokens)
       .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
       .limit(1);
-    const supply = token?.supply ?? 0;
+    if (!token) return c.json({ error: 'not_found' }, 404);
 
-    return c.json({
-      net,
-      sym,
-      holders: rows.map((r) => ({
+    const supply = token.supply > 0 ? token.supply : 0;
+    const mint = (token.mint ?? '').trim();
+
+    type HolderOut = {
+      wallet: string;
+      amount: number;
+      pct: number;
+      costNative: number;
+      curve?: boolean;
+    };
+
+    const fromDb = async (): Promise<{ holders: HolderOut[]; source: 'db'; holderCount: number }> => {
+      const rows = await deps.db
+        .select()
+        .from(holdersSnapshot)
+        .where(
+          and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym), gt(holdersSnapshot.tokenAmount, 0)),
+        )
+        .orderBy(desc(holdersSnapshot.tokenAmount))
+        .limit(max);
+      const launchpad = deps.env.rhLaunchpadAddress.toLowerCase();
+      const holders: HolderOut[] = rows.map((r) => ({
         wallet: r.wallet,
         amount: r.tokenAmount,
         pct: supply > 0 ? (r.tokenAmount / supply) * 100 : 0,
         costNative: r.costNative,
-      })),
+        ...(net === 'RH' && r.wallet.toLowerCase() === launchpad ? { curve: true } : {}),
+      }));
+      const holderCount = holders.filter((h) => !h.curve).length;
+      return { holders, source: 'db', holderCount };
+    };
+
+    const cacheChainHolders = async (
+      chainHolders: { wallet: string; amount: number; curve: boolean }[],
+    ): Promise<void> => {
+      // Best-effort: keep the snapshot warm so an RPC/explorer outage still
+      // serves the last known on-chain picture.
+      try {
+        for (const h of chainHolders) {
+          await deps.db
+            .insert(holdersSnapshot)
+            .values({
+              net,
+              sym,
+              wallet: h.wallet,
+              tokenAmount: h.amount,
+              costNative: 0,
+            })
+            .onConflictDoUpdate({
+              target: [holdersSnapshot.net, holdersSnapshot.sym, holdersSnapshot.wallet],
+              set: { tokenAmount: h.amount },
+            });
+        }
+        const holderCount = chainHolders.filter((h) => !h.curve).length;
+        await deps.db
+          .update(tokens)
+          .set({ holders: holderCount, updatedAt: new Date(deps.now()) })
+          .where(and(eq(tokens.net, net), eq(tokens.sym, sym)));
+      } catch (err) {
+        deps.logger.warn('holders snapshot cache failed', { net, sym, err: String(err) });
+      }
+    };
+
+    if (mint) {
+      try {
+        if (net === 'RH') {
+          const live = await fetchEvmHoldersFromExplorer({
+            mint,
+            launchpad: deps.env.rhLaunchpadAddress,
+            decimals: token.tokenDecimals || 18,
+            limit: max,
+            explorerUrl: deps.env.rhExplorerUrl,
+          });
+          const holders: HolderOut[] = live.holders.map((h) => ({
+            wallet: h.wallet,
+            amount: h.amount,
+            pct: supply > 0 ? (h.amount / supply) * 100 : 0,
+            costNative: 0,
+            ...(h.curve ? { curve: true } : {}),
+          }));
+          void cacheChainHolders(live.holders);
+          return c.json({
+            net,
+            sym,
+            source: live.source,
+            curveWallet: deps.env.rhLaunchpadAddress,
+            holderCount: holders.filter((h) => !h.curve).length,
+            holders,
+          });
+        }
+
+        if (net === 'SOL') {
+          const live = await fetchSolHoldersFromRpc({
+            mint,
+            decimals: token.tokenDecimals || 6,
+            limit: Math.min(max, 20),
+            rpcUrl: deps.env.solanaRpcUrl,
+          });
+          const holders: HolderOut[] = live.holders.map((h) => ({
+            wallet: h.wallet,
+            amount: h.amount,
+            pct: supply > 0 ? (h.amount / supply) * 100 : 0,
+            costNative: 0,
+            ...(h.curve ? { curve: true } : {}),
+          }));
+          void cacheChainHolders(live.holders);
+          return c.json({
+            net,
+            sym,
+            source: live.source,
+            holderCount: holders.filter((h) => !h.curve).length,
+            holders,
+          });
+        }
+      } catch (err) {
+        deps.logger.warn('on-chain holders failed; falling back to db', {
+          net,
+          sym,
+          mint,
+          err: String(err),
+        });
+      }
+    }
+
+    const fallback = await fromDb();
+    return c.json({
+      net,
+      sym,
+      ...(net === 'RH' ? { curveWallet: deps.env.rhLaunchpadAddress } : {}),
+      ...fallback,
     });
   });
 

@@ -8,6 +8,9 @@ import type { XProfile, XProvider } from './x-provider.js';
  * ... to avoid hitting rate limits on every profile view". `x_profile_cache`
  * is keyed by lower-cased handle; a row past `expiresAt` is treated as a
  * cache miss and refetched, same as a row that never existed.
+ *
+ * Misses from an unconfigured provider (`source: 'none'`) are **not** cached,
+ * so flipping on `X_BEARER_TOKEN` starts working without waiting out the TTL.
  */
 export interface XProfileCacheOptions {
   db: Db;
@@ -31,6 +34,13 @@ export class XProfileCacheService {
   async get(rawHandle: string): Promise<CachedXProfile> {
     const handle = rawHandle.replace(/^@/, '').trim().toLowerCase();
     const nowMs = this.now();
+    const source = this.opts.provider.source;
+
+    // No real X credentials — never serve a fabricated or stale "found" row.
+    if (source === 'none') {
+      const fresh = await this.opts.provider.fetchProfile(handle);
+      return { ...fresh, handle, cachedAt: nowMs, source };
+    }
 
     const [row] = await this.opts.db
       .select()
@@ -45,8 +55,10 @@ export class XProfileCacheService {
         avatarUrl: row.avatarUrl,
         verified: row.verified,
         found: row.found,
+        status: row.found ? 'ok' : 'not_found',
+        ...(row.found ? {} : { reason: "Username doesn't exist" as const }),
         cachedAt: row.fetchedAt.getTime(),
-        source: 'placeholder', // Not persisted per-row; see final report for the tradeoff.
+        source,
       };
     }
 
@@ -76,6 +88,6 @@ export class XProfileCacheService {
         },
       });
 
-    return { ...fresh, handle, cachedAt: nowMs, source: this.opts.provider.source };
+    return { ...fresh, handle, cachedAt: nowMs, source };
   }
 }

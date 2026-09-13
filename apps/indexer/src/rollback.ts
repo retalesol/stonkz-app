@@ -380,12 +380,13 @@ export class ReorgRollback {
 
         case 'StakeClaimed': {
           if (!row.sym || !row.wallet) break;
+          // Ingest zeros claimable on claim; rollback restores the claimed amounts.
           const claim = row.payload as { rewardNative: number; rewardTokens: number };
           await tx
             .update(stakePositions)
             .set({
-              rewardNative: sql`greatest(0, ${stakePositions.rewardNative} - ${claim.rewardNative})`,
-              rewardTokens: sql`greatest(0, ${stakePositions.rewardTokens} - ${claim.rewardTokens})`,
+              rewardNative: sql`${stakePositions.rewardNative} + ${claim.rewardNative}`,
+              rewardTokens: sql`${stakePositions.rewardTokens} + ${claim.rewardTokens}`,
               updatedAt: new Date(this.now()),
             })
             .where(

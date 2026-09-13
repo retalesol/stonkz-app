@@ -120,37 +120,28 @@ export function buildUnwrapOnlyLeg(): UniversalRouterLeg {
 }
 
 /**
- * Aggregator-hop buy: `WRAP_ETH` (recipient `ADDRESS_THIS` — an intermediate
- * hop the same `execute` call continues to spend from) then
- * `V3_SWAP_EXACT_IN` (recipient `MSG_SENDER`, `payerIsUser = false` because
- * the Universal Router is paying from the WETH balance it just wrapped, not
- * pulling from the trader).
+ * Aggregator-hop buy: V3-only. `StonkzRouter.buyViaAggregator` wraps ETH into
+ * chain-local WETH and transfers it to the Universal Router before `execute`
+ * (UR `WRAP_ETH` targets mainnet aeWETH on RH testnet and reverts). The swap
+ * spends that WETH (`payerIsUser = false`) and delivers base to `MSG_SENDER`.
  */
 export function buildBuyAggregatorLeg(weth: Address, base: Address, feeTier: number): UniversalRouterLeg {
   const path = encodeV3Path(weth, feeTier, base);
   return {
-    commands: commandsBytes([CMD_WRAP_ETH, CMD_V3_SWAP_EXACT_IN]),
-    inputs: [
-      encodeWrapEthInput(ADDRESS_THIS, CONTRACT_BALANCE),
-      encodeV3SwapExactInInput(MSG_SENDER, CONTRACT_BALANCE, 0n, path, false),
-    ],
+    commands: commandsBytes([CMD_V3_SWAP_EXACT_IN]),
+    inputs: [encodeV3SwapExactInInput(MSG_SENDER, CONTRACT_BALANCE, 0n, path, false)],
   };
 }
 
 /**
- * Aggregator-hop sell: `V3_SWAP_EXACT_IN` (recipient `ADDRESS_THIS`,
- * `payerIsUser = false` — the base token was transferred to the Universal
- * Router's own balance by `StonkzRouter` just before `execute()`, exactly the
- * shape `sellViaAggregator`'s doc comment requires) then `UNWRAP_WETH`
- * (recipient `MSG_SENDER`).
+ * Aggregator-hop sell: V3-only. Base was transferred to the Universal Router by
+ * `StonkzRouter` just before `execute()`. Swap delivers WETH to `MSG_SENDER`;
+ * the router unwraps locally (`UNWRAP_WETH` is broken on RH testnet).
  */
 export function buildSellAggregatorLeg(base: Address, weth: Address, feeTier: number): UniversalRouterLeg {
   const path = encodeV3Path(base, feeTier, weth);
   return {
-    commands: commandsBytes([CMD_V3_SWAP_EXACT_IN, CMD_UNWRAP_WETH]),
-    inputs: [
-      encodeV3SwapExactInInput(ADDRESS_THIS, CONTRACT_BALANCE, 0n, path, false),
-      encodeUnwrapWethInput(MSG_SENDER, 0n),
-    ],
+    commands: commandsBytes([CMD_V3_SWAP_EXACT_IN]),
+    inputs: [encodeV3SwapExactInInput(MSG_SENDER, CONTRACT_BALANCE, 0n, path, false)],
   };
 }

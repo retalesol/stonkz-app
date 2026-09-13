@@ -3,6 +3,13 @@ import type { AchievementKey, CrateTier, Net } from './types.js';
 /** Graduation market cap, USD. `index.html:1084` */
 export const GRAD = 69000;
 
+/**
+ * Implied USD market cap at launch from virtual reserves (`GRAD / 16`, matching
+ * `VIRTUAL_TOKEN_NUM` in `@stonkz/curve-sim`). Fill % is progress from this
+ * floor to `GRAD`, so a fresh mint reads 0% — not ~6.25%.
+ */
+export const CURVE_START_MC = GRAD / 16;
+
 /** Default fixed supply when a coin does not set one. `index.html:1084` */
 export const SUPPLY = 1e9;
 
@@ -273,6 +280,35 @@ export const STOCKS = [
   ['STRCx', 'Strategy PP xStock'],
 ] as const satisfies readonly (readonly [symbol: string, name: string])[];
 
+/**
+ * Robinhood Chain stock / ETF bases (canonical RH tickers, not Solana `xStock`).
+ * Testnet addresses for the subset Robinhood documents on 46630 are wired in
+ * `apps/api/src/router/base-mints.ts`. Graduation is still $69K USD mcap on the
+ * curve regardless of which allow-listed base is chosen.
+ */
+export const RH_STOCKS = [
+  ['TSLA', 'Tesla'],
+  ['AMZN', 'Amazon'],
+  ['PLTR', 'Palantir'],
+  ['NFLX', 'Netflix'],
+  ['AMD', 'AMD'],
+  ['AAPL', 'Apple'],
+  ['NVDA', 'NVIDIA'],
+  ['MSFT', 'Microsoft'],
+  ['GOOGL', 'Alphabet'],
+  ['META', 'Meta'],
+  ['COIN', 'Coinbase'],
+  ['HOOD', 'Robinhood'],
+  ['SPY', 'SPDR S&P 500'],
+  ['QQQ', 'Invesco QQQ'],
+  ['MSTR', 'MicroStrategy'],
+  ['CRCL', 'Circle'],
+  ['GLD', 'SPDR Gold'],
+  ['INTC', 'Intel'],
+  ['KO', 'Coca-Cola'],
+  ['GME', 'GameStop'],
+] as const satisfies readonly (readonly [symbol: string, name: string])[];
+
 /** Major base mints per network. `index.html:3718-3723` */
 export const MAJORS = {
   SOL: [
@@ -289,10 +325,12 @@ export const MAJORS = {
   ],
   RH: [
     ['ETH', 'Ethereum'],
+    ['WETH', 'Wrapped Ether'],
+    ['USDG', 'Global Dollar'],
     ['USDC', 'USD Coin'],
     ['BTC', 'Bitcoin'],
-    ['XRP', 'XRP'],
     ['SOL', 'Solana'],
+    ['XRP', 'XRP'],
     ['DOGE', 'Dogecoin'],
     ['ADA', 'Cardano'],
     ['AVAX', 'Avalanche'],

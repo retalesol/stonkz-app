@@ -1,11 +1,11 @@
-import type { Settings } from '@stonkz/shared';
+import type { MevMode, Settings } from '@stonkz/shared';
 
 /**
- * Transaction defaults, persisted in `stonkz.settings.v1`.
+ * Transaction defaults.
  *
- * These stay device-local through Phase 2 — they parameterise the composed
- * transaction (aggregator hop + curve hop + priority + MEV tip) but are never
- * authoritative for settlement. `index.html:2488`
+ * Device-local cache in `stonkz.settings.v1`, synced to `PUT /me/settings`
+ * when a live session is active so `/trade/prepare` uses the same slip /
+ * priority / MEV tip the UI shows.
  */
 
 const KEY = 'stonkz.settings.v1';
@@ -15,7 +15,9 @@ export const DEFAULTS: Settings = {
   prio: 0.0012,
   mev: 'SHIELD',
   mevTip: 0.0009,
-  cap: 0.02,
+  // Must cover defBuy + Solana prio/MEV tip — prepare rejects buys above this.
+  // Aligns with API / DB default (5), not the oracle's legacy 0.02.
+  cap: 5,
   defBuy: 0.5,
   confirm: true,
 };
@@ -27,12 +29,16 @@ export function loadSettings(): void {
     const raw = localStorage.getItem(KEY);
     if (!raw) return;
     const o = JSON.parse(raw) as Partial<Settings>;
-    for (const k of Object.keys(SET) as Array<keyof Settings>) {
-      const v = o[k];
-      if (v !== undefined && v !== null) (SET as unknown as Record<string, unknown>)[k] = v;
-    }
+    applySettings(o);
   } catch {
     /* a corrupt blob falls back to defaults */
+  }
+}
+
+export function applySettings(o: Partial<Settings>): void {
+  for (const k of Object.keys(SET) as Array<keyof Settings>) {
+    const v = o[k];
+    if (v !== undefined && v !== null) (SET as unknown as Record<string, unknown>)[k] = v;
   }
 }
 
@@ -46,4 +52,18 @@ export function saveSettings(): void {
 
 export function resetSettings(): void {
   Object.assign(SET, DEFAULTS);
+  saveSettings();
+}
+
+/** Payload for prepare + PUT /me/settings. */
+export function settingsPayload(): Settings {
+  return {
+    slip: SET.slip,
+    prio: SET.prio,
+    mev: SET.mev as MevMode,
+    mevTip: SET.mevTip,
+    cap: SET.cap,
+    defBuy: SET.defBuy,
+    confirm: SET.confirm,
+  };
 }

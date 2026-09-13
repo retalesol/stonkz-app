@@ -4,7 +4,7 @@ import { XProfileCacheService } from './x-cache.js';
 import { PlaceholderXProvider, type XProfile, type XProvider } from './x-provider.js';
 
 class CountingProvider implements XProvider {
-  readonly source = 'placeholder' as const;
+  readonly source = 'x_api' as const;
   calls = 0;
   constructor(private readonly profile: XProfile) {}
   async fetchProfile(): Promise<XProfile> {
@@ -14,13 +14,12 @@ class CountingProvider implements XProvider {
 }
 
 describe('XProfileCacheService', () => {
-  it('placeholder provider fabricates a deterministic, clearly-not-real profile', async () => {
+  it('placeholder provider never invents a found profile', async () => {
     const provider = new PlaceholderXProvider();
     const a = await provider.fetchProfile('@degen');
-    const b = await provider.fetchProfile('degen');
-    expect(a).toEqual(b);
-    expect(a.found).toBe(true);
-    expect(a.displayName).toBe('@degen');
+    expect(a.found).toBe(false);
+    expect(a.status).toBe('unavailable');
+    expect(a.reason).toMatch(/not configured/i);
   });
 
   it('only calls the provider once within the TTL', async () => {
@@ -33,6 +32,7 @@ describe('XProfileCacheService', () => {
         avatarUrl: null,
         verified: false,
         found: true,
+        status: 'ok',
       });
       let now = 1_000_000;
       const cache = new XProfileCacheService({ db: db.db, provider, ttlSeconds: 3600, now: () => now });

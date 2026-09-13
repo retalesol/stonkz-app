@@ -9,6 +9,7 @@ import { tokenRoutes } from '../routes/tokens.js';
 import { tradeRoutes } from '../routes/trade.js';
 import { launchRoutes } from '../routes/launch.js';
 import { feesRoutes } from '../routes/fees.js';
+import { stakeRoutes } from '../routes/stake.js';
 import { socialRoutes } from '../routes/social.js';
 import { chatRoutes } from '../routes/chat.js';
 import { xRoutes } from '../routes/x.js';
@@ -42,6 +43,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/', tradeRoutes());
   app.route('/', launchRoutes());
   app.route('/', feesRoutes());
+  app.route('/', stakeRoutes());
   app.route('/', socialRoutes());
   app.route('/', chatRoutes());
   app.route('/', xRoutes());

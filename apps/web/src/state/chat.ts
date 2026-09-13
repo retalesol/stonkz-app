@@ -17,6 +17,10 @@ export interface ChatMsg {
   mine?: boolean;
   /** System line: rendered without an author row. */
   sys?: boolean;
+  /** Full wallet when known — drives mememan seed + profile link. */
+  wallet?: string;
+  /** Custom PFP URL when set; otherwise mememan on a wallet colour. */
+  avatarUrl?: string | null;
 }
 
 export interface ChatState {

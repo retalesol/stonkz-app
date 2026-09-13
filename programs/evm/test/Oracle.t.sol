@@ -6,6 +6,8 @@ import {ChainlinkPriceSource, AggregatorV3Interface} from "../src/oracle/Chainli
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {MockAggregator, MockERC20} from "./mocks/Mocks.sol";
+import {DeployPad} from "../script/DeployPad.sol";
+import {IPriceSource} from "../src/oracle/IPriceSource.sol";
 
 /// @notice The oracle behaviour that `docs/robinhood-chain.md` §4.4 and §8 say
 /// this chain forces on us. Two of these tests exist because the obvious
@@ -49,13 +51,13 @@ contract OracleTest is Test {
         assertEq(p, 3_000_000_000, "20h is well inside a 24h heartbeat");
 
         // A launchpad wired to this source agrees.
-        StonkzLaunchpad pad = new StonkzLaunchpad(admin, admin, admin, src, admin);
+        StonkzLaunchpad pad = DeployPad.launchpad(admin, admin, admin, IPriceSource(address(src)), admin);
         assertEq(pad.maxOracleStaleness(), 90_000, "86400 + grace, not 3600");
         pad.createToken("Coin", "OK", "u", 1_000_000_000, address(weth), 250, false);
     }
 
     function test_PastTheHeartbeatPlusGraceItIsNotFresh() public {
-        StonkzLaunchpad pad = new StonkzLaunchpad(admin, admin, admin, src, admin);
+        StonkzLaunchpad pad = DeployPad.launchpad(admin, admin, admin, IPriceSource(address(src)), admin);
         vm.warp(block.timestamp + HEARTBEAT + GRACE + 1);
         vm.expectRevert(bytes("stale oracle"));
         pad.createToken("Coin", "STALE", "u", 1_000_000_000, address(weth), 250, false);
@@ -117,7 +119,7 @@ contract OracleTest is Test {
     /// graduation, and does not stop anyone trading. A design where a Chainlink
     /// hiccup reverts fills turns an oracle outage into a launchpad outage.
     function test_ADeadOracleDefersGraduationButNeverBlocksATrade() public {
-        StonkzLaunchpad pad = new StonkzLaunchpad(admin, admin, admin, src, admin);
+        StonkzLaunchpad pad = DeployPad.launchpad(admin, admin, admin, IPriceSource(address(src)), admin);
         address token =
             pad.createToken("Coin", "LIVE", "u", 1_000_000_000, address(weth), 250, false);
 
@@ -141,7 +143,7 @@ contract OracleTest is Test {
     }
 
     function test_OracleGraduationPauseDoesNotStrandAnExhaustedCurve() public {
-        StonkzLaunchpad pad = new StonkzLaunchpad(admin, admin, admin, src, admin);
+        StonkzLaunchpad pad = DeployPad.launchpad(admin, admin, admin, IPriceSource(address(src)), admin);
         address token =
             pad.createToken("Coin", "EXH", "u", 1_000_000_000, address(weth), 250, false);
 
@@ -161,7 +163,7 @@ contract OracleTest is Test {
     }
 
     function test_OracleGraduationPauseStopsThePriceTrigger() public {
-        StonkzLaunchpad pad = new StonkzLaunchpad(admin, admin, admin, src, admin);
+        StonkzLaunchpad pad = DeployPad.launchpad(admin, admin, admin, IPriceSource(address(src)), admin);
         address token =
             pad.createToken("Coin", "MID", "u", 1_000_000_000, address(weth), 250, false);
         weth.mint(address(this), 100 ether);

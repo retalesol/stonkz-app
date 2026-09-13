@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+
 import {CurveMath} from "./CurveMath.sol";
 import {SafeErc20} from "./SafeErc20.sol";
 import {StonkzToken} from "./StonkzToken.sol";
@@ -29,7 +32,10 @@ interface IGraduationMigrator {
 /// Solana's per-coin PDA vaults become balances tracked in this contract's
 /// storage; the money is in one place but the ledgers are as separate as the
 /// PDAs were, and no function lets one ledger draw on another.
-contract StonkzLaunchpad {
+///
+/// Deployed behind a UUPS proxy through public beta so logic can change without
+/// migrating curve balances. `_authorizeUpgrade` is admin-gated.
+contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     using CurveMath for CurveMath.State;
 
     /* ------------------------------------------------------------- storage */
@@ -130,10 +136,10 @@ contract StonkzLaunchpad {
     /// rather than papered over: the $69K threshold is a trigger, not a
     /// settlement price. Nothing is priced off the oracle — fills are priced
     /// off the curve.
-    uint64 public maxOracleStaleness = 90_000;
+    uint64 public maxOracleStaleness;
     uint256 public tokenCount;
 
-    uint256 private _lock = 1;
+    uint256 private _lock;
 
     /* -------------------------------------------------------------- events */
 
@@ -214,13 +220,18 @@ contract StonkzLaunchpad {
         _;
     }
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
         address _admin,
         address _protocolWithdrawAuthority,
         address _opsWithdrawAuthority,
         IPriceSource _priceSource,
         address _migrationAuthority
-    ) {
+    ) external initializer {
         require(
             _admin != address(0) && _protocolWithdrawAuthority != address(0)
                 && _opsWithdrawAuthority != address(0),
@@ -231,7 +242,11 @@ contract StonkzLaunchpad {
         opsWithdrawAuthority = _opsWithdrawAuthority;
         priceSource = _priceSource;
         migrationAuthority = _migrationAuthority;
+        maxOracleStaleness = 90_000;
+        _lock = 1;
     }
+
+    function _authorizeUpgrade(address) internal override onlyAdmin {}
 
     /* ---------------------------------------------------------------- admin */
 

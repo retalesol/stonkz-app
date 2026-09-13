@@ -1,14 +1,222 @@
-/* ---------- toast / footer ---------- */
-.toasts{position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:90;display:flex;
-  flex-direction:column;gap:5px;align-items:center;pointer-events:none;max-width:calc(100vw - 24px)}
-.toast{background:#0f7a3d;border:1px solid #3fe08a;color:#eafff2;padding:6px 16px;letter-spacing:.08em;
-  font-size:11.5px;animation:rise .3s ease-out;transition:opacity .35s ease-out;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.toast.bye{opacity:0}
-.toast.gold{background:#241a04;border-color:var(--gold);color:var(--gold)}
-.toast.ach{background:#17102b;border-color:var(--violet);color:#dccdff}
-.toast.red{background:#3a1210;border-color:var(--down);color:#ffb0a6}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+/* ---------- mememan agent / footer ---------- */
+
+.mm-agent{
+  position:fixed;
+  right:10px;
+  bottom:0;
+  z-index:45;
+  width:132px;
+  height:168px;
+  pointer-events:none;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  justify-content:flex-end;
+  transition:height .32s cubic-bezier(.2,.8,.2,1), transform .32s cubic-bezier(.2,.8,.2,1);
+}
+/* Quiet = snooping peek. Footer (~32px) covers the bottom of the agent, so
+   height must clear the footer by enough to show the eyes. */
+.mm-agent.quiet{
+  height:98px;
+  transform:none;
+}
+@media (hover:hover) and (pointer:fine){
+  .mm-agent.quiet:hover{
+    height:132px; /* whole head pops up */
+  }
+}
+.mm-agent.expanded{
+  z-index:70;
+  height:min(72vh, 560px);
+}
+
+.mm-bubbles{
+  position:absolute;
+  right:118px;
+  bottom:78px;
+  width:min(280px, calc(100vw - 150px));
+  max-height:0;
+  pointer-events:none;
+  display:flex;
+  flex-direction:column-reverse;
+  align-items:flex-end;
+  gap:0;
+  overflow:visible;
+}
+.mm-agent.has-bubbles:not(.quiet) .mm-bubbles{
+  max-height:140px;
+  pointer-events:auto;
+}
+.mm-agent.quiet .mm-bubbles{visibility:hidden;opacity:0}
+.mm-agent.expanded .mm-bubbles{
+  bottom:52px;
+  max-height:min(68vh, 520px);
+  overflow-y:auto;
+  overflow-x:visible;
+  gap:8px;
+  pointer-events:auto;
+  padding-bottom:4px;
+  scrollbar-width:thin;
+}
+
+.mm-bubble{
+  position:relative;
+  right:0;
+  z-index:var(--z, 1);
+  max-width:100%;
+  margin:0;
+  padding:10px 12px 14px;
+  text-align:left;
+  cursor:pointer;
+  pointer-events:auto;
+  flex:0 0 auto;
+  color:#120c00;
+  background:#f4efe3;
+  font-family:"Silkscreen","IBM Plex Mono",monospace;
+  font-size:10px;
+  line-height:1.35;
+  letter-spacing:.02em;
+  image-rendering:pixelated;
+  border:0;
+  box-shadow:
+    0 -3px 0 #0b0a08,
+    0 3px 0 #0b0a08,
+    -3px 0 0 #0b0a08,
+    3px 0 0 #0b0a08,
+    -3px -3px 0 #0b0a08,
+    3px -3px 0 #0b0a08,
+    -3px 3px 0 #0b0a08,
+    3px 3px 0 #0b0a08,
+    6px 6px 0 rgba(0,0,0,.35);
+  /* Solitaire stack when collapsed: pull older cards up/left behind the front. */
+  margin-bottom:calc(var(--i, 0) * -42px);
+  margin-right:calc(var(--i, 0) * 7px);
+  transform:rotate(calc(var(--i, 0) * -1.15deg));
+  transition:margin .28s cubic-bezier(.2,.8,.2,1), transform .28s cubic-bezier(.2,.8,.2,1), opacity .28s ease;
+  animation:mmPop .32s cubic-bezier(.2,.9,.3,1.2);
+}
+.mm-bubble.bye{opacity:0;transform:translateY(10px) scale(.96)}
+.mm-bubble.gold{background:#fff3c4;color:#3a2a00}
+.mm-bubble.ach{background:#ebe4ff;color:#2a1848}
+.mm-bubble.red{background:#ffd4ce;color:#4a100c}
+
+.mm-agent.expanded .mm-bubble{
+  margin-bottom:0;
+  margin-right:0;
+  transform:none;
+  width:100%;
+}
+.mm-agent:not(.expanded) .mm-bubble:not(.front){
+  filter:brightness(.92);
+}
+
+.mm-bubble-txt{
+  display:block;
+  white-space:normal;
+  word-break:break-word;
+}
+
+/* Spike points toward Mememan (right / down). */
+.mm-spike{
+  position:absolute;
+  right:-2px;
+  bottom:-10px;
+  width:14px;
+  height:14px;
+  background:#f4efe3;
+  box-shadow:
+    3px 0 0 #0b0a08,
+    0 3px 0 #0b0a08,
+    3px 3px 0 #0b0a08,
+    6px 3px 0 #0b0a08,
+    3px 6px 0 #0b0a08;
+  transform:skewX(-18deg);
+  pointer-events:none;
+}
+.mm-bubble.gold .mm-spike{background:#fff3c4}
+.mm-bubble.ach .mm-spike{background:#ebe4ff}
+.mm-bubble.red .mm-spike{background:#ffd4ce}
+
+.mm-body{
+  position:relative;
+  z-index:20;
+  width:132px;
+  height:168px;
+  padding:0;
+  border:0;
+  background:transparent;
+  cursor:pointer;
+  pointer-events:auto;
+  overflow:hidden;
+  display:block;
+  transition:height .32s cubic-bezier(.2,.8,.2,1);
+}
+.mm-agent.quiet .mm-body{
+  height:98px;
+}
+@media (hover:hover) and (pointer:fine){
+  .mm-agent.quiet:hover .mm-body{
+    height:132px;
+  }
+}
+.mm-img{
+  position:absolute;
+  right:0;
+  bottom:0;
+  width:132px;
+  height:auto;
+  display:block;
+  image-rendering:pixelated;
+  transform:scaleX(-1); /* face left toward the page */
+  user-select:none;
+  pointer-events:none;
+  filter:drop-shadow(-4px 0 0 rgba(0,0,0,.35));
+  transition:top .32s cubic-bezier(.2,.8,.2,1), bottom .32s cubic-bezier(.2,.8,.2,1), transform .32s cubic-bezier(.2,.8,.2,1);
+}
+/* Quiet: pin the crown to the top of the clip so eyes sit above the footer. */
+.mm-agent.quiet .mm-img{
+  top:0;
+  bottom:auto;
+  transform:scaleX(-1);
+}
+
+.mm-badge{
+  position:absolute;
+  top:4px;
+  left:8px;
+  z-index:30;
+  min-width:18px;
+  height:18px;
+  padding:0 5px;
+  border:2px solid #0b0a08;
+  background:var(--amber);
+  color:#150d00;
+  font-family:"Silkscreen","IBM Plex Mono",monospace;
+  font-size:10px;
+  line-height:14px;
+  text-align:center;
+  pointer-events:none;
+  box-shadow:2px 2px 0 #0b0a08;
+}
+
+@keyframes mmPop{
+  from{opacity:0;transform:translate(8px, 12px) scale(.85)}
+  to{opacity:1}
+}
+
+@media (max-width:560px){
+  .mm-agent{width:104px;height:136px;right:4px}
+  .mm-body{width:104px;height:136px}
+  .mm-img{width:104px}
+  .mm-bubbles{right:94px;width:min(220px, calc(100vw - 110px));bottom:64px}
+  .mm-agent.quiet{height:82px}
+  .mm-agent.quiet .mm-body{height:82px}
+}
+@media (max-width:560px) and (hover:hover) and (pointer:fine){
+  .mm-agent.quiet:hover{height:110px}
+  .mm-agent.quiet:hover .mm-body{height:110px}
+}
+
 .foot{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;gap:14px;align-items:center;
   flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;background:#06070a;border-top:1px solid var(--line2);
   padding:6px 12px;font-size:10.5px;color:var(--dim);letter-spacing:.04em;
@@ -17,4 +225,12 @@
 .foot>span{flex:0 0 auto}
 .foot .demo{margin-left:auto;background:var(--amber2);color:#150d00;padding:1px 8px;letter-spacing:.1em;font-weight:600}
 
+/* Leave room so footer text does not collide with Mememan. */
+.foot{padding-right:148px}
+@media (max-width:560px){
+  .foot{padding-right:112px}
+}
 
+@media (prefers-reduced-motion:reduce){
+  .mm-agent,.mm-bubble,.mm-img{transition:none!important;animation:none!important}
+}

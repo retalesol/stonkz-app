@@ -311,6 +311,7 @@ describe('quote cache', () => {
     nativeAmount: 1,
     baseMint: 'So11111111111111111111111111111111111111112',
     sym: 'DOGE',
+    reserves: '0-0',
   };
   const quote = { out: 1234, price: 0.0001, impact: 0.5 };
 

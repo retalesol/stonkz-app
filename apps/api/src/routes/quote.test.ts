@@ -183,8 +183,10 @@ describe('GET /tokens/:sym/quote', () => {
   it('handles the sell side by inverting the hop symbols', async () => {
     const { body } = await quote('/tokens/VIABONK/quote?side=sell&amount=2');
     expect(body.side).toBe('sell');
-    expect(body.hops[0]).toMatchObject({ inSymbol: 'BONK', outSymbol: 'SOL' });
-    expect(body.hops[1]).toMatchObject({ inSymbol: 'VIABONK', outSymbol: 'BONK' });
+    // Chronological sell: token → base on curve, then base → native.
+    expect(body.hops[0]).toMatchObject({ inSymbol: 'VIABONK', outSymbol: 'BONK' });
+    expect(body.hops[1]).toMatchObject({ inSymbol: 'BONK', outSymbol: 'SOL' });
+    expect(body.routeLabel).toBe('CURVE → JUPITER');
   });
 
   it('labels itself indicative so nothing downstream treats it as executable', async () => {
@@ -214,26 +216,25 @@ describe('quote cache', () => {
     expect(headers.get('cache-control')).toBe(`public, max-age=${QUOTE_CACHE_TTL_SECONDS}`);
   });
 
-  it('keys on net, side, native amount and base mint', async () => {
+  it('keys on net, side, native amount, base mint and reserves', async () => {
+    for (const k of await h.redis.keys('quote:*')) await h.redis.del(k);
     await quote('/tokens/VIABONK/quote?side=buy&amount=1');
-    const key = quoteCacheKey({
-      net: 'SOL',
-      side: 'buy',
-      nativeAmount: 1,
-      baseMint: BONK_MINT,
-      sym: 'VIABONK',
-    });
-    expect(await h.redis.get(key)).not.toBeNull();
+    const keys = await h.redis.keys('quote:SOL:VIABONK:buy:*');
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toContain(BONK_MINT);
+    // reserve fingerprint is the last segment
+    expect(keys[0]!.split(':').length).toBeGreaterThanOrEqual(7);
 
-    // A different side or size is a different entry.
     expect(
       await h.redis.get(
-        quoteCacheKey({ net: 'SOL', side: 'sell', nativeAmount: 1, baseMint: BONK_MINT, sym: 'VIABONK' }),
-      ),
-    ).toBeNull();
-    expect(
-      await h.redis.get(
-        quoteCacheKey({ net: 'SOL', side: 'buy', nativeAmount: 2, baseMint: BONK_MINT, sym: 'VIABONK' }),
+        quoteCacheKey({
+          net: 'SOL',
+          side: 'sell',
+          nativeAmount: 1,
+          baseMint: BONK_MINT,
+          sym: 'VIABONK',
+          reserves: '0-0',
+        }),
       ),
     ).toBeNull();
   });
@@ -273,6 +274,7 @@ describe('quote cache', () => {
       nativeAmount: 1,
       baseMint: SOL_MINT,
       sym: 'NATIVE',
+      reserves: '0-0',
     });
     expect(await h.redis.get(rhKey)).toBeNull();
   });

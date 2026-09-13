@@ -14,6 +14,12 @@ import { NATIVE_PRICE, WALLET, nativeUnit } from './wallet.js';
 export interface Holding {
   sym: string;
   tok: number;
+  /**
+   * Exact ERC-20 atoms when known (from `balanceOf`). Max-sell must use this
+   * rather than `String(tok)` — float round-trips overshoot the chain balance
+   * and revert with `"balance"`.
+   */
+  tokAtoms?: string;
   /** Cost basis in USD. */
   cost: number;
   /** Opened during this session — gates the `diamond` and `grad` checks. */
@@ -72,17 +78,21 @@ export function pfValue(): number {
 /**
  * Apply a fill to the portfolio and the native balance.
  *
- * A coin paired against a stock or stablecoin still debits the native balance
- * from Phase 2 — the router buys the base with SOL/ETH on hop 1. In the sim we
- * keep the oracle's shortcut of only moving the balance for native pairs and
- * flag it, because the balance line is fake either way. `index.html:2695`
+ * Prefer `tokOut` when known (live quotes / prepare). Falling back to
+ * `usdIn / price(c)` invents garbage when `mc` is still 0 on a fresh launch.
  */
-export function noteTrade(c: SimCoin, buy: boolean, sol: number): void {
+export function noteTrade(c: SimCoin, buy: boolean, sol: number, tokOut?: number): void {
   const h = holdOf(c.sym);
   const usdIn = sol * NATIVE_PRICE.usd;
-  const tok = usdIn / price(c);
+  const px = price(c);
+  const tok =
+    tokOut !== undefined && Number.isFinite(tokOut) && tokOut > 0
+      ? tokOut
+      : px > 0
+        ? usdIn / px
+        : 0;
   // TODO(Phase 2.R): every fill debits native once hop 1 is real.
-  const native = !c.base || c.base === nativeUnit();
+  const native = !c.base || c.base === nativeUnit() || c.base === 'WETH' || c.base === 'WSOL';
   if (buy) {
     if (h) {
       h.tok += tok;
@@ -105,6 +115,33 @@ export function noteTrade(c: SimCoin, buy: boolean, sol: number): void {
   if (MYTRADES.length > 20) MYTRADES.pop();
   emit('portfolio');
   if (WALLET.on) emit('wallet');
+}
+
+/** Replace (or set) a holding from a trusted balance — e.g. ERC-20 `balanceOf`. */
+export function setHoldingTokens(sym: string, tok: number, costUsd?: number, tokAtoms?: string): void {
+  if (!(tok > 0)) {
+    const h = holdOf(sym);
+    if (h) HOLD.splice(HOLD.indexOf(h), 1);
+    emit('portfolio');
+    return;
+  }
+  const h = holdOf(sym);
+  if (h) {
+    h.tok = tok;
+    if (costUsd !== undefined) h.cost = costUsd;
+    if (tokAtoms !== undefined) h.tokAtoms = tokAtoms;
+    else delete h.tokAtoms;
+    h.live = true;
+  } else {
+    HOLD.unshift({
+      sym,
+      tok,
+      cost: costUsd ?? 0,
+      live: true,
+      ...(tokAtoms ? { tokAtoms } : {}),
+    });
+  }
+  emit('portfolio');
 }
 
 /** Credit tokens without spending native — fee claims and stake claims. */

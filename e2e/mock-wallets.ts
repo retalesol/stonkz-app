@@ -185,7 +185,7 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
         const account = {
           address,
           publicKey,
-          chains: ['solana:mainnet'],
+          chains: ['solana:devnet'],
           features: ['solana:signMessage', 'solana:signAndSendTransaction'],
           label: undefined,
           icon: undefined,
@@ -195,7 +195,7 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
           version: '1.0.0',
           name: 'Mock Phantom',
           icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
-          chains: ['solana:mainnet'],
+          chains: ['solana:devnet'],
           accounts: [account],
           features: {
             'standard:connect': {
@@ -256,7 +256,7 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
         record('__rpcCalls', []);
 
         const provider = {
-          isMetaMask: false,
+          isMetaMask: true,
           async request(args: { method: string; params?: unknown[] }): Promise<unknown> {
             (win['__rpcCalls'] as string[]).push(args.method);
             switch (args.method) {
@@ -306,12 +306,14 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
 
         win['ethereum'] = provider;
 
+        // Announce as MetaMask: the RH picker only offers MetaMask + WalletConnect
+        // (`listEvmWallets`), so a fake "Robinhood Wallet" rdns never appears.
         const detail = {
           info: {
             uuid: '11111111-2222-3333-4444-555555555555',
-            name: 'Mock Robinhood Wallet',
+            name: 'MetaMask',
             icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
-            rdns: 'com.robinhood.wallet.mock',
+            rdns: 'io.metamask',
           },
           provider,
         };
@@ -367,8 +369,35 @@ export async function stubChainRpc(
     });
   });
 
-  await page.route('**/rpc.mainnet.chain.robinhood.com/**', async (route) => {
+  // Staging web builds target Solana devnet.
+  await page.route('**/api.devnet.solana.com/**', async (route) => {
     const body = route.request().postDataJSON() as { id: unknown; method: string };
+    const results: Record<string, unknown> = {
+      getSignatureStatuses: {
+        context: { slot: 1 },
+        value: [{ slot: 1, confirmations: 1, err: null, confirmationStatus: 'confirmed' }],
+      },
+      getBlockHeight: 1,
+      getBalance: { context: { slot: 1 }, value: 2_500_000_000 },
+      getLatestBlockhash: {
+        context: { slot: 1 },
+        value: { blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi', lastValidBlockHeight: 999_999 },
+      },
+      sendTransaction: MOCK_SOL_SIGNATURE,
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(reply(body.id, results[body.method] ?? null)),
+    });
+  });
+
+  await page.route('**/rpc.mainnet.chain.robinhood.com/**', async (route) => {
+    const body = route.request().postDataJSON() as {
+      id: unknown;
+      method: string;
+      params?: [{ data?: string }, ...unknown[]];
+    };
     if (body.method === 'eth_call' && over.revert) {
       await route.fulfill({
         status: 200,
@@ -381,9 +410,68 @@ export async function stubChainRpc(
       });
       return;
     }
+    // EIP-2612 `nonces(address)` — empty `0x` breaks viem decode in permit.ts.
+    const callData = body.params?.[0]?.data ?? '';
+    const ethCallResult =
+      body.method === 'eth_call' && typeof callData === 'string' && callData.startsWith('0x7ecebe00')
+        ? '0x' + (7).toString(16).padStart(64, '0')
+        : '0x';
     const results: Record<string, unknown> = {
       eth_chainId: '0x1237',
-      eth_call: '0x',
+      eth_call: ethCallResult,
+      eth_getBalance: '0x1bc16d674ec80000',
+      eth_blockNumber: '0x10',
+      eth_getTransactionReceipt: {
+        transactionHash: MOCK_EVM_TX_HASH,
+        blockNumber: '0x10',
+        blockHash: '0x' + '11'.repeat(32),
+        transactionIndex: '0x0',
+        from: MOCK_EVM_ADDRESS.toLowerCase(),
+        to: '0x1111111111111111111111111111111111111111',
+        cumulativeGasUsed: '0x5208',
+        gasUsed: '0x5208',
+        effectiveGasPrice: '0x1',
+        contractAddress: null,
+        logs: [],
+        logsBloom: '0x' + '00'.repeat(256),
+        status: over.receiptStatus ?? '0x1',
+        type: '0x2',
+      },
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(reply(body.id, results[body.method] ?? null)),
+    });
+  });
+
+  // Staging RH testnet (46630) — same stub surface as mainnet RPC above.
+  await page.route('**/rpc.testnet.chain.robinhood.com/**', async (route) => {
+    const body = route.request().postDataJSON() as {
+      id: unknown;
+      method: string;
+      params?: [{ data?: string }, ...unknown[]];
+    };
+    if (body.method === 'eth_call' && over.revert) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: { code: 3, message: 'execution reverted: Too little received' },
+        }),
+      });
+      return;
+    }
+    const callData = body.params?.[0]?.data ?? '';
+    const ethCallResult =
+      body.method === 'eth_call' && typeof callData === 'string' && callData.startsWith('0x7ecebe00')
+        ? '0x' + (7).toString(16).padStart(64, '0')
+        : '0x';
+    const results: Record<string, unknown> = {
+      eth_chainId: '0xb616', // 46630
+      eth_call: ethCallResult,
       eth_getBalance: '0x1bc16d674ec80000',
       eth_blockNumber: '0x10',
       eth_getTransactionReceipt: {
@@ -418,7 +506,7 @@ export async function walletRecord<T>(page: Page, key: string): Promise<T> {
 
 /** The picker row ids the mocks register under. */
 export const MOCK_SOL_WALLET_ID = 'Mock Phantom';
-export const MOCK_EVM_WALLET_ID = 'injected:com.robinhood.wallet.mock';
+export const MOCK_EVM_WALLET_ID = 'injected:io.metamask';
 
 /**
  * Connect in live mode: network, then wallet.
@@ -434,4 +522,9 @@ export async function connectWithMockWallet(page: Page, net: 'SOL' | 'RH'): Prom
   await page.click(`[data-wallet="${net === 'SOL' ? MOCK_SOL_WALLET_ID : MOCK_EVM_WALLET_ID}"]`);
   await expect(page.locator('#walletScrim')).toBeHidden({ timeout: 15_000 });
   await expect(page.locator('#wchip')).toBeVisible({ timeout: 15_000 });
+  // Picker closes before `api.connect` finishes reloading the board — wait for
+  // the success toast so net-scoped coins are in place before the next assert.
+  // Avoid bare "CONNECTED": "WALLET DISCONNECTED" also matches that substring.
+  const connected = net === 'SOL' ? 'SOLANA CONNECTED' : 'ROBINHOOD CONNECTED';
+  await expect(page.locator('.mm-bubble', { hasText: connected })).toBeVisible({ timeout: 15_000 });
 }

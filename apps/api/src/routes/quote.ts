@@ -5,9 +5,27 @@ import { tokens } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
+import { SolanaRpc } from '../chain/solana.js';
 import { aggregatorFor, composeQuote } from '../router/compose.js';
 import { RouterError } from '../router/errors.js';
+import {
+  reserveFingerprint,
+  syncCurveReserves,
+  type EthCaller,
+  type SolanaAccountSource,
+} from '../router/curve-sync.js';
 import type { TokenRow } from './serialise.js';
+
+function asEthCaller(rpc: unknown): EthCaller | undefined {
+  const candidate = rpc as Partial<EthCaller>;
+  return typeof candidate.ethCall === 'function' ? (candidate as EthCaller) : undefined;
+}
+
+function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
+  if (rpc instanceof SolanaRpc) return rpc;
+  const candidate = rpc as Partial<SolanaAccountSource>;
+  return typeof candidate.getAccountDataBase64 === 'function' ? (candidate as SolanaAccountSource) : undefined;
+}
 
 function parseNet(raw: string | undefined): Net | null {
   return raw === 'SOL' || raw === 'RH' ? raw : null;
@@ -16,13 +34,9 @@ function parseNet(raw: string | undefined): Net | null {
 /**
  * `GET /tokens/:sym/quote?side=&amount=` — plan step 82.
  *
- * Delegates every hop-pricing decision to `router/compose.ts`: real
- * `@stonkz/curve-sim` math against live curve state once a token has one
- * (every token this phase's `/launch/confirm` creates), the pre-existing
- * mc/supply approximation for rows that do not (everything the Phase 1.C
- * fixture read-path track seeds — kept working, unmodified, alongside it).
- * The 8-second Redis cache, keyed by net + side + native amount + base mint,
- * is unchanged from Phase 1.C.
+ * Syncs curve reserves from chain before compose so sells work after buys
+ * even when the indexer is lagging or still on fixtures. Cache key includes
+ * the reserve fingerprint so a post-buy sync cannot serve a stale quote.
  */
 export function quoteRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -45,21 +59,35 @@ export function quoteRoutes(): Hono<AppEnv> {
       .limit(1);
     if (!row) return c.json({ error: 'not_found' }, 404);
 
+    const synced = await syncCurveReserves({
+      db: deps.db,
+      row: row as TokenRow,
+      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
+      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+    });
+
     try {
       const cached = await deps.quotes.wrap(
-        { net, side, nativeAmount: amount, baseMint: row.baseMint, sym },
+        {
+          net,
+          side,
+          nativeAmount: amount,
+          baseMint: synced.baseMint,
+          sym,
+          reserves: reserveFingerprint(synced),
+        },
         async () => {
           const now = deps.now();
           const native = nativeUnit(net);
           const usdPrice = await deps.oracle.nativeUsd(native).catch(() => null);
-          const aggregatorVenue = aggregatorFor(net, row.baseSymbol);
+          const aggregatorVenue = aggregatorFor(net, synced.baseSymbol);
           const aggregator = aggregatorVenue === 'JUPITER' ? deps.jupiter : aggregatorVenue === 'UNISWAP' ? deps.uniswap : null;
 
           return composeQuote({
             net,
             side,
             amount,
-            row: row as TokenRow,
+            row: synced,
             usdPrice,
             now,
             aggregator,
@@ -67,8 +95,6 @@ export function quoteRoutes(): Hono<AppEnv> {
         },
       );
 
-      // The bar drains against the cache entry's expiry, not the request time, so
-      // a cache hit is honest about how stale it is.
       c.header('Cache-Control', `public, max-age=${deps.env.quoteCacheTtlSeconds}`);
       return c.json({ ...cached.value, expiresAt: cached.expiresAt });
     } catch (err) {

@@ -53,19 +53,31 @@ describe('chain-mode configuration', () => {
     ).toThrow(/RH_LAUNCHPAD_ADDRESS/);
   });
 
-  it('refuses chain mode without a Solana start slot', () => {
+  it('refuses chain mode without a Solana start slot when SOL is enabled', () => {
     expect(() =>
       readIndexerConfig(env, {
         INDEXER_SOURCE: 'chain',
+        INDEXER_CHAIN_NETS: 'SOL,RH',
         RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0',
         INDEXER_RH_START_BLOCK: '21000000',
       }),
     ).toThrow(/INDEXER_SOL_START_SLOT/);
   });
 
+  it('allows RH-only chain mode without a Solana start slot', () => {
+    const config = readIndexerConfig(env, {
+      INDEXER_SOURCE: 'chain',
+      INDEXER_CHAIN_NETS: 'RH',
+      RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0',
+      INDEXER_RH_START_BLOCK: '21000000',
+    });
+    expect(config.chainNets).toEqual(['RH']);
+  });
+
   it('accepts a fully configured chain mode', () => {
     const config = readIndexerConfig(env, {
       INDEXER_SOURCE: 'chain',
+      INDEXER_CHAIN_NETS: 'SOL,RH',
       RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0',
       INDEXER_SOL_START_SLOT: '250000000',
       INDEXER_RH_START_BLOCK: '21000000',

@@ -25,6 +25,22 @@ export function encodeClaimCreatorFeesCall(token: Address): Hex {
   return encodeFunctionData({ abi: LAUNCHPAD_ABI, functionName: 'claimCreatorFees', args: [token] });
 }
 
+export function encodeStakeCall(token: Address, amount: bigint, lockDays: number): Hex {
+  return encodeFunctionData({
+    abi: LAUNCHPAD_ABI,
+    functionName: 'stake',
+    args: [token, amount, lockDays],
+  });
+}
+
+export function encodeUnstakeCall(token: Address, amount: bigint): Hex {
+  return encodeFunctionData({ abi: LAUNCHPAD_ABI, functionName: 'unstake', args: [token, amount] });
+}
+
+export function encodeClaimStakeCall(token: Address): Hex {
+  return encodeFunctionData({ abi: LAUNCHPAD_ABI, functionName: 'claimStake', args: [token] });
+}
+
 export interface DecodedTokenCreated {
   token: Address;
   baseToken: Address;

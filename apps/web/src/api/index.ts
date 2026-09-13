@@ -22,16 +22,15 @@ export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
  * The footer's disclosure line — not `api.mode === 'sim'`, because that flag
  * does not track which *features* are real.
  *
- * Phase 2.C lands `/quote`, `/trade/*`, `/launch/*` and `/fees*` for real in
- * `live.ts`: trading, launching and claiming creator fees are genuine API
- * calls now (signed with a local practice keypair, not a real wallet
- * extension or a broadcast to a live chain — `app/signer.ts`'s header has
- * the honesty trade). Staking, crates and XP have no live endpoint yet and
- * still run on `simApi`'s in-memory model regardless of `api.mode`, so this
- * line names exactly those three, not a blanket "simulated data" claim that
- * would now be false for the rest of the app. `plan step 68`, `plan step 99`
+ * Live mode: crates and XP hit the server ledger; staking prepares real
+ * program instructions but nothing is deployed yet (§3 of
+ * `docs/real-vs-simulated.md`). Board numbers still come from fixtures until
+ * the indexer points at a live cluster. Sim mode keeps the sandbox disclosure.
  */
-export const DISCLOSURE = 'STAKING, CRATES & XP ARE SIMULATED \u00b7 NOT FINANCIAL ADVICE';
+export const DISCLOSURE =
+  API_MODE === 'live'
+    ? 'DEVNET STAGING \u00b7 PROGRAMS NOT DEPLOYED YET \u00b7 NOT FINANCIAL ADVICE'
+    : 'SIMULATED DATA \u00b7 NOT FINANCIAL ADVICE';
 
 export type {
   ClaimResult,

@@ -56,6 +56,10 @@ export interface Coin {
   seed: number;
   /** Creator address. */
   dev: string;
+  /** Token mint / contract address when known. */
+  mint?: string;
+  /** Server says prepare may succeed (mint + curve k, not graduated). */
+  tradeable?: boolean;
   lane: Lane | null;
   /** Previous tick's market cap, for flash direction. */
   lastMc: number;
@@ -63,6 +67,8 @@ export interface Coin {
   x?: string;
   web?: string;
   tg?: string;
+  /** Launch image (IPFS gateway URL). */
+  image?: string;
   /** Launched by the connected wallet. */
   mine?: boolean;
   /** Unclaimed creator fees, in the chain's native unit. */
@@ -244,8 +250,12 @@ export interface Quote {
   effFeePct: number;
   /** Combined price impact, percent. */
   impactPct: number;
+  /** USD per native unit when the quote server tagged a spot (`null` if oracle missed). */
+  nativeUsd?: number | null;
   /** Epoch ms this quote goes stale. 8s bar. */
   expiresAt: number;
+  /** True when the server fell back to an indicative (non-executable) price. */
+  indicative?: boolean;
 }
 
 /** A confirmed fill on the trades tab / tape. */

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+
 import {IPriceSource} from "./IPriceSource.sol";
 
 /// @title The EVM mirror of the Solana program's `BaseOracle` account.
@@ -10,9 +13,11 @@ import {IPriceSource} from "./IPriceSource.sol";
 /// semantics comparable, and it is what the Foundry suite drives so the tests
 /// do not depend on a forked mainnet aggregator.
 ///
-/// On Robinhood Chain the deployed source is `ChainlinkPriceSource`. This one is
-/// for testnet, for local runs, and for a base token that has no Chainlink feed.
-contract PushPriceSource is IPriceSource {
+/// On Robinhood Chain mainnet the deployed source is `ChainlinkPriceSource`.
+/// This UUPS-upgradeable push oracle is for testnet, local runs, and any base
+/// token that has no Chainlink feed — kept upgradeable through public beta so
+/// oracle semantics can change without redeploying every consumer.
+contract PushPriceSource is Initializable, UUPSUpgradeable, IPriceSource {
     struct Price {
         uint256 price1e6;
         uint256 conf1e6;
@@ -32,7 +37,12 @@ contract PushPriceSource is IPriceSource {
     event PricePushed(address indexed baseToken, uint256 price1e6, uint256 conf1e6);
     event MaxAgeSet(address indexed baseToken, uint64 secs);
 
-    constructor(address _admin, address _oracleAuthority, uint64 _defaultMaxAge) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _admin, address _oracleAuthority, uint64 _defaultMaxAge) external initializer {
         require(_admin != address(0), "zero admin");
         require(_defaultMaxAge > 0, "maxAge");
         admin = _admin;
@@ -44,6 +54,8 @@ contract PushPriceSource is IPriceSource {
         require(msg.sender == admin, "not admin");
         _;
     }
+
+    function _authorizeUpgrade(address) internal override onlyAdmin {}
 
     function setOracleAuthority(address a) external onlyAdmin {
         oracleAuthority = a;

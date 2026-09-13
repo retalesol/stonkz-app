@@ -105,7 +105,11 @@ function paneHTML(k: CrateTier): Html {
           ><th scope="col" class="r">CHANCE</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div id="revealSlot"></div>
       <button class="openbtn" id="openBtn"${rdy ? '' : ' disabled'}>${rdy ? 'OPEN ' + c.k + ' CRATE' : 'LOCKED ' + DOT + ' ' + cdText(left)}</button>
-      <p class="hint">ODDS ARE ROLLED PER OPEN. OPENING STARTS THIS CRATE&#8217;S COOLDOWN AND PAYS XP. SIMULATED &#8212; NO REAL TOKEN IS DISTRIBUTED.</p>
+      <p class="hint">ODDS ARE ROLLED SERVER-SIDE PER OPEN. OPENING STARTS THIS CRATE&#8217;S COOLDOWN AND PAYS XP.${
+        api.mode === 'live'
+          ? ' OPTIONZ ARE LEDGER CREDITS &#8212; NOT A TRANSFERABLE TOKEN.'
+          : ' SIMULATED &#8212; NO REAL TOKEN IS DISTRIBUTED.'
+      }</p>
     </div>`;
 }
 

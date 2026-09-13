@@ -37,9 +37,17 @@ export function renderStake(c: SimCoin): void {
   const st = ensureStake(c.sym);
   const cb = inCashback(c);
   const pie = feePie(1, poolFrac(c));
+  const live = api.mode === 'live';
   must('#stk-title').textContent = 'Stake ' + c.sym;
-  must('#stk-sub').textContent =
-    (cb ? 'CASHBACK WINDOW ' + DOT + ' REWARDS IN ' + c.sym : 'REWARDS IN ' + nativeUnit()) + ' ' + DOT + ' SIMULATED';
+  must('#stk-sub').textContent = live
+    ? (cb ? 'CASHBACK WINDOW ' + DOT + ' REWARDS IN ' + c.sym : 'REWARDS IN ' + nativeUnit()) +
+      ' ' +
+      DOT +
+      ' AWAITING PROGRAM DEPLOY'
+    : (cb ? 'CASHBACK WINDOW ' + DOT + ' REWARDS IN ' + c.sym : 'REWARDS IN ' + nativeUnit()) +
+      ' ' +
+      DOT +
+      ' SIMULATED';
   render(
     must('#stakeBody'),
     html`<div class="quad">
@@ -52,6 +60,9 @@ export function renderStake(c: SimCoin): void {
         ><div><div class="lbl">YOUR EARNINGS</div><div class="val up" id="sv-earn">${earnText(c)}</div
           ><span class="hint" id="sv-share">${(yourShare(c) * 100).toFixed(2)}% OF POOL</span></div>
       </div>
+      ${live
+        ? html`<p class="hint" style="margin:0 0 10px">STAKE / UNSTAKE / CLAIM PREPARE REAL TRANSACTIONS. THEY WILL FAIL ON BROADCAST UNTIL THE LAUNCHPAD IS DEPLOYED ON THIS CLUSTER.</p>`
+        : ''}
       <div class="stk-grid">
         <div><canvas class="stk-pie" id="stkPie"></canvas>
           <div class="stk-legend">
@@ -136,8 +147,20 @@ async function doStake(c: SimCoin, dir: 1 | -1): Promise<void> {
       return;
     }
     const L = LOCKS.find((l) => l[0] === STK.lock) ?? (LOCKS[0] as (typeof LOCKS)[number]);
-    await api.stake({ sym: c.sym, amount: amt, days: L[0], mult: L[1] });
-    toast('STAKED ' + num(amt) + ' ' + c.sym + (L[0] ? ' ' + DOT + ' ' + L[2] + ' LOCK ' + L[1] + 'x' : '') + ' ' + DOT + ' SIMULATED');
+    try {
+      await api.stake({ sym: c.sym, amount: amt, days: L[0], mult: L[1] });
+    } catch (err) {
+      toast(err instanceof Error ? err.message.toUpperCase() : 'STAKE FAILED', 'red');
+      return;
+    }
+    toast(
+      'STAKED ' +
+        num(amt) +
+        ' ' +
+        c.sym +
+        (L[0] ? ' ' + DOT + ' ' + L[2] + ' LOCK ' + L[1] + 'x' : '') +
+        (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
+    );
     void circ(c);
   } else {
     if (st.until > Date.now()) {
@@ -185,6 +208,11 @@ export function openStake(c: SimCoin, opener?: Element | null): void {
   if (st.until > Date.now()) STK.lock = st.days;
   renderStake(c);
   openScrim('#stakeScrim', opener);
+  if (api.mode === 'live' && api.hydrateStake) {
+    void api.hydrateStake(c.sym).then(() => {
+      if (STK.c === c) renderStake(c);
+    });
+  }
 }
 
 export function closeStake(): void {

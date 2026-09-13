@@ -59,6 +59,9 @@ export type ChatEvent = {
   wallet: string;
   text: string;
   createdAtMs: number;
+  /** Present when the sender has a profile row. */
+  username?: string | null;
+  avatarUrl?: string | null;
 };
 
 export type ChannelEvent = BoardEvent | TokenEvent | TapeEvent | UserEvent | ChatEvent;

@@ -1,10 +1,10 @@
-import type { PublicKey} from '@solana/web3.js';
-import { SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import {
   anchorDiscriminator,
   derivePdas,
   deriveMintPda,
+  deriveStakePositionPda,
   encodeBool,
   encodeString,
   encodeU16,
@@ -168,6 +168,103 @@ export function buildClaimCreatorFeesInstruction(accounts: ClaimAccounts): Trans
     { pubkey: accounts.creator, isSigner: true, isWritable: false },
     { pubkey: creatorBase, isSigner: false, isWritable: true },
     { pubkey: creatorToken, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+  return new TransactionInstruction({ programId: accounts.programId, keys, data });
+}
+
+export interface StakeAccounts {
+  programId: PublicKey;
+  mint: PublicKey;
+  owner: PublicKey;
+}
+
+/**
+ * Shared account metas for `stake` / `unstake`. Position is `init_if_needed`
+ * on stake, so the system program is required; unstake reuses the same layout.
+ */
+function stakeKeys(accounts: StakeAccounts) {
+  // Stake/unstake PDAs key only off mint; protocol/ops vaults from derivePdas
+  // are unused here — dummy baseMint is fine.
+  const pdas = derivePdas(accounts.programId, accounts.mint, PublicKey.default);
+  const [position] = deriveStakePositionPda(accounts.programId, accounts.mint, accounts.owner);
+  const ownerToken = getAssociatedTokenAddressSync(
+    accounts.mint,
+    accounts.owner,
+    false,
+    TOKEN_PROGRAM_ID,
+  );
+  return {
+    keys: [
+      { pubkey: pdas.curve, isSigner: false, isWritable: true },
+      { pubkey: accounts.mint, isSigner: false, isWritable: false },
+      { pubkey: position, isSigner: false, isWritable: true },
+      { pubkey: pdas.stakeEscrow, isSigner: false, isWritable: true },
+      { pubkey: accounts.owner, isSigner: true, isWritable: true },
+      { pubkey: ownerToken, isSigner: false, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+  };
+}
+
+/** `stake(amount, lock_days)`. */
+export function buildStakeInstruction(
+  accounts: StakeAccounts,
+  amount: bigint,
+  lockDays: number,
+): TransactionInstruction {
+  const { keys } = stakeKeys(accounts);
+  const data = Buffer.concat([
+    anchorDiscriminator('stake'),
+    encodeU64(amount),
+    encodeU16(lockDays),
+  ]);
+  return new TransactionInstruction({ programId: accounts.programId, keys, data });
+}
+
+/** `unstake(amount)`. */
+export function buildUnstakeInstruction(accounts: StakeAccounts, amount: bigint): TransactionInstruction {
+  const { keys } = stakeKeys(accounts);
+  const data = Buffer.concat([anchorDiscriminator('unstake'), encodeU64(amount)]);
+  return new TransactionInstruction({ programId: accounts.programId, keys, data });
+}
+
+export interface ClaimStakeAccounts {
+  programId: PublicKey;
+  mint: PublicKey;
+  baseMint: PublicKey;
+  owner: PublicKey;
+}
+
+/** `claim_stake()`. */
+export function buildClaimStakeInstruction(accounts: ClaimStakeAccounts): TransactionInstruction {
+  const pdas = derivePdas(accounts.programId, accounts.mint, accounts.baseMint);
+  const [position] = deriveStakePositionPda(accounts.programId, accounts.mint, accounts.owner);
+  const ownerBase = getAssociatedTokenAddressSync(
+    accounts.baseMint,
+    accounts.owner,
+    false,
+    TOKEN_PROGRAM_ID,
+  );
+  const ownerToken = getAssociatedTokenAddressSync(
+    accounts.mint,
+    accounts.owner,
+    false,
+    TOKEN_PROGRAM_ID,
+  );
+  const data = anchorDiscriminator('claim_stake');
+  const keys = [
+    { pubkey: pdas.curve, isSigner: false, isWritable: true },
+    { pubkey: accounts.mint, isSigner: false, isWritable: false },
+    { pubkey: accounts.baseMint, isSigner: false, isWritable: false },
+    { pubkey: position, isSigner: false, isWritable: true },
+    { pubkey: pdas.bucketBaseVault, isSigner: false, isWritable: true },
+    { pubkey: pdas.bucketTokenVault, isSigner: false, isWritable: true },
+    { pubkey: accounts.owner, isSigner: true, isWritable: false },
+    { pubkey: ownerBase, isSigner: false, isWritable: true },
+    { pubkey: ownerToken, isSigner: false, isWritable: true },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
   ];

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { acceptConfirmDialogs } from './accept-dialogs.js';
 import { installMockWallets, walletRecord } from './mock-wallets.js';
 
 /**
@@ -24,6 +25,7 @@ test.describe('a default build cannot be practice mode', () => {
   test.beforeEach(async ({ page }) => {
     // A real Solana wallet and a real Robinhood wallet are both "installed"
     // for these, which is the interesting case: the app must not use them.
+    acceptConfirmDialogs(page);
     await installMockWallets(page);
     await page.goto('/');
     await expect(page.locator('html')).toHaveAttribute('data-booted', 'true');
@@ -41,7 +43,7 @@ test.describe('a default build cannot be practice mode', () => {
     // refuses to construct and `isPracticeSession()` can never be true —
     // there is no sequence of clicks that lights this strip.
     await expect(badge).toBeHidden();
-    await expect(page.locator('.toast', { hasText: 'PRACTICE KEY' })).toBeHidden();
+    await expect(page.locator('.mm-bubble', { hasText: 'PRACTICE KEY' })).toBeHidden();
   });
 
   test('sim mode never prompts an installed wallet', async ({ page }) => {
@@ -56,7 +58,7 @@ test.describe('a default build cannot be practice mode', () => {
     expect(await walletRecord<string | undefined>(page, '__signedSiws')).toBeUndefined();
     expect(await walletRecord<string[]>(page, '__rpcCalls')).toEqual([]);
     // And it says so, rather than implying a settlement.
-    await expect(page.locator('.toast', { hasText: 'SIMULATED' })).toBeVisible();
+    await expect(page.locator('.mm-bubble', { hasText: 'SIMULATED' })).toBeVisible();
   });
 
   test('a sim trade still fills without a wallet, and says it is simulated', async ({ page }) => {
@@ -67,7 +69,7 @@ test.describe('a default build cannot be practice mode', () => {
     await expect(page.locator('#tokenView')).toBeVisible();
     await page.fill('#t-amt', '0.5');
     await page.click('#t-go');
-    await expect(page.locator('.toast', { hasText: 'FILLED' })).toBeVisible();
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible();
     expect(await walletRecord<string[]>(page, '__rpcCalls')).toEqual([]);
   });
 });
