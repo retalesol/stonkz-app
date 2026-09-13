@@ -3,7 +3,7 @@ import { PublicKey, Transaction } from '@solana/web3.js';
 import type { Address } from 'viem';
 import { and, eq } from 'drizzle-orm';
 import { LOCKS } from '@stonkz/shared';
-import { stakePositions, tokens } from '../db/schema.js';
+import { stakePositions } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -16,6 +16,7 @@ import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { encodeClaimStakeCall, encodeStakeCall, encodeUnstakeCall } from '../router/evm-launch.js';
 import { toAtoms } from '../router/units.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
+import { resolveTokenRow } from './token-resolve.js';
 
 /**
  * Per-memecoin staking prepare endpoints.
@@ -25,11 +26,11 @@ import { ZERO_EVM_ADDRESS } from '../env.js';
  * `docs/real-vs-simulated.md`) — until then, wallets will reject or the
  * chain will fail the broadcast, which is the honest failure mode.
  *
- * - `POST /stake/prepare` — `{ sym, amount, days }`
- * - `POST /stake/unstake/prepare` — `{ sym, amount }`
- * - `POST /stake/claim/prepare` — `{ sym }`
+ * - `POST /stake/prepare` — `{ sym, mint?, amount, days }`
+ * - `POST /stake/unstake/prepare` — `{ sym, mint?, amount }`
+ * - `POST /stake/claim/prepare` — `{ sym, mint? }`
  * - `GET /stake/:sym` — own position from the indexer table (empty until
- *   chain events land)
+ *   chain events land); optional `?mint=`
  */
 
 const ZERO = ZERO_EVM_ADDRESS.toLowerCase();
@@ -46,20 +47,9 @@ export function stakeRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const sym = c.req.param('sym').toUpperCase();
-
-    const [row] = await deps.db
-      .select()
-      .from(stakePositions)
-      .where(
-        and(
-          eq(stakePositions.net, user.net),
-          eq(stakePositions.sym, sym),
-          eq(stakePositions.wallet, user.wallet),
-        ),
-      )
-      .limit(1);
-
-    if (!row) {
+    const mintQ = c.req.query('mint')?.trim();
+    const token = await resolveTokenRow(deps.db, user.net, { mint: mintQ, sym });
+    if (!token?.mint) {
       return c.json({
         net: user.net,
         sym,
@@ -72,9 +62,36 @@ export function stakeRoutes(): Hono<AppEnv> {
       });
     }
 
+    const [row] = await deps.db
+      .select()
+      .from(stakePositions)
+      .where(
+        and(
+          eq(stakePositions.net, user.net),
+          eq(stakePositions.mint, token.mint),
+          eq(stakePositions.wallet, user.wallet),
+        ),
+      )
+      .limit(1);
+
+    if (!row) {
+      return c.json({
+        net: user.net,
+        sym,
+        mint: token.mint,
+        amt: 0,
+        mult: 1,
+        days: 0,
+        until: 0,
+        rewTok: 0,
+        rewSol: 0,
+      });
+    }
+
     return c.json({
       net: user.net,
       sym,
+      mint: token.mint,
       amt: row.amount,
       mult: row.mult,
       days: row.lockDays,
@@ -92,10 +109,12 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     const body = (await c.req.json().catch(() => ({}))) as {
       sym?: unknown;
+      mint?: unknown;
       amount?: unknown;
       days?: unknown;
     };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
+    const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     const amount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
     const days = typeof body.days === 'number' ? body.days : Number(body.days ?? 0);
     if (!sym) return c.json({ error: 'bad_request', detail: 'sym is required' }, 400);
@@ -106,11 +125,7 @@ export function stakeRoutes(): Hono<AppEnv> {
       return c.json({ error: 'bad_request', detail: 'invalid lock term' }, 400);
     }
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
 
     if (net === 'SOL') {
@@ -168,19 +183,16 @@ export function stakeRoutes(): Hono<AppEnv> {
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; amount?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; mint?: unknown; amount?: unknown };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
+    const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     const amount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
     if (!sym) return c.json({ error: 'bad_request', detail: 'sym is required' }, 400);
     if (!Number.isFinite(amount) || amount <= 0) {
       return c.json({ error: 'bad_request', detail: 'amount must be a positive number' }, 400);
     }
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
 
     if (net === 'SOL') {
@@ -235,15 +247,12 @@ export function stakeRoutes(): Hono<AppEnv> {
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; mint?: unknown };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
+    const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     if (!sym) return c.json({ error: 'bad_request', detail: 'sym is required' }, 400);
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
 
     if (net === 'SOL') {

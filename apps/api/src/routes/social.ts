@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
 import type { Net } from '@stonkz/shared';
 import { follows, tape, tokens, users, wallPosts } from '../db/schema.js';
 import { isUniqueViolation } from '../db/errors.js';
@@ -94,6 +94,7 @@ async function holdingsFromTape(
       .select()
       .from(tokens)
       .where(and(eq(tokens.net, net), eq(tokens.sym, r.sym)))
+      .orderBy(desc(tokens.launchedAt))
       .limit(1);
     const priceUsd = tokRow ? tokRow.mc / tokRow.supply : 0;
     const tok = Number(r.tok);

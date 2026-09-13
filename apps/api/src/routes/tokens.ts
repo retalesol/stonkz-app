@@ -7,6 +7,7 @@ import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
+import { resolveTokenRow } from './token-resolve.js';
 
 const TIMEFRAMES = new Set(['1m', '5m', '15m', '1h', '4h', '1d']);
 /** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
@@ -103,12 +104,9 @@ export function tokenRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const sym = c.req.param('sym').toUpperCase();
     const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const mintQ = c.req.query('mint')?.trim() || undefined;
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const row = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
     if (!row) return c.json({ error: 'not_found' }, 404);
 
     return c.json(serialiseToken(row as TokenRow, deps.now()));
@@ -118,16 +116,26 @@ export function tokenRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const sym = c.req.param('sym').toUpperCase();
     const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const mintQ = c.req.query('mint')?.trim() || undefined;
     const tf = c.req.query('tf') ?? '1m';
     if (!TIMEFRAMES.has(tf)) return c.json({ error: 'bad_timeframe' }, 400);
     const max = clampLimit(c.req.query('limit'), 200, 1000);
 
-    const rows = await deps.db
-      .select()
-      .from(candles)
-      .where(and(eq(candles.net, net), eq(candles.sym, sym), eq(candles.tf, tf)))
-      .orderBy(desc(candles.bucketStart))
-      .limit(max);
+    const token = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
+    const mint = token?.mint;
+    const rows = mint
+      ? await deps.db
+          .select()
+          .from(candles)
+          .where(and(eq(candles.net, net), eq(candles.mint, mint), eq(candles.tf, tf)))
+          .orderBy(desc(candles.bucketStart))
+          .limit(max)
+      : await deps.db
+          .select()
+          .from(candles)
+          .where(and(eq(candles.net, net), eq(candles.sym, sym), eq(candles.tf, tf)))
+          .orderBy(desc(candles.bucketStart))
+          .limit(max);
 
     return c.json({
       net,
@@ -151,22 +159,34 @@ export function tokenRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const sym = c.req.param('sym').toUpperCase();
     const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const mintQ = c.req.query('mint')?.trim() || undefined;
     const max = clampLimit(c.req.query('limit'), 50, 200);
 
-    const rows = await deps.db
-      .select()
-      .from(trades)
-      .where(and(eq(trades.net, net), eq(trades.sym, sym)))
-      .orderBy(desc(trades.id))
-      .limit(max);
+    const token = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
+    const mint = token?.mint;
+    const rows = mint
+      ? await deps.db
+          .select()
+          .from(trades)
+          .where(and(eq(trades.net, net), eq(trades.mint, mint)))
+          .orderBy(desc(trades.id))
+          .limit(max)
+      : await deps.db
+          .select()
+          .from(trades)
+          .where(and(eq(trades.net, net), eq(trades.sym, sym)))
+          .orderBy(desc(trades.id))
+          .limit(max);
 
     return c.json({
       net,
       sym,
+      ...(mint ? { mint } : {}),
       nativeUnit: nativeUnit(net),
       trades: rows.map((r) => ({
         t: r.blockTime.getTime(),
         sym: r.sym,
+        mint: r.mint ?? undefined,
         net: r.net,
         buy: r.side === 'buy',
         sol: r.nativeAmount,
@@ -185,13 +205,10 @@ export function tokenRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const sym = c.req.param('sym').toUpperCase();
     const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const mintQ = c.req.query('mint')?.trim() || undefined;
     const max = clampLimit(c.req.query('limit'), 50, 200);
 
-    const [token] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const token = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
     if (!token) return c.json({ error: 'not_found' }, 404);
 
     const supply = token.supply > 0 ? token.supply : 0;
@@ -210,7 +227,7 @@ export function tokenRoutes(): Hono<AppEnv> {
         .select()
         .from(holdersSnapshot)
         .where(
-          and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym), gt(holdersSnapshot.tokenAmount, 0)),
+          and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint), gt(holdersSnapshot.tokenAmount, 0)),
         )
         .orderBy(desc(holdersSnapshot.tokenAmount))
         .limit(max);
@@ -238,12 +255,13 @@ export function tokenRoutes(): Hono<AppEnv> {
             .values({
               net,
               sym,
+              mint,
               wallet: h.wallet,
               tokenAmount: h.amount,
               costNative: 0,
             })
             .onConflictDoUpdate({
-              target: [holdersSnapshot.net, holdersSnapshot.sym, holdersSnapshot.wallet],
+              target: [holdersSnapshot.net, holdersSnapshot.mint, holdersSnapshot.wallet],
               set: { tokenAmount: h.amount },
             });
         }
@@ -251,9 +269,9 @@ export function tokenRoutes(): Hono<AppEnv> {
         await deps.db
           .update(tokens)
           .set({ holders: holderCount, updatedAt: new Date(deps.now()) })
-          .where(and(eq(tokens.net, net), eq(tokens.sym, sym)));
+          .where(and(eq(tokens.net, net), eq(tokens.mint, mint)));
       } catch (err) {
-        deps.logger.warn('holders snapshot cache failed', { net, sym, err: String(err) });
+        deps.logger.warn('holders snapshot cache failed', { net, sym, mint, err: String(err) });
       }
     };
 

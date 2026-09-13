@@ -165,7 +165,7 @@ function stakedPanelHTML(): Html {
     const cb = inCashback(c);
     const locked = st.until > Date.now();
     const earn = cb ? num(st.rewTok || 0) + ' ' + c.sym : (st.rewSol || 0).toFixed(4) + ' ' + nativeUnit();
-    return html`<div class="stk-row" data-stk="${attr(c.sym)}">
+    return html`<div class="stk-row" data-stk="${attr(c.sym)}" data-mint="${attr(c.mint || '')}">
       <div><div class="sy">${c.sym}${locked ? html`<span class="lockbadge">${st.mult}x ${st.days}D</span>` : ''}</div
         ><div class="mt">${num(st.amt)} STAKED ${DOT} ${(yourShare(c) * 100).toFixed(2)}% OF POOL</div></div
       ><div class="earn"><b>${earn}</b><span>${cb ? 'CASHBACK' : 'FEES'}</span></div
@@ -266,7 +266,7 @@ function hashSeed(addr: string): number {
 function minedHTML(list: SimCoin[]): Html {
   if (!list.length) return html`<div class="empty">NO COINS LAUNCHED YET</div>`;
   return html`${list.map(
-    (c) => html`<div class="mine-row" data-sym="${attr(c.sym)}" role="button" tabindex="0"
+    (c) => html`<div class="mine-row" data-sym="${attr(c.sym)}" data-mint="${attr(c.mint || '')}" role="button" tabindex="0"
       ><canvas width="64" height="64" data-seed="${attr(c.seed)}" aria-hidden="true"></canvas
       ><div><div class="sy">${c.sym}</div><div class="mt">${c.name} ${DOT} ${ago(c.age)}</div></div
       ><div style="text-align:right"><div class="am">${usd(c.mc)}</div><div class="mt ${ud(c.chg)}">${pct(c.chg)}</div></div></div>`,
@@ -763,11 +763,23 @@ export function initProfileView(): void {
     }
     const row = target?.closest<HTMLElement>('[data-stk]');
     if (row) {
-      navigate({ view: 'token', sym: row.dataset['stk'] as string });
+      const mint = row.dataset['mint'];
+      navigate({
+        view: 'token',
+        sym: row.dataset['stk'] as string,
+        ...(mint ? { mint } : {}),
+      });
       return;
     }
     const mn = target?.closest<HTMLElement>('#pfMine [data-sym]');
-    if (mn) navigate({ view: 'token', sym: mn.dataset['sym'] as string });
+    if (mn) {
+      const mint = mn.dataset['mint'];
+      navigate({
+        view: 'token',
+        sym: mn.dataset['sym'] as string,
+        ...(mint ? { mint } : {}),
+      });
+    }
   });
 }
 

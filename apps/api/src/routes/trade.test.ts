@@ -275,6 +275,7 @@ describe('POST /trade/prepare', () => {
       sym: 'FIXTURE',
       name: 'Fixture Only',
       creator: 'Dev',
+      mint: 'mint-FIXTURE',
       baseSymbol: 'SOL',
       baseMint: SOL_MINT,
       supply: 1e9,

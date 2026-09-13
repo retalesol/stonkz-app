@@ -5,6 +5,7 @@ import { encodeAbiParameters, encodeEventTopics, getAddress, type Address } from
 import { launchIntents, tokens } from '../db/schema.js';
 import { TOKEN_CREATED_EVENT_ABI } from '../router/evm-abi.js';
 import { createTestApp, authed, type TestApp } from '../test/app.js';
+import { solanaWallet } from '../test/wallets.js';
 
 let h: TestApp;
 
@@ -35,6 +36,7 @@ interface LaunchPrepareResponse {
   expiresAt: number;
   error?: string;
   detail?: string;
+  retryAfterMs?: number;
 }
 
 interface LaunchConfirmResponse {
@@ -176,18 +178,18 @@ describe('POST /launch/prepare + /launch/confirm', () => {
     expect(body.transaction).toBeTruthy();
   });
 
-  it('rejects a duplicate ticker on the same net', async () => {
-    const { token } = await h.login('SOL');
-    const first = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'dupe' });
+  it('rejects an in-flight prepare for the same ticker from another wallet', async () => {
+    const a = await h.login('SOL', solanaWallet('in-flight-a'));
+    const b = await h.login('SOL', solanaWallet('in-flight-b'));
+    const first = await prepare(a.token, { ...SOL_TICKER_BODY, ticker: 'dupe' });
     expect(first.status).toBe(200);
 
-    // Still in-flight (unconfirmed) — the second prepare must not silently overwrite it.
-    const second = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'dupe' });
+    const second = await prepare(b.token, { ...SOL_TICKER_BODY, ticker: 'dupe' });
     expect(second.status).toBe(409);
     expect(second.body.error).toBe('ticker_taken');
   });
 
-  it('rejects a ticker that already has a confirmed token on this net', async () => {
+  it('rejects a confirmed ticker within the 5-minute cooldown', async () => {
     const { token } = await h.login('SOL');
     const p = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'taken' });
     const intent = await loadIntent(p.body.intentId);
@@ -195,9 +197,38 @@ describe('POST /launch/prepare + /launch/confirm', () => {
     h.rpcs.SOL.setSolanaTransactionMessage(sig, intent.unsignedPayload);
     await confirm(token, p.body.intentId, sig);
 
-    const again = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'taken' });
+    const again = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'taken', name: 'Different Name' });
     expect(again.status).toBe(409);
-    expect(again.body.error).toBe('ticker_taken');
+    expect(again.body.error).toBe('name_or_ticker_cooldown');
+    expect(typeof again.body.retryAfterMs).toBe('number');
+  });
+
+  it('rejects a display name within the 5-minute cooldown', async () => {
+    const { token } = await h.login('SOL');
+    const p = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'nmone', name: 'Shared Name' });
+    const intent = await loadIntent(p.body.intentId);
+    const sig = 'sig-name-cd';
+    h.rpcs.SOL.setSolanaTransactionMessage(sig, intent.unsignedPayload);
+    await confirm(token, p.body.intentId, sig);
+
+    const again = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'nmtwo', name: 'shared name' });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe('name_or_ticker_cooldown');
+  });
+
+  it('allows the same ticker after the 5-minute cooldown', async () => {
+    const { token } = await h.login('SOL');
+    const p = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'reuse' });
+    const intent = await loadIntent(p.body.intentId);
+    const sig = 'sig-reuse';
+    h.rpcs.SOL.setSolanaTransactionMessage(sig, intent.unsignedPayload);
+    await confirm(token, p.body.intentId, sig);
+
+    h.advance(5 * 60 * 1000 + 1);
+    const again = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'reuse', name: 'Reuse Two' });
+    expect(again.status).toBe(200);
+    expect(again.body.predictedMint).toBeTruthy();
+    expect(again.body.predictedMint).not.toBe(p.body.predictedMint);
   });
 
   it('rejects cashback combined with a nonzero dev buy', async () => {

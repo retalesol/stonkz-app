@@ -1,5 +1,5 @@
 import { usd } from '@stonkz/shared';
-import { bySym } from '../state/coins.js';
+import { byMint, bySym } from '../state/coins.js';
 
 /**
  * URL routing.
@@ -9,12 +9,14 @@ import { bySym } from '../state/coins.js';
  * that without a framework: the view state and the address bar are the same
  * thing now.
  *
+ * Duplicate tickers disambiguate with optional `?mint=`.
+ *
  * @see plan step 31
  */
 
 export type Route =
   | { view: 'board' }
-  | { view: 'token'; sym: string }
+  | { view: 'token'; sym: string; mint?: string }
   | { view: 'rewards' }
   | { view: 'profile'; addr?: string | undefined }
   /** The launch stepper over the board, so a deploy link can be shared. */
@@ -24,8 +26,10 @@ export const BOARD: Route = { view: 'board' };
 
 export function toPath(r: Route): string {
   switch (r.view) {
-    case 'token':
-      return '/t/' + encodeURIComponent(r.sym);
+    case 'token': {
+      const base = '/t/' + encodeURIComponent(r.sym);
+      return r.mint ? base + '?mint=' + encodeURIComponent(r.mint) : base;
+    }
     case 'rewards':
       return '/rewards';
     case 'launch':
@@ -37,13 +41,17 @@ export function toPath(r: Route): string {
   }
 }
 
-export function parse(path: string): Route {
+export function parse(path: string, search = ''): Route {
   const p = path.replace(/\/+$/, '') || '/';
   if (p === '/rewards') return { view: 'rewards' };
   if (p === '/launch') return { view: 'launch' };
   if (p === '/me') return { view: 'profile' };
   const t = /^\/t\/([^/]+)$/.exec(p);
-  if (t) return { view: 'token', sym: decodeURIComponent(t[1] as string).toUpperCase() };
+  if (t) {
+    const sym = decodeURIComponent(t[1] as string).toUpperCase();
+    const mint = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search).get('mint') || undefined;
+    return mint ? { view: 'token', sym, mint } : { view: 'token', sym };
+  }
   const u = /^\/u\/([^/]+)$/.exec(p);
   if (u) return { view: 'profile', addr: decodeURIComponent(u[1] as string) };
   return BOARD;
@@ -59,7 +67,7 @@ export function parse(path: string): Route {
 export function titleOf(r: Route): string {
   const DOT = ' \u00B7 ';
   if (r.view === 'token') {
-    const c = bySym(r.sym);
+    const c = (r.mint && byMint(r.mint)) || bySym(r.sym);
     return 'STONKZ' + DOT + '$' + r.sym + (c ? DOT + usd(c.mc) : '');
   }
   if (r.view === 'rewards') return 'STONKZ' + DOT + 'REWARDS';
@@ -118,13 +126,13 @@ export function back(): void {
 /** Wire popstate and dispatch whatever the address bar already says. */
 export function startRouting(): void {
   window.addEventListener('popstate', (e) => {
-    const r = (e.state as Route | null) ?? parse(location.pathname);
+    const r = (e.state as Route | null) ?? parse(location.pathname, location.search);
     now = r;
     if (depth > 0) depth--;
     document.title = titleOf(r);
     handler(r, true);
   });
-  const initial = parse(location.pathname);
+  const initial = parse(location.pathname, location.search);
   now = initial;
   history.replaceState(initial, '', toPath(initial));
   document.title = titleOf(initial);

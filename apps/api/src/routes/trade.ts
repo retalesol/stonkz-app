@@ -3,7 +3,7 @@ import { PublicKey } from '@solana/web3.js';
 import type { Address } from 'viem';
 import { and, eq } from 'drizzle-orm';
 import { nativeUnit } from '@stonkz/shared';
-import { settings, tokens } from '../db/schema.js';
+import { settings } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -27,6 +27,7 @@ import {
   type PermitInput,
 } from '../router/evm-router.js';
 import type { TokenRow } from './serialise.js';
+import { resolveTokenRow } from './token-resolve.js';
 
 function asEthCaller(rpc: unknown): EthCaller | undefined {
   const candidate = rpc as Partial<EthCaller>;
@@ -60,6 +61,7 @@ const DEFAULT_SETTINGS: {
 
 interface TradePrepareBody {
   sym?: unknown;
+  mint?: unknown;
   side?: unknown;
   amount?: unknown;
   /** Optional override — prefers the connected client's current SET.slip. */
@@ -153,6 +155,7 @@ export function tradeRoutes(): Hono<AppEnv> {
 
     const body = (await c.req.json().catch(() => ({}))) as TradePrepareBody;
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
+    const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     const side = body.side === 'sell' ? 'sell' : body.side === 'buy' ? 'buy' : null;
     const amount = typeof body.amount === 'number' ? body.amount : Number.NaN;
 
@@ -160,11 +163,7 @@ export function tradeRoutes(): Hono<AppEnv> {
       return c.json({ error: 'bad_request', detail: 'sym, side (buy|sell) and a positive amount are required' }, 400);
     }
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row) return c.json({ error: 'not_found' }, 404);
 
     const synced = await syncCurveReserves({
@@ -497,12 +496,9 @@ export function tradeRoutes(): Hono<AppEnv> {
       return c.json({ error: 'bad_request', detail: 'sym and signature|txHash are required' }, 400);
     }
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
-    if (!row) return c.json({ error: 'not_found' }, 404);
+    const mintBody = typeof (body as { mint?: unknown }).mint === 'string' ? (body as { mint: string }).mint.trim() : undefined;
+    const resolved = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
+    if (!resolved) return c.json({ error: 'not_found' }, 404);
 
     // Best-effort proof check: confirm the tx exists / succeeded. We still
     // sync reserves from chain even if the indexer never sees the fill.
@@ -526,7 +522,7 @@ export function tradeRoutes(): Hono<AppEnv> {
 
     const synced = await syncCurveReserves({
       db: deps.db,
-      row: row as TokenRow,
+      row: resolved as TokenRow,
       rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
       sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
     });
@@ -537,7 +533,7 @@ export function tradeRoutes(): Hono<AppEnv> {
       sym,
       curveRealBase: synced.curveRealBase,
       curveRealToken: synced.curveRealToken,
-      mc: synced.mc ?? row.mc,
+      mc: synced.mc ?? resolved.mc,
     });
   });
 

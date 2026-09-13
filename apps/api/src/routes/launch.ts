@@ -13,11 +13,12 @@ import { basePriceFor } from '../router/base-price.js';
 import { deriveCurveColumns, type CurveStateColumns } from '../router/curve-state.js';
 import { moderateLaunch } from '../router/moderation.js';
 import { toAtoms } from '../router/units.js';
+import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import { asSolanaBlockhashSource, asSolanaTransactionSource, type JupiterHop } from '../router/solana-tx.js';
 import { composeSolanaLaunchTransaction } from '../router/solana-launch-tx.js';
 import { asEvmTransactionSource } from '../router/evm-tx.js';
-import { decodeTokenCreated, encodeCreateTokenCall } from '../router/evm-launch.js';
-import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
+import { encodeCreateTokenCall, decodeTokenCreated } from '../router/evm-launch.js';
+import { findLaunchCooldown } from './token-resolve.js';
 
 const SOLANA_TOKEN_DECIMALS = 6;
 const EVM_TOKEN_DECIMALS = 18;
@@ -71,7 +72,7 @@ async function walletLaunchRateLimit(
  * ticker/supply/fee after the fact, then upserts the `tokens` row.
  *
  * **Dev-buy atomicity asymmetry, by chain, not by choice**: on Solana the
- * mint is a PDA of the ticker, known before signing, so `buy` can follow
+ * mint is a PDA of creator+salt, known before signing, so `buy` can follow
  * `create_token` in the same transaction. On Robinhood, `StonkzToken` is
  * deployed with plain `CREATE` — the address is unknowable until the
  * transaction executes — so a dev buy there is necessarily a *second*,
@@ -153,16 +154,20 @@ export function launchRoutes(): Hono<AppEnv> {
       );
     }
 
-    // Unique ticker per net (plan step 90) — the `tokens` primary key is the
-    // real backstop at `/confirm`; these two checks just fail fast and give a
-    // clean 409 instead of a confusing failure three steps later.
+    // Soft cooldown: same ticker or display name on this net within 5 minutes.
+    // Permanent uniqueness lives on mint (chain + tokens PK), not ticker.
     const now = deps.now();
-    const [existingToken] = await deps.db
-      .select({ sym: tokens.sym })
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, ticker)))
-      .limit(1);
-    if (existingToken) return c.json({ error: 'ticker_taken' }, 409);
+    const cooldown = await findLaunchCooldown(deps.db, net, ticker, name, now);
+    if (cooldown) {
+      return c.json(
+        {
+          error: 'name_or_ticker_cooldown',
+          detail: `a token with this ${cooldown.kind} launched less than 5 minutes ago`,
+          retryAfterMs: cooldown.retryAfterMs,
+        },
+        409,
+      );
+    }
 
     // Drop expired prepares, then let the same wallet replace its own
     // unconsumed intent for this ticker (a cancelled MetaMask confirm used to
@@ -249,13 +254,22 @@ export function launchRoutes(): Hono<AppEnv> {
         jupiterHop = { response: await deps.jupiter.swapInstructions(devBuyJupiterQuoteRaw, wallet) };
       }
 
+      const mintSalt = BigInt(now);
+      const createArgs = {
+        name,
+        ticker,
+        uri,
+        supply: BigInt(Math.round(supply)),
+        feeBps,
+        cashback,
+        salt: mintSalt,
+      };
       const composed = composeSolanaLaunchTransaction(
         {
           programId,
           creator,
           baseMint,
-          ticker,
-          createArgs: { name, ticker, uri, supply: BigInt(Math.round(supply)), feeBps, cashback },
+          createArgs,
           ...(devBuyAtoms !== null && devBuyMinOutAtoms !== null
             ? { devBuy: { curveAmountIn: devBuyAtoms, curveMinOut: devBuyMinOutAtoms, ...(jupiterHop ? { jupiter: jupiterHop } : {}) } }
             : {}),
@@ -279,6 +293,7 @@ export function launchRoutes(): Hono<AppEnv> {
           baseMint: baseMintAddress,
           devBuyNative,
           predictedMint: composed.mint.toBase58(),
+          mintSalt,
           unsignedPayload: composed.messageBase64,
           expiresAt,
         })
@@ -459,7 +474,7 @@ export function launchRoutes(): Hono<AppEnv> {
           ...(intent.uri && /^https?:\/\//i.test(intent.uri) ? { imageUrl: intent.uri } : {}),
           ...curveColumns,
         })
-        .onConflictDoNothing({ target: [tokens.net, tokens.sym] });
+        .onConflictDoNothing({ target: [tokens.net, tokens.mint] });
 
       await tx
         .update(launchIntents)

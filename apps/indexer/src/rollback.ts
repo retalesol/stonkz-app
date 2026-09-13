@@ -156,8 +156,13 @@ export class ReorgRollback {
       report.events = disowned.length;
       const signatures = [...new Set(disowned.map((e) => e.txSig))];
       const affectedSyms = [...new Set(disowned.map((e) => e.sym).filter((s): s is string => s !== null))];
-      const droppedSyms = disowned.filter((e) => e.kind === 'TokenCreated').map((e) => e.sym as string);
-      report.tokensDropped = [...new Set(droppedSyms)];
+      const droppedLaunches = disowned
+        .filter((e) => e.kind === 'TokenCreated')
+        .map((e) => ({
+          sym: e.sym as string,
+          mint: (e.payload as { mint?: string }).mint?.trim(),
+        }));
+      report.tokensDropped = [...new Set(droppedLaunches.map((d) => d.sym))];
 
       await this.reverseLedger(tx, net, signatures, report);
       await this.unwindAccumulators(tx, net, disowned);
@@ -166,7 +171,7 @@ export class ReorgRollback {
       // A launch that never happened takes its whole token with it, including
       // rows no `chain_position` can reach (the creator vault, stake
       // positions, the candle series).
-      for (const sym of report.tokensDropped) await this.dropToken(tx, net, sym);
+      for (const { sym, mint } of droppedLaunches) await this.dropToken(tx, net, sym, mint);
 
       const survivors = affectedSyms.filter((s) => !report.tokensDropped.includes(s));
       for (const sym of survivors) await this.recomputeSym(tx, net, sym);
@@ -307,9 +312,12 @@ export class ReorgRollback {
           if (!row.sym) break;
           const fee = row.payload as Pick<
             FeeAccruedEvent,
-            'creatorBucket' | 'stakerShare' | 'creatorTokens' | 'protocol' | 'stonkzOps'
+            'mint' | 'creatorBucket' | 'stakerShare' | 'creatorTokens' | 'protocol' | 'stonkzOps'
           >;
           const creatorNet = fee.creatorBucket - fee.stakerShare;
+          const vaultKey = fee.mint?.trim()
+            ? and(eq(creatorVaults.net, net), eq(creatorVaults.mint, fee.mint.trim()))
+            : and(eq(creatorVaults.net, net), eq(creatorVaults.sym, row.sym));
           await tx
             .update(creatorVaults)
             .set({
@@ -319,13 +327,16 @@ export class ReorgRollback {
               lifetimeNative: sql`greatest(0, ${creatorVaults.lifetimeNative} - ${fee.creatorBucket})`,
               updatedAt: new Date(this.now()),
             })
-            .where(and(eq(creatorVaults.net, net), eq(creatorVaults.sym, row.sym)));
+            .where(vaultKey);
           break;
         }
 
         case 'CreatorFeesClaimed': {
           if (!row.sym) break;
-          const claim = row.payload as { nativeAmount: number; tokenAmount: number };
+          const claim = row.payload as { mint?: string; nativeAmount: number; tokenAmount: number };
+          const vaultKey = claim.mint?.trim()
+            ? and(eq(creatorVaults.net, net), eq(creatorVaults.mint, claim.mint.trim()))
+            : and(eq(creatorVaults.net, net), eq(creatorVaults.sym, row.sym));
           // A claim *reduced* the unclaimed balance, so undoing it puts the
           // money back.
           await tx
@@ -336,52 +347,73 @@ export class ReorgRollback {
               claimedNative: sql`greatest(0, ${creatorVaults.claimedNative} - ${claim.nativeAmount})`,
               updatedAt: new Date(this.now()),
             })
-            .where(and(eq(creatorVaults.net, net), eq(creatorVaults.sym, row.sym)));
+            .where(vaultKey);
           break;
         }
 
         case 'Staked': {
           if (!row.sym || !row.wallet) break;
-          const stake = row.payload as Pick<StakedEvent, 'amount'>;
+          const stake = row.payload as Pick<StakedEvent, 'mint' | 'amount'>;
+          const stakeKey = stake.mint?.trim()
+            ? and(
+                eq(stakePositions.net, net),
+                eq(stakePositions.mint, stake.mint.trim()),
+                eq(stakePositions.wallet, row.wallet),
+              )
+            : and(
+                eq(stakePositions.net, net),
+                eq(stakePositions.sym, row.sym),
+                eq(stakePositions.wallet, row.wallet),
+              );
           await tx
             .update(stakePositions)
             .set({
               amount: sql`greatest(0, ${stakePositions.amount} - ${stake.amount})`,
               updatedAt: new Date(this.now()),
             })
-            .where(
-              and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.sym, row.sym),
-                eq(stakePositions.wallet, row.wallet),
-              ),
-            );
+            .where(stakeKey);
           break;
         }
 
         case 'Unstaked': {
           if (!row.sym || !row.wallet) break;
-          const unstake = row.payload as { amount: number };
+          const unstake = row.payload as { mint?: string; amount: number };
+          const stakeKey = unstake.mint?.trim()
+            ? and(
+                eq(stakePositions.net, net),
+                eq(stakePositions.mint, unstake.mint.trim()),
+                eq(stakePositions.wallet, row.wallet),
+              )
+            : and(
+                eq(stakePositions.net, net),
+                eq(stakePositions.sym, row.sym),
+                eq(stakePositions.wallet, row.wallet),
+              );
           await tx
             .update(stakePositions)
             .set({
               amount: sql`${stakePositions.amount} + ${unstake.amount}`,
               updatedAt: new Date(this.now()),
             })
-            .where(
-              and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.sym, row.sym),
-                eq(stakePositions.wallet, row.wallet),
-              ),
-            );
+            .where(stakeKey);
           break;
         }
 
         case 'StakeClaimed': {
           if (!row.sym || !row.wallet) break;
           // Ingest zeros claimable on claim; rollback restores the claimed amounts.
-          const claim = row.payload as { rewardNative: number; rewardTokens: number };
+          const claim = row.payload as { mint?: string; rewardNative: number; rewardTokens: number };
+          const stakeKey = claim.mint?.trim()
+            ? and(
+                eq(stakePositions.net, net),
+                eq(stakePositions.mint, claim.mint.trim()),
+                eq(stakePositions.wallet, row.wallet),
+              )
+            : and(
+                eq(stakePositions.net, net),
+                eq(stakePositions.sym, row.sym),
+                eq(stakePositions.wallet, row.wallet),
+              );
           await tx
             .update(stakePositions)
             .set({
@@ -389,13 +421,7 @@ export class ReorgRollback {
               rewardTokens: sql`${stakePositions.rewardTokens} + ${claim.rewardTokens}`,
               updatedAt: new Date(this.now()),
             })
-            .where(
-              and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.sym, row.sym),
-                eq(stakePositions.wallet, row.wallet),
-              ),
-            );
+            .where(stakeKey);
           break;
         }
 
@@ -455,12 +481,27 @@ export class ReorgRollback {
   }
 
   /** A launch that got reorged out leaves nothing behind. */
-  private async dropToken(tx: Tx, net: Net, sym: string): Promise<void> {
-    await tx.delete(candles).where(and(eq(candles.net, net), eq(candles.sym, sym)));
-    await tx.delete(holdersSnapshot).where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym)));
-    await tx.delete(stakePositions).where(and(eq(stakePositions.net, net), eq(stakePositions.sym, sym)));
-    await tx.delete(creatorVaults).where(and(eq(creatorVaults.net, net), eq(creatorVaults.sym, sym)));
-    await tx.delete(tokens).where(and(eq(tokens.net, net), eq(tokens.sym, sym)));
+  private async dropToken(tx: Tx, net: Net, sym: string, mint?: string): Promise<void> {
+    const idKey = mint
+      ? {
+          candles: and(eq(candles.net, net), eq(candles.mint, mint)),
+          holders: and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint)),
+          stakes: and(eq(stakePositions.net, net), eq(stakePositions.mint, mint)),
+          vaults: and(eq(creatorVaults.net, net), eq(creatorVaults.mint, mint)),
+          token: and(eq(tokens.net, net), eq(tokens.mint, mint)),
+        }
+      : {
+          candles: and(eq(candles.net, net), eq(candles.sym, sym)),
+          holders: and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym)),
+          stakes: and(eq(stakePositions.net, net), eq(stakePositions.sym, sym)),
+          vaults: and(eq(creatorVaults.net, net), eq(creatorVaults.sym, sym)),
+          token: and(eq(tokens.net, net), eq(tokens.sym, sym)),
+        };
+    await tx.delete(candles).where(idKey.candles);
+    await tx.delete(holdersSnapshot).where(idKey.holders);
+    await tx.delete(stakePositions).where(idKey.stakes);
+    await tx.delete(creatorVaults).where(idKey.vaults);
+    await tx.delete(tokens).where(idKey.token);
   }
 
   /* --------------------------------------------------------- the recompute */
@@ -482,8 +523,25 @@ export class ReorgRollback {
       .where(and(eq(trades.net, net), eq(trades.sym, sym)))
       .orderBy(asc(trades.chainPosition), asc(trades.id));
 
-    await tx.delete(candles).where(and(eq(candles.net, net), eq(candles.sym, sym)));
-    await tx.delete(holdersSnapshot).where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym)));
+    const mintHint =
+      surviving[0]?.mint ??
+      (
+        await tx
+          .select({ mint: tokens.mint })
+          .from(tokens)
+          .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
+          .orderBy(sql`${tokens.launchedAt} desc`)
+          .limit(1)
+      )[0]?.mint;
+    const mint = mintHint ?? `legacy:${net}:${sym}`;
+
+    if (mintHint) {
+      await tx.delete(candles).where(and(eq(candles.net, net), eq(candles.mint, mint)));
+      await tx.delete(holdersSnapshot).where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint)));
+    } else {
+      await tx.delete(candles).where(and(eq(candles.net, net), eq(candles.sym, sym)));
+      await tx.delete(holdersSnapshot).where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym)));
+    }
 
     interface Bucket {
       tf: string;
@@ -553,6 +611,7 @@ export class ReorgRollback {
         [...buckets.values()].map((b) => ({
           net,
           sym,
+          mint,
           tf: b.tf,
           bucketStart: new Date(b.bucketStart),
           o: b.o,
@@ -571,6 +630,7 @@ export class ReorgRollback {
         [...holders].map(([wallet, h]) => ({
           net,
           sym,
+          mint,
           wallet,
           tokenAmount: h.tokenAmount,
           costNative: h.costNative,
@@ -581,11 +641,17 @@ export class ReorgRollback {
       );
     }
 
-    const [row] = await tx
-      .select({ sym: tokens.sym })
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const [row] = mintHint
+      ? await tx
+          .select({ sym: tokens.sym })
+          .from(tokens)
+          .where(and(eq(tokens.net, net), eq(tokens.mint, mint)))
+          .limit(1)
+      : await tx
+          .select({ sym: tokens.sym })
+          .from(tokens)
+          .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
+          .limit(1);
     if (!row) return;
 
     // With every fill gone the token is back to its launch state, which the
@@ -649,7 +715,11 @@ export class ReorgRollback {
         ...(restoredToken === undefined ? {} : { curveRealToken: restoredToken }),
         updatedAt: new Date(this.now()),
       })
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)));
+      .where(
+        mintHint
+          ? and(eq(tokens.net, net), eq(tokens.mint, mint))
+          : and(eq(tokens.net, net), eq(tokens.sym, sym)),
+      );
   }
 
   /** The crown is a pure function of `tokens`, so it is re-derived, not undone. */

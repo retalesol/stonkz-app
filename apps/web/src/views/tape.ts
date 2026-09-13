@@ -214,7 +214,7 @@ export function initTape(): void {
     if (!el) return;
     const c = bySym(el.dataset['sym'] ?? '');
     unpin();
-    if (c) navigate({ view: 'token', sym: c.sym });
+    if (c) navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
   });
   document.addEventListener('mouseleave', () => {
     if (pinned) unpin();

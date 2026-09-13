@@ -1,7 +1,5 @@
 import { Hono } from 'hono';
-import { and, eq } from 'drizzle-orm';
 import { nativeUnit, type Net } from '@stonkz/shared';
-import { tokens } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -15,6 +13,7 @@ import {
   type SolanaAccountSource,
 } from '../router/curve-sync.js';
 import type { TokenRow } from './serialise.js';
+import { resolveTokenRow } from './token-resolve.js';
 
 function asEthCaller(rpc: unknown): EthCaller | undefined {
   const candidate = rpc as Partial<EthCaller>;
@@ -52,11 +51,8 @@ export function quoteRoutes(): Hono<AppEnv> {
       return c.json({ error: 'bad_request', detail: 'amount must be a positive native amount' }, 400);
     }
 
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
+    const mintQ = c.req.query('mint')?.trim() || undefined;
+    const row = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
     if (!row) return c.json({ error: 'not_found' }, 404);
 
     const synced = await syncCurveReserves({

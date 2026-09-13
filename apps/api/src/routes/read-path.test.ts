@@ -20,6 +20,10 @@ beforeEach(async () => {
 
 const T0 = Date.parse('2026-09-06T12:00:00.000Z');
 const minutesAgo = (n: number) => new Date(T0 - n * 60_000);
+const MINT_DOGE2 = 'mint-DOGE2';
+const MINT_MOONER = 'mint-MOONER';
+const MINT_GRADD = 'mint-GRADD';
+const MINT_RHDOG = '0x00000000000000000000000000000000000000b2';
 
 /**
  * A small deterministic board. Ingestion is covered by the indexer's fixture
@@ -34,6 +38,7 @@ async function seed(): Promise<void> {
       name: 'Doge Two',
       descr: 'much wow',
       creator: 'DevOne',
+      mint: MINT_DOGE2,
       baseSymbol: 'SOL',
       baseMint: 'So11111111111111111111111111111111111111112',
       supply: 1_000_000_000,
@@ -51,6 +56,7 @@ async function seed(): Promise<void> {
       sym: 'MOONER',
       name: 'Mooner',
       creator: 'DevTwo',
+      mint: MINT_MOONER,
       baseSymbol: 'BONK',
       baseMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
       supply: 1_000_000_000,
@@ -68,6 +74,7 @@ async function seed(): Promise<void> {
       sym: 'GRADD',
       name: 'Graduated One',
       creator: 'DevThree',
+      mint: MINT_GRADD,
       baseSymbol: 'SOL',
       baseMint: 'So11111111111111111111111111111111111111112',
       supply: 1_000_000_000,
@@ -86,6 +93,7 @@ async function seed(): Promise<void> {
       sym: 'RHDOG',
       name: 'Robinhood Dog',
       creator: 'DevRh',
+      mint: MINT_RHDOG,
       baseSymbol: 'ETH',
       baseMint: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
       supply: 1_000_000_000,
@@ -104,6 +112,7 @@ async function seed(): Promise<void> {
     [3, 2, 1].map((i) => ({
       net: 'SOL' as const,
       sym: 'DOGE2',
+      mint: MINT_DOGE2,
       txSig: `sig-${i}`,
       logIndex: 0,
       side: i === 2 ? ('sell' as const) : ('buy' as const),
@@ -123,6 +132,7 @@ async function seed(): Promise<void> {
     [1, 2, 3].map((i) => ({
       net: 'SOL' as const,
       sym: 'DOGE2',
+      mint: MINT_DOGE2,
       tf: '1m',
       bucketStart: minutesAgo(i),
       o: 1 + i,
@@ -136,10 +146,10 @@ async function seed(): Promise<void> {
   );
 
   await h.deps.db.insert(holdersSnapshot).values([
-    { net: 'SOL', sym: 'DOGE2', wallet: 'Whale', tokenAmount: 500_000_000, costNative: 5 },
-    { net: 'SOL', sym: 'DOGE2', wallet: 'Shrimp', tokenAmount: 1_000, costNative: 0.01 },
+    { net: 'SOL', sym: 'DOGE2', mint: MINT_DOGE2, wallet: 'Whale', tokenAmount: 500_000_000, costNative: 5 },
+    { net: 'SOL', sym: 'DOGE2', mint: MINT_DOGE2, wallet: 'Shrimp', tokenAmount: 1_000, costNative: 0.01 },
     // Sold out, kept for cost basis. Must never appear in the list.
-    { net: 'SOL', sym: 'DOGE2', wallet: 'Exited', tokenAmount: 0, costNative: 2 },
+    { net: 'SOL', sym: 'DOGE2', mint: MINT_DOGE2, wallet: 'Exited', tokenAmount: 0, costNative: 2 },
   ]);
 
   await h.deps.db.insert(koth).values([

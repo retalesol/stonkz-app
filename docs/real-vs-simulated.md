@@ -156,6 +156,19 @@ environment switch only — flip cluster + RPC; no code change.
 | WS fan-out load test | **REAL code, NEVER RUN** | `apps/api/loadtest/k6/ws-fanout.js` measures real delivery lag and fails closed if no publisher is running. Its thresholds are targets; no run has produced a number against them. |
 | Program tests | **REAL** | Anchor + Foundry, including a Raydium integration path and a skipped-by-default RH fork test. |
 
+### Token identity (duplicate tickers / names)
+
+Canonical token id is **`(net, mint)`**. Display ticker (`sym`) and name are
+reusable after a **5-minute per-net cooldown** from the most recent matching
+launch (`POST /launch/prepare` → `409 name_or_ticker_cooldown`). Deep links
+`/t/SYM` without `?mint=` open the **newest** instance.
+
+**Redeploy required for on-chain reuse:** Solana mint PDAs now seed on
+`[mint, creator, salt_u64]` (not ticker); RH launchpad no longer reverts on
+`"ticker taken"`. Until the Solana program and RH launchpad are redeployed /
+upgraded on the target cluster, chain create will still reject or collide
+with the old rules even though the API/DB allow duplicates.
+
 ---
 
 ## Do not claim, until the phases that fix them land

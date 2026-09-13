@@ -127,8 +127,9 @@ pub mod launchpad {
         supply: u64,
         fee_bps: u16,
         cashback: bool,
+        salt: u64,
     ) -> Result<()> {
-        instructions::create_token::create_token(ctx, name, ticker, uri, supply, fee_bps, cashback)
+        instructions::create_token::create_token(ctx, name, ticker, uri, supply, fee_bps, cashback, salt)
     }
 
     /// `amount_base` in, at least `min_out` tokens back. Slippage is enforced

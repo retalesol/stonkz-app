@@ -38,7 +38,6 @@ export interface SolanaLaunchComposition {
   programId: PublicKey;
   creator: PublicKey;
   baseMint: PublicKey;
-  ticker: string;
   createArgs: CreateTokenArgs;
   devBuy?: SolanaLaunchDevBuy;
 }
@@ -89,7 +88,12 @@ export function composeSolanaLaunchTransaction(
   });
 
   const { instruction: createIx, mint, curve } = buildCreateTokenInstruction(
-    { programId: c.programId, creator: c.creator, baseMint: c.baseMint, ticker: c.ticker },
+    {
+      programId: c.programId,
+      creator: c.creator,
+      baseMint: c.baseMint,
+      salt: c.createArgs.salt,
+    },
     c.createArgs,
   );
 

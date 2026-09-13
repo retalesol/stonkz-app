@@ -168,6 +168,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'Trade',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           trader: record.trader,
           side: record.isBuy ? 'buy' : 'sell',
@@ -218,6 +219,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'FeeAccrued',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           // `FeeAccrued` names the mint, not the creator; the creator comes
           // from the launch, which is the same place the vault row does.
@@ -247,6 +249,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'Graduated',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           mc: Number(record.mcapUsd1e6) / 1e6,
           ...(migrated ? { poolAddress: migrated.pool } : {}),
@@ -261,6 +264,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'CreatorFeesClaimed',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           creator: record.creator,
           nativeAmount: nativeNotional(
@@ -282,6 +286,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'Staked',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           wallet: record.owner,
           amount: toWhole(record.amount, meta.tokenDecimals),
@@ -304,6 +309,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'Unstaked',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           wallet: record.owner,
           amount: toWhole(record.amount, meta.tokenDecimals),
@@ -318,6 +324,7 @@ export async function mapSolanaTransaction(
           ...base,
           kind: 'StakeClaimed',
           logIndex: logIndex++,
+          mint: record.mint,
           sym: meta.sym,
           wallet: record.owner,
           rewardNative: nativeNotional(

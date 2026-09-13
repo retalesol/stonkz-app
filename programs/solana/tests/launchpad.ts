@@ -115,18 +115,26 @@ describe('stonkz launchpad', () => {
   const protocolVault = () => vault('protocol_vault', baseMint);
   const opsVault = () => vault('ops_vault', baseMint);
 
+  let launchSalt = 0;
+
   async function launch(
     ticker: string,
-    opts: { feeBps?: number; cashback?: boolean; supply?: number } = {},
+    opts: { feeBps?: number; cashback?: boolean; supply?: number; salt?: number } = {},
   ) {
     const feeBps = opts.feeBps ?? 300;
     const cashback = opts.cashback ?? false;
     const supply = new BN(opts.supply ?? 1_000_000_000);
-    const mint = PublicKey.findProgramAddressSync([enc('mint'), enc(ticker)], pid)[0];
+    const salt = new BN(opts.salt ?? ++launchSalt);
+    const saltBuf = Buffer.alloc(8);
+    saltBuf.writeBigUInt64LE(BigInt(salt.toString()));
+    const mint = PublicKey.findProgramAddressSync(
+      [enc('mint'), creator.publicKey.toBuffer(), saltBuf],
+      pid,
+    )[0];
     const a = coinAccounts(mint);
 
     await program.methods
-      .createToken(`${ticker} coin`, ticker, `https://ston.kz/t/${ticker}`, supply, feeBps, cashback)
+      .createToken(`${ticker} coin`, ticker, `https://ston.kz/t/${ticker}`, supply, feeBps, cashback, salt)
       .accountsPartial({
         global: globalPda,
         mint,
@@ -350,17 +358,13 @@ describe('stonkz launchpad', () => {
       assert.equal(c.realToken.toString(), ((supplyAtoms / 5n) * 4n).toString());
     });
 
-    it('rejects a duplicate ticker, a bad fee and an unlisted supply', async () => {
-      await rejects(
-launch('WOJAK'), /already in use|custom program error/i);
-      await rejects(
-launch('BADFEE', { feeBps: 501 }), /FeeOutOfRange/);
-      await rejects(
-launch('BADFE2', { feeBps: 99 }), /FeeOutOfRange/);
-      await rejects(
-launch('BADSUP', { supply: 12345 }), /UnsupportedSupply/);
-      await rejects(
-launch('lower'), /InvalidTicker|Seeds/);
+    it('allows the same ticker twice with different salts, and rejects a bad fee / unlisted supply', async () => {
+      await launch('WOJAK');
+      await launch('WOJAK'); // second salt — must succeed now
+      await rejects(launch('BADFEE', { feeBps: 501 }), /FeeOutOfRange/);
+      await rejects(launch('BADFE2', { feeBps: 99 }), /FeeOutOfRange/);
+      await rejects(launch('BADSUP', { supply: 12345 }), /UnsupportedSupply/);
+      await rejects(launch('lower'), /InvalidTicker|Seeds/);
     });
   });
 

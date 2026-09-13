@@ -20,6 +20,11 @@ beforeEach(async () => {
 const T0 = Date.parse('2026-09-06T12:00:00.000Z');
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const BONK_MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+const MINT_NATIVE = 'mint-NATIVE';
+const MINT_VIABONK = 'mint-VIABONK';
+const MINT_RHTOK = '0x00000000000000000000000000000000000000a1';
+const MINT_GRADUATED = 'mint-GRADUATED';
+const MINT_CASHBK = 'mint-CASHBK';
 
 async function seed(): Promise<void> {
   h.setNow(T0);
@@ -30,6 +35,7 @@ async function seed(): Promise<void> {
       sym: 'NATIVE',
       name: 'Native Based',
       creator: 'Dev',
+      mint: MINT_NATIVE,
       baseSymbol: 'SOL',
       baseMint: SOL_MINT,
       supply: 1_000_000_000,
@@ -45,6 +51,7 @@ async function seed(): Promise<void> {
       sym: 'VIABONK',
       name: 'Via Bonk',
       creator: 'Dev',
+      mint: MINT_VIABONK,
       baseSymbol: 'BONK',
       baseMint: BONK_MINT,
       supply: 1_000_000_000,
@@ -59,6 +66,7 @@ async function seed(): Promise<void> {
       sym: 'RHTOK',
       name: 'RH Token',
       creator: 'Dev',
+      mint: MINT_RHTOK,
       baseSymbol: 'USDC',
       baseMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
       supply: 1_000_000_000,
@@ -73,6 +81,7 @@ async function seed(): Promise<void> {
       sym: 'GRADUATED',
       name: 'Graduated',
       creator: 'Dev',
+      mint: MINT_GRADUATED,
       baseSymbol: 'SOL',
       baseMint: SOL_MINT,
       supply: 1_000_000_000,
@@ -89,6 +98,7 @@ async function seed(): Promise<void> {
       sym: 'CASHBK',
       name: 'Cashback',
       creator: 'Dev',
+      mint: MINT_CASHBK,
       baseSymbol: 'SOL',
       baseMint: SOL_MINT,
       supply: 1_000_000_000,
@@ -287,6 +297,7 @@ describe('quote cache', () => {
         sym: 'NATIVE',
         name: 'Native Based',
         creator: 'Dev',
+        mint: MINT_NATIVE,
         baseSymbol: 'SOL',
         baseMint: SOL_MINT,
         supply: 1_000_000_000,

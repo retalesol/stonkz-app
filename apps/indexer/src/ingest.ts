@@ -84,6 +84,19 @@ export class Ingestor {
     return this.opts.db;
   }
 
+  /** Canonical mint for a token: hint, newest row for (net, sym), or legacy fallback. */
+  private async resolveMint(net: Net, sym: string, mintHint?: string): Promise<string> {
+    const hint = mintHint?.trim();
+    if (hint) return hint;
+    const [row] = await this.db
+      .select({ mint: tokens.mint })
+      .from(tokens)
+      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
+      .orderBy(desc(tokens.launchedAt))
+      .limit(1);
+    return row?.mint ?? `legacy:${net}:${sym}`;
+  }
+
   /** Processes a batch in chain order. */
   async apply(events: readonly ChainEvent[]): Promise<IngestReport> {
     const report: IngestReport = {
@@ -186,6 +199,7 @@ export class Ingestor {
 
   private async onTokenCreated(event: TokenCreatedEvent, report: IngestReport): Promise<void> {
     const lane = laneOf({ mc: event.mc });
+    const mint = event.mint?.trim() || `legacy:${event.net}:${event.sym}`;
     await this.db
       .insert(tokens)
       .values({
@@ -194,6 +208,7 @@ export class Ingestor {
         name: event.name,
         descr: event.descr,
         creator: event.creator,
+        mint,
         baseSymbol: event.baseSymbol,
         baseMint: event.baseMint,
         supply: event.supply,
@@ -209,7 +224,6 @@ export class Ingestor {
         telegram: event.telegram ?? null,
         launchedAt: new Date(event.blockTimeMs),
         updatedAt: new Date(this.now()),
-        ...(event.mint ? { mint: event.mint } : {}),
         // A chain source decodes the real curve; the fixture producer has none
         // and leaves the columns at their `'0'` defaults.
         ...(event.curve
@@ -227,19 +241,19 @@ export class Ingestor {
             }
           : {}),
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing({ target: [tokens.net, tokens.mint] });
 
     // Each launch gets its own bucket — two launches never share one.
     await this.db
       .insert(creatorVaults)
-      .values({ net: event.net, sym: event.sym, creator: event.creator })
-      .onConflictDoNothing();
+      .values({ net: event.net, sym: event.sym, mint, creator: event.creator })
+      .onConflictDoNothing({ target: [creatorVaults.net, creatorVaults.mint] });
 
     await this.opts.publisher.board({
       type: 'token_created',
       net: event.net,
       sym: event.sym,
-      payload: { name: event.name, creator: event.creator, mc: event.mc, lane },
+      payload: { mint, name: event.name, creator: event.creator, mc: event.mc, lane },
     });
 
     const result = await this.opts.awards.launch({
@@ -257,12 +271,14 @@ export class Ingestor {
 
   private async onTrade(event: TradeEvent, report: IngestReport): Promise<void> {
     const at = new Date(event.blockTimeMs);
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
     await this.db
       .insert(trades)
       .values({
         net: event.net,
         sym: event.sym,
+        mint,
         txSig: event.txSig,
         logIndex: event.logIndex,
         side: event.side,
@@ -298,9 +314,9 @@ export class Ingestor {
       })
       .onConflictDoNothing();
 
-    await this.updateHolder(event);
-    await this.updateCandles(event);
-    const lane = await this.updateToken(event);
+    await this.updateHolder(event, mint);
+    await this.updateCandles(event, mint);
+    const lane = await this.updateToken(event, mint);
     await this.updateKoth(event.net);
 
     await this.opts.publisher.fill(event.net, event.sym, {
@@ -338,10 +354,10 @@ export class Ingestor {
   }
 
   /** Position and native cost basis, per the plan's step 98. */
-  private async updateHolder(event: TradeEvent): Promise<void> {
+  private async updateHolder(event: TradeEvent, mint: string): Promise<void> {
     const key = and(
       eq(holdersSnapshot.net, event.net),
-      eq(holdersSnapshot.sym, event.sym),
+      eq(holdersSnapshot.mint, mint),
       eq(holdersSnapshot.wallet, event.trader),
     );
     const [existing] = await this.db.select().from(holdersSnapshot).where(key).limit(1);
@@ -352,6 +368,7 @@ export class Ingestor {
         .values({
           net: event.net,
           sym: event.sym,
+          mint,
           wallet: event.trader,
           tokenAmount: event.tokenAmount,
           costNative: event.nativeAmount,
@@ -359,7 +376,7 @@ export class Ingestor {
           updatedAt: new Date(event.blockTimeMs),
         })
         .onConflictDoUpdate({
-          target: [holdersSnapshot.net, holdersSnapshot.sym, holdersSnapshot.wallet],
+          target: [holdersSnapshot.net, holdersSnapshot.mint, holdersSnapshot.wallet],
           set: {
             tokenAmount: sql`${holdersSnapshot.tokenAmount} + ${event.tokenAmount}`,
             costNative: sql`${holdersSnapshot.costNative} + ${event.nativeAmount}`,
@@ -382,6 +399,7 @@ export class Ingestor {
       .values({
         net: event.net,
         sym: event.sym,
+        mint,
         wallet: event.trader,
         tokenAmount: 0,
         costNative: 0,
@@ -390,7 +408,7 @@ export class Ingestor {
         updatedAt: new Date(event.blockTimeMs),
       })
       .onConflictDoUpdate({
-        target: [holdersSnapshot.net, holdersSnapshot.sym, holdersSnapshot.wallet],
+        target: [holdersSnapshot.net, holdersSnapshot.mint, holdersSnapshot.wallet],
         set: {
           tokenAmount: sql`greatest(0, ${holdersSnapshot.tokenAmount} - ${sold})`,
           costNative: sql`greatest(0, ${holdersSnapshot.costNative} - ${costOut})`,
@@ -400,7 +418,7 @@ export class Ingestor {
       });
   }
 
-  private async updateCandles(event: TradeEvent): Promise<void> {
+  private async updateCandles(event: TradeEvent, mint: string): Promise<void> {
     const price = event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0;
     for (const update of candleUpdatesFor(event.blockTimeMs, price, event.usdValue, event.nativeAmount)) {
       await this.db
@@ -408,6 +426,7 @@ export class Ingestor {
         .values({
           net: event.net,
           sym: event.sym,
+          mint,
           tf: update.tf,
           bucketStart: new Date(update.bucketStart),
           o: price,
@@ -419,7 +438,7 @@ export class Ingestor {
           trades: 1,
         })
         .onConflictDoUpdate({
-          target: [candles.net, candles.sym, candles.tf, candles.bucketStart],
+          target: [candles.net, candles.mint, candles.tf, candles.bucketStart],
           set: {
             // Open is whatever the first fill in the bucket set it to.
             h: sql`greatest(${candles.h}, ${price})`,
@@ -433,11 +452,11 @@ export class Ingestor {
     }
   }
 
-  private async updateToken(event: TradeEvent): Promise<Lane> {
+  private async updateToken(event: TradeEvent, mint: string): Promise<Lane> {
     const [existing] = await this.db
       .select()
       .from(tokens)
-      .where(and(eq(tokens.net, event.net), eq(tokens.sym, event.sym)))
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)))
       .limit(1);
     if (!existing) return 'new';
 
@@ -447,7 +466,7 @@ export class Ingestor {
       .where(
         and(
           eq(holdersSnapshot.net, event.net),
-          eq(holdersSnapshot.sym, event.sym),
+          eq(holdersSnapshot.mint, mint),
           gt(holdersSnapshot.tokenAmount, 0),
         ),
       );
@@ -460,7 +479,7 @@ export class Ingestor {
       .where(
         and(
           eq(trades.net, event.net),
-          eq(trades.sym, event.sym),
+          eq(trades.mint, mint),
           gte(trades.blockTime, new Date(event.blockTimeMs - CHANGE_WINDOW_MS)),
         ),
       )
@@ -486,7 +505,7 @@ export class Ingestor {
         ...(event.realBase !== undefined ? { curveRealBase: event.realBase } : {}),
         ...(event.realToken !== undefined ? { curveRealToken: event.realToken } : {}),
       })
-      .where(and(eq(tokens.net, event.net), eq(tokens.sym, event.sym)));
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
 
     if (lane !== existing.lane) {
       await this.opts.publisher.board({
@@ -541,10 +560,12 @@ export class Ingestor {
   /* ------------------------------------------------------------ graduation */
 
   private async onGraduated(event: GraduatedEvent, report: IngestReport): Promise<void> {
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
+
     await this.db
       .update(tokens)
       .set({ lane: 'grad', graduatedAt: new Date(event.blockTimeMs), mc: event.mc, updatedAt: new Date(this.now()) })
-      .where(and(eq(tokens.net, event.net), eq(tokens.sym, event.sym)));
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
 
     await this.opts.publisher.board({ type: 'graduated', net: event.net, sym: event.sym });
     await this.opts.publisher.token(event.sym, { type: 'graduated', net: event.net, sym: event.sym });
@@ -560,7 +581,7 @@ export class Ingestor {
         .where(
           and(
             eq(holdersSnapshot.net, event.net),
-            eq(holdersSnapshot.sym, event.sym),
+            eq(holdersSnapshot.mint, mint),
             gt(holdersSnapshot.tokenAmount, 0),
           ),
         )
@@ -583,12 +604,14 @@ export class Ingestor {
   private async onFeeAccrued(event: FeeAccruedEvent): Promise<void> {
     // Stakers' cut comes out of the creator's 70%, never out of the other legs.
     const creatorNet = event.creatorBucket - event.stakerShare;
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
     await this.db
       .insert(creatorVaults)
       .values({
         net: event.net,
         sym: event.sym,
+        mint,
         creator: event.creator,
         unclaimedNative: creatorNet,
         unclaimedTokens: event.creatorTokens,
@@ -596,7 +619,7 @@ export class Ingestor {
         lifetimeNative: event.creatorBucket,
       })
       .onConflictDoUpdate({
-        target: [creatorVaults.net, creatorVaults.sym],
+        target: [creatorVaults.net, creatorVaults.mint],
         set: {
           unclaimedNative: sql`${creatorVaults.unclaimedNative} + ${creatorNet}`,
           unclaimedTokens: sql`${creatorVaults.unclaimedTokens} + ${event.creatorTokens}`,
@@ -650,6 +673,8 @@ export class Ingestor {
   }
 
   private async onCreatorFeesClaimed(event: CreatorFeesClaimedEvent, report: IngestReport): Promise<void> {
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
+
     await this.db
       .update(creatorVaults)
       .set({
@@ -658,7 +683,7 @@ export class Ingestor {
         claimedNative: sql`${creatorVaults.claimedNative} + ${event.nativeAmount}`,
         updatedAt: new Date(this.now()),
       })
-      .where(and(eq(creatorVaults.net, event.net), eq(creatorVaults.sym, event.sym)));
+      .where(and(eq(creatorVaults.net, event.net), eq(creatorVaults.mint, mint)));
 
     const award = await this.opts.awards.feeClaim({
       net: event.net,
@@ -673,11 +698,14 @@ export class Ingestor {
   /* ----------------------------------------------------------------- stake */
 
   private async onStaked(event: StakedEvent, report: IngestReport): Promise<void> {
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
+
     await this.db
       .insert(stakePositions)
       .values({
         net: event.net,
         sym: event.sym,
+        mint,
         wallet: event.wallet,
         amount: event.amount,
         lockDays: event.lockDays,
@@ -685,7 +713,7 @@ export class Ingestor {
         untilMs: event.untilMs,
       })
       .onConflictDoUpdate({
-        target: [stakePositions.net, stakePositions.sym, stakePositions.wallet],
+        target: [stakePositions.net, stakePositions.mint, stakePositions.wallet],
         set: {
           amount: sql`${stakePositions.amount} + ${event.amount}`,
           lockDays: event.lockDays,
@@ -708,6 +736,8 @@ export class Ingestor {
   }
 
   private async onUnstaked(event: UnstakedEvent): Promise<void> {
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
+
     await this.db
       .update(stakePositions)
       .set({
@@ -717,13 +747,15 @@ export class Ingestor {
       .where(
         and(
           eq(stakePositions.net, event.net),
-          eq(stakePositions.sym, event.sym),
+          eq(stakePositions.mint, mint),
           eq(stakePositions.wallet, event.wallet),
         ),
       );
   }
 
   private async onStakeClaimed(event: StakeClaimedEvent, report: IngestReport): Promise<void> {
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
+
     // On-chain claim zeros unclaimed; these columns are the *claimable*
     // balance shown by GET /stake — set to 0, do not accumulate claimed totals.
     await this.db
@@ -736,7 +768,7 @@ export class Ingestor {
       .where(
         and(
           eq(stakePositions.net, event.net),
-          eq(stakePositions.sym, event.sym),
+          eq(stakePositions.mint, mint),
           eq(stakePositions.wallet, event.wallet),
         ),
       );
@@ -753,6 +785,8 @@ export class Ingestor {
   /* -------------------------------------------------------------- cashback */
 
   private async onCashbackWindow(event: CashbackWindowEvent): Promise<void> {
+    const mint = await this.resolveMint(event.net, event.sym, event.mint);
+
     await this.db
       .update(tokens)
       .set({
@@ -760,7 +794,7 @@ export class Ingestor {
         cbStartMs: event.open ? event.startedAtMs : null,
         updatedAt: new Date(this.now()),
       })
-      .where(and(eq(tokens.net, event.net), eq(tokens.sym, event.sym)));
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
 
     await this.opts.publisher.token(event.sym, {
       type: 'cashback',
@@ -795,7 +829,7 @@ export class Ingestor {
       const [token] = await this.db
         .select({ mc: tokens.mc, supply: tokens.supply })
         .from(tokens)
-        .where(and(eq(tokens.net, net), eq(tokens.sym, position.sym)))
+        .where(and(eq(tokens.net, net), eq(tokens.mint, position.mint)))
         .limit(1);
       if (!token || token.supply <= 0 || nativeUsdPrice <= 0) continue;
 
@@ -807,7 +841,7 @@ export class Ingestor {
         .select({ txSig: trades.txSig })
         .from(trades)
         .where(
-          and(eq(trades.net, net), eq(trades.sym, position.sym), eq(trades.trader, position.wallet)),
+          and(eq(trades.net, net), eq(trades.mint, position.mint), eq(trades.trader, position.wallet)),
         )
         .orderBy(asc(trades.id))
         .limit(1);

@@ -101,11 +101,12 @@ contract LaunchpadTest is Test {
         assertGt(c.virtualBase, 0);
     }
 
-    function test_RejectsDuplicateTickerBadFeeAndBadTicker() public {
-        _launch("DUPE", 250, false);
+    function test_AllowsDuplicateTickerRejectsBadFeeAndBadTicker() public {
+        address first = _launch("DUPE", 250, false);
         vm.prank(creator);
-        vm.expectRevert(bytes("ticker taken"));
-        pad.createToken("Coin", "DUPE", "u", SUPPLY, address(base), 250, false);
+        address second = pad.createToken("Coin", "DUPE", "u", SUPPLY, address(base), 250, false);
+        assertTrue(first != second, "duplicate ticker mints a new token");
+        assertEq(pad.tokenByTicker(keccak256(bytes("DUPE"))), second, "mapping keeps the latest");
 
         vm.prank(creator);
         vm.expectRevert(bytes("fee"));

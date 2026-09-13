@@ -22,6 +22,7 @@ describe('GET /og/t/:sym', () => {
       name: 'Wojak Coin',
       descr: 'the saddest coin',
       creator: 'CREATOR',
+      mint: 'mint-WOJAK',
       baseSymbol: 'SOL',
       baseMint: 'So11111111111111111111111111111111111111112',
       supply: 1_000_000_000,

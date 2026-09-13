@@ -2,10 +2,11 @@ import { Hono } from 'hono';
 import { and, eq } from 'drizzle-orm';
 import { esc, usd } from '@stonkz/shared';
 import type { Net } from '@stonkz/shared';
-import { tokens, users } from '../db/schema.js';
+import { users } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
+import { resolveTokenRow } from './token-resolve.js';
 
 /**
  * Plan step 155 — "OG images per `/t/:sym`", extended to profile pages per
@@ -61,8 +62,11 @@ export function ogRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const net = parseNet(c.req.query('net')) ?? 'SOL';
     const sym = (c.req.param('sym') ?? '').toUpperCase();
-    const [row] = await deps.db.select().from(tokens).where(and(eq(tokens.net, net), eq(tokens.sym, sym))).limit(1);
-    const url = `${deps.env.publicWebOrigin}/t/${sym}`;
+    const mintQ = c.req.query('mint')?.trim();
+    const row = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
+    const url = row?.mint
+      ? `${deps.env.publicWebOrigin}/t/${sym}?mint=${encodeURIComponent(row.mint)}`
+      : `${deps.env.publicWebOrigin}/t/${sym}`;
     if (!row) {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(ogPage({ title: `STONKZ · $${sym}`, description: 'A coin on ston.kz.', url }));

@@ -837,6 +837,11 @@ export function openToken(c: SimCoin): void {
   }
   c.lane = laneOf(c);
   TV.c = c;
+  // Keep the address bar on the resolved mint so shares/back stay unambiguous.
+  navigate(
+    { view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) },
+    { replace: true },
+  );
   TV.tab = 'trades';
   TV.side = 'BUY';
   TV.range = 90;

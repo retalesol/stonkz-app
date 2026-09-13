@@ -14,7 +14,7 @@ import { closeStake, isStakeOpen } from '../modals/stake.js';
 import { closeSteps, initSteps, isStepsOpen } from '../modals/steps.js';
 import { cancelPicker, initWalletPicker, isWalletPickerOpen } from '../modals/walletpicker.js';
 import { closeWiz, initWizard, isWizOpen, openWiz } from '../modals/wizard.js';
-import { COINS, bySym } from '../state/coins.js';
+import { COINS, byMint, bySym } from '../state/coins.js';
 import { loadSettings } from '../state/settings.js';
 import { USER, loadUser, saveUser, touchStreak } from '../state/user.js';
 import { WALLET } from '../state/wallet.js';
@@ -51,7 +51,7 @@ import {
 
 function apply(r: Route): void {
   if (r.view === 'token') {
-    const c = bySym(r.sym);
+    const c = (r.mint && byMint(r.mint)) || bySym(r.sym);
     if (!c) {
       // A dead link: say so once and fall back to the board rather than
       // rendering an empty page.
@@ -229,7 +229,7 @@ export async function boot(): Promise<void> {
         }
         q.value = '';
         filterBoard('');
-        navigate({ view: 'token', sym: c.sym });
+        navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
       })
       .catch(() => {
         toast('SEARCH FAILED', 'red');

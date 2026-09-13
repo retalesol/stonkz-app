@@ -76,6 +76,7 @@ export interface TokenCreatedEvent extends EventBase {
 /** A curve fill. `nativeAmount` is the ticket the user actually paid. */
 export interface TradeEvent extends EventBase {
   kind: 'Trade';
+  mint?: string;
   sym: string;
   trader: string;
   side: 'buy' | 'sell';
@@ -101,6 +102,7 @@ export interface TradeEvent extends EventBase {
 /** $69K market cap reached; reserves migrated and LP burned. */
 export interface GraduatedEvent extends EventBase {
   kind: 'Graduated';
+  mint?: string;
   sym: string;
   mc: number;
   poolAddress?: string;
@@ -113,6 +115,7 @@ export interface GraduatedEvent extends EventBase {
  */
 export interface FeeAccruedEvent extends EventBase {
   kind: 'FeeAccrued';
+  mint?: string;
   sym: string;
   creator: string;
   /** Total curve fee taken on this fill, in the native unit. */
@@ -128,6 +131,7 @@ export interface FeeAccruedEvent extends EventBase {
 
 export interface StakedEvent extends EventBase {
   kind: 'Staked';
+  mint?: string;
   sym: string;
   wallet: string;
   amount: number;
@@ -140,6 +144,7 @@ export interface StakedEvent extends EventBase {
 
 export interface UnstakedEvent extends EventBase {
   kind: 'Unstaked';
+  mint?: string;
   sym: string;
   wallet: string;
   amount: number;
@@ -147,6 +152,7 @@ export interface UnstakedEvent extends EventBase {
 
 export interface StakeClaimedEvent extends EventBase {
   kind: 'StakeClaimed';
+  mint?: string;
   sym: string;
   wallet: string;
   rewardNative: number;
@@ -156,6 +162,7 @@ export interface StakeClaimedEvent extends EventBase {
 /** Opens or closes the 5-minute launch window. */
 export interface CashbackWindowEvent extends EventBase {
   kind: 'CashbackWindow';
+  mint?: string;
   sym: string;
   open: boolean;
   startedAtMs: number;
@@ -181,6 +188,7 @@ export interface TreasuryCreditEvent extends EventBase {
  */
 export interface CreatorFeesClaimedEvent extends EventBase {
   kind: 'CreatorFeesClaimed';
+  mint?: string;
   sym: string;
   creator: string;
   nativeAmount: number;

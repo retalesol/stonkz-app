@@ -3,13 +3,14 @@ import { PublicKey, Transaction } from '@solana/web3.js';
 import type { Address } from 'viem';
 import { and, eq, gt, or } from 'drizzle-orm';
 import { nativeUnit } from '@stonkz/shared';
-import { creatorVaults, tokens } from '../db/schema.js';
+import { creatorVaults } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { buildClaimCreatorFeesInstruction } from '../router/solana-instructions.js';
 import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { encodeClaimCreatorFeesCall } from '../router/evm-launch.js';
+import { resolveTokenRow } from './token-resolve.js';
 
 /**
  * `GET /fees` + `POST /fees/claim/prepare` — plan step 92, creator vault
@@ -45,6 +46,7 @@ export function feesRoutes(): Hono<AppEnv> {
       nativeUnit: nativeUnit(net),
       vaults: rows.map((r) => ({
         sym: r.sym,
+        mint: r.mint,
         unclaimedNative: r.unclaimedNative,
         unclaimedTokens: r.unclaimedTokens,
         stakerPoolNative: r.stakerPoolNative,
@@ -60,25 +62,22 @@ export function feesRoutes(): Hono<AppEnv> {
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; mint?: unknown };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
+    const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     if (!sym) return c.json({ error: 'bad_request', detail: 'sym is required' }, 400);
+
+    const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
+    if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
 
     const [vault] = await deps.db
       .select()
       .from(creatorVaults)
-      .where(and(eq(creatorVaults.net, net), eq(creatorVaults.sym, sym), eq(creatorVaults.creator, wallet)))
+      .where(and(eq(creatorVaults.net, net), eq(creatorVaults.mint, row.mint), eq(creatorVaults.creator, wallet)))
       .limit(1);
     if (!vault || (vault.unclaimedNative <= 0 && vault.unclaimedTokens <= 0)) {
       return c.json({ error: 'nothing_to_claim' }, 422);
     }
-
-    const [row] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, sym)))
-      .limit(1);
-    if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
@@ -100,13 +99,14 @@ export function feesRoutes(): Hono<AppEnv> {
       return c.json({
         net,
         sym,
+        mint: row.mint,
         transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }
 
     const data = encodeClaimCreatorFeesCall(row.mint as Address);
-    return c.json({ net, sym, to: deps.env.rhLaunchpadAddress, data, value: '0' });
+    return c.json({ net, sym, mint: row.mint, to: deps.env.rhLaunchpadAddress, data, value: '0' });
   });
 
   return app;

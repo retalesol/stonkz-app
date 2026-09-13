@@ -246,6 +246,7 @@ export async function mapEvmTransaction(
           ...base,
           kind: 'Trade',
           logIndex,
+          mint: token,
           sym: meta.sym,
           // Routed fills call the launchpad from StonkzRouter, so Trade.trader
           // is the router. Prefer AtomicBuy/Sell.trader (the wallet).
@@ -287,6 +288,7 @@ export async function mapEvmTransaction(
           ...base,
           kind: 'FeeAccrued',
           logIndex,
+          mint: token,
           sym: meta.sym,
           creator: meta.creator,
           ...nativeFeeLegs(
@@ -311,11 +313,13 @@ export async function mapEvmTransaction(
         break;
 
       case 'Graduated': {
-        const meta = await need(addr(args, 'token'));
+        const token = addr(args, 'token');
+        const meta = await need(token);
         out.push({
           ...base,
           kind: 'Graduated',
           logIndex,
+          mint: token,
           sym: meta.sym,
           mc: Number(big(args, 'mcapUsd1e6')) / 1e6,
           ...(migrated ? { poolAddress: addr(migrated.args, 'pool') } : {}),
@@ -324,13 +328,15 @@ export async function mapEvmTransaction(
       }
 
       case 'CreatorFeesClaimed': {
-        const meta = await need(addr(args, 'token'));
+        const token = addr(args, 'token');
+        const meta = await need(token);
         const baseAmount = big(args, 'base');
         const usd = baseAtomsToUsd(baseAmount, meta.basePrice1e6, meta.baseDecimals);
         out.push({
           ...base,
           kind: 'CreatorFeesClaimed',
           logIndex,
+          mint: token,
           sym: meta.sym,
           creator: addr(args, 'creator'),
           nativeAmount: nativeNotional(
@@ -347,13 +353,15 @@ export async function mapEvmTransaction(
       }
 
       case 'Staked': {
-        const meta = await need(addr(args, 'token'));
+        const token = addr(args, 'token');
+        const meta = await need(token);
         const amount = big(args, 'amount');
         const weight = big(args, 'weight');
         out.push({
           ...base,
           kind: 'Staked',
           logIndex,
+          mint: token,
           sym: meta.sym,
           wallet: addr(args, 'owner'),
           amount: toWhole(amount, meta.tokenDecimals),
@@ -366,11 +374,13 @@ export async function mapEvmTransaction(
       }
 
       case 'Unstaked': {
-        const meta = await need(addr(args, 'token'));
+        const token = addr(args, 'token');
+        const meta = await need(token);
         out.push({
           ...base,
           kind: 'Unstaked',
           logIndex,
+          mint: token,
           sym: meta.sym,
           wallet: addr(args, 'owner'),
           amount: toWhole(big(args, 'amount'), meta.tokenDecimals),
@@ -379,13 +389,15 @@ export async function mapEvmTransaction(
       }
 
       case 'StakeClaimed': {
-        const meta = await need(addr(args, 'token'));
+        const token = addr(args, 'token');
+        const meta = await need(token);
         const baseAmount = big(args, 'base');
         const usd = baseAtomsToUsd(baseAmount, meta.basePrice1e6, meta.baseDecimals);
         out.push({
           ...base,
           kind: 'StakeClaimed',
           logIndex,
+          mint: token,
           sym: meta.sym,
           wallet: addr(args, 'owner'),
           rewardNative: nativeNotional(

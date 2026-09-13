@@ -15,18 +15,18 @@ pub const MAX_NAME_LEN: usize = 32;
 pub const MAX_URI_LEN: usize = 200;
 
 #[derive(Accounts)]
-#[instruction(name: String, ticker: String)]
+#[instruction(name: String, ticker: String, uri: String, supply: u64, fee_bps: u16, cashback: bool, salt: u64)]
 pub struct CreateToken<'info> {
     #[account(mut, seeds = [SEED_GLOBAL], bump = global.bump)]
     pub global: Box<Account<'info, Global>>,
 
-    /// Seeding the mint on the ticker makes tickers unique per program
-    /// deployment — one launchpad per network, so unique per net — without a
-    /// registry account or a server-side check.
+    /// Mint PDA is seeded on creator + salt so the same ticker can launch
+    /// more than once. Uniqueness of display name/ticker is an app-layer
+    /// cooldown, not an on-chain permanent bind.
     #[account(
         init,
         payer = creator,
-        seeds = [SEED_MINT, ticker.as_bytes()],
+        seeds = [SEED_MINT, creator.key().as_ref(), &salt.to_le_bytes()],
         bump,
         mint::decimals = TOKEN_DECIMALS,
         mint::authority = curve,
@@ -125,6 +125,7 @@ pub fn create_token(
     supply: u64,
     fee_bps: u16,
     cashback: bool,
+    _salt: u64,
 ) -> Result<()> {
     require!(!ctx.accounts.global.launch_paused, LaunchpadError::LaunchPaused);
     require!(valid_ticker(&ticker), LaunchpadError::InvalidTicker);

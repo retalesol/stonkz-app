@@ -27,7 +27,8 @@ export interface CreateTokenAccounts {
   programId: PublicKey;
   creator: PublicKey;
   baseMint: PublicKey;
-  ticker: string;
+  /** u64 salt for the mint PDA — unique per creator launch. */
+  salt: bigint;
 }
 
 export interface CreateTokenArgs {
@@ -37,14 +38,15 @@ export interface CreateTokenArgs {
   supply: bigint;
   feeBps: number;
   cashback: boolean;
+  salt: bigint;
 }
 
-/** `create_token(name, ticker, uri, supply, fee_bps, cashback)` — plan step 90. */
+/** `create_token(name, ticker, uri, supply, fee_bps, cashback, salt)` — plan step 90. */
 export function buildCreateTokenInstruction(
   accounts: CreateTokenAccounts,
   args: CreateTokenArgs,
 ): { instruction: TransactionInstruction; mint: PublicKey; curve: PublicKey } {
-  const [mint] = deriveMintPda(accounts.programId, accounts.ticker);
+  const [mint] = deriveMintPda(accounts.programId, accounts.creator, accounts.salt);
   const pdas = derivePdas(accounts.programId, mint, accounts.baseMint);
 
   const data = Buffer.concat([
@@ -55,6 +57,7 @@ export function buildCreateTokenInstruction(
     encodeU64(args.supply),
     encodeU16(args.feeBps),
     encodeBool(args.cashback),
+    encodeU64(args.salt),
   ]);
 
   const keys = [

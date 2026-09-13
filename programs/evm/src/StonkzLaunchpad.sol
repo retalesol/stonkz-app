@@ -365,7 +365,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         require(_validTicker(ticker), "ticker");
         require(feeBps >= CurveMath.MIN_FEE_BPS && feeBps <= CurveMath.MAX_FEE_BPS, "fee");
         bytes32 key = keccak256(bytes(ticker));
-        require(tokenByTicker[key] == address(0), "ticker taken");
+        // Latest-by-ticker pointer only — duplicate tickers are allowed; the
+        // app enforces a short cooldown, not a permanent bind.
 
         uint8 baseDecimals = IERC20(baseToken).decimals();
         uint256 price = _freshPrice(baseToken);

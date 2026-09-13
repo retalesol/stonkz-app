@@ -23,7 +23,7 @@ import { signAndConfirm, signPermit, type SellPermit, type SignPayload, type UiS
 import { emit } from '../lib/bus.js';
 import { clock, shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
-import { COINS, bySym, pushTrade, toFill as fillFromTrade, type Holder, type SimCoin, type Trade, type TradeHop } from '../state/coins.js';
+import { COINS, byMint, bySym, pushTrade, toFill as fillFromTrade, type Holder, type SimCoin, type Trade, type TradeHop } from '../state/coins.js';
 import { creditTokens, holdOf, noteTrade, HOLD } from '../state/holdings.js';
 import { syncHoldingFromChain } from './live-holding.js';
 import { ensureStake, stakeOf } from '../state/stake.js';
@@ -199,17 +199,27 @@ export class LiveApiError extends Error {
     readonly code: string,
     detail: string,
     readonly status: number,
+    readonly retryAfterMs?: number,
   ) {
     super(detail);
     this.name = 'LiveApiError';
   }
 }
 
-async function readErrorBody(res: Response): Promise<{ code: string; detail: string }> {
-  const body = (await res.json().catch(() => ({}))) as { error?: unknown; detail?: unknown };
+async function readErrorBody(
+  res: Response,
+): Promise<{ code: string; detail: string; retryAfterMs?: number }> {
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: unknown;
+    detail?: unknown;
+    retryAfterMs?: unknown;
+  };
   return {
     code: typeof body.error === 'string' ? body.error : 'request_failed',
     detail: typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`,
+    ...(typeof body.retryAfterMs === 'number' && Number.isFinite(body.retryAfterMs)
+      ? { retryAfterMs: body.retryAfterMs }
+      : {}),
   };
 }
 
@@ -247,8 +257,8 @@ async function postJson<T>(path: string, body: unknown, net: Net): Promise<T> {
     });
   }
   if (!res.ok) {
-    const { code, detail } = await readErrorBody(res);
-    throw new LiveApiError(code, detail, res.status);
+    const { code, detail, retryAfterMs } = await readErrorBody(res);
+    throw new LiveApiError(code, detail, res.status, retryAfterMs);
   }
   return (await res.json()) as T;
 }
@@ -344,6 +354,7 @@ interface ApiLaunchConfirm {
 
 interface ApiFeeVaultRow {
   sym: string;
+  mint?: string;
   unclaimedNative: number;
   unclaimedTokens: number;
   stakerPoolNative: number;
@@ -435,6 +446,30 @@ function toSimCoin(t: ApiToken): SimCoin {
     comments: null,
     liveHolders: null,
   };
+}
+
+/** Match by mint when present so duplicate tickers stay distinct. */
+function findCoin(identity: { sym: string; mint?: string | null | undefined }): SimCoin | null {
+  if (identity.mint) {
+    const hit = byMint(identity.mint);
+    if (hit) return hit;
+  }
+  return bySym(identity.sym);
+}
+
+function mergeToken(t: ApiToken): SimCoin {
+  const existing = findCoin(t);
+  if (existing) {
+    patchCoin(existing, t);
+    return existing;
+  }
+  const coin = toSimCoin(t);
+  COINS.push(coin);
+  return coin;
+}
+
+function mintQs(c: { mint?: string }): string {
+  return c.mint ? `&mint=${encodeURIComponent(c.mint)}` : '';
 }
 
 /** Patch an already-rendered coin in place, so `c.el` and open charts survive. */
@@ -619,9 +654,10 @@ async function refreshNativePrices(): Promise<void> {
   }
 }
 
-async function fetchToken(net: Net, sym: string): Promise<ApiToken | null> {
+async function fetchToken(net: Net, sym: string, mint?: string): Promise<ApiToken | null> {
   try {
-    return await getJson<ApiToken>('/tokens/' + encodeURIComponent(sym) + '?net=' + net);
+    const qs = mint ? `&mint=${encodeURIComponent(mint)}` : '';
+    return await getJson<ApiToken>('/tokens/' + encodeURIComponent(sym) + '?net=' + net + qs);
   } catch {
     return null;
   }
@@ -752,13 +788,17 @@ export function subscribeChatRoom(net: Net, room: string, onMessage: (msg: LiveC
 
 function onBoardEvent(data: Record<string, unknown>): void {
   const sym = data['sym'] as string | undefined;
+  const payload = (data['payload'] as Record<string, unknown> | undefined) ?? {};
+  const mint =
+    (typeof data['mint'] === 'string' ? data['mint'] : undefined) ||
+    (typeof payload['mint'] === 'string' ? payload['mint'] : undefined);
   const eventNet = (data['net'] as Net | undefined) ?? WALLET.net;
   switch (data['type']) {
     case 'token_created':
-      if (sym && !bySym(sym)) void handleTokenCreated(sym, eventNet);
+      if (sym && !findCoin({ sym, mint })) void handleTokenCreated(sym, eventNet, mint);
       return;
     case 'lane_move': {
-      const c = sym ? bySym(sym) : null;
+      const c = sym ? findCoin({ sym, mint }) : null;
       const to = data['to'] as Lane | undefined;
       if (c && to && c.lane !== to) {
         c.lane = to;
@@ -767,7 +807,7 @@ function onBoardEvent(data: Record<string, unknown>): void {
       return;
     }
     case 'graduated': {
-      const c = sym ? bySym(sym) : null;
+      const c = sym ? findCoin({ sym, mint }) : null;
       if (c && c.lane !== 'grad') {
         c.lane = 'grad';
         emit('lane', { sym: c.sym, lane: 'grad' });
@@ -775,7 +815,7 @@ function onBoardEvent(data: Record<string, unknown>): void {
       return;
     }
     case 'koth': {
-      const c = sym ? bySym(sym) : null;
+      const c = sym ? findCoin({ sym, mint }) : null;
       if (c) {
         c.lastMc = c.mc;
         c.mc = data['mc'] as number;
@@ -788,9 +828,9 @@ function onBoardEvent(data: Record<string, unknown>): void {
   }
 }
 
-async function handleTokenCreated(sym: string, net: Net): Promise<void> {
-  const t = await fetchToken(net, sym);
-  if (!t || bySym(t.sym)) return;
+async function handleTokenCreated(sym: string, net: Net, mint?: string): Promise<void> {
+  const t = await fetchToken(net, sym, mint);
+  if (!t || findCoin(t)) return;
   const c = toSimCoin(t);
   COINS.push(c);
   emit('mint', { sym: c.sym });
@@ -803,7 +843,8 @@ function onTapeEvent(data: Record<string, unknown>): void {
 }
 
 function onTokenEvent(sym: string, data: Record<string, unknown>): void {
-  const c = bySym(sym);
+  const mint = typeof data['mint'] === 'string' ? data['mint'] : undefined;
+  const c = findCoin({ sym, mint });
   if (!c) return;
   switch (data['type']) {
     case 'fill': {
@@ -880,13 +921,9 @@ async function refreshBoard(): Promise<void> {
 
   let grew = false;
   for (const t of list) {
-    const existing = bySym(t.sym);
-    if (existing) {
-      patchCoin(existing, t);
-    } else {
-      COINS.push(toSimCoin(t));
-      grew = true;
-    }
+    const before = COINS.length;
+    mergeToken(t);
+    if (COINS.length > before) grew = true;
   }
   // Connected scope is a filter — drop coins from the other chain that lingered.
   if (scope !== 'ALL') {
@@ -949,8 +986,14 @@ async function reloadBoard(scope: BoardScope): Promise<void> {
 /* Trade — `GET /tokens/:sym/quote`, `POST /trade/prepare`. Plan step 95-96.   */
 /* -------------------------------------------------------------------------- */
 
-async function fetchQuote(net: Net, sym: string, side: 'buy' | 'sell', amount: number): Promise<Quote> {
-  const qs = `?net=${net}&side=${side}&amount=${amount}`;
+async function fetchQuote(
+  net: Net,
+  sym: string,
+  side: 'buy' | 'sell',
+  amount: number,
+  mint?: string,
+): Promise<Quote> {
+  const qs = `?net=${net}&side=${side}&amount=${amount}${mint ? `&mint=${encodeURIComponent(mint)}` : ''}`;
   return getJson<Quote>(`/tokens/${encodeURIComponent(sym)}/quote${qs}`);
 }
 
@@ -1088,11 +1131,12 @@ function applyConfirmedTrade(
 }
 
 async function liveTrade(quote: Quote): Promise<Fill> {
-  const c = bySym(quote.sym);
+  const c = findCoin({ sym: quote.sym, mint: quote.mint }) || bySym(quote.sym);
   if (!c) throw new Error('unknown ticker ' + quote.sym);
   const net = quote.net;
   const body = {
     sym: quote.sym,
+    ...(c.mint ? { mint: c.mint } : {}),
     side: quote.side,
     amount: quote.amountIn,
     ...settingsPayload(),
@@ -1103,7 +1147,11 @@ async function liveTrade(quote: Quote): Promise<Fill> {
   // Re-sync curve reserves from chain so the next sell quote is not stuck on
   // empty DB reserves if the indexer lags.
   if (signature) {
-    void postJson('/trade/confirm', { sym: c.sym, signature, txHash: signature }, net).catch(() => undefined);
+    void postJson(
+      '/trade/confirm',
+      { sym: c.sym, ...(c.mint ? { mint: c.mint } : {}), signature, txHash: signature },
+      net,
+    ).catch(() => undefined);
   }
   return applyConfirmedTrade(c, quote.side, quote.amountIn, confirmedQuote, net, signature ?? undefined);
 }
@@ -1251,7 +1299,11 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
   if (targets.length === 0) return { native: 0, tokens: {} };
 
   const prepareClaim = async (v: ApiFeeVaultRow): Promise<SignPayload> => {
-    const prep = await postJson<ApiClaimPrepare>('/fees/claim/prepare', { sym: v.sym }, net);
+    const prep = await postJson<ApiClaimPrepare>(
+      '/fees/claim/prepare',
+      { sym: v.sym, ...(v.mint ? { mint: v.mint } : {}) },
+      net,
+    );
     return prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep);
   };
 
@@ -1380,9 +1432,10 @@ type ApiStakePrepare = ApiStakePrepareSol | ApiStakePrepareRh;
 
 async function liveStake(input: StakeInput): Promise<void> {
   const net = WALLET.net;
+  const coin = bySym(input.sym);
   const prep = await postJson<ApiStakePrepare>(
     '/stake/prepare',
-    { sym: input.sym, amount: input.amount, days: input.days },
+    { sym: input.sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: input.amount, days: input.days },
     net,
   );
   await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
@@ -1414,7 +1467,12 @@ async function liveUnstake(sym: string): Promise<number> {
   }
   const amt = st.amt;
   const net = WALLET.net;
-  const prep = await postJson<ApiStakePrepare>('/stake/unstake/prepare', { sym, amount: amt }, net);
+  const coin = bySym(sym);
+  const prep = await postJson<ApiStakePrepare>(
+    '/stake/unstake/prepare',
+    { sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: amt },
+    net,
+  );
   await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
   st.amt = 0;
   st.mult = 1;
@@ -1432,7 +1490,11 @@ async function liveClaimStake(sym: string): Promise<StakeClaim> {
   const st = stakeOf(sym);
   // Always attempt the on-chain claim — pending rewards live on the program,
   // not only in the indexer columns. Local zeros must not block a claim.
-  const prep = await postJson<ApiStakePrepare>('/stake/claim/prepare', { sym }, net);
+  const prep = await postJson<ApiStakePrepare>(
+    '/stake/claim/prepare',
+    { sym, ...(bySym(sym)?.mint ? { mint: bySym(sym)!.mint } : {}) },
+    net,
+  );
   await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
   const out: StakeClaim = { tokens: st?.rewTok ?? 0, native: st?.rewSol ?? 0 };
   if (out.tokens > 0) creditTokens(sym, out.tokens);
@@ -1459,7 +1521,9 @@ interface ApiStakeRow {
 async function hydrateLiveStake(sym: string): Promise<void> {
   const net = WALLET.net;
   try {
-    const row = await getJsonAuthed<ApiStakeRow>(`/stake/${encodeURIComponent(sym)}`, net);
+    const mint = bySym(sym)?.mint;
+    const qs = mint ? `?mint=${encodeURIComponent(mint)}` : '';
+    const row = await getJsonAuthed<ApiStakeRow>(`/stake/${encodeURIComponent(sym)}${qs}`, net);
     const st = ensureStake(sym);
     st.amt = row.amt;
     st.mult = row.mult;
@@ -1524,14 +1588,15 @@ export const liveApi: StonkzApi = {
 
   async watchToken(c: SimCoin): Promise<void> {
     const net = c.net ?? WALLET.net;
+    const mq = mintQs(c);
     const [candlesRes, tradesRes, holdersRes] = await Promise.all([
-      getJson<ApiCandlesResponse>(`/tokens/${c.sym}/candles?net=${net}&tf=1m&limit=200`).catch(
+      getJson<ApiCandlesResponse>(`/tokens/${c.sym}/candles?net=${net}&tf=1m&limit=200${mq}`).catch(
         () => ({ candles: [] }),
       ),
-      getJson<ApiTradesResponse>(`/tokens/${c.sym}/trades?net=${net}&limit=40`).catch(() => ({
+      getJson<ApiTradesResponse>(`/tokens/${c.sym}/trades?net=${net}&limit=40${mq}`).catch(() => ({
         trades: [],
       })),
-      getJson<ApiHoldersResponse>(`/tokens/${c.sym}/holders?net=${net}&limit=50`).catch(
+      getJson<ApiHoldersResponse>(`/tokens/${c.sym}/holders?net=${net}&limit=50${mq}`).catch(
         (): ApiHoldersResponse => ({ holders: [] }),
       ),
     ]);
@@ -1562,20 +1627,14 @@ export const liveApi: StonkzApi = {
     } catch (err) {
       throw err instanceof Error ? err : new Error('search_failed');
     }
-    // Merge into COINS so route apply() / bySym() can open tokens that were
-    // not on the initial board page.
-    return list.map((t) => {
-      const existing = bySym(t.sym);
-      if (existing) return existing;
-      const coin = toSimCoin(t);
-      COINS.push(coin);
-      return coin;
-    });
+    // Merge into COINS so route apply() / byMint()/bySym() can open tokens that
+    // were not on the initial board page.
+    return list.map((t) => mergeToken(t));
   },
 
   async quote(input: QuoteInput): Promise<Quote> {
     const net = input.coin.net ?? WALLET.net;
-    return fetchQuote(net, input.coin.sym, input.side, input.amountIn);
+    return fetchQuote(net, input.coin.sym, input.side, input.amountIn, input.coin.mint);
   },
   async trade(quote: Quote): Promise<Fill> {
     return liveTrade(quote);

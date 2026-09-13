@@ -124,8 +124,8 @@ export const tokens = pgTable(
     name: text('name').notNull(),
     descr: text('descr').notNull().default(''),
     creator: text('creator').notNull(),
-    /** The launched token's own on-chain address (SPL mint / ERC-20 contract). */
-    mint: text('mint').notNull().default(''),
+    /** The launched token's own on-chain address (SPL mint / ERC-20 contract). Canonical id with `net`. */
+    mint: text('mint').notNull(),
     baseSymbol: text('base_symbol').notNull(),
     baseMint: text('base_mint').notNull(),
     supply: doublePrecision('supply').notNull(),
@@ -173,12 +173,12 @@ export const tokens = pgTable(
     curveGradMcapBase: text('curve_grad_mcap_base').notNull().default('0'),
   },
   (t) => [
-    primaryKey({ columns: [t.net, t.sym] }),
+    primaryKey({ columns: [t.net, t.mint] }),
     index('tokens_lane_idx').on(t.net, t.lane),
     index('tokens_mc_idx').on(t.net, t.mc),
     index('tokens_creator_idx').on(t.net, t.creator),
-    // A decoded chain event names a mint/contract address, never a ticker.
-    index('tokens_mint_idx').on(t.net, t.mint),
+    index('tokens_sym_idx').on(t.net, t.sym),
+    index('tokens_launched_at_idx').on(t.net, t.launchedAt),
   ],
 );
 
@@ -188,9 +188,8 @@ export const tokens = pgTable(
  * `/launch/confirm` reads this back to verify the signed transaction it is
  * handed matches — byte for byte on Solana, `to`+`data` on Robinhood — what
  * this server actually built, rather than trusting client-reported params
- * post-signature. Never a source of truth by itself: the `tokens` primary key
- * `(net, sym)` is what actually rejects a duplicate ticker if two prepares for
- * the same ticker race.
+ * post-signature. Ticker uniqueness is an app-layer 5-minute cooldown; the
+ * tokens PK is `(net, mint)`.
  */
 export const launchIntents = pgTable(
   'launch_intents',
@@ -208,8 +207,10 @@ export const launchIntents = pgTable(
     baseSymbol: text('base_symbol').notNull(),
     baseMint: text('base_mint').notNull(),
     devBuyNative: doublePrecision('dev_buy_native').notNull().default(0),
-    /** Solana: PDA of the ticker, known pre-sign. Robinhood: null — `confirm` reads it from the `TokenCreated` log. */
+    /** Solana: PDA of creator+salt, known pre-sign. Robinhood: null — `confirm` reads it from the `TokenCreated` log. */
     predictedMint: text('predicted_mint'),
+    /** Solana `create_token` salt for mint PDA seeds `[mint, creator, salt]`. */
+    mintSalt: bigint('mint_salt', { mode: 'bigint' }),
     /** Solana: the compiled message (no signatures), base64. Robinhood: the exact calldata. */
     unsignedPayload: text('unsigned_payload').notNull(),
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
@@ -230,6 +231,8 @@ export const trades = pgTable(
     id: bigserial('id', { mode: 'number' }).primaryKey(),
     net: text('net').notNull(),
     sym: text('sym').notNull(),
+    /** Canonical token id when known (post-0009). */
+    mint: text('mint'),
     txSig: text('tx_sig').notNull(),
     logIndex: integer('log_index').notNull().default(0),
     side: text('side').notNull(),
@@ -248,6 +251,7 @@ export const trades = pgTable(
   (t) => [
     uniqueIndex('trades_sig_uq').on(t.net, t.txSig, t.logIndex),
     index('trades_token_time_idx').on(t.net, t.sym, t.blockTime),
+    index('trades_mint_time_idx').on(t.net, t.mint, t.blockTime),
     index('trades_time_idx').on(t.blockTime),
     index('trades_trader_idx').on(t.net, t.trader, t.blockTime),
   ],
@@ -258,6 +262,7 @@ export const candles = pgTable(
   {
     net: text('net').notNull(),
     sym: text('sym').notNull(),
+    mint: text('mint').notNull(),
     /** 1m | 5m | 15m | 1h | 4h | 1d */
     tf: text('tf').notNull(),
     bucketStart: timestamp('bucket_start', { withTimezone: true }).notNull(),
@@ -270,7 +275,7 @@ export const candles = pgTable(
     nativeVolume: doublePrecision('native_volume').notNull().default(0),
     trades: integer('trades').notNull().default(0),
   },
-  (t) => [primaryKey({ columns: [t.net, t.sym, t.tf, t.bucketStart] })],
+  (t) => [primaryKey({ columns: [t.net, t.mint, t.tf, t.bucketStart] })],
 );
 
 export const holdersSnapshot = pgTable(
@@ -278,6 +283,7 @@ export const holdersSnapshot = pgTable(
   {
     net: text('net').notNull(),
     sym: text('sym').notNull(),
+    mint: text('mint').notNull(),
     wallet: text('wallet').notNull(),
     tokenAmount: doublePrecision('token_amount').notNull().default(0),
     /** Cost basis recorded in the native unit, per the plan's step 98. */
@@ -287,8 +293,8 @@ export const holdersSnapshot = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    primaryKey({ columns: [t.net, t.sym, t.wallet] }),
-    index('holders_by_token_idx').on(t.net, t.sym, t.tokenAmount),
+    primaryKey({ columns: [t.net, t.mint, t.wallet] }),
+    index('holders_by_token_idx').on(t.net, t.mint, t.tokenAmount),
     index('holders_by_wallet_idx').on(t.net, t.wallet),
   ],
 );
@@ -363,6 +369,7 @@ export const creatorVaults = pgTable(
   {
     net: text('net').notNull(),
     sym: text('sym').notNull(),
+    mint: text('mint').notNull(),
     creator: text('creator').notNull(),
     /** The 70% bucket, minus whatever the memecoin stakers have peeled off. */
     unclaimedNative: doublePrecision('unclaimed_native').notNull().default(0),
@@ -372,7 +379,7 @@ export const creatorVaults = pgTable(
     claimedNative: doublePrecision('claimed_native').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.net, t.sym] }), index('creator_vaults_creator_idx').on(t.net, t.creator)],
+  (t) => [primaryKey({ columns: [t.net, t.mint] }), index('creator_vaults_creator_idx').on(t.net, t.creator)],
 );
 
 export const stakePositions = pgTable(
@@ -380,6 +387,7 @@ export const stakePositions = pgTable(
   {
     net: text('net').notNull(),
     sym: text('sym').notNull(),
+    mint: text('mint').notNull(),
     wallet: text('wallet').notNull(),
     amount: doublePrecision('amount').notNull().default(0),
     lockDays: integer('lock_days').notNull().default(0),
@@ -389,7 +397,7 @@ export const stakePositions = pgTable(
     rewardTokens: doublePrecision('reward_tokens').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.net, t.sym, t.wallet] }), index('stake_by_wallet_idx').on(t.net, t.wallet)],
+  (t) => [primaryKey({ columns: [t.net, t.mint, t.wallet] }), index('stake_by_wallet_idx').on(t.net, t.wallet)],
 );
 
 /**

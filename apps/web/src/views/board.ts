@@ -32,6 +32,7 @@ function card(c: SimCoin): HTMLElement {
   const b = document.createElement('div');
   b.className = 'coin';
   b.dataset['sym'] = c.sym;
+  if (c.mint) b.dataset['mint'] = c.mint;
   b.setAttribute('role', 'button');
   b.tabIndex = 0;
   render(
@@ -54,12 +55,12 @@ function card(c: SimCoin): HTMLElement {
   b.addEventListener('click', (e) => {
     // The creator link is a nested control; let the board delegate handle it.
     if ((e.target as Element | null)?.closest('.addrlink')) return;
-    navigate({ view: 'token', sym: c.sym });
+    navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
   });
   b.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      navigate({ view: 'token', sym: c.sym });
+      navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
     }
   });
   c.el = b;
@@ -207,6 +208,8 @@ export function king(): void {
     const first = kothId === null;
     kothId = best.id;
     koth.dataset['sym'] = best.sym;
+    if (best.mint) koth.dataset['mint'] = best.mint;
+    else delete koth.dataset['mint'];
     render(
       koth,
       html`<span class="crown">KING OF THE HILL</span
@@ -284,7 +287,8 @@ export function initBoard(): void {
   const openKing = (e: Event): void => {
     if ((e.target as Element | null)?.closest('.addrlink')) return;
     const sym = koth.dataset['sym'];
-    if (sym) navigate({ view: 'token', sym });
+    const mint = koth.dataset['mint'];
+    if (sym) navigate({ view: 'token', sym, ...(mint ? { mint } : {}) });
   };
   koth.addEventListener('click', openKing);
   koth.addEventListener('keydown', (e) => {

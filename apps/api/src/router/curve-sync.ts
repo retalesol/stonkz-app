@@ -212,13 +212,15 @@ async function persistReserves<T extends CurveSyncRow>(
     if (patch.lane) (next as CurveSyncRow).lane = patch.lane;
   }
 
-  try {
-    await db
-      .update(tokens)
-      .set(patch)
-      .where(and(eq(tokens.net, row.net), eq(tokens.sym, row.sym)));
-  } catch {
-    // Quote with live numbers even if persistence blips.
+  if (row.mint) {
+    try {
+      await db
+        .update(tokens)
+        .set(patch)
+        .where(and(eq(tokens.net, row.net), eq(tokens.mint, row.mint)));
+    } catch {
+      // Quote with live numbers even if persistence blips.
+    }
   }
   return next;
 }

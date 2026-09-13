@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Db } from '../db/client.js';
 import {
   COINS_REAL_BASE_WORD,
   COINS_REAL_TOKEN_WORD,
@@ -38,6 +39,10 @@ describe('syncRhCurveReserves', () => {
     net: 'RH' as const,
     sym: 'COPIUM',
     mint: '0x821742F0169c261aa4B7d6602B6c40B1615aBC0e',
+    baseMint: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    baseSymbol: 'USDC',
+    name: 'Copium',
+    graduatedAt: null,
     tokenDecimals: 18,
     baseDecimals: 6,
     basePriceUsd1e6: '1000000',
@@ -53,7 +58,8 @@ describe('syncRhCurveReserves', () => {
   it('updates the in-memory row and persists when chain reserves differ', async () => {
     const update = vi.fn(async () => undefined);
     const set = vi.fn(() => ({ where: update }));
-    const db = { update: vi.fn(() => ({ set })) } as never;
+    const dbMock = { update: vi.fn(() => ({ set })) };
+    const db = dbMock as unknown as Db;
     const eth = {
       ethCall: vi.fn(async () => fakeCoinsReturn(16_067_767n, 100n)),
     };
@@ -68,14 +74,15 @@ describe('syncRhCurveReserves', () => {
     expect(next.curveRealBase).toBe('16067767');
     expect(next.curveRealToken).toBe('100');
     expect(eth.ethCall).toHaveBeenCalledOnce();
-    expect(db.update).toHaveBeenCalledOnce();
+    expect(dbMock.update).toHaveBeenCalledOnce();
   });
 
   it('does not persist when reserves already match', async () => {
     const eth = {
       ethCall: vi.fn(async () => fakeCoinsReturn(0n, 800_000_000_000_000_000_000_000_000n)),
     };
-    const db = { update: vi.fn() } as never;
+    const dbMock = { update: vi.fn() };
+    const db = dbMock as unknown as Db;
     const next = await syncRhCurveReserves({
       db,
       eth,
@@ -83,7 +90,7 @@ describe('syncRhCurveReserves', () => {
       row: { ...baseRow, curveRealBase: '0', curveRealToken: '800000000000000000000000000' },
     });
     expect(next.curveRealBase).toBe('0');
-    expect(db.update).not.toHaveBeenCalled();
+    expect(dbMock.update).not.toHaveBeenCalled();
   });
 });
 

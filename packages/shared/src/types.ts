@@ -235,6 +235,8 @@ export interface QuoteHop {
 /** A priced route. `amountIn` is always the native unit. */
 export interface Quote {
   sym: string;
+  /** Canonical mint when known — preferred over `sym` for duplicate tickers. */
+  mint?: string;
   net: Net;
   side: 'buy' | 'sell';
   /** Always SOL or ETH. */

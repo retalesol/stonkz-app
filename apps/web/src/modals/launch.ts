@@ -7,7 +7,6 @@ import {
   SUPPLIES,
   type SupplyOption,
   curveMc,
-  isTickerTaken,
   normalizeTicker,
   num,
   px,
@@ -24,7 +23,6 @@ import { toast } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { DOT, MID, fmtSupply } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
-import { tickers } from '../state/coins.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, netOf } from '../state/wallet.js';
 import { addChat } from '../views/chat.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
@@ -265,10 +263,6 @@ function renderNew(): void {
         toast('PICK A TICKER FIRST');
         return;
       }
-      if (isTickerTaken(sym, tickers())) {
-        toast('TICKER ' + sym + ' ALREADY EXISTS ' + DOT + ' PICK ANOTHER');
-        return;
-      }
       NEW.tick = sym;
     }
     if (NEW.step < 2) {
@@ -335,12 +329,6 @@ async function doLaunch(): Promise<void> {
     renderNew();
     return;
   }
-  if (isTickerTaken(sym, tickers())) {
-    toast('TICKER ' + sym + ' ALREADY EXISTS ' + DOT + ' PICK ANOTHER');
-    NEW.step = 0;
-    renderNew();
-    return;
-  }
   const buy = Math.max(0, NEW.buy || 0);
   let xh = NEW.x.trim();
   if (xh && xh[0] !== '@') xh = '@' + xh.replace(/^@+/, '');
@@ -371,8 +359,13 @@ async function doLaunch(): Promise<void> {
     if (err instanceof SignerCancelledError) toast('LAUNCH CANCELLED');
     else if (isRejection(err)) toast('LAUNCH REJECTED IN WALLET');
     else if (err instanceof LiveApiError) {
-      const msg = (err.message || err.code).toUpperCase();
-      toast(msg.length > 120 ? msg.slice(0, 117) + '…' : msg, 'red');
+      if (err.code === 'name_or_ticker_cooldown') {
+        const retrySec = Math.max(1, Math.ceil((err.retryAfterMs ?? 300_000) / 1000));
+        toast(`NAME OR TICKER ON COOLDOWN ${DOT} TRY AGAIN IN ${retrySec}S`, 'red');
+      } else {
+        const msg = (err.message || err.code).toUpperCase();
+        toast(msg.length > 120 ? msg.slice(0, 117) + '…' : msg, 'red');
+      }
     } else toast(describeWalletError(err), 'red');
     return;
   }
@@ -389,7 +382,7 @@ async function doLaunch(): Promise<void> {
           (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
   );
   addChat('GLOBAL', { sys: true, who: '', text: 'NEW MINT ' + DOT + ' $' + sym + ' / ' + NEW.base + ' ' + DOT + ' DEPLOYED BY YOU' }, true);
-  navigate({ view: 'token', sym: c.sym });
+  navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
 }
 
 export function openLaunch(opener?: Element | null): void {

@@ -132,14 +132,23 @@ export const COINS: SimCoin[] = RAW.map((a, i) => {
   } satisfies SimCoin;
 });
 
-export function bySym(s: string): SimCoin | null {
-  for (const c of COINS) if (c.sym === s) return c;
+export function byMint(m: string): SimCoin | null {
+  const key = m.trim();
+  if (!key) return null;
+  for (const c of COINS) if (c.mint && c.mint === key) return c;
   return null;
 }
 
-/** All tickers currently taken, for the launch stepper's collision check. */
+/** Newest coin with this ticker (last match — live merges append/update in place). */
+export function bySym(s: string): SimCoin | null {
+  let best: SimCoin | null = null;
+  for (const c of COINS) if (c.sym === s) best = c;
+  return best;
+}
+
+/** All tickers currently on the board — soft hint only; not a uniqueness gate. */
 export function tickers(): string[] {
-  return COINS.map((c) => c.sym);
+  return [...new Set(COINS.map((c) => c.sym))];
 }
 
 export function myCoins(): SimCoin[] {

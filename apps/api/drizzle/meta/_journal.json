@@ -64,6 +64,13 @@
       "when": 1788949200000,
       "tag": "0008_token_image",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789035600000,
+      "tag": "0009_token_mint_pk",
+      "breakpoints": true
     }
   ]
 }

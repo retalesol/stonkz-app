@@ -62,12 +62,16 @@ describe('derivePdas', () => {
 });
 
 describe('deriveMintPda', () => {
-  it('is seeded on the ticker, so the same ticker always predicts the same mint', () => {
+  it('is seeded on creator + salt, so the same ticker can mint twice', () => {
     const programId = new PublicKey('FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg');
-    const [a] = deriveMintPda(programId, 'WOJAK');
-    const [b] = deriveMintPda(programId, 'WOJAK');
-    const [c] = deriveMintPda(programId, 'PEPE');
+    const creator = new PublicKey('So11111111111111111111111111111111111111112');
+    const other = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    const [a] = deriveMintPda(programId, creator, 1n);
+    const [b] = deriveMintPda(programId, creator, 1n);
+    const [c] = deriveMintPda(programId, creator, 2n);
+    const [d] = deriveMintPda(programId, other, 1n);
     expect(a.toBase58()).toBe(b.toBase58());
     expect(a.toBase58()).not.toBe(c.toBase58());
+    expect(a.toBase58()).not.toBe(d.toBase58());
   });
 });

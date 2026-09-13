@@ -87,9 +87,18 @@ export function derivePdas(programId: PublicKey, mint: PublicKey, baseMint: Publ
   };
 }
 
-/** `create_token`'s mint PDA is seeded on the ticker, not on itself. */
-export function deriveMintPda(programId: PublicKey, ticker: string): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([Buffer.from(LAUNCHPAD_SEEDS.mint), Buffer.from(ticker)], programId);
+/** `create_token`'s mint PDA — seeds `[b"mint", creator, salt_le]`. */
+export function deriveMintPda(
+  programId: PublicKey,
+  creator: PublicKey,
+  salt: bigint | number,
+): [PublicKey, number] {
+  const saltBuf = Buffer.alloc(8);
+  saltBuf.writeBigUInt64LE(typeof salt === 'bigint' ? salt : BigInt(salt));
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(LAUNCHPAD_SEEDS.mint), creator.toBuffer(), saltBuf],
+    programId,
+  );
 }
 
 /** Per-wallet stake position PDA — seeds `[b"stake", mint, owner]`. */

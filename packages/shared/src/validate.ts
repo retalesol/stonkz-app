@@ -24,7 +24,7 @@ export function isValidTicker(input: string | null | undefined): boolean {
   return normalizeTicker(input).length > 0;
 }
 
-/** Uniqueness is per network — the same ticker may exist on SOL and RH. */
+/** Soft board hint only — tickers are reusable after a 5-minute cooldown. */
 export function isTickerTaken(ticker: string, taken: Iterable<string>): boolean {
   const sym = normalizeTicker(ticker);
   if (!sym) return false;
