@@ -1,0 +1,9 @@
+{
+  "cluster": "devnet",
+  "programId": "FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg",
+  "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
+  "lastUpgradedSlot": 497713076,
+  "upgradeSignature": "44MvhVSb34RMExp5RFk7vSRwex6cPzedw2sQ7CYTfWdCvySyZ1rCJChWtNhjvBMueG9EugxovHBfCjZ66EuwBT1i",
+  "upgradedAt": "2026-09-13",
+  "note": "Mint PDA seeds are creator+salt; duplicate tickers allowed. Program ID unchanged."
+}

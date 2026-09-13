@@ -53,6 +53,12 @@
     "TestnetUsdg is a mintable stand-in: real USDG is owner-gated; COPIUM retargeted via LaunchpadRetargetPatch then impl restored.",
     "Aggregator buys use buyViaV3/sellViaV3 via SwapRouter02 (UR V3 CREATE2 pool address is wrong on 46630).",
     "Pin RH_V3_FEE_TIER_OVERRIDES=USDG:3000 and RH_V3_QUOTER_ADDRESS for executable ETH\u2194USDG hops.",
-    "BASE_MINT_OVERRIDES_RH maps USDG to TestnetUsdg for COPIUM staging (real USDG not faucetable)."
-  ]
+    "BASE_MINT_OVERRIDES_RH maps USDG to TestnetUsdg for COPIUM staging (real USDG not faucetable).",
+    "2026-09-13: upgraded StonkzLaunchpad impl to 0xe729089137ee7Af2495F3C55cf1538121fBea68d (duplicate ticker/name allowed on-chain)."
+  ],
+  "implementation": {
+    "StonkzLaunchpad": "0xe729089137ee7Af2495F3C55cf1538121fBea68d",
+    "upgradedAt": "2026-09-13",
+    "note": "UUPS upgrade: duplicate tickers allowed (tokenByTicker is latest pointer only); mint identity is address."
+  }
 }

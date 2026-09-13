@@ -163,11 +163,12 @@ reusable after a **5-minute per-net cooldown** from the most recent matching
 launch (`POST /launch/prepare` → `409 name_or_ticker_cooldown`). Deep links
 `/t/SYM` without `?mint=` open the **newest** instance.
 
-**Redeploy required for on-chain reuse:** Solana mint PDAs now seed on
+**On-chain reuse (staging, 2026-09-13):** Solana mint PDAs seed on
 `[mint, creator, salt_u64]` (not ticker); RH launchpad no longer reverts on
-`"ticker taken"`. Until the Solana program and RH launchpad are redeployed /
-upgraded on the target cluster, chain create will still reject or collide
-with the old rules even though the API/DB allow duplicates.
+`"ticker taken"`. Devnet program
+`FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg` and RH testnet proxy
+`0x2588E500B1e5fCF18253F44b6f2607BF2B14161C` are upgraded in place — addresses
+unchanged. See `docs/deployment.md` and `programs/evm/deployments/46630.json`.
 
 ---
 

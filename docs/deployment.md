@@ -41,11 +41,13 @@ sharing a signer would undo that off-chain.
 The two withdraw authorities are the only keys that can move settled revenue.
 `programs/SPEC.md` §4 is explicit that neither may be a server hot key.
 
-**Redeploy note (duplicate tickers):** After the mint-PDA salt / `"ticker taken"`
-removal land, redeploy or UUPS-upgrade the Solana launchpad program and the RH
-testnet `StonkzLaunchpad`, then refresh `programs/evm/deployments/46630.json`
-and API env. Until then, API/DB allow reused tickers but on-chain create still
-follows the old seed / uniqueness rules. See `docs/real-vs-simulated.md`
+**Redeploy note (duplicate tickers):** Staging (2026-09-13) — RH testnet
+`StonkzLaunchpad` UUPS-upgraded in place (proxy
+`0x2588E500B1e5fCF18253F44b6f2607BF2B14161C`, impl
+`0xe729089137ee7Af2495F3C55cf1538121fBea68d`); Solana launchpad
+`FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg` upgraded on devnet (slot
+497713076). Proxy / program IDs unchanged — no Railway env refresh required.
+See `programs/evm/deployments/46630.json` and `docs/real-vs-simulated.md`
 (token identity).
 
 ---
