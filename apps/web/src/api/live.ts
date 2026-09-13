@@ -1011,11 +1011,9 @@ function solPayload(prep: { transaction: string; lastValidBlockHeight: number })
  *
  * Both chains' single-call atomic paths — Solana's `transaction`, Robinhood
  * `StonkzRouter`'s `to`/`data`/`value` — are one signature, inline, no
- * modal, the same shape as any other wallet prompt. Robinhood's
- * `atomic: false` `EvmStep[]` fallback is never collapsed into that:
- * `modals/steps.ts` opens, shows `plan.warning` verbatim, and makes the
- * trader click through every step in order, each one now genuinely
- * broadcast and confirmed before the next unlocks.
+ * modal. The API refuses non-atomic RH prepares (`rh_router_required`); if a
+ * stale client still receives `atomic: false`, fail here instead of walking
+ * a multi-signature step plan that can strand intermediate assets.
  *
  * A first-time Robinhood *sell* is the one case with more than one signature
  * and still `atomic: true` — the on-chain swap is genuinely one transaction,
@@ -1037,12 +1035,11 @@ async function signTradePlan(
   body: Record<string, unknown>,
 ): Promise<{ quote: Quote; signature: string | null }> {
   if (!prep.atomic) {
-    const steps: UiStep[] = prep.steps.map((s) => ({
-      description: s.description,
-      payload: () => evmPayload(s),
-    }));
-    await openSteps(net, title, steps, prep.warning);
-    return { quote: prep.quote, signature: null };
+    throw new LiveApiError(
+      'rh_router_required',
+      prep.warning ?? 'atomic StonkzRouter required; non-atomic RH trades are disabled',
+      422,
+    );
   }
   if (prep.net === 'RH' && prep.permitTypedData) {
     const permitTypedData = prep.permitTypedData;

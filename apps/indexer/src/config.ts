@@ -100,9 +100,17 @@ function bool(src: ConfigSource, key: string, fallback: boolean): boolean {
 export const DEFAULT_LOCK_KEY = 0x53_74_6f_6e_6b_7a; // "Stonkz"
 
 export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env): IndexerConfig {
-  const mode = str(src, 'INDEXER_SOURCE', 'fixtures');
+  const mode = str(src, 'INDEXER_SOURCE', 'chain');
   if (mode !== 'fixtures' && mode !== 'chain') {
     throw new Error(`INDEXER_SOURCE must be "fixtures" or "chain", got ${JSON.stringify(mode)}`);
+  }
+  if (mode === 'fixtures') {
+    const allowFixtures = bool(src, 'INDEXER_ALLOW_FIXTURES', env.nodeEnv !== 'production');
+    if (!allowFixtures) {
+      throw new Error(
+        'INDEXER_SOURCE=fixtures is disabled in production; set INDEXER_SOURCE=chain (or INDEXER_ALLOW_FIXTURES=1 for explicit test/replay only)',
+      );
+    }
   }
 
   const chainNetsRaw = str(src, 'INDEXER_CHAIN_NETS', 'SOL,RH')

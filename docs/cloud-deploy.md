@@ -11,8 +11,9 @@ The topology `apps/api/README.md` documented but had not executed.
 | Static web | Vercel project **stonkz-app** | Vite build of `apps/web` |
 
 This is a **staging** stack. `STONKZ_STAGING=1` lets the API boot in
-`NODE_ENV=production` without a deployed launchpad or a paid RH RPC.
-`INDEXER_SOURCE=fixtures`. Do not market it as live chain data.
+`NODE_ENV=production` without a paid RH RPC / launchpad (router is still
+required). `INDEXER_SOURCE=chain` with start block/slot set. Board/tape are
+chain-backed — do not market staging as mainnet.
 
 Live URLs (first deploy, 2026-09-08):
 
@@ -22,11 +23,8 @@ Live URLs (first deploy, 2026-09-08):
 | API | https://stonkz-backend-production.up.railway.app |
 | Indexer health | https://stonkz-indexer-production.up.railway.app/health |
 
-The API `/health` reports `chains.*.status: degraded` on purpose: fixture
-cursors sit at the scenario heads while `SOLANA_RPC_URL` / `RH_RPC_URL`
-still point at public mainnet tips. The indexer's own `/health` reports
-`mode: "fixtures"`, `behind: 0` against the confirmed (fixture) head, and
-`behindRaw` as the live-tip gap. That is honest, not a broken deploy.
+The indexer's `/health` reports `mode: "chain"` with per-net cursors against
+RH testnet + Solana devnet tips.
 
 ## Neon
 

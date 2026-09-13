@@ -16,8 +16,8 @@ user-facing paths.
 - [ ] **Real wallet connection ships, practice mode cannot.** `VITE_PRACTICE_WALLET` off in the production build, verified by inspecting a production bundle — not just the env file. A production build with the practice keypair reachable is a launch-stopping defect.
 - [ ] **Real broadcast, both chains.** A funded wallet completes buy, sell, launch, fee claim, and tip on Solana and on Robinhood Chain, with real confirmations. No simulated confirm anywhere in the path.
 - [ ] **Programs deployed and initialized on mainnet**, per [`deployment.md`](deployment.md), with all five authority roles held by distinct keys and none of them in the API's environment.
-- [ ] **Indexer running in chain mode** (`INDEXER_SOURCE=chain`), resuming from its persisted cursor, with reorg handling and confirmation-depth buffering active. No fixture data reachable in production.
-- [ ] **`RH_ROUTER_ADDRESS` set**, so RH trades take the atomic `StonkzRouter` path. If it is unset, the non-atomic fallback can strand a user mid-route holding an intermediate asset.
+- [ ] **Indexer running in chain mode** (`INDEXER_SOURCE=chain`, the default), resuming from its persisted cursor, with reorg handling and confirmation-depth buffering active. Fixture mode refused in production without `INDEXER_ALLOW_FIXTURES=1`.
+- [ ] **`RH_ROUTER_ADDRESS` set** (production boot requirement). Missing router or unpinned aggregator fee tiers return `rh_router_required` — there is no non-atomic fallback.
 - [ ] **`RH_V3_FEE_TIER_OVERRIDES` pinned by hand** for every supported aggregator-hop base asset, each verified on the explorer. Never guessed — roughly 1,900 pools on this chain carry 88-100% LP fees.
 - [ ] **External audit complete** and findings closed or accepted in writing. See [`audit-package.md`](audit-package.md).
 

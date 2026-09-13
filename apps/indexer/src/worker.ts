@@ -22,15 +22,14 @@ import type { Net } from '@stonkz/shared';
  * `INDEXER_SOURCE` picks the event source and, with it, how much of the
  * durability machinery is switched on:
  *
- * - `fixtures` (the default) replays `canonicalScenario()`. There is no chain,
- *   so there are no block hashes to compare and nothing a reorg could
- *   invalidate; reorg detection and rollback stay off, and the cursors are
- *   rewound on boot so a restart replays the scenario instead of sitting idle.
- * - `chain` runs the real Solana and Robinhood Chain sources with the
- *   confirmation buffer, reorg rollback and dead-lettering all live. The
+ * - `chain` (the default) runs the real Solana and Robinhood Chain sources with
+ *   the confirmation buffer, reorg rollback and dead-lettering all live. The
  *   cursors are **never** rewound here — that was the boot bug in
  *   `docs/indexer-runbooks.md` §3, where a restart re-ingested from position 0
  *   and re-walked every slot the programs had ever touched.
+ * - `fixtures` replays `canonicalScenario()` for local tests/replay only. It
+ *   is refused in production unless `INDEXER_ALLOW_FIXTURES=1`. There is no
+ *   chain, so reorg detection stays off and cursors rewind on boot.
  *
  * Which mode is running is stated in the logs and on `/health`, because an
  * operator must never have to guess whether they are looking at chain data.

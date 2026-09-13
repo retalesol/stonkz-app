@@ -96,3 +96,18 @@ export class BaseMintNotAllowedError extends RouterError {
     this.name = 'BaseMintNotAllowedError';
   }
 }
+
+/**
+ * RH trades are atomic-only. Missing `RH_ROUTER_ADDRESS` or a pinned
+ * `RH_V3_FEE_TIER_OVERRIDES` entry used to fall back to a multi-signature
+ * `EvmStep[]` plan that can strand intermediate assets — that path is gone.
+ */
+export class RhAtomicRouterRequiredError extends RouterError {
+  readonly code = 'rh_router_required';
+  readonly httpStatus = 422;
+
+  constructor(detail: string) {
+    super(detail);
+    this.name = 'RhAtomicRouterRequiredError';
+  }
+}

@@ -179,8 +179,9 @@ forge script script/SmokeGraduate.s.sol:SmokeGraduate \
 
 Set Railway `RH_CHAIN_ID=46630`, `RH_RPC_URL`, `RH_LAUNCHPAD_ADDRESS`,
 `RH_ROUTER_ADDRESS`, `BASE_MINT_OVERRIDES_RH`, and
-`INDEXER_RH_START_BLOCK` (deployment block). Keep `INDEXER_SOURCE=fixtures`
-until Solana has an `INDEXER_SOL_START_SLOT` — chain mode requires both nets.
+`INDEXER_RH_START_BLOCK` (deployment block). Set `INDEXER_SOURCE=chain` with
+`INDEXER_SOL_START_SLOT` once Solana is deployed — production refuses fixture
+mode without `INDEXER_ALLOW_FIXTURES=1`.
 
 EVM launchpad / push-oracle stay **UUPS-upgradeable through public beta**
 (`upgradeToAndCall`, admin-gated). `StonkzRouter` stays immutable by design —
@@ -248,11 +249,10 @@ RH_V3_FEE_TIER_OVERRIDES=<see below>
 ```
 
 `apps/api/src/env.ts` refuses to boot in production with
-`RH_LAUNCHPAD_ADDRESS` unset. `RH_ROUTER_ADDRESS` is *allowed* to stay at the
-zero address — RH trading then degrades to the documented non-atomic
-`EvmStep[]` sequence rather than failing. **That degradation is not acceptable
-for real funds**: a trader who stops signing partway is left holding an
-intermediate asset. Set it.
+`RH_LAUNCHPAD_ADDRESS` unset (unless `STONKZ_STAGING=1`) and always refuses a
+zero `RH_ROUTER_ADDRESS`. RH trading is atomic-only: missing router or an
+unpinned aggregator fee tier returns `rh_router_required` instead of a
+multi-signature `EvmStep[]` plan.
 
 ### 3.1 `RH_V3_FEE_TIER_OVERRIDES` — pin these by hand, never guess
 
@@ -270,7 +270,7 @@ you intend to support:
 2. Verify its fee tier and that its liquidity is real, on the explorer.
 3. Add exactly that tier to the override map.
 
-An unpinned base asset falls back to the non-atomic path by design. Leaving it
+An unpinned base asset fails closed (`rh_router_required`). Leaving it
 unpinned is safer than guessing.
 
 ---

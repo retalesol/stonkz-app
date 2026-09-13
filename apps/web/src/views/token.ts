@@ -1031,6 +1031,8 @@ async function submitTrade(c: SimCoin): Promise<void> {
         toast('ORDER BLOCKED — FIXTURE TOKEN. OPEN A LIVE-CURVE TOKEN TO TRADE.', 'red');
       } else if (code === 'graduated_not_supported' || msg.includes('graduated_not_supported')) {
         toast('GRADUATED — CURVE PREPARE DOES NOT SERVE DEX TRADES YET.', 'red');
+      } else if (code === 'rh_router_required' || msg.includes('rh_router_required')) {
+        toast('ATOMIC ROUTER REQUIRED — PIN RH_ROUTER / V3 FEE TIER. NON-ATOMIC TRADES DISABLED.', 'red');
       } else {
         toast(describeWalletError(err), 'red');
       }

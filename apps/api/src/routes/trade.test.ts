@@ -174,7 +174,7 @@ describe('POST /trade/prepare', () => {
     expect(quote.hops[1]?.feeBps).toBe(250);
   });
 
-  it('returns a non-atomic RH step plan through Uniswap, with the atomicity warning attached', async () => {
+  it('fails closed when RH has no StonkzRouter (non-atomic EvmStep[] is disabled)', async () => {
     await seedTradeableToken({
       net: 'RH',
       sym: 'RHVIA',
@@ -190,13 +190,10 @@ describe('POST /trade/prepare', () => {
     h.rpcs.RH.setBalance(address, 5);
 
     const { status, body } = await tradePrepare(token, { sym: 'RHVIA', side: 'buy', amount: 0.5 });
-    expect(status).toBe(200);
-    expect(body.atomic).toBe(false);
-    expect(typeof body.warning).toBe('string');
-    expect(String(body.warning)).toMatch(/StonkzRouter/);
-    const steps = body.steps ?? [];
-    expect(steps.length).toBeGreaterThanOrEqual(3);
-    expect(steps[0]?.description).toMatch(/Uniswap/);
+    expect(status).toBe(422);
+    expect(body.error).toBe('rh_router_required');
+    expect(body.atomic).toBeUndefined();
+    expect(body.steps).toBeUndefined();
   });
 
   it('rejects a buy when the wallet cannot cover hop 1 (insufficient native)', async () => {
@@ -525,7 +522,7 @@ describe('POST /trade/prepare', () => {
       expect(body.note).toBeUndefined();
     });
 
-    it('falls back to the non-atomic EvmStep[] plan when the aggregator-hop base asset has no pinned fee tier', async () => {
+    it('fails closed when the aggregator-hop base asset has no pinned fee tier', async () => {
       const UNPINNED_MINT = getAddress(`0x${'dca0dca0'.padStart(40, '0')}`);
       await seedOn(hr, {
         net: 'RH',
@@ -542,10 +539,9 @@ describe('POST /trade/prepare', () => {
       hr.rpcs.RH.setBalance(address, 5);
 
       const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHNOPIN', side: 'buy', amount: 0.5 });
-      expect(status).toBe(200);
-      expect(body.atomic).toBe(false);
-      expect(Array.isArray(body.steps)).toBe(true);
-      expect(String(body.warning)).toMatch(/StonkzRouter/);
+      expect(status).toBe(422);
+      expect(body.error).toBe('rh_router_required');
+      expect(body.steps).toBeUndefined();
     });
   });
 

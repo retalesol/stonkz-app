@@ -95,12 +95,9 @@ export interface ApiEnv {
 
   /**
    * `programs/evm/src/StonkzRouter.sol`'s deployment address. Zero address
-   * (the default) means "not deployed here" — `router/evm-router.ts`'s
-   * `canUseStonkzRouter` treats that as a hard "fall back to the non-atomic
-   * `EvmStep[]` plan", the same loud-placeholder pattern `rhLaunchpadAddress`
-   * already uses. Unlike the launchpad, this one is allowed to stay zero in
-   * production: RH trading degrades to the documented non-atomic sequence
-   * rather than refusing to boot, which is a real (if worse) product.
+   * (the default) means "not deployed here". Production refuses to boot
+   * without it — RH trades are atomic-only; the old multi-step `EvmStep[]`
+   * fallback is gone (`docs/rh-trade-atomicity-gap.md`).
    */
   rhRouterAddress: string;
   /**
@@ -369,6 +366,13 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     if (env.jwtSecret === DEV_JWT_SECRET) throw new Error('JWT_SECRET must be set in production');
     if (env.crateHmacSecret === DEV_CRATE_SECRET) throw new Error('CRATE_HMAC_SECRET must be set in production');
     if (env.jwtSecret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
+    // Atomic RH path is mandatory even on STONKZ_STAGING — never boot a
+    // production image that would fall through to multi-signature EvmStep[].
+    if (env.rhRouterAddress === ZERO_EVM_ADDRESS) {
+      throw new Error(
+        'RH_ROUTER_ADDRESS must be set in production; non-atomic RH trades are disabled',
+      );
+    }
     if (!staging) {
       // Robinhood documents the public endpoint as rate-limited and not for
       // production use, and a wallet render reads a balance.

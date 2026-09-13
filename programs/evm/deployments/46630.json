@@ -42,7 +42,11 @@
     "apiPrepareAtomic": true,
     "buyWithEthEthCallOk": true,
     "buyViaV3Router": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883",
-    "copiumBuyViaV3EthCallOk": true
+    "copiumBuyViaV3EthCallOk": true,
+    "RHLIVE_DUP": "0x6e0f626e7714A21A57DdE8913444856dA14cAe22",
+    "RHLIVE_DUP_createTx": "0xfd4ac53c24e33b80ed91acdbbf4cf6043b0853b70b8fa3b2ce6edfbf6728ac96",
+    "RHLIVE_DUP_note": "2026-09-13 live smoke: second RHLIVE after UUPS upgrade; tokenByTicker points here; original RHLIVE still live",
+    "pushPricesTx": "0xbc72573283fa17f27555969c1757d6a27331973fb616b1703170b410c0df8357"
   },
   "notes": [
     "Launchpad and PushPriceSource are UUPS proxies (admin can upgradeToAndCall).",

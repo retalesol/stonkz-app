@@ -51,12 +51,10 @@ export function tokenRoutes(): Hono<AppEnv> {
     const filters: SQL[] = [];
     if (net) filters.push(eq(tokens.net, net));
     if (lane) filters.push(eq(tokens.lane, lane));
-    // Hide fixture placeholders (empty mint / no curve) from the live board.
-    // Operators can still look them up by exact symbol via /tokens/:sym.
-    const includeFixtures = c.req.query('fixtures') === '1';
-    if (!includeFixtures) {
-      filters.push(sql`${tokens.mint} <> ''`);
-    }
+    // Hide fixture placeholders (empty mint / legacy: synthetic ids) from the
+    // live board. Chain-mode ingest always has a real mint address.
+    filters.push(sql`${tokens.mint} <> ''`);
+    filters.push(sql`${tokens.mint} not like 'legacy:%'`);
     if (q) {
       const like = `${q}%`;
       const contains = `%${q}%`;

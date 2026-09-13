@@ -337,34 +337,41 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     });
   }
 
-  /** The `docs/rh-trade-atomicity-gap.md` fallback — no `StonkzRouter` for this base asset, an ordered `EvmStep[]`. */
-  async function mockTradePrepareSteps(
-    page: Page,
-    quote: MockQuote,
-    descriptions: string[],
-    warning: string,
-  ): Promise<void> {
+  /** API fail-closed when StonkzRouter cannot serve this base — no EvmStep[] walk. */
+  async function mockTradePrepareRouterRequired(page: Page): Promise<void> {
     await page.route('**/trade/prepare', async (route) => {
       if (route.request().method() !== 'POST') return route.fallback();
       await route.fulfill({
-        status: 200,
+        status: 422,
         contentType: 'application/json',
         body: JSON.stringify({
-          net: 'RH',
-          atomic: false,
-          steps: descriptions.map((description) => ({
-            to: '0x2222222222222222222222222222222222222222',
-            data: '0x',
-            value: '0',
-            description,
-          })),
-          warning,
-          quote,
-          expiresAt: Date.now() + 30_000,
+          error: 'rh_router_required',
+          detail:
+            'no atomic StonkzRouter route for base USDG; pin RH_V3_FEE_TIER_OVERRIDES for this asset',
         }),
       });
     });
   }
+
+  test('Robinhood prepare without an atomic router route fails closed (no multi-signature step walk)', async ({
+    page,
+  }) => {
+    const sym = 'COPIUM';
+    await mockTradePrepareRouterRequired(page);
+
+    await connectWithMockWallet(page, 'RH');
+    await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
+    const card = page.locator(`.coin[data-sym="${sym}"]`).first();
+    await expect(card).toBeVisible();
+    await card.click();
+    await expect(page.locator('#tokenView')).toBeVisible();
+
+    await page.click('#t-go');
+    await expect(page.locator('#txScrim')).toBeHidden({ timeout: 5_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /ATOMIC ROUTER REQUIRED|NON-ATOMIC|RH_ROUTER|FEE TIER/i })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
 
   test('SOL buy — native-paired quote is a single curve hop, and the fill only renders after the signed prepare response resolves', async ({
     page,

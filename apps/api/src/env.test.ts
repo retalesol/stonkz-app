@@ -15,6 +15,29 @@ describe('readEnv production gates', () => {
     ).toThrow(/CRATE_HMAC_SECRET/);
   });
 
+  it('requires RH_ROUTER_ADDRESS in production (including STONKZ_STAGING)', () => {
+    expect(() =>
+      readEnv({
+        NODE_ENV: 'production',
+        STONKZ_STAGING: '1',
+        ...secrets,
+        RH_RPC_URL: RH_PUBLIC_RPC_URL,
+        RH_LAUNCHPAD_ADDRESS: ZERO_EVM_ADDRESS,
+      }),
+    ).toThrow(/RH_ROUTER_ADDRESS/);
+
+    const env = readEnv({
+      NODE_ENV: 'production',
+      STONKZ_STAGING: '1',
+      ...secrets,
+      RH_RPC_URL: RH_PUBLIC_RPC_URL,
+      RH_LAUNCHPAD_ADDRESS: ZERO_EVM_ADDRESS,
+      RH_ROUTER_ADDRESS: '0x00000000000000000000000000000000000000aa',
+    });
+    expect(env.rhLaunchpadAddress).toBe(ZERO_EVM_ADDRESS);
+    expect(env.rhRouterAddress.toLowerCase()).toBe('0x00000000000000000000000000000000000000aa');
+  });
+
   it('refuses a missing launchpad address unless STONKZ_STAGING=1', () => {
     expect(() =>
       readEnv({
@@ -22,6 +45,7 @@ describe('readEnv production gates', () => {
         ...secrets,
         RH_RPC_URL: 'https://example.invalid/rh',
         RH_LAUNCHPAD_ADDRESS: ZERO_EVM_ADDRESS,
+        RH_ROUTER_ADDRESS: '0x00000000000000000000000000000000000000aa',
       }),
     ).toThrow(/RH_LAUNCHPAD_ADDRESS/);
 
@@ -31,6 +55,7 @@ describe('readEnv production gates', () => {
       ...secrets,
       RH_RPC_URL: RH_PUBLIC_RPC_URL,
       RH_LAUNCHPAD_ADDRESS: ZERO_EVM_ADDRESS,
+      RH_ROUTER_ADDRESS: '0x00000000000000000000000000000000000000aa',
     });
     expect(env.rhLaunchpadAddress).toBe(ZERO_EVM_ADDRESS);
   });

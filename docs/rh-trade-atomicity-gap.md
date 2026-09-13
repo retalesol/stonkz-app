@@ -1,35 +1,16 @@
 # Robinhood Chain trade atomicity — closed by `StonkzRouter`
 
-**Status: closed, on both the contract and API sides, for every base asset an
-operator has configured.** `programs/evm/src/StonkzRouter.sol` makes a
-native-in trade genuinely atomic in one signature, and `apps/api`'s
-`POST /trade/prepare` now calls it: `router/universal-router.ts` builds the
-Universal Router `execute()` commands itself, `router/evm-router.ts` composes
-the `buyViaAggregator`/`sellViaAggregator` call, and `routes/trade.ts` prefers
-that path and returns `atomic: true`.
+**Status: closed.** `programs/evm/src/StonkzRouter.sol` makes a native-in
+trade genuinely atomic in one signature, and `apps/api`'s `POST /trade/prepare`
+calls it exclusively: `router/evm-router.ts` composes
+`buyViaAggregator`/`sellViaAggregator`, returns `atomic: true`, or fails with
+`rh_router_required`.
 
-**What "for every base asset an operator has configured" means in practice —
-the two remaining reasons a trade still gets the non-atomic `EvmStep[]`
-fallback below, both operator-config gaps rather than per-trade ones:**
-
-1. **No `StonkzRouter` deployment recorded.** `ApiEnv.rhRouterAddress`
-   defaults to the zero-address placeholder (same posture as
-   `rhLaunchpadAddress`), and `stonkzRouterDecision` treats that as "use the
-   fallback". Set `RH_ROUTER_ADDRESS` once the contract is deployed.
-2. **An aggregator-hop base asset with no pinned Uniswap v3 fee tier.** The
-   direct-pair case (base = WETH) needs no pool at all — see below — but
-   trading against any other base asset needs to know *which* v3 pool to
-   route through, and `docs/robinhood-chain.md` row 43's "~1,900 hookless v4
-   pools carry 88-100% LP fees" warning is exactly why that pool is an
-   explicit human-pinned allow-list (`ApiEnv.rhV3FeeTierOverrides`,
-   `RH_V3_FEE_TIER_OVERRIDES` env var), never a guessed or probed default.
-   Deliberately empty out of the box, same posture as `router/base-mints.ts`'s
-   sparse RH entries.
-
-The `EvmStep[]` fallback (`router/evm-tx.ts`) is kept, unchanged, for exactly
-those two gaps — it is not deleted, because refusing the trade outright until
-every base asset has a pinned pool would be worse than the documented
-non-atomic sequence. Its own header now says this explicitly.
+**There is no multi-signature `EvmStep[]` fallback on the prepare path.** The
+composer in `router/evm-tx.ts` remains for reference/tests only. Production
+refuses to boot without `RH_ROUTER_ADDRESS`. An aggregator-hop base without a
+pinned `RH_V3_FEE_TIER_OVERRIDES` entry also fails closed — never guessed
+(`docs/robinhood-chain.md` fee-trap warning).
 
 ## The gap, as it stood
 

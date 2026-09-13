@@ -22,14 +22,12 @@ export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
  * The footer's disclosure line — not `api.mode === 'sim'`, because that flag
  * does not track which *features* are real.
  *
- * Live mode: crates and XP hit the server ledger; staking prepares real
- * program instructions but nothing is deployed yet (§3 of
- * `docs/real-vs-simulated.md`). Board numbers still come from fixtures until
- * the indexer points at a live cluster. Sim mode keeps the sandbox disclosure.
+ * Live mode against staging points at RH testnet + Solana devnet programs.
+ * Sim mode keeps the sandbox disclosure.
  */
 export const DISCLOSURE =
   API_MODE === 'live'
-    ? 'DEVNET STAGING \u00b7 PROGRAMS NOT DEPLOYED YET \u00b7 NOT FINANCIAL ADVICE'
+    ? 'DEVNET / RH TESTNET STAGING \u00b7 NOT MAINNET \u00b7 NOT FINANCIAL ADVICE'
     : 'SIMULATED DATA \u00b7 NOT FINANCIAL ADVICE';
 
 export type {

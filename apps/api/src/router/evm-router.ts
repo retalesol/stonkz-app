@@ -3,15 +3,10 @@
  * Robinhood Chain once a `StonkzRouter` deployment is configured
  * (`ApiEnv.rhRouterAddress`) and the trade's base asset has a route the
  * router can take (`stonkzRouterDecision`) — one call to
- * `buyViaAggregator`/`sellViaAggregator`, `atomic: true`, closing the gap
- * `docs/rh-trade-atomicity-gap.md` and `router/evm-tx.ts`'s header document.
+ * `buyViaAggregator`/`sellViaAggregator`, `atomic: true`.
  *
- * `router/evm-tx.ts`'s ordered `EvmStep[]` composer is kept, unchanged, as
- * the fallback for whatever `stonkzRouterDecision` returns `null` for: no
- * router configured at all (`rhRouterAddress` still the zero-address
- * placeholder), or an aggregator-hop base asset with no pinned v3 fee tier
- * (`ApiEnv.rhV3FeeTierOverrides` — deliberately empty by default, see that
- * field's doc comment).
+ * Returning `null` means the prepare must fail closed with
+ * `rh_router_required` — there is no multi-signature `EvmStep[]` fallback.
  */
 import { encodeFunctionData, type Address, type Hex } from 'viem';
 import type { Net } from '@stonkz/shared';
@@ -49,8 +44,8 @@ export interface PermitInput {
 
 /**
  * Which base assets `StonkzRouter` may be used for on this net, given the
- * operator's own config. `null` means "use the `EvmStep[]` fallback" — never
- * a guessed default; see `ApiEnv.rhV3FeeTierOverrides`'s doc comment for why.
+ * operator's own config. `null` means fail closed (`rh_router_required`) —
+ * never a guessed default; see `ApiEnv.rhV3FeeTierOverrides`'s doc comment.
  */
 export type RouterRoute = { mode: 'direct' } | { mode: 'aggregator'; feeTier: number };
 

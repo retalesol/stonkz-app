@@ -8,8 +8,8 @@ chain event.
 
 Phase B closed the client half of the first gap: real wallets sign and
 broadcast now (§1). Robinhood **testnet** now has a live launchpad (§3);
-Solana cluster deploy and RH mainnet remain outstanding. Board data still
-defaults to fixtures until the indexer points at a live cluster (§2).
+Solana **devnet** program is deployed and upgraded. Board/tape on staging
+come from `INDEXER_SOURCE=chain` (§2) — fixture mode is refused in production.
 
 This file is the single place that says which is which. Every row is checked
 against code, not against a phase's exit notes.
@@ -63,28 +63,26 @@ formality:
 | Tip verification (server) | **REAL** | `apps/api/src/social/tips.ts::verifyTip` re-derives sender/recipient/amount from the RPC. A client cannot assert a tip happened or inflate the amount. |
 | Practice keypair | **SIMULATED, hard-gated** | `apps/web/src/wallet/practice.ts` keeps the browser-local keypair as a development convenience and nothing more. Four gates: `VITE_PRACTICE_WALLET=1` (unset by default, and not even `=true` opts in); `vite.config.ts` **fails a production build** with it set unless `VITE_PRACTICE_WALLET_ACK=1`; `wallet/manager.ts` ranks it behind every real wallet and never auto-selects it; and every result carries `simulated: true` behind a persistent, non-dismissible UI badge. It signs real SIWS/SIWE (the cryptography is genuine) and broadcasts nothing. `e2e/wallet.spec.ts` asserts it cannot activate in a default build. |
 
-**Consequence:** the client can build and sign real txs. RH **testnet** now
-has contracts to hit (§3); Solana and RH mainnet do not. The public board still
-defaults to fixtures (§2) — staging seeded `BETADOG` for API prepare smoke
-only. Indexer stays `INDEXER_SOURCE=fixtures` until Solana start-slot + chain
-mode can be enabled together.
+**Consequence:** the client can build and sign real txs. RH **testnet** and
+Solana **devnet** have contracts to hit (§3); Solana / RH **mainnet** do not.
+Staging board/tape are chain-indexed (§2), not fixture-replayed.
 
 ## 2. Chain data (board, tape, KOTH, charts)
 
 | Surface | Status | Evidence |
 |---|---|---|
-| Indexer event source | **REAL code, defaults to fixtures** | `INDEXER_SOURCE=fixtures` (default) still replays `canonicalScenario()`. `INDEXER_SOURCE=chain` now boots real Solana + RH sources instead of throwing. Nothing in this repo has pointed chain mode at a live cluster. |
-| Solana ingestion | **REAL code, NEVER RUN** | Polling `getSignaturesForAddress` + `getTransaction` against `SOLANA_LAUNCHPAD_PROGRAM_ID`, with Anchor event decode. No Geyser/Helius webhook path — polling is the primary, by design. |
-| RH ingestion | **REAL code, NEVER RUN** | `viem` `getLogs` against the launchpad + router addresses, ABI-decoded. Requires `RH_LAUNCHPAD_ADDRESS` plus start slot/block; chain mode refuses the zero address at boot. |
-| Reorg detection / rollback | **REAL code, NEVER RUN against a live reorg** | Confirmation-depth buffer (Solana `finalized` / RH `N` blocks), cursor hashes, and `ReorgRollback` that deletes orphaned materialized rows. Ledger policy: XP/SP awards for a reorged `chain_events` row are reversed with the market data. |
+| Indexer event source | **REAL on staging (chain default)** | `INDEXER_SOURCE` defaults to `chain`; `fixtures` is refused in production unless `INDEXER_ALLOW_FIXTURES=1`. Staging Railway runs chain mode against RH 46630 + Solana devnet with start block/slot set. |
+| Solana ingestion | **REAL on staging** | Polling `getSignaturesForAddress` + `getTransaction` against `SOLANA_LAUNCHPAD_PROGRAM_ID`, with Anchor event decode. No Geyser/Helius webhook path — polling is the primary, by design. |
+| RH ingestion | **REAL on staging** | `viem` `getLogs` against the launchpad + router addresses, ABI-decoded. Requires `RH_LAUNCHPAD_ADDRESS` plus start block; chain mode refuses the zero address at boot. |
+| Reorg detection / rollback | **REAL code, lightly exercised** | Confirmation-depth buffer (Solana `finalized` / RH `N` blocks), cursor hashes, and `ReorgRollback`. Staging RH has seen reorg counters > 0. |
 | Cursor behaviour on boot | **SAFE** | Rewind-to-0 runs only in fixture mode. Chain mode resumes the persisted cursor and will not walk from genesis. |
 | Dead-letter for rejected events | **REAL** | `indexer_dead_letters`; a batch that fails `INDEXER_MAX_BATCH_ATTEMPTS` times is recorded and skipped. Per-chain `drain()` isolation means one net cannot stall the other. |
 | Backfill tooling | **REAL CLI, NEVER RUN** | `pnpm --filter @stonkz/indexer backfill -- --net SOL\|RH --from N --to M`. Idempotent; `--dry-run` / `--rollback-first` / `--rewind` documented in `docs/indexer-runbooks.md`. |
 | Health / metrics / single-replica lock | **REAL** | `GET :8788/health`, `/metrics`, `/dead-letters`. Session-level Postgres advisory lock on a dedicated connection. The lock **must** use Neon's direct (non-pooler) host — transaction pooling breaks session locks. |
-| REST/WS read API + frontend read path | **REAL** | `apps/api` routes and `apps/web`'s live mode consume them correctly. Until chain mode is pointed at a deployment, they serve fixture-sourced rows. |
+| REST/WS read API + frontend read path | **REAL** | `apps/api` routes and `apps/web`'s live mode consume them. Board hides `legacy:` / empty-mint rows. |
 
-**Consequence:** every price, market cap, holder count, candle, and tape row a
-user would see today traces back to a fixture scenario, not to chain state.
+**Consequence:** staging board/tape rows come from chain ingest. Fixture replay
+is test-only. Mainnet still needs its own start slot/block after deploy.
 
 **Solana cluster default:** web and API default to **devnet**
 (`VITE_CLUSTER` / `SOLANA_CLUSTER` + matching RPC URLs). Mainnet is an
@@ -109,9 +107,9 @@ environment switch only — flip cluster + RPC; no code change.
 | Surface | Status | Evidence |
 |---|---|---|
 | Solana native-in route (Jupiter quote + curve, atomic) | **REAL** | `apps/api/src/router/`, `routes/trade.ts`. |
-| RH atomic route via `StonkzRouter` | **REAL on RH testnet staging** | Railway `RH_ROUTER_ADDRESS` / `RH_LAUNCHPAD_ADDRESS` point at 46630 deploy. `POST /trade/prepare` for seeded `BETADOG` returned `atomic: true` → router `0xC414…9513`. Mainnet still defaults to the zero address / non-atomic fallback until a 4663 deploy. |
-| Pinned RH Uniswap v3 fee tiers | **REAL, UNCONFIGURED** | `RH_V3_FEE_TIER_OVERRIDES` is deliberately empty. Required per aggregator-hop base asset, and deliberately never guessed — see `docs/robinhood-chain.md` on the ~1,900 hookless v4 pools carrying 88-100% LP fees. |
-| Non-atomic `EvmStep[]` fallback | **REAL** | Kept intentionally, with a user-visible warning, for the two config gaps above. |
+| RH atomic route via `StonkzRouter` | **REAL on RH testnet staging** | Railway `RH_ROUTER_ADDRESS` / `RH_LAUNCHPAD_ADDRESS` point at 46630 deploy. Production boots refuse a zero router. `POST /trade/prepare` is atomic-only. |
+| Pinned RH Uniswap v3 fee tiers | **REAL on staging (USDG:3000)** | Unpinned aggregator-hop bases fail closed with `rh_router_required` — never guessed. |
+| Non-atomic `EvmStep[]` fallback | **REMOVED from prepare path** | `buildEvmTradePlan` remains for tests/reference only; `/trade/prepare` and the live client refuse multi-signature RH trades. |
 
 ## 5. Game layer
 
@@ -120,7 +118,7 @@ environment switch only — flip cluster + RPC; no code change.
 | XP / SP / Stonk Optionz ledger | **REAL, server-authoritative** | `apps/api/src/game/ledger.ts` refuses any reason in `CHAIN_VERIFIED_REASONS` without a matching `chain_events` row. Live web hydrates from `GET /rewards` / `GET /me` and never seeds a guest LV-4 ledger (`state/user.ts`). |
 | Streaks, achievements, ranks | **REAL** | Server-side, tested. Client `addXP`/`unlock`/`touchStreak` are no-ops in live mode. |
 | Crate opening | **REAL, but HMAC not VRF** | Live `POST /rewards/crates/:tier/open`. `apps/api/src/game/crates.ts` rolls `HMAC-SHA256(secret, net\|wallet\|tier\|nonce)` with a server nonce. Not client-manipulable, but auditable-only, not publicly verifiable. Security finding M2: **do not market odds until this is a commit-reveal VRF.** |
-| Crate/XP source events | **SIMULATED upstream** | The ledger is real, but the chain events feeding it come from fixtures (§2). |
+| Crate/XP source events | **REAL on staging when indexer is chain** | Ledger awards still require matching `chain_events` rows; staging indexer feeds those from chain. |
 | Per-memecoin staking (client/API) | **REAL prepare path, AWAITING DEPLOY** | `POST /stake/{prepare,unstake/prepare,claim/prepare}` compose launchpad instructions (Solana + RH). Settlement fails until programs are deployed (§3). Live UI no longer invents `otherStake` pool weight. |
 
 ## 6. Social

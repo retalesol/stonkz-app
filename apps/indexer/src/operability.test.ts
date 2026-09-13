@@ -26,8 +26,12 @@ describe('chain-mode configuration', () => {
   };
   const env = readEnv(base);
 
-  it('defaults to fixtures, so nothing starts reading a chain by accident', () => {
-    const config = readIndexerConfig(env, {});
+  it('defaults to chain mode (fixtures are opt-in for tests only)', () => {
+    expect(() => readIndexerConfig(env, {})).toThrow(/INDEXER_SOL_START_SLOT|INDEXER_RH_START_BLOCK|RH_LAUNCHPAD/);
+    const config = readIndexerConfig(env, {
+      INDEXER_SOURCE: 'fixtures',
+      INDEXER_ALLOW_FIXTURES: '1',
+    });
     expect(config.mode).toBe('fixtures');
     // Solana reads at `finalized`, which is already the post-reorg view.
     expect(config.confirmations.SOL).toBe(0);
@@ -35,6 +39,16 @@ describe('chain-mode configuration', () => {
     expect(config.confirmations.RH).toBe(12);
     expect(config.lockKey).toBe(DEFAULT_LOCK_KEY);
     expect(config.singleReplicaLock).toBe(true);
+  });
+
+  it('refuses fixtures in production without INDEXER_ALLOW_FIXTURES', () => {
+    const prod = readEnv({ ...base, NODE_ENV: 'production', ...{
+      JWT_SECRET: 'production-jwt-secret-at-least-32-chars!!',
+      CRATE_HMAC_SECRET: 'production-crate-secret-not-the-dev-one',
+      STONKZ_STAGING: '1',
+      RH_ROUTER_ADDRESS: '0x00000000000000000000000000000000000000aa',
+    }});
+    expect(() => readIndexerConfig(prod, { INDEXER_SOURCE: 'fixtures' })).toThrow(/INDEXER_ALLOW_FIXTURES/);
   });
 
   it('rejects a source mode it does not implement', () => {

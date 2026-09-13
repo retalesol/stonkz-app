@@ -8,7 +8,14 @@ import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { composeCurveTrade } from '../router/compose.js';
-import { CapExceededError, InsufficientNativeError, NoRouteError, RouterError, SlippageExceededError } from '../router/errors.js';
+import {
+  CapExceededError,
+  InsufficientNativeError,
+  NoRouteError,
+  RhAtomicRouterRequiredError,
+  RouterError,
+  SlippageExceededError,
+} from '../router/errors.js';
 import { isOracleHopRaw } from '../router/oracle-hop.js';
 import { isV3PoolHopRaw } from '../router/v3-pool-hop.js';
 import { syncCurveReserves, type EthCaller, type SolanaAccountSource } from '../router/curve-sync.js';
@@ -16,9 +23,8 @@ import { toAtoms } from '../router/units.js';
 import { asErc20BalanceSource } from '../chain/types.js';
 import { SolanaRpc } from '../chain/solana.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
-import type { UniswapQuoteResponseRaw } from '../router/uniswap.js';
 import { asSolanaBlockhashSource, composeSolanaTradeTransaction } from '../router/solana-tx.js';
-import { buildEvmTradePlan } from '../router/evm-tx.js';
+import { ZERO_EVM_ADDRESS } from '../env.js';
 import {
   buildAtomicBuyCall,
   buildAtomicSellCall,
@@ -140,9 +146,10 @@ function parsePermit(raw: unknown): PermitInput | null {
  * - **Solana**: one atomic `Transaction` — Jupiter's swap instruction(s), if
  *   any, followed by (buy) or preceded by (sell) the launchpad's own `buy`/
  *   `sell` instruction. `router/solana-tx.ts` has the detail.
- * - **Robinhood Chain**: an explicitly non-atomic, ordered `EvmStep[]` —
- *   there is no periphery router in `programs/evm` to make this one
- *   transaction (`docs/rh-trade-atomicity-gap.md`, `router/evm-tx.ts`).
+ * - **Robinhood Chain**: one atomic `StonkzRouter` call (`atomic: true`).
+ *   Missing router address or an unpinned aggregator fee tier fails closed
+ *   with `rh_router_required` — there is no multi-signature `EvmStep[]`
+ *   fallback (`docs/rh-trade-atomicity-gap.md`).
  */
 export function tradeRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -440,31 +447,14 @@ export function tradeRoutes(): Hono<AppEnv> {
         });
       }
 
-      // Fallback: no `StonkzRouter` configured for this base asset yet — the
-      // documented, explicitly non-atomic ordered step plan.
-      const launchpad = deps.env.rhLaunchpadAddress as Address;
-      const uniswap = trade.aggregatorQuote
-        ? { client: deps.uniswap, quote: trade.aggregatorQuote.raw as UniswapQuoteResponseRaw }
-        : null;
-      const plan = await buildEvmTradePlan({
-        trader: wallet as Address,
-        launchpad,
-        token: synced.mint as Address,
-        baseToken: synced.baseMint as Address,
-        uniswap,
-        amountBaseOrToken: trade.curveAmountInAtoms,
-        minOut: trade.curveMinOutAtoms,
-        side,
-      });
-
-      return c.json({
-        net,
-        atomic: plan.atomic,
-        steps: plan.steps,
-        warning: plan.warning,
-        quote: trade.quote,
-        expiresAt: now + 30_000,
-      });
+      // Atomic-only: never emit a multi-signature EvmStep[] plan.
+      const routerMissing =
+        !deps.env.rhRouterAddress || deps.env.rhRouterAddress.toLowerCase() === ZERO_EVM_ADDRESS;
+      throw new RhAtomicRouterRequiredError(
+        routerMissing
+          ? 'RH_ROUTER_ADDRESS is not configured; non-atomic RH trades are disabled'
+          : `no atomic StonkzRouter route for base ${synced.baseSymbol}; pin RH_V3_FEE_TIER_OVERRIDES for this asset`,
+      );
     } catch (err) {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
       throw err;

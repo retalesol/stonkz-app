@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { MAJORS, STOCKS, RH_STOCKS, nativeUnit, type Net } from '@stonkz/shared';
-import { koth, tape, treasuries } from '../db/schema.js';
+import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -56,10 +56,22 @@ export function marketRoutes(): Hono<AppEnv> {
     const net = netParam === 'ALL' ? null : (parseNet(netParam) ?? c.get('user')?.net ?? 'SOL');
     const max = Math.min(Number.parseInt(c.req.query('limit') ?? '40', 10) || 40, 200);
 
+    const filters = [
+      net ? eq(tape.net, net) : undefined,
+      // Drop fills for fixture / legacy tokens that may linger from old replays.
+      sql`exists (
+        select 1 from ${tokens} t
+        where t.net = ${tape.net}
+          and t.sym = ${tape.sym}
+          and t.mint <> ''
+          and t.mint not like 'legacy:%'
+      )`,
+    ].filter(Boolean);
+
     const rows = await deps.db
       .select()
       .from(tape)
-      .where(net ? eq(tape.net, net) : undefined)
+      .where(and(...filters))
       .orderBy(desc(tape.id))
       .limit(max);
 

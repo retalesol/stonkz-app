@@ -4,10 +4,12 @@ How `apps/indexer` actually behaves after Phase C. Capabilities that exist
 only in code and have never been pointed at a live cluster are marked
 **never run**, not missing.
 
-**Default today:** `INDEXER_SOURCE` is unset / `fixtures`. The board you
-see locally is still a fixture replay. Chain mode is real code that
-refuses to boot unless the program addresses and start positions are set
-(`assertChainModeConfigured` in `src/config.ts`).
+**Default today:** `INDEXER_SOURCE` defaults to `chain`. Fixture replay is
+opt-in (`INDEXER_SOURCE=fixtures`) and refused in production unless
+`INDEXER_ALLOW_FIXTURES=1`. Chain mode refuses to boot unless the program
+addresses and start positions are set (`assertChainModeConfigured` in
+`src/config.ts`). Staging Railway already runs chain mode against RH 46630
++ Solana devnet.
 
 ---
 
@@ -18,12 +20,13 @@ refuses to boot unless the program addresses and start positions are set
   `INDEXER_POLL_MS` (default 2s); diamond-hands sweep every
   `INDEXER_SWEEP_MS` (default 60s).
 - **Modes** (`INDEXER_SOURCE`):
-  - `fixtures` — `FixtureEventSource` over `canonicalScenario()`. Cursors
-    rewind to 0 on every boot so a restart replays the scenario.
-  - `chain` — Solana polling source (`getSignaturesForAddress` +
+  - `chain` (default) — Solana polling source (`getSignaturesForAddress` +
     `getTransaction`, Anchor decode) and RH `getLogs` source (viem,
     launchpad + router ABIs). Cursors are **never** rewound. Confirmation
     buffer, reorg rollback, and dead-lettering are on.
+  - `fixtures` — `FixtureEventSource` over `canonicalScenario()` for tests
+    / local replay only. Cursors rewind to 0 on every boot. Production
+    requires `INDEXER_ALLOW_FIXTURES=1`.
 - **State** (Postgres):
   - `indexer_cursors` — one row per net. Position, raw head, confirmed
     head, `position_hash`, `position_signature`, `reorgs`,
