@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { and, count, desc, eq, sql } from 'drizzle-orm';
-import type { Net } from '@stonkz/shared';
-import { follows, tape, tokens, users, wallPosts } from '../db/schema.js';
+import { parseNet, type Net } from '@stonkz/shared';
+import { follows, tape, tokens, users, wallLikes, wallPosts } from '../db/schema.js';
 import { isUniqueViolation } from '../db/errors.js';
 import { optionalAuth, requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -27,9 +27,6 @@ import { serialiseToken } from './serialise.js';
 const USERNAME_MAX = 22;
 const BIO_MAX = 160;
 
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
 
 function isValidUsername(v: string): boolean {
   return /^[A-Za-z0-9_]{1,22}$/.test(v);
@@ -463,18 +460,55 @@ export function socialRoutes(): Hono<AppEnv> {
       .where(and(eq(wallPosts.net, memberNet), eq(wallPosts.toWallet, wallet)))
       .orderBy(wallPosts.id);
 
+    const likeCounts = await deps.db
+      .select({ postId: wallLikes.postId, n: sql<number>`count(*)::int` })
+      .from(wallLikes)
+      .where(eq(wallLikes.net, memberNet))
+      .groupBy(wallLikes.postId);
+    const likeMap = new Map(likeCounts.map((r) => [r.postId, r.n]));
+
     return c.json({
       net: memberNet,
       addr: wallet,
       minTip: minTipFor(memberNet),
       posts: rows.map((r) => ({
+        id: r.id,
         from: r.fromWallet,
         text: r.text,
         tip: r.tipNative,
         sig: r.tipTxSig,
+        likes: likeMap.get(r.id) ?? 0,
         createdAtMs: r.createdAt.getTime(),
       })),
     });
+  });
+
+  /** Like a wall post — 1 XP for the first 5 likes per UTC day. */
+  app.post('/wall/:net/posts/:id/like', requireAuth(), limit(RATE_LIMITS.social), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+    const net = parseNet(c.req.param('net'));
+    const postId = Number.parseInt(c.req.param('id') ?? '', 10);
+    if (!net || !Number.isFinite(postId)) return c.json({ error: 'bad_request' }, 400);
+    if (net !== user.net) return c.json({ error: 'net_mismatch' }, 400);
+
+    const [post] = await deps.db
+      .select()
+      .from(wallPosts)
+      .where(and(eq(wallPosts.net, net), eq(wallPosts.id, postId)))
+      .limit(1);
+    if (!post) return c.json({ error: 'not_found' }, 404);
+
+    const inserted = await deps.db
+      .insert(wallLikes)
+      .values({ net, postId, wallet: user.wallet })
+      .onConflictDoNothing()
+      .returning({ postId: wallLikes.postId });
+    if (inserted.length === 0) return c.json({ ok: true, liked: true, xpAwarded: 0, already: true });
+
+    const { xp } = await deps.awards.like({ net, wallet: user.wallet, postId });
+    return c.json({ ok: true, liked: true, xpAwarded: xp });
   });
 
   /**

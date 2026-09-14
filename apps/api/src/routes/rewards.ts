@@ -25,10 +25,17 @@ export function rewardsRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
 
-    const [snapshot, states] = await Promise.all([
+    await deps.awards.dailyCheckin({ net: user.net, wallet: user.wallet });
+
+    const [snapshot, states, spSnap] = await Promise.all([
       deps.ledger.snapshot(user.net, user.wallet),
       deps.crates.states(user.net, user.wallet),
+      deps.ledger.readBalance(user.net, user.wallet).then((b) => deps.spLevels.snapshot(user.net, user.wallet, b.sp)),
     ]);
+
+    const globalReadyAt = states[0]?.readyAt ?? Date.now();
+    const globalReady = states[0]?.ready ?? true;
+    const lastTier = states[0]?.lastTier ?? null;
 
     return c.json({
       net: user.net,
@@ -41,7 +48,23 @@ export function rewardsRoutes(): Hono<AppEnv> {
       streakMult: snapshot.streakMult,
       achievementCount: snapshot.achievements.length,
       achievements: snapshot.achievements,
-      cratesReady: states.filter((s) => s.ready).length,
+      cratesReady: states.filter((s) => s.openable).length,
+      globalCooldown: {
+        readyAt: globalReadyAt,
+        ready: globalReady,
+        lastTier,
+      },
+      spLevel: {
+        level: spSnap.level.level,
+        sp: spSnap.level.sp,
+        cur: spSnap.level.cur,
+        next: spSnap.level.next,
+        pct: spSnap.level.pct,
+        toNext: spSnap.level.toNext,
+        nextLevel: spSnap.nextLevel,
+        newlyClaimed: spSnap.newlyClaimed,
+        granted: spSnap.granted,
+      },
       crates: states.map((state) => {
         const def = CRATES.find((cr) => cr.k === state.tier);
         return {
@@ -50,7 +73,6 @@ export function rewardsRoutes(): Hono<AppEnv> {
             rarity: (RAR[i] as (typeof RAR)[number])[0],
             rarityClass: (RAR[i] as (typeof RAR)[number])[1],
             odds: d[0],
-            // `S` rows pay Stonk Optionz, never $STONKZ (plan step 107).
             kind: d[1] === 'S' ? ('OPTIONZ' as const) : ('ITEM' as const),
             min: d[1] === 'S' ? d[2] : null,
             max: d[1] === 'S' ? d[3] : null,
@@ -84,6 +106,7 @@ export function rewardsRoutes(): Hono<AppEnv> {
         rankedUp: result.rankedUp,
         readyAt: result.readyAt,
         cooldownHours: result.cooldownHours,
+        inventoryLeft: result.inventoryLeft,
         // The commitment is returned so an open can be checked later; the
         // secret behind it never leaves the server.
         proof: {
@@ -96,6 +119,9 @@ export function rewardsRoutes(): Hono<AppEnv> {
       if (err instanceof CrateError) {
         if (err.code === 'cooling_down') {
           return c.json({ error: 'cooling_down', readyAt: err.readyAt ?? null }, 429);
+        }
+        if (err.code === 'no_inventory') {
+          return c.json({ error: 'no_inventory', detail: err.message }, 409);
         }
         return c.json({ error: err.code }, 404);
       }

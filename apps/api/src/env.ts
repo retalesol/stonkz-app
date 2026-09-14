@@ -1,5 +1,10 @@
 import type { Net } from '@stonkz/shared';
-import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL } from './chain/evm.js';
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_EXPLORER_URL,
+  BASE_SEPOLIA_RPC_URL,
+} from './chain/base.js';
+import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL, RH_TESTNET_CHAIN_ID } from './chain/evm.js';
 
 /**
  * Every knob the API reads, resolved once at boot. Defaults target
@@ -51,9 +56,17 @@ export interface ApiEnv {
   /** Blockscout / RH explorer base (no trailing slash). Used for live token holders. */
   rhExplorerUrl: string;
   rhChainId: number;
-  /** Chain ids a SIWE message may name. See `AuthServiceOptions`. */
+  /** EVM chain ids a SIWE message may name (RH + Base). See `AuthServiceOptions`. */
   allowedRhChainIds: readonly number[];
   rhNetworkLabel: string;
+  baseRpcUrl: string;
+  baseExplorerUrl: string;
+  baseChainId: number;
+  baseLaunchpadAddress: string;
+  baseRouterAddress: string;
+  baseV3FeeTierOverrides: Record<string, number>;
+  baseV3FactoryAddress: string;
+  baseV3QuoterAddress: string;
   maxChainLagSeconds: number;
   chainTickMs: Record<Net, number>;
 
@@ -284,15 +297,34 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
         ? 'https://explorer.testnet.chain.robinhood.com'
         : 'https://robinhoodchain.blockscout.com',
     ).replace(/\/$/, ''),
-    rhChainId: int(src, 'RH_CHAIN_ID', RH_CHAIN_ID),
-    allowedRhChainIds: ints(src, 'RH_ALLOWED_CHAIN_IDS', [
-      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID),
-    ]),
+    rhChainId: int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID),
+    allowedRhChainIds: (() => {
+      const rhId = int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID);
+      const baseId = int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID);
+      const fromEnv = ints(src, 'EVM_ALLOWED_CHAIN_IDS', ints(src, 'RH_ALLOWED_CHAIN_IDS', []));
+      const merged = fromEnv.length > 0 ? fromEnv : [rhId, baseId];
+      return [...new Set(merged)];
+    })(),
     rhNetworkLabel: str(src, 'RH_NETWORK_LABEL', 'ROBINHOOD'),
+    baseRpcUrl: str(src, 'BASE_RPC_URL', BASE_SEPOLIA_RPC_URL),
+    baseExplorerUrl: str(src, 'BASE_EXPLORER', BASE_SEPOLIA_EXPLORER_URL).replace(/\/$/, ''),
+    baseChainId: int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID),
+    baseLaunchpadAddress: str(src, 'BASE_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
+    baseRouterAddress: str(src, 'BASE_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
+    baseV3FeeTierOverrides: intMap(src, 'BASE_V3_FEE_TIER_OVERRIDES'),
+    baseV3FactoryAddress: str(
+      src,
+      'BASE_V3_FACTORY_ADDRESS',
+      int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID) === BASE_SEPOLIA_CHAIN_ID
+        ? '0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24'
+        : '0x33128a8fC17869897dc68A926803F6140319853',
+    ),
+    baseV3QuoterAddress: str(src, 'BASE_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
     maxChainLagSeconds: int(src, 'MAX_CHAIN_LAG_SECONDS', 30),
     chainTickMs: {
       SOL: int(src, 'SOLANA_SLOT_MS', 400),
       RH: int(src, 'RH_BLOCK_MS', 2000),
+      BASE: int(src, 'BASE_BLOCK_MS', 2000),
     },
 
     priceOracleUrl: str(src, 'PRICE_ORACLE_URL', 'https://api.coinbase.com/v2/prices'),
@@ -304,10 +336,12 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     dust: {
       SOL: float(src, 'DUST_SOL', 0.01),
       RH: float(src, 'DUST_ETH', 0.0005),
+      BASE: float(src, 'DUST_BASE_ETH', float(src, 'DUST_ETH', 0.0005)),
     },
     whaleCut: {
       SOL: float(src, 'WHALE_SOL', 5),
       RH: float(src, 'WHALE_ETH', 2),
+      BASE: float(src, 'WHALE_BASE_ETH', float(src, 'WHALE_ETH', 2)),
     },
 
     quoteCacheTtlSeconds: int(src, 'QUOTE_CACHE_TTL_SECONDS', 8),

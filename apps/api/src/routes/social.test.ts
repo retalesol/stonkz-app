@@ -78,7 +78,7 @@ describe('PATCH /me', () => {
 });
 
 describe('follow / unfollow', () => {
-  it('follows once, pays XP and the social achievement, and is idempotent', async () => {
+  it('follows once, unlocks social, and is idempotent (no follow XP)', async () => {
     const me = await h.login('SOL');
     const target = solanaWallet('follow-target').address;
 
@@ -89,9 +89,10 @@ describe('follow / unfollow', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ following: true });
 
-    const balance = await h.deps.ledger.readBalance('SOL', me.address);
-    expect(balance.xp).toBeGreaterThan(0);
     expect(await h.deps.ledger.unlockedKeys('SOL', me.address)).toContain('social');
+    const balance = await h.deps.ledger.readBalance('SOL', me.address);
+    // Achievement XP only — follow itself pays 0.
+    expect(balance.xp).toBeGreaterThan(0);
 
     // Following twice does not double-pay.
     await h.app.request(`/follow/SOL/${target}`, { method: 'POST', headers: authed(me.token) });

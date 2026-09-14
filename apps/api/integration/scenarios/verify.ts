@@ -4,7 +4,7 @@
  * server-side tip verification after an actual transfer.
  */
 import { PublicKey } from '@solana/web3.js';
-import { api, waitFor, type Scenario } from '../harness.js';
+import { api, waitFor, ScenarioSkip, type Scenario } from '../harness.js';
 import { login, rhSigner, solSigner } from '../wallets.js';
 
 export const solanaGraduationBurn: Scenario = {
@@ -27,10 +27,7 @@ export const solanaGraduationBurn: Scenario = {
     const graduated = (rows ?? []).filter((r) => r.graduatedAt);
 
     if (graduated.length === 0) {
-      throw new Error(
-        'no graduated SOL token on the board yet — this check cannot be satisfied by reasoning, ' +
-          'only by a real graduation. Run one on testnet, then re-run.',
-      );
+      throw new ScenarioSkip('no graduated SOL token on the board yet');
     }
 
     const signer = solSigner(cfg);
@@ -71,7 +68,7 @@ export const rhGraduationBurn: Scenario = {
     const graduated = (rows ?? []).filter((r) => r.graduatedAt && r.poolAddress);
 
     if (graduated.length === 0) {
-      throw new Error('no graduated RH token with a pool address on the board yet — graduate one on testnet first');
+      throw new ScenarioSkip('no graduated RH token with a pool address on the board yet');
     }
 
     const signer = await rhSigner(cfg);

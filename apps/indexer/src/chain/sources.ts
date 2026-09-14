@@ -40,6 +40,8 @@ export function buildChainSources(opts: ChainSourcesOptions): ChainSources {
   const baseMints = createBaseMintRegistry({
     SOL: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_SOL']),
     RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
+    BASE: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_BASE']),
+    solanaCluster: env.solanaCluster,
   });
 
   // The oracle is only consulted for fills whose base asset is not the
@@ -63,6 +65,7 @@ export function buildChainSources(opts: ChainSourcesOptions): ChainSources {
       trackBlockhash: config.solanaTrackBlockhash,
     }),
     RH: new EvmChainSource({
+      net: 'RH',
       rpc: new HttpEvmIndexRpc({ url: env.rhRpcUrl }),
       launchpadAddress: config.rhLaunchpadAddress,
       routerAddress: config.rhRouterAddress,
@@ -73,6 +76,19 @@ export function buildChainSources(opts: ChainSourcesOptions): ChainSources {
       logger,
       confirmations: config.confirmations.RH,
       logWindow: config.rhLogWindow,
+    }),
+    BASE: new EvmChainSource({
+      net: 'BASE',
+      rpc: new HttpEvmIndexRpc({ url: env.baseRpcUrl }),
+      launchpadAddress: config.baseLaunchpadAddress,
+      routerAddress: config.baseRouterAddress,
+      startBlock: config.baseStartBlock,
+      registry,
+      baseMints,
+      nativeUsd: nativeUsd('BASE'),
+      logger,
+      confirmations: config.confirmations.BASE,
+      logWindow: config.baseLogWindow,
     }),
   };
 

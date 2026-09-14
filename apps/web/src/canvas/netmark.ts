@@ -1,6 +1,6 @@
 import type { Net } from '@stonkz/shared';
 
-/** The Solana bars / Robinhood feather marks in the network picker. `index.html:2452` */
+/** The Solana bars / Robinhood feather / Base square marks in the network picker. */
 export function netMark(cv: HTMLCanvasElement | null, k: Net | string | undefined): void {
   if (!cv) return;
   const g = cv.getContext('2d');
@@ -22,6 +22,16 @@ export function netMark(cv: HTMLCanvasElement | null, k: Net | string | undefine
       g.closePath();
       g.fill();
     }
+  } else if (k === 'BASE') {
+    g.fillStyle = '#0052ff';
+    g.beginPath();
+    g.roundRect(w * 0.18, w * 0.18, w * 0.64, w * 0.64, w * 0.12);
+    g.fill();
+    g.fillStyle = '#ffffff';
+    g.font = 'bold ' + Math.round(w * 0.28) + 'px sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('B', w * 0.5, w * 0.52);
   } else {
     g.fillStyle = '#00c805';
     g.beginPath();

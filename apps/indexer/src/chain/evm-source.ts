@@ -1,6 +1,6 @@
 import type { BaseMintRegistry } from '@stonkz/api/router/base-mints';
 import type { Logger } from '@stonkz/api/observability/logger';
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 import type { ChainEvent } from '../events.js';
 import { compareEvents } from '../events.js';
 import type { EventSource, PollResult } from '../source.js';
@@ -32,6 +32,7 @@ import type { TokenRegistry } from './registry.js';
  * cursor advances by what was really read rather than by what was requested.
  */
 export interface EvmChainSourceOptions {
+  net?: EvmNet;
   rpc: EvmIndexRpc;
   launchpadAddress: string;
   routerAddress: string;
@@ -48,13 +49,14 @@ export interface EvmChainSourceOptions {
 }
 
 export class EvmChainSource implements EventSource {
-  readonly net: Net = 'RH';
+  readonly net: Net;
 
   private readonly addresses: readonly string[];
   private readonly confirmations: number;
   private readonly logWindow: number;
 
   constructor(private readonly opts: EvmChainSourceOptions) {
+    this.net = opts.net ?? 'RH';
     this.confirmations = Math.max(0, opts.confirmations ?? 12);
     this.logWindow = Math.max(1, opts.logWindow ?? 2_000);
     // The router is optional: on a deployment without it every fill is a
@@ -108,6 +110,7 @@ export class EvmChainSource implements EventSource {
     for (const group of groups) {
       events.push(
         ...(await mapEvmTransaction(group.logs, {
+          net: this.net === 'BASE' ? 'BASE' : 'RH',
           txHash: group.txHash,
           blockNumber: group.blockNumber,
           blockTimeMs: await this.blockTimeMs(group.blockNumber, blockTimes),

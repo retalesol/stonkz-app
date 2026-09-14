@@ -348,9 +348,14 @@ describe('toHexWei', () => {
 });
 
 describe('chain config', () => {
-  it('pins Robinhood Chain to 4663 / 0x1237', () => {
-    expect(RH_CHAIN_ID).toBe(4663);
-    expect(RH_CHAIN_ID_HEX).toBe('0x1237');
+  it('defaults Robinhood Chain to testnet 46630 for staging', () => {
+    expect(RH_CHAIN_ID).toBe(46630);
+    expect(RH_CHAIN_ID_HEX).toBe('0xb626');
+  });
+
+  it('defaults Base to Sepolia 84532', async () => {
+    const { BASE_CHAIN_ID } = await import('./chain.js');
+    expect(BASE_CHAIN_ID).toBe(84532);
   });
 
   it('maps every cluster to its Wallet Standard chain id', () => {
@@ -361,7 +366,8 @@ describe('chain config', () => {
   });
 
   it('labels the chain a net settles on', () => {
-    expect(chainLabel('RH')).toContain('4663');
+    expect(chainLabel('RH')).toContain('46630');
+    expect(chainLabel('BASE')).toContain('84532');
     expect(chainLabel('SOL')).toContain('SOLANA');
   });
 });

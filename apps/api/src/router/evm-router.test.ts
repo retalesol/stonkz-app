@@ -24,8 +24,12 @@ describe('stonkzRouterDecision', () => {
     expect(stonkzRouterDecision('RH', '', true, WETH, 'WETH', {})).toBeNull();
   });
 
-  it('is null on Solana regardless of config \u2014 StonkzRouter is an RH-only contract', () => {
+  it('is null on Solana regardless of config \u2014 StonkzRouter is EVM-only', () => {
     expect(stonkzRouterDecision('SOL', ROUTER, true, WETH, 'WETH', {})).toBeNull();
+  });
+
+  it('accepts BASE the same way as RH once a router is configured', () => {
+    expect(stonkzRouterDecision('BASE', ROUTER, true, WETH, 'WETH', {})).toEqual({ mode: 'direct' });
   });
 
   it('takes the direct-pair mode with no fee-tier lookup needed once a router is configured', () => {
@@ -45,12 +49,6 @@ describe('stonkzRouterDecision', () => {
     expect(pinnedV3FeeTierFor(USDC, 'USDC', {})).toBeNull();
   });
 });
-
-function decodeLeg(data: Hex, fn: 'buyViaAggregator' | 'sellViaAggregator') {
-  const decoded = decodeFunctionData({ abi: STONKZ_ROUTER_ABI, data });
-  expect(decoded.functionName).toBe(fn);
-  return decoded.args;
-}
 
 describe('buildAtomicBuyCall', () => {
   it('direct pair: encodes buyWithEth (local wrap), msg.value = ethIn', () => {

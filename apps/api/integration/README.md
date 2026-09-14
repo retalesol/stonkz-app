@@ -44,6 +44,10 @@ covers.
 | `INTEGRATION_RH_LAUNCHPAD_ADDRESS` | oracle staleness check |
 | `INTEGRATION_RH_ROUTER_ADDRESS` | RH atomic trade check |
 | `INTEGRATION_RH_SMART_ACCOUNT` | ERC-1271 login (owner must be `INTEGRATION_RH_PRIVATE_KEY`) |
+| `INTEGRATION_BASE_RPC_URL` | Base Sepolia scenarios |
+| `INTEGRATION_BASE_PRIVATE_KEY` | funded Base Sepolia key (falls back to RH key) |
+| `INTEGRATION_BASE_LAUNCHPAD_ADDRESS` | Base launchpad after `DeployBaseSepolia` |
+| `INTEGRATION_BASE_ROUTER_ADDRESS` | Base `StonkzRouter` |
 
 Tuning: `INTEGRATION_TRADE_AMOUNT` (default `0.01` native),
 `INTEGRATION_INDEXER_TIMEOUT_MS` (default `90000`),

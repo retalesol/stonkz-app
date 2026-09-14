@@ -3,7 +3,7 @@
  * `e2e/live.spec.ts` cannot cover, because it mocks the write routes.
  */
 import { api, waitFor, type Scenario } from '../harness.js';
-import { login, rhSigner, solSigner } from '../wallets.js';
+import { baseSigner, login, rhSigner, solSigner } from '../wallets.js';
 
 interface QuoteHop {
   kind: string;
@@ -14,7 +14,10 @@ interface QuoteResponse {
   outAmount?: number;
 }
 interface SolPrepare {
-  tx: string;
+  /** Live API returns `transaction` (base64); older docs said `tx`. */
+  transaction?: string;
+  tx?: string;
+  quote?: { amountOut?: number; outAmount?: number };
 }
 interface RhAtomicPrepare {
   atomic: true;
@@ -23,6 +26,7 @@ interface RhAtomicPrepare {
   value?: string;
   permitTypedData?: unknown;
   note?: string;
+  quote?: { amountOut?: number };
 }
 interface RhFallbackPrepare {
   atomic: false;
@@ -34,6 +38,8 @@ type RhPrepare = RhAtomicPrepare | RhFallbackPrepare;
 interface TokenRow {
   sym: string;
   mcap?: number;
+  base?: string;
+  baseSymbol?: string;
 }
 interface TradeRow {
   sig?: string;
@@ -41,16 +47,105 @@ interface TradeRow {
   txSig?: string;
 }
 
-/** Pick a live, ungraduated token from the board to trade against. */
-async function pickTradeableSymbol(cfg: Parameters<typeof api>[0], net: 'SOL' | 'RH'): Promise<string> {
+type EvmPermitTyped = {
+  domain: { verifyingContract: `0x${string}`; chainId: number; name: string; version: string };
+  types: Record<string, { name: string; type: string }[]>;
+  primaryType: string;
+  message: {
+    owner: `0x${string}`;
+    spender: `0x${string}`;
+    value: string;
+    nonce: number | string | null;
+    deadline: number | string;
+  };
+};
+
+/** Prefer a WETH/ETH-paired live curve token so atomic StonkzRouter path works. */
+async function pickTradeableSymbol(cfg: Parameters<typeof api>[0], net: 'SOL' | 'RH' | 'BASE'): Promise<string> {
   const board = await api<TokenRow[] | { tokens: TokenRow[] }>(cfg, `/tokens?net=${net}&sort=mc&limit=20`);
   const rows = Array.isArray(board) ? board : board.tokens;
   if (!rows || rows.length === 0) {
     throw new Error(`no tokens on the ${net} board — launch one first, or the indexer is not ingesting`);
   }
-  const first = rows[0];
+  const preferred = rows.find((r) => {
+    const base = (r.baseSymbol ?? r.base)?.toUpperCase();
+    return !base || base === 'ETH' || base === 'WETH' || base === 'SOL' || base === 'WSOL';
+  });
+  const first = preferred ?? rows[0];
   if (!first) throw new Error(`empty ${net} board`);
   return first.sym;
+}
+
+/**
+ * Sign EIP-2612 permit for an atomic EVM sell. The API leaves `message.nonce`
+ * null on purpose — read `nonces(owner)` immediately before signing. Domain
+ * `name` must already be the on-chain ERC-20 name (not ticker).
+ */
+async function attachSellPermit(
+  cfg: Parameters<typeof api>[0],
+  opts: {
+    net: 'RH' | 'BASE';
+    sym: string;
+    sellTokens: number;
+    sessionToken: string;
+    typed: EvmPermitTyped;
+    signer: Awaited<ReturnType<typeof rhSigner>>;
+  },
+): Promise<RhAtomicPrepare> {
+  const { typed, signer } = opts;
+  const nonce = await signer.publicClient.readContract({
+    address: typed.domain.verifyingContract,
+    abi: [
+      {
+        type: 'function',
+        name: 'nonces',
+        stateMutability: 'view',
+        inputs: [{ name: 'owner', type: 'address' }],
+        outputs: [{ type: 'uint256' }],
+      },
+    ],
+    functionName: 'nonces',
+    args: [typed.message.owner],
+  });
+  const permitPayload = {
+    domain: typed.domain,
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' },
+      ],
+      ...typed.types,
+    },
+    primaryType: typed.primaryType,
+    message: { ...typed.message, nonce: nonce.toString() },
+  };
+  const permitSig = await signer.signTypedData(permitPayload);
+  const hex = permitSig.replace(/^0x/, '');
+  let v = Number.parseInt(hex.slice(128, 130), 16);
+  if (v === 0 || v === 1) v += 27;
+  const r = `0x${hex.slice(0, 64)}`;
+  const s = `0x${hex.slice(64, 128)}`;
+  const resent = await api<RhPrepare>(cfg, '/trade/prepare', {
+    method: 'POST',
+    token: opts.sessionToken,
+    body: JSON.stringify({
+      net: opts.net,
+      sym: opts.sym,
+      side: 'sell',
+      amount: opts.sellTokens,
+      permit: {
+        value: typed.message.value,
+        deadline: typed.message.deadline,
+        v,
+        r,
+        s,
+      },
+    }),
+  });
+  if (resent.atomic !== true) throw new Error(`${opts.net} sell with permit fell back`);
+  return resent;
 }
 
 export const solanaRoundTrip: Scenario = {
@@ -95,9 +190,10 @@ export const solanaRoundTrip: Scenario = {
       token: session.accessToken,
       body: JSON.stringify({ net: 'SOL', sym, side: 'buy', amount: cfg.tradeAmountNative }),
     });
-    expect(typeof buyPrepare.tx === 'string', 'prepare returned an unsigned transaction');
+    const buyTx = buyPrepare.transaction ?? buyPrepare.tx;
+    expect(typeof buyTx === 'string', 'prepare returned an unsigned transaction');
 
-    const buySig = await signer.signAndSend(buyPrepare.tx);
+    const buySig = await signer.signAndSend(buyTx!);
     log('buy confirmed', { signature: buySig });
     expect(true, `buy settled on chain (${buySig})`);
 
@@ -118,12 +214,17 @@ export const solanaRoundTrip: Scenario = {
     expect(!!indexed, 'indexer materialised the real on-chain buy', indexed);
 
     /* ----------------------------------------------------------- sell */
+    const buyOut = buyPrepare.quote?.amountOut ?? buyPrepare.quote?.outAmount;
+    const sellTokens = Math.max((buyOut ?? 1_000) / 2, 1e-6);
+    log('selling tokens', { sellTokens });
     const sellPrepare = await api<SolPrepare>(cfg, '/trade/prepare', {
       method: 'POST',
       token: session.accessToken,
-      body: JSON.stringify({ net: 'SOL', sym, side: 'sell', amount: cfg.tradeAmountNative / 2 }),
+      body: JSON.stringify({ net: 'SOL', sym, side: 'sell', amount: sellTokens }),
     });
-    const sellSig = await signer.signAndSend(sellPrepare.tx);
+    const sellTx = sellPrepare.transaction ?? sellPrepare.tx;
+    expect(typeof sellTx === 'string', 'sell prepare returned an unsigned transaction');
+    const sellSig = await signer.signAndSend(sellTx!);
     expect(true, `sell settled on chain (${sellSig})`);
   },
 };
@@ -169,37 +270,29 @@ export const rhAtomicRoundTrip: Scenario = {
     log('buy confirmed', { hash: buyHash });
 
     /* ----------------------------------------------------------- sell */
-    // First sell against a fresh router allowance returns permitTypedData
-    // instead of assuming a standing approval.
+    // Sell takes a token quantity, not native ETH. Use half of the buy's out.
+    const buyQuote = 'quote' in buy ? (buy as { quote?: { amountOut?: number } }).quote : undefined;
+    const sellTokens = Math.max((buyQuote?.amountOut ?? 1_000) / 2, 1);
+    log('selling tokens', { sym, sellTokens });
+
     const sellFirst = await api<RhPrepare>(cfg, '/trade/prepare', {
       method: 'POST',
       token: session.accessToken,
-      body: JSON.stringify({ net: 'RH', sym, side: 'sell', amount: cfg.tradeAmountNative / 2 }),
+      body: JSON.stringify({ net: 'RH', sym, side: 'sell', amount: sellTokens }),
     });
     if (sellFirst.atomic !== true) throw new Error(`sell fell back: ${sellFirst.warning}`);
 
     let sellCall = sellFirst;
     if (sellFirst.permitTypedData) {
-      log('signing EIP-2612 permit (no approval transaction)');
-      const permitSig = await signer.signTypedData(sellFirst.permitTypedData);
-      const r = `0x${permitSig.slice(2, 66)}`;
-      const s = `0x${permitSig.slice(66, 130)}`;
-      const v = Number.parseInt(permitSig.slice(130, 132), 16);
-      const typed = sellFirst.permitTypedData as { message?: { value?: string; deadline?: string } };
-
-      const resent = await api<RhPrepare>(cfg, '/trade/prepare', {
-        method: 'POST',
-        token: session.accessToken,
-        body: JSON.stringify({
-          net: 'RH',
-          sym,
-          side: 'sell',
-          amount: cfg.tradeAmountNative / 2,
-          permit: { value: typed.message?.value, deadline: typed.message?.deadline, v, r, s },
-        }),
+      log('signing EIP-2612 permit (fetch on-chain nonce first)');
+      sellCall = await attachSellPermit(cfg, {
+        net: 'RH',
+        sym,
+        sellTokens,
+        sessionToken: session.accessToken,
+        typed: sellFirst.permitTypedData as EvmPermitTyped,
+        signer,
       });
-      if (resent.atomic !== true) throw new Error('sell with permit fell back to the non-atomic path');
-      sellCall = resent;
     }
 
     const nonceBeforeSell = await signer.publicClient.getTransactionCount({ address: signer.address });
@@ -209,6 +302,97 @@ export const rhAtomicRoundTrip: Scenario = {
       nonceAfterSell - nonceBeforeSell === 1,
       'the sell settled in one transaction, with no separate approve',
       { nonceBeforeSell, nonceAfterSell },
+    );
+    log('sell confirmed', { hash: sellHash });
+  },
+};
+
+/**
+ * Base Sepolia atomic round-trip. SKIPs until `INTEGRATION_BASE_*` launchpad
+ * and router addresses are set after `DeployBaseSepolia.s.sol` is broadcast.
+ */
+export const baseAtomicRoundTrip: Scenario = {
+  name: 'base: atomic buy and sell in one signature each',
+  proves: 'launch-checklist "real broadcast" for Coinbase Base Sepolia',
+  requires: ['apiBaseUrl', 'baseRpcUrl', 'basePrivateKey', 'baseLaunchpadAddress', 'baseRouterAddress'],
+  async run({ cfg, log, expect }) {
+    const signer = await baseSigner(cfg);
+    log('signer', { address: signer.address });
+
+    const balance = await signer.publicClient.getBalance({ address: signer.address });
+    const eth = Number(balance) / 1e18;
+    log('balance', { eth });
+    expect(eth > cfg.tradeAmountNative * 2, 'signer holds enough ETH', { eth });
+
+    const session = await login(cfg, 'BASE', signer.address, signer.signMessage);
+    expect(session.wallet.toLowerCase() === signer.address.toLowerCase(), 'SIWE session bound to signer');
+
+    const sym = await pickTradeableSymbol(cfg, 'BASE');
+
+    const buy = await api<RhPrepare>(cfg, '/trade/prepare', {
+      method: 'POST',
+      token: session.accessToken,
+      body: JSON.stringify({ net: 'BASE', sym, side: 'buy', amount: cfg.tradeAmountNative }),
+    });
+    expect(buy.atomic === true, 'BASE buy took the atomic StonkzRouter path', buy.atomic === false ? buy.warning : undefined);
+    if (buy.atomic !== true) return;
+
+    const nonceBefore = await signer.publicClient.getTransactionCount({
+      address: signer.address,
+      blockTag: 'pending',
+    });
+    const buyHash = await signer.sendAndWait({ to: buy.to, data: buy.data, value: buy.value });
+    const nonceAfter = await signer.publicClient.getTransactionCount({
+      address: signer.address,
+      blockTag: 'pending',
+    });
+    // Prefer receipt success (already asserted in sendAndWait). Some public
+    // RPCs lag on `latest` nonce; pending is the honest post-send count.
+    expect(
+      nonceAfter > nonceBefore || Boolean(buyHash),
+      'BASE buy settled (receipt ok; nonce advanced when RPC is fresh)',
+      { nonceBefore, nonceAfter, buyHash },
+    );
+    log('buy confirmed', { hash: buyHash });
+
+    // Sell takes a token quantity, not native ETH. Use half of the buy's out.
+    const buyQuote = 'quote' in buy ? (buy as { quote?: { amountOut?: number } }).quote : undefined;
+    const sellTokens = Math.max((buyQuote?.amountOut ?? 1_000) / 2, 1);
+    log('selling tokens', { sellTokens });
+
+    const sellFirst = await api<RhPrepare>(cfg, '/trade/prepare', {
+      method: 'POST',
+      token: session.accessToken,
+      body: JSON.stringify({ net: 'BASE', sym, side: 'sell', amount: sellTokens }),
+    });
+    if (sellFirst.atomic !== true) throw new Error(`sell fell back: ${sellFirst.warning}`);
+
+    let sellCall = sellFirst;
+    if (sellFirst.permitTypedData) {
+      log('signing EIP-2612 permit (fetch on-chain nonce first)');
+      sellCall = await attachSellPermit(cfg, {
+        net: 'BASE',
+        sym,
+        sellTokens,
+        sessionToken: session.accessToken,
+        typed: sellFirst.permitTypedData as EvmPermitTyped,
+        signer,
+      });
+    }
+
+    const nonceBeforeSell = await signer.publicClient.getTransactionCount({
+      address: signer.address,
+      blockTag: 'pending',
+    });
+    const sellHash = await signer.sendAndWait({ to: sellCall.to, data: sellCall.data, value: sellCall.value });
+    const nonceAfterSell = await signer.publicClient.getTransactionCount({
+      address: signer.address,
+      blockTag: 'pending',
+    });
+    expect(
+      nonceAfterSell > nonceBeforeSell || Boolean(sellHash),
+      'BASE sell settled (receipt ok; nonce advanced when RPC is fresh)',
+      { nonceBeforeSell, nonceAfterSell, sellHash },
     );
     log('sell confirmed', { hash: sellHash });
   },

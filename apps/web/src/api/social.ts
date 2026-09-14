@@ -100,10 +100,12 @@ export interface LiveMember {
 }
 
 export interface LiveWallPost {
+  id?: number;
   from: string;
   text: string;
   tip: number;
   sig: string;
+  likes?: number;
   createdAtMs: number;
 }
 
@@ -241,7 +243,25 @@ export interface LiveRewardsSnapshot {
   optionz: number;
   streak: number;
   streakMult: number;
-  crates: { tier: string; readyAt: number; ready: boolean; opens: number }[];
+  cratesReady: number;
+  globalCooldown?: { readyAt: number; ready: boolean };
+  spLevel?: {
+    level: number;
+    sp: number;
+    next: number | null;
+    pct: number;
+    toNext: number;
+    nextLevel: { level: number; sp: number; grants: Record<string, number> } | null;
+  };
+  crates: {
+    tier: string;
+    readyAt: number;
+    ready: boolean;
+    opens: number;
+    inventory: number;
+    openable: boolean;
+    cooldownHours: number;
+  }[];
   dropLog: { at: number; tier: string; rarity: string; label: string; optionz: number; item: string | null }[];
   achievements: { key: string; unlockedAt: number }[];
 }
@@ -257,6 +277,7 @@ export interface LiveCrateOpenResult {
   rankedUp: boolean;
   readyAt: number;
   cooldownHours: number;
+  inventoryLeft: number;
 }
 
 export function fetchRewards(net: Net): Promise<LiveRewardsSnapshot> {
@@ -265,4 +286,39 @@ export function fetchRewards(net: Net): Promise<LiveRewardsSnapshot> {
 
 export function openCrateLive(net: Net, tier: string): Promise<LiveCrateOpenResult> {
   return authedJson(`/rewards/crates/${encodeURIComponent(tier)}/open`, net, { method: 'POST', body: '{}' });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Referrals                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveReferralSnapshot {
+  code: string;
+  rates: number[];
+  spKickbackRate: number;
+  referredBy: string | null;
+  directReferrals: number;
+  pendingNative: number;
+  lifetimeNative: number;
+}
+
+export function fetchReferrals(net: Net): Promise<LiveReferralSnapshot> {
+  return authedJson(`/referrals`, net);
+}
+
+export function attachReferral(net: Net, code: string): Promise<{ ok: true; referrer: string }> {
+  return authedJson(`/referrals/attach`, net, { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+export function claimReferralFees(
+  net: Net,
+): Promise<{ ok: true; claimedNative: number; optionz: number; optionzTotal: number }> {
+  return authedJson(`/referrals/claim`, net, { method: 'POST', body: '{}' });
+}
+
+export function likeWallPost(
+  net: Net,
+  postId: number,
+): Promise<{ ok: true; liked: boolean; xpAwarded: number; already?: boolean }> {
+  return authedJson(`/wall/${net}/posts/${postId}/like`, net, { method: 'POST', body: '{}' });
 }

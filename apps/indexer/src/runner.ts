@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, type Net } from '@stonkz/shared';
 import type { Logger } from '@stonkz/api/observability/logger';
 import type { PriceOracle } from '@stonkz/api/chain/types';
 import { nativeUnit } from '@stonkz/shared';
@@ -302,12 +302,12 @@ export class IndexerRunner {
    */
   async drain(maxPasses = 100): Promise<PassResult[]> {
     const settled = await Promise.allSettled(
-      (['SOL', 'RH'] as const).map((net) => this.drainNet(net, maxPasses)),
+      ALL_NETS.map((net) => this.drainNet(net, maxPasses)),
     );
 
     const results: PassResult[] = [];
     for (const [i, outcome] of settled.entries()) {
-      const net = (['SOL', 'RH'] as const)[i] as Net;
+      const net = ALL_NETS[i] as Net;
       if (outcome.status === 'fulfilled') {
         results.push(...outcome.value);
       } else {
@@ -326,8 +326,8 @@ export class IndexerRunner {
    * current price, not of any single event, so it has to run on a timer.
    */
   async sweepAchievements(): Promise<Record<Net, string[]>> {
-    const out: Record<Net, string[]> = { SOL: [], RH: [] };
-    for (const net of ['SOL', 'RH'] as const) {
+    const out: Record<Net, string[]> = { SOL: [], RH: [], BASE: [] };
+    for (const net of ALL_NETS) {
       try {
         const price = await this.opts.oracle.nativeUsd(nativeUnit(net));
         out[net] = await this.opts.ingestor.sweepDiamondHands(net, price);

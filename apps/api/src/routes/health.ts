@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { sql } from 'drizzle-orm';
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, type Net } from '@stonkz/shared';
 import { indexerCursors } from '../db/schema.js';
 import { listAppliedMigrations } from '../db/migrate.js';
 import type { AppDeps, AppEnv } from '../app/context.js';
@@ -56,7 +56,7 @@ export function healthRoutes(): Hono<AppEnv> {
 
   app.get('/health', async (c) => {
     const deps = c.get('deps');
-    const nets: Net[] = ['SOL', 'RH'];
+    const nets: Net[] = [...ALL_NETS];
 
     const cursorRows = await deps.db
       .select()

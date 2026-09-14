@@ -151,7 +151,7 @@ describe('the health and metrics surface', () => {
       confirmations,
     });
     const idle = new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
-    rig = await createIndexerRig([], { sources: { SOL: source, RH: idle } });
+    rig = await createIndexerRig([], { sources: { SOL: source, RH: idle , BASE: idle  } });
     await rig.runner.drain();
 
     const opts = {
@@ -160,7 +160,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000 },
+      tickMs: { SOL: 400, RH: 2_000 , BASE: 2_000  },
       maxLagSeconds,
       mode: 'chain',
       isLeader: () => true,
@@ -201,7 +201,7 @@ describe('the health and metrics surface', () => {
   it('fails health when a chain is outside its lag budget', async () => {
     const sol = new ScriptedSource({ net: 'SOL', head: 1_000_000, startPosition: 1, confirmations: 0 });
     const idle = new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
-    rig = await createIndexerRig([], { sources: { SOL: sol, RH: idle } });
+    rig = await createIndexerRig([], { sources: { SOL: sol, RH: idle , BASE: idle  } });
     // Nothing was ingested, but the head is a million slots away.
     await rig.cursors.observeHead('SOL', 1_000_000, 1_000_000);
 
@@ -211,7 +211,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000 },
+      tickMs: { SOL: 400, RH: 2_000 , BASE: 2_000  },
       maxLagSeconds: 30,
       mode: 'chain',
       isLeader: () => true,
@@ -261,7 +261,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000 },
+      tickMs: { SOL: 400, RH: 2_000 , BASE: 2_000  },
       maxLagSeconds: 30,
       mode: 'chain',
       isLeader: () => true,

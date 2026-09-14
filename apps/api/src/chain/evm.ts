@@ -1,4 +1,5 @@
-import type { NativeUnit, Net } from '@stonkz/shared';
+import type { EvmNet, NativeUnit, Net } from '@stonkz/shared';
+import { nativeUnit as unitForNet } from '@stonkz/shared';
 import { jsonRpc } from './jsonrpc.js';
 import { RpcError, type ChainRpc, type FetchLike, type NativeTransferSource, type NativeTransferVerification } from './types.js';
 
@@ -30,6 +31,8 @@ function encodeBalanceOfCall(owner: string): string {
 export interface EvmRpcOptions {
   url: string;
   chainId: number;
+  /** Which EVM product net this endpoint serves. Defaults to Robinhood Chain. */
+  net?: EvmNet;
   fetchImpl?: FetchLike;
   timeoutMs?: number;
   onCall?: (ok: boolean) => void;
@@ -43,8 +46,8 @@ export interface EvmRpcOptions {
  * confirmed, because 4663 and testnet 46630 are a plausible typo apart.
  */
 export class EvmRpc implements ChainRpc, NativeTransferSource {
-  readonly net: Net = 'RH';
-  readonly nativeUnit: NativeUnit = 'ETH';
+  readonly net: Net;
+  readonly nativeUnit: NativeUnit;
   readonly chainId: number;
 
   private readonly url: string;
@@ -53,6 +56,8 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
   private readonly onCall: (ok: boolean) => void;
 
   constructor(opts: EvmRpcOptions) {
+    this.net = opts.net ?? 'RH';
+    this.nativeUnit = unitForNet(this.net);
     this.url = opts.url;
     this.chainId = opts.chainId;
     this.fetchImpl = opts.fetchImpl ?? ((u, i) => fetch(u, i));
@@ -69,7 +74,7 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
       return result;
     } catch (err) {
       this.onCall(false);
-      throw new RpcError('RH', method, err instanceof Error ? err.message : String(err), err);
+      throw new RpcError(this.net, method, err instanceof Error ? err.message : String(err), err);
     }
   }
 
@@ -172,7 +177,7 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
   async verifyChainId(): Promise<void> {
     const actual = Number.parseInt(await this.call<string>('eth_chainId', []), 16);
     if (actual !== this.chainId) {
-      throw new RpcError('RH', 'eth_chainId', `expected ${this.chainId}, endpoint reports ${actual}`);
+      throw new RpcError(this.net, 'eth_chainId', `expected ${this.chainId}, endpoint reports ${actual}`);
     }
   }
 

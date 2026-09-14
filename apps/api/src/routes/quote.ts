@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { nativeUnit, type Net } from '@stonkz/shared';
+import { nativeUnit, parseNet } from '@stonkz/shared';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -26,9 +26,6 @@ function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
   return typeof candidate.getAccountDataBase64 === 'function' ? (candidate as SolanaAccountSource) : undefined;
 }
 
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
 
 /**
  * `GET /tokens/:sym/quote?side=&amount=` — plan step 82.

@@ -27,7 +27,7 @@ export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
  */
 export const DISCLOSURE =
   API_MODE === 'live'
-    ? 'DEVNET / RH TESTNET STAGING \u00b7 NOT MAINNET \u00b7 NOT FINANCIAL ADVICE'
+    ? 'DEVNET / RH TESTNET / BASE SEPOLIA \u00b7 NOT MAINNET \u00b7 NOT FINANCIAL ADVICE'
     : 'SIMULATED DATA \u00b7 NOT FINANCIAL ADVICE';
 
 export type {

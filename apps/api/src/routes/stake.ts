@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import type { Address } from 'viem';
 import { and, eq } from 'drizzle-orm';
-import { LOCKS } from '@stonkz/shared';
+import { LOCKS, isEvm, type EvmNet } from '@stonkz/shared';
 import { stakePositions } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -16,6 +16,7 @@ import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { encodeClaimStakeCall, encodeStakeCall, encodeUnstakeCall } from '../router/evm-launch.js';
 import { toAtoms } from '../router/units.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
+import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { resolveTokenRow } from './token-resolve.js';
 
 /**
@@ -153,11 +154,16 @@ export function stakeRoutes(): Hono<AppEnv> {
       });
     }
 
-    if (deps.env.rhLaunchpadAddress.toLowerCase() === ZERO) {
+    if (!isEvm(net)) {
+      return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
+    }
+
+    const launchpad = evmLaunchpadAddress(deps.env, net as EvmNet);
+    if (launchpad.toLowerCase() === ZERO) {
       return c.json(
         {
           error: 'programs_not_deployed',
-          detail: 'Robinhood launchpad address is unset — staking awaits contract deployment',
+          detail: `${net} launchpad address is unset — staking awaits contract deployment`,
         },
         503,
       );
@@ -171,7 +177,7 @@ export function stakeRoutes(): Hono<AppEnv> {
       action: 'stake',
       amount,
       days,
-      to: deps.env.rhLaunchpadAddress,
+      to: launchpad,
       data,
       value: '0',
     });
@@ -219,11 +225,16 @@ export function stakeRoutes(): Hono<AppEnv> {
       });
     }
 
-    if (deps.env.rhLaunchpadAddress.toLowerCase() === ZERO) {
+    if (!isEvm(net)) {
+      return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
+    }
+
+    const launchpad = evmLaunchpadAddress(deps.env, net as EvmNet);
+    if (launchpad.toLowerCase() === ZERO) {
       return c.json(
         {
           error: 'programs_not_deployed',
-          detail: 'Robinhood launchpad address is unset — staking awaits contract deployment',
+          detail: `${net} launchpad address is unset — staking awaits contract deployment`,
         },
         503,
       );
@@ -235,7 +246,7 @@ export function stakeRoutes(): Hono<AppEnv> {
       sym,
       action: 'unstake',
       amount,
-      to: deps.env.rhLaunchpadAddress,
+      to: launchpad,
       data: encodeUnstakeCall(row.mint as Address, atoms),
       value: '0',
     });
@@ -278,11 +289,16 @@ export function stakeRoutes(): Hono<AppEnv> {
       });
     }
 
-    if (deps.env.rhLaunchpadAddress.toLowerCase() === ZERO) {
+    if (!isEvm(net)) {
+      return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
+    }
+
+    const launchpad = evmLaunchpadAddress(deps.env, net as EvmNet);
+    if (launchpad.toLowerCase() === ZERO) {
       return c.json(
         {
           error: 'programs_not_deployed',
-          detail: 'Robinhood launchpad address is unset — staking awaits contract deployment',
+          detail: `${net} launchpad address is unset — staking awaits contract deployment`,
         },
         503,
       );
@@ -292,7 +308,7 @@ export function stakeRoutes(): Hono<AppEnv> {
       net,
       sym,
       action: 'claim',
-      to: deps.env.rhLaunchpadAddress,
+      to: launchpad,
       data: encodeClaimStakeCall(row.mint as Address),
       value: '0',
     });

@@ -4,6 +4,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
 } from '@solana/spl-token';
+import { JupiterAltRequiredError } from './errors.js';
 import type { JupiterHop } from './solana-tx.js';
 import { buildBuyInstruction, buildCreateTokenInstruction, traderAtas, type CreateTokenArgs } from './solana-instructions.js';
 
@@ -63,10 +64,7 @@ function toIx(ix: { programId: string; accounts: { pubkey: string; isSigner: boo
 function jupiterInstructions(hop: JupiterHop): TransactionInstruction[] {
   const r = hop.response;
   if (r.addressLookupTableAddresses.length > 0) {
-    throw new Error(
-      'composeSolanaLaunchTransaction: Jupiter route requires address lookup tables; ' +
-        'VersionedTransaction support is not implemented — see solana-launch-tx.ts',
-    );
+    throw new JupiterAltRequiredError();
   }
   const out: TransactionInstruction[] = [];
   if (r.tokenLedgerInstruction) out.push(toIx(r.tokenLedgerInstruction));

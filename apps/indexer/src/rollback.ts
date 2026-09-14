@@ -17,6 +17,8 @@ import {
   treasuries,
   treasuryCredits,
   xpEvents,
+  referralFeeBalances,
+  referralFeeEvents,
 } from '@stonkz/api/db/schema';
 import type { Logger } from '@stonkz/api/observability/logger';
 import { utcDayKey } from '@stonkz/api/game/day';
@@ -165,6 +167,7 @@ export class ReorgRollback {
       report.tokensDropped = [...new Set(droppedLaunches.map((d) => d.sym))];
 
       await this.reverseLedger(tx, net, signatures, report);
+      await this.unwindReferralFees(tx, net, signatures);
       await this.unwindAccumulators(tx, net, disowned);
       await this.deletePositionScoped(tx, net, fromPosition, report);
 
@@ -290,6 +293,35 @@ export class ReorgRollback {
         .returning({ key: achievements.key });
       report.achievementsRevoked += deleted.length;
     }
+  }
+
+  /** Reverse referral fee events + pending balances for disowned fill signatures. */
+  private async unwindReferralFees(tx: Tx, net: Net, signatures: readonly string[]): Promise<void> {
+    if (signatures.length === 0) return;
+    const feeRows = await tx
+      .select()
+      .from(referralFeeEvents)
+      .where(and(eq(referralFeeEvents.net, net), inArray(referralFeeEvents.txSig, [...signatures])));
+    if (feeRows.length === 0) return;
+
+    const byEarner = new Map<string, number>();
+    for (const row of feeRows) {
+      byEarner.set(row.earner, (byEarner.get(row.earner) ?? 0) + row.payoutNative);
+    }
+    const nowDate = new Date(this.now());
+    for (const [earner, total] of byEarner) {
+      await tx
+        .update(referralFeeBalances)
+        .set({
+          pendingNative: sql`greatest(0, ${referralFeeBalances.pendingNative} - ${total})`,
+          lifetimeNative: sql`greatest(0, ${referralFeeBalances.lifetimeNative} - ${total})`,
+          updatedAt: nowDate,
+        })
+        .where(and(eq(referralFeeBalances.net, net), eq(referralFeeBalances.wallet, earner)));
+    }
+    await tx
+      .delete(referralFeeEvents)
+      .where(and(eq(referralFeeEvents.net, net), inArray(referralFeeEvents.txSig, [...signatures])));
   }
 
   /* --------------------------------------------------- additive accumulators */

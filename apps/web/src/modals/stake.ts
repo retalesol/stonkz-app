@@ -43,7 +43,7 @@ export function renderStake(c: SimCoin): void {
     ? (cb ? 'CASHBACK WINDOW ' + DOT + ' REWARDS IN ' + c.sym : 'REWARDS IN ' + nativeUnit()) +
       ' ' +
       DOT +
-      ' AWAITING PROGRAM DEPLOY'
+      ' LIVE PREPARE'
     : (cb ? 'CASHBACK WINDOW ' + DOT + ' REWARDS IN ' + c.sym : 'REWARDS IN ' + nativeUnit()) +
       ' ' +
       DOT +
@@ -61,7 +61,7 @@ export function renderStake(c: SimCoin): void {
           ><span class="hint" id="sv-share">${(yourShare(c) * 100).toFixed(2)}% OF POOL</span></div>
       </div>
       ${live
-        ? html`<p class="hint" style="margin:0 0 10px">STAKE / UNSTAKE / CLAIM PREPARE REAL TRANSACTIONS. THEY WILL FAIL ON BROADCAST UNTIL THE LAUNCHPAD IS DEPLOYED ON THIS CLUSTER.</p>`
+        ? html`<p class="hint" style="margin:0 0 10px">STAKE / UNSTAKE / CLAIM BUILD REAL TRANSACTIONS YOUR WALLET SIGNS ON THIS CLUSTER.</p>`
         : ''}
       <div class="stk-grid">
         <div><canvas class="stk-pie" id="stkPie"></canvas>

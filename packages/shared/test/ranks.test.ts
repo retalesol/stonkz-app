@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { ACH, RANKS } from '../src/constants.js';
 import {
+  SOCIAL_DAILY_CAP,
   XP_CASHBACK_LAUNCH,
+  XP_COMMENT,
+  XP_DAILY_CHECKIN,
   XP_DIAMOND_HANDS,
   XP_FOLLOW,
   XP_GRADUATE,
   XP_LAUNCH,
+  XP_LAUNCH_BOND,
+  XP_LIKE,
   XP_STAKE_CLAIM,
   XP_WALL_POST,
   achOf,
@@ -113,24 +118,25 @@ describe('applyXpMult', () => {
     expect(applyXpMult(100, 1)).toBe(100);
     expect(applyXpMult(100, 7)).toBe(130);
     expect(applyXpMult(5, 2)).toBe(5); // 5.25 -> 5
-    expect(applyXpMult(XP_LAUNCH, 7)).toBe(195);
+    expect(applyXpMult(XP_LAUNCH, 7)).toBe(65);
   });
 });
 
 describe('XP formulas — GOLDEN', () => {
-  it('trade XP is max(5, round(native * 40))', () => {
-    expect(xpForTrade(0)).toBe(5);
-    expect(xpForTrade(0.01)).toBe(5);
-    expect(xpForTrade(0.125)).toBe(5);
-    expect(xpForTrade(0.5)).toBe(20);
-    expect(xpForTrade(1)).toBe(40);
-    expect(xpForTrade(5)).toBe(200);
-    expect(xpForTrade(2.34)).toBe(94); // round(93.6)
+  it('trade XP is max(8, round(native * 50))', () => {
+    expect(xpForTrade(0)).toBe(8);
+    expect(xpForTrade(0.01)).toBe(8);
+    expect(xpForTrade(0.1)).toBe(8);
+    expect(xpForTrade(0.5)).toBe(25);
+    expect(xpForTrade(1)).toBe(50);
+    expect(xpForTrade(5)).toBe(250);
+    expect(xpForTrade(2.34)).toBe(117); // round(117)
   });
 
-  it('launch XP is a flat 150', () => {
-    expect(XP_LAUNCH).toBe(150);
-    expect(XP_CASHBACK_LAUNCH).toBe(150);
+  it('launch XP is 50 and bond is 250', () => {
+    expect(XP_LAUNCH).toBe(50);
+    expect(XP_LAUNCH_BOND).toBe(250);
+    expect(XP_CASHBACK_LAUNCH).toBe(0);
   });
 
   it('fee-claim XP is max(10, round(native * 30))', () => {
@@ -150,8 +156,12 @@ describe('XP formulas — GOLDEN', () => {
 
   it('pins the flat awards', () => {
     expect(XP_STAKE_CLAIM).toBe(12);
-    expect(XP_FOLLOW).toBe(6);
-    expect(XP_WALL_POST).toBe(8);
+    expect(XP_FOLLOW).toBe(0);
+    expect(XP_WALL_POST).toBe(1);
+    expect(XP_COMMENT).toBe(1);
+    expect(XP_LIKE).toBe(1);
+    expect(XP_DAILY_CHECKIN).toBe(10);
+    expect(SOCIAL_DAILY_CAP).toBe(5);
     expect(XP_GRADUATE).toBe(250);
     expect(XP_DIAMOND_HANDS).toBe(200);
   });

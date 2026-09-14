@@ -1,15 +1,22 @@
 # What is real vs simulated
 
 **Read this before describing Stonkz to anyone outside the build.** Phases 0-6
-produced a complete, well-tested codebase. It is **not** a launched product.
-The gap is not "polish" — it is that no transaction this app builds has ever
-been broadcast to a real chain, and no board data has ever come from a real
-chain event.
+produced a complete, well-tested codebase. It is **not** a mainnet product.
+Staging now settles real **testnet/devnet** trades (Solana + RH + Base Sepolia)
+via the funded integration harness and chain-indexed board/tape — but no
+**mainnet** program is deployed, and no end-user browser extension has driven
+the staging UI end to end.
 
 Phase B closed the client half of the first gap: real wallets sign and
 broadcast now (§1). Robinhood **testnet** now has a live launchpad (§3);
-Solana **devnet** program is deployed and upgraded. Board/tape on staging
-come from `INDEXER_SOURCE=chain` (§2) — fixture mode is refused in production.
+Solana **devnet** program is deployed and upgraded. **Coinbase Base** is a
+first-class `Net='BASE'` — Base Sepolia **84532** launchpad + `StonkzRouter`
+are **deployed** (addresses in
+[`programs/evm/deployments/84532.json`](../programs/evm/deployments/84532.json)).
+Board/tape on staging come from `INDEXER_SOURCE=chain` (§2) — fixture mode is
+refused in production.
+
+Devnet beta findings and remediations: [`devnet-beta-findings.md`](devnet-beta-findings.md).
 
 This file is the single place that says which is which. Every row is checked
 against code, not against a phase's exit notes.
@@ -52,12 +59,13 @@ formality:
 |---|---|---|
 | Wallet connect, Solana | **REAL** | `apps/web/src/wallet/solana.ts` reads the Wallet Standard registry (`@wallet-standard/app`'s `getWallets()`) directly — no React, no wallet-adapter. Detects installed wallets, filters to those that can sign for the configured cluster, connects, exposes the pubkey, follows account changes. Picker UI: `apps/web/src/modals/walletpicker.ts`. |
 | Wallet connect, Robinhood Chain (injected) | **REAL** | `apps/web/src/wallet/evm.ts`: EIP-6963 discovery with a `window.ethereum` fallback, `viem` for chain reads. Addresses are EIP-55 checksummed so the SIWE message matches what the API echoes. |
-| Wallet connect, Robinhood Chain (WalletConnect) | **REAL, UNCONFIGURED** | `apps/web/src/wallet/walletconnect.ts` (`@walletconnect/universal-provider`, chain pinned in the session namespace, QR drawn to a `<canvas>` in `modals/walletpicker.ts`). Required rather than optional: Robinhood Wallet is mobile-only, so desktop has no other route in. `VITE_WALLETCONNECT_PROJECT_ID` is unset by default, and with it unset the picker row renders **disabled with the reason shown** — it never falls back to a fake signer. |
+| Wallet connect, Coinbase Base | **REAL on staging** | Same EVM wallet layer with `Net='BASE'`, chain id **84532** (Sepolia). Staging `VITE_BASE_*` points at the 84532 deploy. |
+| Wallet connect, Robinhood Chain (WalletConnect) | **REAL on staging** | `apps/web/src/wallet/walletconnect.ts` (`@walletconnect/universal-provider`, chain pinned in the session namespace, QR drawn to a `<canvas>` in `modals/walletpicker.ts`). Required rather than optional: Robinhood Wallet is mobile-only, so desktop has no other route in. Staging sets `VITE_WALLETCONNECT_PROJECT_ID`; with it unset the picker row renders **disabled with the reason shown** — it never falls back to a fake signer. |
 | Chain-ID enforcement (4663) | **REAL** | `wallet/evm.ts::enforceRhChain`: reads `eth_chainId`, `wallet_switchEthereumChain`, `wallet_addEthereumChain` on `4902`, then **re-reads and refuses to sign** if the wallet stayed put. Deliberately not run before sign-in, because `personal_sign` is chain-agnostic and many mobile wallets cannot switch at all (`docs/robinhood-chain.md` §6.1). Unit-tested through the whole ladder. |
 | Transaction signing + broadcast | **REAL, NEVER BROADCAST FOR REAL** | `app/signer.ts` delegates to the connected wallet. Solana prefers `signAndSendTransaction`, falls back to `signTransaction` + `sendRawTransaction`, then polls `getSignatureStatuses` until confirmed or `lastValidBlockHeight` passes. Robinhood pre-simulates with `eth_call`, sends `eth_sendTransaction`, waits for a receipt and rejects a reverted one. See caveat 1 above. |
 | Failure states (rejection / funds / slippage / chain) | **REAL** | `wallet/errors.ts` maps provider errors to 13 distinct kinds; `views/token.ts`, `modals/launch.ts`, `modals/claim.ts` and `modals/steps.ts` report them separately. A decline is not a red failure, and a missed `min_out` reads as SLIPPAGE EXCEEDED rather than as a bare revert. 89 unit tests in `apps/web/src/wallet/`. |
 | Write paths wired to the real signer | **REAL** | Trade (all three RH `/trade/prepare` shapes from `docs/rh-trade-atomicity-gap.md` plus Solana atomic), launch, fee claim and tips all go through `wallet/`. `api/live.ts` no longer has a `fakeSellPermit()`. |
-| EIP-712 sell permit | **REAL, UNVERIFIABLE UNTIL DEPLOYED** | `wallet/permit.ts` reads `nonces(owner)` off the token immediately before signing (the API returns `nonce: null` on purpose), adds the `EIP712Domain` type entry, drops the API's `note` sibling, and splits the signature into `PermitData`. Whether the resulting digest is one `StonkzToken.permit` accepts cannot be checked without a deployed token (§3). |
+| EIP-712 sell permit | **REAL on RH testnet + Base Sepolia** | `wallet/permit.ts` reads `nonces(owner)` off the token immediately before signing (the API returns `nonce: null` on purpose), adds the `EIP712Domain` type entry, drops the API's `note` sibling, and splits the signature into `PermitData`. `/trade/prepare` now eth_calls `name()` for the EIP-712 domain (indexer `tokens.name` is the ticker). Funded harness: RH + Base atomic sell with permit **PASS**. |
 | SIWS / SIWE login handshake | **REAL** | `apps/web/src/app/session.ts` posts to `/auth/siws` / `/auth/siwe`; `apps/api` verifies real signatures, including an ERC-1271 fallback. The key holder is now the connected wallet, not a `localStorage` keypair. |
 | Tip broadcast | **REAL, both chains** | `apps/web/src/app/tip.ts`. The "RH tips need a real wallet" refusal is gone: an RH tip is an `eth_sendTransaction` of `value` wei, waited on for a receipt. Solana builds a real `SystemProgram.transfer` for the connected wallet to sign. |
 | Tip verification (server) | **REAL** | `apps/api/src/social/tips.ts::verifyTip` re-derives sender/recipient/amount from the RPC. A client cannot assert a tip happened or inflate the amount. |
@@ -71,9 +79,10 @@ Staging board/tape are chain-indexed (§2), not fixture-replayed.
 
 | Surface | Status | Evidence |
 |---|---|---|
-| Indexer event source | **REAL on staging (chain default)** | `INDEXER_SOURCE` defaults to `chain`; `fixtures` is refused in production unless `INDEXER_ALLOW_FIXTURES=1`. Staging Railway runs chain mode against RH 46630 + Solana devnet with start block/slot set. |
+| Indexer event source | **REAL on staging (chain default)** | `INDEXER_SOURCE` defaults to `chain`; `fixtures` is refused in production unless `INDEXER_ALLOW_FIXTURES=1`. Staging Railway runs chain mode against Solana devnet + RH 46630 + Base Sepolia 84532 with start slot/block set. |
 | Solana ingestion | **REAL on staging** | Polling `getSignaturesForAddress` + `getTransaction` against `SOLANA_LAUNCHPAD_PROGRAM_ID`, with Anchor event decode. No Geyser/Helius webhook path — polling is the primary, by design. |
 | RH ingestion | **REAL on staging** | `viem` `getLogs` against the launchpad + router addresses, ABI-decoded. Requires `RH_LAUNCHPAD_ADDRESS` plus start block; chain mode refuses the zero address at boot. |
+| Base Sepolia ingestion | **REAL on staging** | Same EVM source with `net: 'BASE'`, `INDEXER_BASE_START_BLOCK` from the 84532 deploy, launchpad + router addresses. |
 | Reorg detection / rollback | **REAL code, lightly exercised** | Confirmation-depth buffer (Solana `finalized` / RH `N` blocks), cursor hashes, and `ReorgRollback`. Staging RH has seen reorg counters > 0. |
 | Cursor behaviour on boot | **SAFE** | Rewind-to-0 runs only in fixture mode. Chain mode resumes the persisted cursor and will not walk from genesis. |
 | Dead-letter for rejected events | **REAL** | `indexer_dead_letters`; a batch that fails `INDEXER_MAX_BATCH_ATTEMPTS` times is recorded and skipped. Per-chain `drain()` isolation means one net cannot stall the other. |
@@ -99,7 +108,8 @@ environment switch only — flip cluster + RPC; no code change.
 | 20/70/10 fee split | **REAL, asserted on every fill** | `require!`/`require` identity checks in both chains' buy/sell paths, not just tests. |
 | Deployment tooling | **REAL** | `programs/evm/script/Deploy.s.sol` (mainnet), `DeployTestnet.s.sol` (46630), and `programs/solana/scripts/init-deployment.ts`. Runbook: [`deployment.md`](deployment.md). |
 | Robinhood **testnet** (46630) deployment | **REAL** | Addresses in [`programs/evm/deployments/46630.json`](../programs/evm/deployments/46630.json): UUPS `StonkzLaunchpad` + `PushPriceSource`, `StonkzRouter`, self-deployed V2 factory + migrator. Smoke: create/buy/sell `$BETADOG`, oracle `graduate` + `migrateLiquidity` (LP at `0x…dEaD`), and `upgradeToAndCall` succeeded on-chain. |
-| Solana / RH **mainnet** deployment | **MISSING** | No mainnet program ID or contract address recorded. Solana bytecode remains upgradeable until authority is revoked (`docs/deployment.md` §1.1). |
+| Base **Sepolia** (84532) deployment | **REAL** | Addresses in [`programs/evm/deployments/84532.json`](../programs/evm/deployments/84532.json): UUPS launchpad + `PushPriceSource`, `StonkzRouter`, Stonkz V2 factory + migrator. Smoke token `$BASEDOG`. Staging API/indexer/web env wired. |
+| Solana / RH / Base **mainnet** deployment | **MISSING** | No mainnet program ID or contract address recorded. Solana bytecode remains upgradeable until authority is revoked (`docs/deployment.md` §1.1). |
 | Third-party audit | **MISSING** | Internal review only (`docs/security-review-findings.md`). |
 
 ## 4. Trade routing
@@ -108,6 +118,7 @@ environment switch only — flip cluster + RPC; no code change.
 |---|---|---|
 | Solana native-in route (Jupiter quote + curve, atomic) | **REAL** | `apps/api/src/router/`, `routes/trade.ts`. |
 | RH atomic route via `StonkzRouter` | **REAL on RH testnet staging** | Railway `RH_ROUTER_ADDRESS` / `RH_LAUNCHPAD_ADDRESS` point at 46630 deploy. Production boots refuse a zero router. `POST /trade/prepare` is atomic-only. |
+| Base atomic route via `StonkzRouter` | **REAL on Base Sepolia staging** | Railway `BASE_ROUTER_ADDRESS` / `BASE_LAUNCHPAD_ADDRESS` point at 84532 deploy. Same prepare shape as RH. |
 | Pinned RH Uniswap v3 fee tiers | **REAL on staging (USDG:3000)** | Unpinned aggregator-hop bases fail closed with `rh_router_required` — never guessed. |
 | Non-atomic `EvmStep[]` fallback | **REMOVED from prepare path** | `buildEvmTradePlan` remains for tests/reference only; `/trade/prepare` and the live client refuse multi-signature RH trades. |
 
@@ -149,7 +160,7 @@ environment switch only — flip cluster + RPC; no code change.
 | Unit tests | **REAL** | 542+ across packages, green. |
 | Playwright sim + live suites | **REAL, mocked writes** | Live suite mocks only the write endpoints (`/trade/prepare`, `/launch/*`, `/fees/*`) because no wallet in CI holds balance. Reads, quotes, and auth hit the real stack. |
 | Playwright wallet suites | **REAL, against mock wallets** | `e2e/mock-wallets.ts` implements the Wallet Standard registry and EIP-1193/EIP-6963, so `apps/web/src/wallet/` runs unmodified; only the keys and the chain behind them are fake. `e2e/wallet.spec.ts` runs in the default suite and asserts practice mode cannot activate; `e2e/wallet-live.spec.ts` needs `LIVE_E2E=1` because the picker only opens in a live-mode build. Does not prove a real extension or a real Robinhood Wallet behaves the same way — see §1 caveat 2. |
-| Funded-testnet integration harness | **REAL code, NEVER RUN** | `apps/api/integration/` drives prepare → sign → broadcast → confirm → indexer with real keypairs. Every scenario currently reports SKIP: there is no deployment and no funded wallet. See [`phase-f-e2e.md`](phase-f-e2e.md). |
+| Funded-testnet integration harness | **REAL, run on staging** | `apps/api/integration/` drives prepare → sign → broadcast → confirm → indexer. **PASS** (2026-09-14): Solana buy/sell, RH atomic buy/sell+permit, Base Sepolia atomic buy/sell+permit. Graduation LP-burn scenarios SKIP until a graduated board row exists. ERC-1271 SKIP without smart-account env. See [`phase-f-e2e.md`](phase-f-e2e.md). |
 | Load tests | **REAL, not a capacity sign-off** | `docs/load-test-results.md`: run on one laptop, against stubbed RPC/oracle, with no WS broadcast fan-out from a live indexer. Treat the PASS as "no obvious bottleneck", not as a production SLA. |
 | WS fan-out load test | **REAL code, NEVER RUN** | `apps/api/loadtest/k6/ws-fanout.js` measures real delivery lag and fails closed if no publisher is running. Its thresholds are targets; no run has produced a number against them. |
 | Program tests | **REAL** | Anchor + Foundry, including a Raydium integration path and a skipped-by-default RH fork test. |

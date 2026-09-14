@@ -14,6 +14,7 @@ import { socialRoutes } from '../routes/social.js';
 import { chatRoutes } from '../routes/chat.js';
 import { xRoutes } from '../routes/x.js';
 import { ogRoutes } from '../routes/og.js';
+import { referralRoutes } from '../routes/referrals.js';
 import type { AppDeps, AppEnv } from './context.js';
 import { requestLogger, withDeps } from './middleware.js';
 import { cors, securityHeaders } from './security.js';
@@ -45,6 +46,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/', feesRoutes());
   app.route('/', stakeRoutes());
   app.route('/', socialRoutes());
+  app.route('/', referralRoutes());
   app.route('/', chatRoutes());
   app.route('/', xRoutes());
   app.route('/', ogRoutes());

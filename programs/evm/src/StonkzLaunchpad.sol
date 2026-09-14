@@ -634,6 +634,9 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         } else {
             reason = 1;
             require(!oracleGraduationPaused, "oracle graduation paused");
+            // Oracle mcap uses virtual reserves — without a raise, migrateLiquidity
+            // would always revert (baseAmount == 0). Refuse until realBase > 0.
+            require(c.realBase > 0, "no base raised");
             uint256 price = _freshPrice(c.baseToken);
             usd = CurveMath.mcapUsd1e6(mcap, price, c.baseDecimals);
             require(usd >= CurveMath.GRAD_MCAP_USD_1E6, "not graduable");

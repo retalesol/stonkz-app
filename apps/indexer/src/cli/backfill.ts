@@ -95,6 +95,7 @@ async function main(): Promise<void> {
       db: deps.db,
       ledger: deps.ledger,
       awards: deps.awards,
+      referrals: deps.referrals,
       publisher: deps.publisher,
       logger,
       now: deps.now,

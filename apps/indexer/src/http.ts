@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, type Net } from '@stonkz/shared';
 import type { Logger } from '@stonkz/api/observability/logger';
 import type { CursorState, ReplayCursors } from './cursors.js';
 import type { DeadLetters } from './deadletter.js';
@@ -67,7 +67,7 @@ export interface IndexerHealth {
   chains: ChainHealth[];
 }
 
-const NETS: readonly Net[] = ['SOL', 'RH'];
+const NETS: readonly Net[] = ALL_NETS;
 
 export async function readHealth(opts: IndexerHttpOptions): Promise<IndexerHealth> {
   const now = (opts.now ?? Date.now)();

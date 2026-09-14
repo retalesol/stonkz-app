@@ -17,6 +17,7 @@ import {
 } from '@stonkz/api/db/schema';
 import type { GameAwards } from '@stonkz/api/game/awards';
 import type { Ledger } from '@stonkz/api/game/ledger';
+import type { ReferralService } from '@stonkz/api/game/referrals';
 import type { Publisher } from '@stonkz/api/ws/publisher';
 import type { Logger } from '@stonkz/api/observability/logger';
 import { candleUpdatesFor } from './candles.js';
@@ -40,6 +41,7 @@ export interface IngestOptions {
   db: Db;
   ledger: Ledger;
   awards: GameAwards;
+  referrals: ReferralService;
   publisher: Publisher;
   logger: Logger;
   now?: () => number;
@@ -125,6 +127,12 @@ export class Ingestor {
       const recorded = await this.record(event);
       if (!recorded) {
         report.duplicates++;
+        // FeeAccrued side effects (referral + vault) are independently
+        // idempotent — re-run them so a crash after `chain_events` insert
+        // cannot permanently skip protocol/referral credits.
+        if (event.kind === 'FeeAccrued') {
+          await this.reconcileFeeAccrued(event);
+        }
         continue;
       }
 
@@ -587,7 +595,15 @@ export class Ingestor {
         )
     ).filter((h) => !this.opts.awards.isDust(event.net, h.costNative));
 
+    const [tokenRow] = await this.db
+      .select({ creator: tokens.creator })
+      .from(tokens)
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)))
+      .limit(1);
+
     for (const holder of holders) {
+      // Creator gets the launch-bond award below — skip double-pay of `grad`.
+      if (tokenRow?.creator && holder.wallet === tokenRow.creator) continue;
       const unlocked = await this.opts.awards.graduatedWhileHolding({
         net: event.net,
         wallet: holder.wallet,
@@ -596,6 +612,18 @@ export class Ingestor {
       });
       if (unlocked) report.achievementsUnlocked.push('grad');
     }
+
+    // Creator bond bonus — 250 SP when their token graduates (not stacked with grad).
+    if (tokenRow?.creator) {
+      const bond = await this.opts.awards.launchBonded({
+        net: event.net,
+        wallet: tokenRow.creator,
+        sym: event.sym,
+        txSig: event.txSig,
+      });
+      report.xpAwarded += bond.xp;
+    }
+
     await this.updateKoth(event.net);
   }
 
@@ -629,7 +657,21 @@ export class Ingestor {
         },
       });
 
-    await this.creditVault(event, 'protocol', event.protocol);
+    await this.reconcileFeeAccrued(event);
+  }
+
+  /**
+   * Idempotent protocol + referral credits for a FeeAccrued fill.
+   * Safe to re-run on duplicate ingest after a mid-handler crash.
+   */
+  private async reconcileFeeAccrued(event: FeeAccruedEvent): Promise<void> {
+    const referralCut = await this.opts.referrals.creditFeesForTx(
+      event.net,
+      event.txSig,
+      event.feeAmount,
+      event.protocol,
+    );
+    await this.creditVault(event, 'protocol', Math.max(0, event.protocol - referralCut));
     await this.creditVault(event, 'stonkz_ops', event.stonkzOps);
   }
 

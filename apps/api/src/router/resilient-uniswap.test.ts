@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NoRouteError } from './errors.js';
-import type { AggregatorClient, AggregatorQuote, AggregatorQuoteRequest } from './aggregator.js';
+import type { AggregatorQuote, AggregatorQuoteRequest } from './aggregator.js';
 import { OracleHopClient } from './oracle-hop.js';
 import { ResilientUniswapClient } from './resilient-uniswap.js';
 import type { UniswapClient, UniswapQuoteResponseRaw, UniswapSwapResponseRaw } from './uniswap.js';

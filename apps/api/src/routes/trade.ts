@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { PublicKey } from '@solana/web3.js';
-import type { Address } from 'viem';
+import { decodeAbiParameters, type Address, type Hex } from 'viem';
 import { and, eq } from 'drizzle-orm';
-import { nativeUnit } from '@stonkz/shared';
+import { isEvm, nativeUnit } from '@stonkz/shared';
 import { settings } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -38,6 +38,28 @@ import { resolveTokenRow } from './token-resolve.js';
 function asEthCaller(rpc: unknown): EthCaller | undefined {
   const candidate = rpc as Partial<EthCaller>;
   return typeof candidate.ethCall === 'function' ? (candidate as EthCaller) : undefined;
+}
+
+/**
+ * EIP-712 domain `name` must match `StonkzToken`'s constructor `_name`
+ * (`keccak256(bytes(_name))`), not the ticker indexed into `tokens.name`
+ * (TokenCreated only carries the symbol). Fall back to the DB name if the
+ * RPC read fails so prepare still returns a payload.
+ */
+async function eip712TokenName(
+  eth: EthCaller | undefined,
+  token: Address,
+  fallback: string,
+): Promise<string> {
+  if (!eth) return fallback;
+  try {
+    const raw = await eth.ethCall(token, '0x06fdde03');
+    if (!raw || raw === '0x') return fallback;
+    const [name] = decodeAbiParameters([{ type: 'string' }], raw as Hex);
+    return name.trim() || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
@@ -173,10 +195,12 @@ export function tradeRoutes(): Hono<AppEnv> {
     const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row) return c.json({ error: 'not_found' }, 404);
 
+    const evmLaunchpad =
+      net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress;
     const synced = await syncCurveReserves({
       db: deps.db,
       row: row as TokenRow,
-      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
+      ...(isEvm(net) ? { evm: { eth: asEthCaller(deps.rpcs[net]), launchpad: evmLaunchpad } } : {}),
       sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
     });
 
@@ -241,8 +265,8 @@ export function tradeRoutes(): Hono<AppEnv> {
     // `toAtoms` can round *above* the on-chain ERC-20 balance and the token
     // reverts with `"balance"`. Prefer the wallet's exact atoms when smaller.
     let amountAtoms: bigint | undefined;
-    if (side === 'sell' && net === 'RH' && synced.mint) {
-      const erc20 = asErc20BalanceSource(deps.rpcs.RH);
+    if (side === 'sell' && isEvm(net) && synced.mint) {
+      const erc20 = asErc20BalanceSource(deps.rpcs[net]);
       if (erc20) {
         try {
           const bal = await erc20.erc20BalanceAtoms(synced.mint, wallet);
@@ -341,9 +365,12 @@ export function tradeRoutes(): Hono<AppEnv> {
         });
       }
 
-      // Robinhood Chain.
+      // EVM chains (Robinhood + Base).
       const isDirectPair = trade.aggregatorQuote === null;
-      const weth = deps.baseMints.mintFor('RH', 'WETH');
+      const weth = deps.baseMints.mintFor(net, 'WETH');
+      const routerAddr = net === 'BASE' ? deps.env.baseRouterAddress : deps.env.rhRouterAddress;
+      const feeOverrides = net === 'BASE' ? deps.env.baseV3FeeTierOverrides : deps.env.rhV3FeeTierOverrides;
+      const evmChainId = net === 'BASE' ? deps.env.baseChainId : deps.env.rhChainId;
       const quotedFee =
         trade.aggregatorQuote && isV3PoolHopRaw(trade.aggregatorQuote.raw)
           ? trade.aggregatorQuote.raw.fee
@@ -351,11 +378,11 @@ export function tradeRoutes(): Hono<AppEnv> {
       const route = weth
         ? stonkzRouterDecision(
             net,
-            deps.env.rhRouterAddress,
+            routerAddr,
             isDirectPair,
             synced.baseMint,
             synced.baseSymbol,
-            deps.env.rhV3FeeTierOverrides,
+            feeOverrides,
             quotedFee,
           )
         : null;
@@ -365,7 +392,7 @@ export function tradeRoutes(): Hono<AppEnv> {
         // module encodes itself (never the Trading API's own `/v1/swap`
         // calldata — see `router/universal-router.ts`'s header for why).
         const deadlineUnixSeconds = Math.floor(now / 1000) + 300;
-        const routerAddress = deps.env.rhRouterAddress as Address;
+        const routerAddress = routerAddr as Address;
         const token = synced.mint as Address;
         const baseMint = synced.baseMint as Address;
         const wethAddress = weth as Address;
@@ -419,8 +446,12 @@ export function tradeRoutes(): Hono<AppEnv> {
           ? null
           : buildSellPermitTypedData({
               tokenAddress: token,
-              tokenName: synced.name,
-              chainId: deps.env.rhChainId,
+              tokenName: await eip712TokenName(
+                asEthCaller(deps.rpcs[net]),
+                token,
+                synced.name,
+              ),
+              chainId: evmChainId,
               routerAddress,
               owner: wallet as Address,
               valueAtoms: trade.curveAmountInAtoms,
@@ -448,12 +479,11 @@ export function tradeRoutes(): Hono<AppEnv> {
       }
 
       // Atomic-only: never emit a multi-signature EvmStep[] plan.
-      const routerMissing =
-        !deps.env.rhRouterAddress || deps.env.rhRouterAddress.toLowerCase() === ZERO_EVM_ADDRESS;
+      const routerMissing = !routerAddr || routerAddr.toLowerCase() === ZERO_EVM_ADDRESS;
       throw new RhAtomicRouterRequiredError(
         routerMissing
-          ? 'RH_ROUTER_ADDRESS is not configured; non-atomic RH trades are disabled'
-          : `no atomic StonkzRouter route for base ${synced.baseSymbol}; pin RH_V3_FEE_TIER_OVERRIDES for this asset`,
+          ? `${net}_ROUTER_ADDRESS is not configured; non-atomic EVM trades are disabled`
+          : `no atomic StonkzRouter route for base ${synced.baseSymbol}; pin ${net}_V3_FEE_TIER_OVERRIDES for this asset`,
       );
     } catch (err) {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
@@ -492,8 +522,8 @@ export function tradeRoutes(): Hono<AppEnv> {
 
     // Best-effort proof check: confirm the tx exists / succeeded. We still
     // sync reserves from chain even if the indexer never sees the fill.
-    if (net === 'RH') {
-      const rpc = deps.rpcs.RH as { getTransactionReceipt?: (h: string) => Promise<{ status: string } | null> };
+    if (net === 'RH' || net === 'BASE') {
+      const rpc = deps.rpcs[net] as { getTransactionReceipt?: (h: string) => Promise<{ status: string } | null> };
       if (typeof rpc.getTransactionReceipt === 'function') {
         const receipt = await rpc.getTransactionReceipt(proof).catch(() => null);
         if (receipt && receipt.status === 'reverted') {
@@ -510,10 +540,12 @@ export function tradeRoutes(): Hono<AppEnv> {
       }
     }
 
+    const evmLaunchpad =
+      net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress;
     const synced = await syncCurveReserves({
       db: deps.db,
       row: resolved as TokenRow,
-      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
+      ...(isEvm(net) ? { evm: { eth: asEthCaller(deps.rpcs[net]), launchpad: evmLaunchpad } } : {}),
       sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
     });
 

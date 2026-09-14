@@ -58,7 +58,7 @@ function readStore(): StoredAuth | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredAuth>;
     if (
-      (parsed.net !== 'SOL' && parsed.net !== 'RH') ||
+      (parsed.net !== 'SOL' && parsed.net !== 'RH' && parsed.net !== 'BASE') ||
       typeof parsed.wallet !== 'string' ||
       typeof parsed.accessToken !== 'string' ||
       typeof parsed.refreshToken !== 'string' ||

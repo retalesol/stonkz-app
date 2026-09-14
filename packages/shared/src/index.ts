@@ -15,4 +15,6 @@ export * from './fees.js';
 export * from './stake.js';
 export * from './ranks.js';
 export * from './crates.js';
+export * from './sp-levels.js';
+export * from './referrals.js';
 export * from './validate.js';

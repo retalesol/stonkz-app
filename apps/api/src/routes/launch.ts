@@ -2,7 +2,18 @@ import { Hono } from 'hono';
 import { PublicKey } from '@solana/web3.js';
 import type { Address } from 'viem';
 import { and, eq, gt, isNull, lte } from 'drizzle-orm';
-import { isValidCurveFee, isValidSupply, isValidTicker, normalizeTicker, MAJORS, STOCKS, RH_STOCKS } from '@stonkz/shared';
+import {
+  isEvm,
+  isValidCurveFee,
+  isValidSupply,
+  isValidTicker,
+  normalizeTicker,
+  MAJORS,
+  STOCKS,
+  RH_STOCKS,
+  type Net,
+} from '@stonkz/shared';
+import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { buyQuote, freshState, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
 import { launchIntents, tokens } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
@@ -35,7 +46,7 @@ interface LaunchPrepareBody {
   devBuyNative?: unknown;
 }
 
-function isAllowedBaseSymbol(net: 'SOL' | 'RH', symbol: string): boolean {
+function isAllowedBaseSymbol(net: Net, symbol: string): boolean {
   const upper = symbol.toUpperCase();
   if (MAJORS[net].some(([sym]) => sym === upper)) return true;
   if (net === 'SOL' && STOCKS.some(([sym]) => sym === upper)) return true;
@@ -311,8 +322,8 @@ export function launchRoutes(): Hono<AppEnv> {
       });
     }
 
-    // Robinhood Chain.
-    const launchpad = deps.env.rhLaunchpadAddress as Address;
+    // EVM (Robinhood or Base).
+    const launchpad = evmLaunchpadAddress(deps.env, net) as Address;
     const data = encodeCreateTokenCall({
       name,
       ticker,
@@ -418,19 +429,21 @@ export function launchRoutes(): Hono<AppEnv> {
       const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
       mcValue = Number(mcapUsd1e6(mcapBaseAtoms, basePrice.price1e6, basePrice.baseDecimals)) / 1e6;
     } else {
-      const txSource = asEvmTransactionSource(deps.rpcs.RH);
+      if (!isEvm(net)) return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
+      const launchpadAddr = evmLaunchpadAddress(deps.env, net);
+      const txSource = asEvmTransactionSource(deps.rpcs[net]);
       if (!txSource) throw new Error('launch/confirm: EVM RPC does not implement getTransactionReceipt()');
       const receipt = await txSource.getTransactionReceipt(signature);
       if (!receipt) return c.json({ error: 'transaction_not_found' }, 404);
       if (receipt.status !== 'success') return c.json({ error: 'transaction_reverted' }, 422);
       if (
         !receipt.to ||
-        receipt.to.toLowerCase() !== deps.env.rhLaunchpadAddress.toLowerCase() ||
+        receipt.to.toLowerCase() !== launchpadAddr.toLowerCase() ||
         receipt.input.toLowerCase() !== intent.unsignedPayload.toLowerCase()
       ) {
         return c.json({ error: 'signature_mismatch', detail: 'the confirmed transaction does not match what was prepared' }, 409);
       }
-      const decoded = decodeTokenCreated(receipt.logs, deps.env.rhLaunchpadAddress as Address);
+      const decoded = decodeTokenCreated(receipt.logs, launchpadAddr as Address);
       if (!decoded) return c.json({ error: 'token_created_event_missing' }, 422);
 
       mint = decoded.token;

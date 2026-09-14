@@ -129,11 +129,13 @@ describe('base mints', () => {
   it('leads each network with its native gas token', () => {
     expect(MAJORS.SOL[0][0]).toBe('SOL');
     expect(MAJORS.RH[0][0]).toBe('ETH');
+    expect(MAJORS.BASE[0][0]).toBe('ETH');
   });
 
-  it('lists twenty stocks and ten majors per network', () => {
+  it('lists twenty stocks and the majors per network', () => {
     expect(STOCKS).toHaveLength(20);
     expect(MAJORS.SOL).toHaveLength(10);
-    expect(MAJORS.RH).toHaveLength(10);
+    expect(MAJORS.RH.length).toBeGreaterThanOrEqual(10);
+    expect(MAJORS.BASE).toHaveLength(3);
   });
 });

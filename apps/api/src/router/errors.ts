@@ -102,6 +102,20 @@ export class BaseMintNotAllowedError extends RouterError {
  * `RH_V3_FEE_TIER_OVERRIDES` entry used to fall back to a multi-signature
  * `EvmStep[]` plan that can strand intermediate assets — that path is gone.
  */
+/** Jupiter returned a route that needs address lookup tables — not supported on legacy transactions yet. */
+export class JupiterAltRequiredError extends RouterError {
+  readonly code = 'jupiter_alt_required';
+  readonly httpStatus = 422;
+
+  constructor(detail?: string) {
+    super(
+      detail ??
+        'Jupiter route requires address lookup tables; VersionedTransaction support is not implemented yet',
+    );
+    this.name = 'JupiterAltRequiredError';
+  }
+}
+
 export class RhAtomicRouterRequiredError extends RouterError {
   readonly code = 'rh_router_required';
   readonly httpStatus = 422;

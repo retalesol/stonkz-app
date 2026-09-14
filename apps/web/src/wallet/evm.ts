@@ -8,15 +8,21 @@ import {
   type PublicClient,
 } from 'viem';
 import {
+  BASE_ADD_CHAIN_PARAMS,
+  BASE_CHAIN_ID,
+  BASE_EXPLORER_URL,
+  BASE_RPC_URL,
   RH_ADD_CHAIN_PARAMS,
   RH_CHAIN_ID,
-  RH_CHAIN_ID_HEX,
   RH_EXPLORER_URL,
   RH_RPC_URL,
+  evmAddChainParams,
+  evmChainIdForNet,
 } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
 import type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice, WalletKind } from './types.js';
 import { WALLETCONNECT_PROJECT_ID, connectWalletConnect, walletConnectUnavailableReason } from './walletconnect.js';
+import type { EvmNet } from '@stonkz/shared';
 
 /**
  * Real Robinhood Chain wallets.
@@ -98,12 +104,18 @@ export function announceEvmProviderForTests(detail: Eip6963ProviderDetail): void
 
 /** MetaMask rdns prefixes announced over EIP-6963. */
 const METAMASK_RDNS = new Set(['io.metamask', 'io.metamask.flask', 'io.metamask.flask.dev']);
+const COINBASE_RDNS = new Set(['com.coinbase.wallet', 'com.coinbase.wallet.extension']);
 
 /** CSP only allows `data:` wallet icons (`img-src`); https CDN icons render blank. */
 const METAMASK_ICON =
   'data:image/svg+xml,' +
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1a1a1a"/><path fill="#E2761B" d="M26.2 5.2 17.4 11.8l1.6-3.8z"/><path fill="#E4761B" d="m5.7 5.2 8.7 6.7-1.5-3.9zm17.7 12.3-2.3 3.6 5 1.4 1.4-4.8zm-23.1.2 1.4 4.8 5-1.4-2.3-3.6z"/><path fill="#E4761B" d="m10.4 14.4-.9 2.9 4.6.2-.2-5zm11.1 0-3.7-2.1-.1 5.2 4.6-.2zM10.6 21.1l2.8 2.1 3.4-1.8v-2zm10.8 0-6.2-1.7v2l3.4 1.8z"/></svg>',
+  );
+const COINBASE_ICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0052FF"/><path fill="#fff" d="M16 7.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zm3.2 9.7h-2v2h-2.4v-2h-2v-2.4h2v-2h2.4v2h2z"/></svg>',
   );
 const WALLETCONNECT_ICON =
   'data:image/svg+xml,' +
@@ -118,6 +130,12 @@ function isMetaMaskDetail(d: Eip6963ProviderDetail): boolean {
     return !!(d.provider as Eip1193Provider & { isMetaMask?: boolean }).isMetaMask;
   }
   return /metamask/i.test(d.info.name);
+}
+
+function isCoinbaseDetail(d: Eip6963ProviderDetail): boolean {
+  const rdns = d.info.rdns.toLowerCase();
+  if (COINBASE_RDNS.has(rdns) || rdns.startsWith('com.coinbase.')) return true;
+  return /coinbase/i.test(d.info.name);
 }
 
 function safeIcon(icon: string | undefined, fallback: string): string {
@@ -154,35 +172,46 @@ function injectedDetails(): Eip6963ProviderDetail[] {
 }
 
 /**
- * Robinhood Chain wallets: MetaMask (desktop extension) + WalletConnect
- * (Robinhood Wallet / mobile). Multi-chain Solana wallets that also announce
- * an EVM provider (Phantom) are intentionally omitted — RH is EVM-only here.
- *
- * WalletConnect is always listed, even with no project id configured — as an
- * explicitly disabled row carrying the reason.
+ * EVM wallets for RH or Base. MetaMask always; Coinbase Wallet emphasized on
+ * Base; WalletConnect always listed (disabled when project id unset).
  */
-export function listEvmWallets(): WalletChoice[] {
-  const metamasks = injectedDetails().filter(isMetaMaskDetail);
-  // One MetaMask row: prefer a real EIP-6963 announce over the legacy shim.
-  const preferred =
+export function listEvmWallets(net: EvmNet = 'RH'): WalletChoice[] {
+  const details = injectedDetails();
+  const out: WalletChoice[] = [];
+
+  if (net === 'BASE') {
+    const preferredCb = details.filter(isCoinbaseDetail)[0];
+    if (preferredCb) {
+      out.push({
+        id: 'injected:' + preferredCb.info.rdns,
+        net,
+        kind: 'evm-injected',
+        name: 'Coinbase Wallet',
+        icon: safeIcon(preferredCb.info.icon, COINBASE_ICON),
+      });
+    }
+  }
+
+  const metamasks = details.filter(isMetaMaskDetail);
+  const preferredMm =
     metamasks.find((d) => METAMASK_RDNS.has(d.info.rdns.toLowerCase()) || d.info.rdns.toLowerCase().startsWith('io.metamask.')) ??
     metamasks[0];
-  const out: WalletChoice[] = [];
-  if (preferred) {
+  if (preferredMm) {
     out.push({
-      id: 'injected:' + preferred.info.rdns,
-      net: 'RH',
+      id: 'injected:' + preferredMm.info.rdns,
+      net,
       kind: 'evm-injected',
       name: 'MetaMask',
-      icon: safeIcon(preferred.info.icon, METAMASK_ICON),
+      icon: safeIcon(preferredMm.info.icon, METAMASK_ICON),
     });
   }
+
   const reason = walletConnectUnavailableReason();
   out.push({
     id: 'walletconnect',
-    net: 'RH',
+    net,
     kind: 'evm-walletconnect',
-    name: 'WalletConnect (Robinhood Wallet)',
+    name: net === 'BASE' ? 'WalletConnect' : 'WalletConnect (Robinhood Wallet)',
     icon: WALLETCONNECT_ICON,
     ...(reason ? { unavailable: reason } : {}),
   });
@@ -211,10 +240,27 @@ export const robinhoodChain = defineChain({
   blockExplorers: { default: { name: 'Blockscout', url: RH_EXPLORER_URL } },
 });
 
-let publicClient: PublicClient | null = null;
-function rpc(): PublicClient {
-  publicClient ??= createPublicClient({ chain: robinhoodChain, transport: http(RH_RPC_URL) });
-  return publicClient;
+export const baseChain = defineChain({
+  id: BASE_CHAIN_ID,
+  name: BASE_ADD_CHAIN_PARAMS.chainName,
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: [BASE_RPC_URL] } },
+  blockExplorers: { default: { name: 'Basescan', url: BASE_EXPLORER_URL } },
+});
+
+const publicClients: Partial<Record<EvmNet, PublicClient>> = {};
+function rpc(net: EvmNet): PublicClient {
+  const existing = publicClients[net];
+  if (existing) return existing;
+  const chain = net === 'BASE' ? baseChain : robinhoodChain;
+  const url = net === 'BASE' ? BASE_RPC_URL : RH_RPC_URL;
+  const client = createPublicClient({ chain, transport: http(url) });
+  publicClients[net] = client;
+  return client;
+}
+
+function explorerBase(net: EvmNet): string {
+  return (net === 'BASE' ? BASE_EXPLORER_URL : RH_EXPLORER_URL).replace(/\/+$/, '');
 }
 
 function utf8ToHex(text: string): string {
@@ -266,31 +312,37 @@ function toChainId(raw: unknown): number {
  * Taking a bare `request` rather than a provider keeps this unit-testable
  * against scripted responses, with no browser and no extension.
  */
-export async function enforceRhChain(request: ChainRequest): Promise<void> {
+export async function enforceEvmChain(
+  request: ChainRequest,
+  net: 'RH' | 'BASE' = 'RH',
+): Promise<void> {
+  const targetId = evmChainIdForNet(net);
+  const targetHex = '0x' + targetId.toString(16);
+  const addParams = evmAddChainParams(net);
   let current: number;
   try {
     current = toChainId(await request('eth_chainId'));
   } catch (err) {
     throw mapWalletError(err, 'Could not read the wallet\u2019s current chain.');
   }
-  if (current === RH_CHAIN_ID) return;
+  if (current === targetId) return;
 
   try {
-    await request('wallet_switchEthereumChain', [{ chainId: RH_CHAIN_ID_HEX }]);
+    await request('wallet_switchEthereumChain', [{ chainId: targetHex }]);
   } catch (err) {
     const mapped = mapWalletError(err);
     if (mapped.kind === 'chain_unsupported') {
       try {
-        await request('wallet_addEthereumChain', [RH_ADD_CHAIN_PARAMS]);
-        await request('wallet_switchEthereumChain', [{ chainId: RH_CHAIN_ID_HEX }]);
+        await request('wallet_addEthereumChain', [addParams]);
+        await request('wallet_switchEthereumChain', [{ chainId: targetHex }]);
       } catch (addErr) {
-        throw mapWalletError(addErr, `Could not add ${RH_ADD_CHAIN_PARAMS.chainName} to this wallet.`);
+        throw mapWalletError(addErr, `Could not add ${addParams.chainName} to this wallet.`);
       }
     } else if (mapped.kind === 'unsupported_method') {
       throw new WalletError(
         'wrong_chain',
         `This wallet is on chain ${current} and cannot be switched from a site. Select ` +
-          `${RH_ADD_CHAIN_PARAMS.chainName} (${RH_CHAIN_ID}) in the wallet itself, then try again.`,
+          `${addParams.chainName} (${targetId}) in the wallet itself, then try again.`,
         { cause: err },
       );
     } else {
@@ -299,13 +351,18 @@ export async function enforceRhChain(request: ChainRequest): Promise<void> {
   }
 
   const after = await request('eth_chainId').then(toChainId, () => -1);
-  if (after !== RH_CHAIN_ID) {
+  if (after !== targetId) {
     throw new WalletError(
       'wrong_chain',
       `The wallet is still on chain ${after === -1 ? 'unknown' : after}. ` +
-        `Switch it to ${RH_ADD_CHAIN_PARAMS.chainName} (${RH_CHAIN_ID}) to trade.`,
+        `Switch it to ${addParams.chainName} (${targetId}) to trade.`,
     );
   }
+}
+
+/** @deprecated Use `enforceEvmChain` — kept for existing tests. */
+export async function enforceRhChain(request: ChainRequest): Promise<void> {
+  return enforceEvmChain(request, 'RH');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -313,7 +370,6 @@ export async function enforceRhChain(request: ChainRequest): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 class EvmWallet implements ConnectedWallet {
-  readonly net = 'RH' as const;
   readonly practice = false;
   private listeners = new Set<(address: string | null) => void>();
   private bound = false;
@@ -326,6 +382,7 @@ class EvmWallet implements ConnectedWallet {
     /** WalletConnect pins the chain in its session namespace, so it never needs a switch. */
     private readonly chainPinnedBySession: boolean,
     private readonly teardown: () => Promise<void>,
+    readonly net: EvmNet = 'RH',
   ) {}
 
   get address(): string {
@@ -337,7 +394,7 @@ class EvmWallet implements ConnectedWallet {
   }
 
   /**
-   * Get the wallet onto chain 4663 — see `enforceRhChain`.
+   * Get the wallet onto RH or Base — see `enforceEvmChain`.
    *
    * Deliberately *not* called before signing in: `docs/robinhood-chain.md`
    * §6.1 is explicit that `personal_sign` is chain-agnostic and that gating
@@ -346,10 +403,10 @@ class EvmWallet implements ConnectedWallet {
    * only point it actually matters.
    */
   async ensureChain(): Promise<void> {
-    // WalletConnect pins `eip155:4663` in the session namespace, so the
+    // WalletConnect pins the chain in the session namespace, so the
     // wallet cannot be anywhere else and the switch prompt is pure noise.
     if (this.chainPinnedBySession) return;
-    await enforceRhChain((method, params) => this.request(method, params));
+    await enforceEvmChain((method, params) => this.request(method, params), this.net);
   }
 
   async signInMessage(message: string): Promise<string> {
@@ -391,7 +448,7 @@ class EvmWallet implements ConnectedWallet {
    */
   private async preflight(to: string, data: string, value: string): Promise<void> {
     try {
-      await rpc().call({
+      await rpc(this.net).call({
         account: this.account as `0x${string}`,
         to: to as `0x${string}`,
         data: data as `0x${string}`,
@@ -407,8 +464,8 @@ class EvmWallet implements ConnectedWallet {
   }
 
   async signAndSend(payload: SignPayload): Promise<BroadcastResult> {
-    if (payload.net !== 'RH') {
-      throw new WalletError('unsupported_method', 'A Robinhood Chain wallet cannot sign a Solana transaction.');
+    if (payload.net !== 'RH' && payload.net !== 'BASE') {
+      throw new WalletError('unsupported_method', 'An EVM wallet cannot sign a Solana transaction.');
     }
     await this.ensureChain();
     await this.preflight(payload.to, payload.data, payload.value);
@@ -429,7 +486,7 @@ class EvmWallet implements ConnectedWallet {
 
     let receipt;
     try {
-      receipt = await rpc().waitForTransactionReceipt({ hash: hash as `0x${string}`, timeout: 120_000 });
+      receipt = await rpc(this.net).waitForTransactionReceipt({ hash: hash as `0x${string}`, timeout: 120_000 });
     } catch (err) {
       const mapped = mapWalletError(err);
       if (mapped.kind === 'unknown' || mapped.kind === 'network') {
@@ -449,12 +506,12 @@ class EvmWallet implements ConnectedWallet {
         'The transaction reverted on chain after it was included \u2014 the price most likely moved. Nothing settled.',
       );
     }
-    return { signature: hash, explorerUrl: RH_EXPLORER_URL.replace(/\/+$/, '') + '/tx/' + hash };
+    return { signature: hash, explorerUrl: explorerBase(this.net) + '/tx/' + hash };
   }
 
   async nativeBalance(): Promise<number | null> {
     try {
-      const wei = await rpc().getBalance({ address: this.account as `0x${string}` });
+      const wei = await rpc(this.net).getBalance({ address: this.account as `0x${string}` });
       return Number(formatEther(wei));
     } catch {
       return null;
@@ -527,11 +584,14 @@ export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}):
   if (id === 'walletconnect') {
     const reason = walletConnectUnavailableReason();
     if (reason) throw new WalletError('unconfigured', reason);
+    const { WALLET } = await import('../state/wallet.js');
+    const wcNet = WALLET.net === 'BASE' ? 'BASE' : 'RH';
     const { provider, address, disconnect } = await connectWalletConnect({
+      net: wcNet,
       ...(hooks.onWalletConnectUri ? { onUri: hooks.onWalletConnectUri } : {}),
       ...(hooks.silent ? { resumeOnly: true } : {}),
     });
-    return new EvmWallet('evm-walletconnect', 'WALLETCONNECT', normalise(address), provider, true, disconnect);
+    return new EvmWallet('evm-walletconnect', 'WALLETCONNECT', normalise(address), provider, true, disconnect, wcNet);
   }
 
   const rdns = id.startsWith('injected:') ? id.slice('injected:'.length) : id;
@@ -549,6 +609,8 @@ export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}):
   const account = accounts[0];
   if (!account) throw new WalletError('rejected', `${detail.info.name} authorised no accounts.`);
 
+  const { WALLET } = await import('../state/wallet.js');
+  const injectedNet: EvmNet = WALLET.net === 'BASE' ? 'BASE' : 'RH';
   return new EvmWallet(
     'evm-injected',
     detail.info.name.toUpperCase(),
@@ -556,6 +618,7 @@ export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}):
     detail.provider,
     false,
     async () => undefined,
+    injectedNet,
   );
 }
 

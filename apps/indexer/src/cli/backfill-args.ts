@@ -64,7 +64,9 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
   };
 
   const net = value('net')?.toUpperCase();
-  if (net !== 'SOL' && net !== 'RH') throw new BackfillArgsError('--net must be SOL or RH');
+  if (net !== 'SOL' && net !== 'RH' && net !== 'BASE') {
+    throw new BackfillArgsError('--net must be SOL, RH, or BASE');
+  }
 
   const from = int('from');
   const to = int('to');

@@ -14,14 +14,15 @@ import {
   type Net,
 } from '@stonkz/shared';
 import type { Db } from '../db/client.js';
-import { crateOpens, crateState } from '../db/schema.js';
+import { crateCooldown, crateInventory, crateOpens, crateState } from '../db/schema.js';
 import type { Publisher } from '../ws/publisher.js';
 import { REASONS } from './rules.js';
 import type { Ledger } from './ledger.js';
+import type { SpLevelService } from './sp-levels.js';
 
 export class CrateError extends Error {
   constructor(
-    readonly code: 'unknown_tier' | 'cooling_down',
+    readonly code: 'unknown_tier' | 'cooling_down' | 'no_inventory',
     message: string,
     readonly readyAt?: number,
   ) {
@@ -34,6 +35,7 @@ export interface CrateServiceOptions {
   db: Db;
   ledger: Ledger;
   publisher: Publisher;
+  spLevels: SpLevelService;
   /** `CRATE_HMAC_SECRET`. Server-only; never sent to a client. */
   secret: string;
   now?: () => number;
@@ -62,40 +64,47 @@ export interface CrateOpenResult {
   item: string | null;
   xp: number;
   rankedUp: boolean;
+  /** Global ready time — every tier is locked until this. */
   readyAt: number;
   cooldownHours: number;
+  inventoryLeft: number;
   roll: CrateRoll;
 }
 
+export interface CrateTierState {
+  tier: CrateTier;
+  cooldownHours: number;
+  colour: string;
+  /** Global cooldown end (same for every tier). */
+  readyAt: number;
+  ready: boolean;
+  /** Tier that started the current global cooldown, if any. */
+  lastTier: CrateTier | null;
+  opens: number;
+  /** Unopened crates of this tier in inventory. */
+  inventory: number;
+  /** True when inventory > 0 and global cooldown elapsed. */
+  openable: boolean;
+}
+
 /**
- * Crate opening. Server-only RNG, server-only cooldown.
+ * Crate opening. Server-only RNG, **global** cooldown, inventory from SP levels.
+ *
+ * ## Cooldown
+ *
+ * Opening any tier sets one `(wallet, net)` ready_at = now + that tier's `cd`
+ * hours. Until then, **no** crate can be opened — a 12h Platinum open locks
+ * Bronze for 12h too.
+ *
+ * ## Inventory
+ *
+ * Crates are earned when lifetime SP crosses `SP_LEVELS` thresholds
+ * (`SpLevelService`). You cannot open a tier with inventory 0.
  *
  * ## Randomness
  *
- * The roll is `HMAC-SHA256(CRATE_HMAC_SECRET, net|wallet|tier|nonce)`, split
- * into two independent 64-bit draws: the first picks the drop row against the
- * odds column, the second positions the payout inside that row. This is
- * unpredictable to the client and reproducible for an auditor who holds the
- * secret, and every open persists `roll_commit` (the digest),
- * `server_seed_hash` (SHA-256 of the secret in use, so a rotation is visible)
- * and the nonce.
- *
- * ## Upgrade path to VRF — required before odds are marketed
- *
- * HMAC is *auditable* but not *publicly verifiable*: a user cannot prove the
- * house did not grind nonces, because only the house holds the secret. Before
- * the drop tables are advertised as odds, this must become a commit-reveal VRF:
- *
- *  1. Publish `server_seed_hash` for an epoch **before** any open in it.
- *  2. Mix a client-supplied nonce into the input (already stored as
- *     `client_nonce`) so neither side alone determines the outcome.
- *  3. Replace the digest with a VRF proof (Switchboard or ORAO on Solana,
- *     Chainlink VRF on the EVM side), storing the proof in `payload_json`.
- *  4. Reveal the epoch seed at rollover so every historical roll in that epoch
- *     is independently checkable.
- *
- * The schema already carries all four fields, so this is a swap inside
- * `roll()` plus a verification endpoint — not a migration.
+ * HMAC-SHA256(CRATE_HMAC_SECRET, net|wallet|tier|nonce) — auditable, not VRF.
+ * See security finding M2 before marketing odds as provably fair.
  */
 export class CrateService {
   private readonly now: () => number;
@@ -116,7 +125,6 @@ export class CrateService {
       .update(`${net}|${wallet}|${tier}|${nonce}`)
       .digest();
 
-    // Two disjoint 64-bit windows so the row choice cannot bias the amount.
     const dropDraw = digest.readBigUInt64BE(0);
     const amountDraw = digest.readBigUInt64BE(8);
     const SCALE = 2n ** 64n;
@@ -130,148 +138,206 @@ export class CrateService {
     };
   }
 
-  /**
-   * Opens a crate.
-   *
-   * The cooldown is enforced by a single conditional upsert: the `ready_at`
-   * guard lives in the statement's `WHERE`, so two concurrent requests cannot
-   * both win. If it matches nothing the crate is still cooling and no roll
-   * happens at all.
-   */
   async open(net: Net, wallet: string, tier: CrateTier): Promise<CrateOpenResult> {
     const crate = crateBy(tier);
     if (!crate) throw new CrateError('unknown_tier', `unknown crate tier ${tier}`);
+
+    // Catch up SP-level grants before checking inventory.
+    const bal = await this.opts.ledger.readBalance(net, wallet);
+    await this.opts.spLevels.sync(net, wallet, bal.sp);
 
     const nowMs = this.now();
     const nowDate = new Date(nowMs);
     const readyAt = new Date(nowMs + crate.cd * HOUR);
 
-    const claimed = await this.db
-      .insert(crateState)
-      .values({ wallet, net, tier, readyAt, opens: 1, updatedAt: nowDate })
+    // Global cooldown: conditional upsert wins only when ready_at <= now.
+    const cdClaimed = await this.db
+      .insert(crateCooldown)
+      .values({ wallet, net, readyAt, lastTier: tier, updatedAt: nowDate })
       .onConflictDoUpdate({
-        target: [crateState.wallet, crateState.net, crateState.tier],
-        set: { readyAt, opens: sql`${crateState.opens} + 1`, updatedAt: nowDate },
-        setWhere: sql`${crateState.readyAt} <= ${nowDate}`,
+        target: [crateCooldown.wallet, crateCooldown.net],
+        set: { readyAt, lastTier: tier, updatedAt: nowDate },
+        setWhere: sql`${crateCooldown.readyAt} <= ${nowDate}`,
       })
-      .returning({ opens: crateState.opens });
+      .returning({ readyAt: crateCooldown.readyAt });
 
-    if (claimed.length === 0) {
+    if (cdClaimed.length === 0) {
       const [state] = await this.db
         .select()
-        .from(crateState)
-        .where(and(eq(crateState.wallet, wallet), eq(crateState.net, net), eq(crateState.tier, tier)))
+        .from(crateCooldown)
+        .where(and(eq(crateCooldown.wallet, wallet), eq(crateCooldown.net, net)))
         .limit(1);
       throw new CrateError(
         'cooling_down',
-        `${tier} crate is still cooling down`,
+        `all crates are locked until the global cooldown ends`,
         state?.readyAt.getTime() ?? nowMs,
       );
     }
 
-    const roll = this.roll(net, wallet, tier);
-    // Reuse the shared table walk so the server and the sim pick the same row.
-    const dropIndex = rollDrop(crate, () => roll.rollValue / 100);
-    const drop = crate.drops[dropIndex] as CrateDrop;
-    const isToken = drop[1] === 'S';
-    const amount = isToken ? rollCrateAmount(drop, () => roll.amountRoll) : 0;
-    const item = isToken ? null : (drop[2] as string);
-    const rarity = (RAR[dropIndex] as (typeof RAR)[number])[0];
-    // The sim rendered `$STONKZ`; the ledger pays Stonk Optionz.
-    const label = isToken ? `${num(amount)} STONK OPTIONZ` : (item as string);
+    // Spend one inventory unit (race-safe).
+    const spent = await this.db
+      .update(crateInventory)
+      .set({ count: sql`${crateInventory.count} - 1`, updatedAt: nowDate })
+      .where(
+        and(
+          eq(crateInventory.wallet, wallet),
+          eq(crateInventory.net, net),
+          eq(crateInventory.tier, tier),
+          sql`${crateInventory.count} > 0`,
+        ),
+      )
+      .returning({ count: crateInventory.count });
 
-    const tierIndex = CRATES.findIndex((c) => c.k === tier);
-    const baseXp = crateXp(tierIndex);
-
-    const [openRow] = await this.db
-      .insert(crateOpens)
-      .values({
-        wallet,
-        net,
-        tier,
-        rollCommit: roll.rollCommit,
-        serverSeedHash: roll.serverSeedHash,
-        clientNonce: roll.clientNonce,
-        rollValue: roll.rollValue,
-        amountRoll: roll.amountRoll,
-        dropIndex,
-        rarity,
-        payloadJson: { label, kind: drop[1], amount, item, tierIndex },
-        optionzAwarded: amount,
-        itemKey: item,
-        xpAwarded: 0,
-        openedAt: nowDate,
-      })
-      .returning({ id: crateOpens.id });
-    if (!openRow) throw new CrateError('unknown_tier', 'could not record the crate open');
-
-    const refId = String(openRow.id);
-    const optionzTotal = isToken
-      ? await this.opts.ledger.creditOptionz(net, wallet, amount, REASONS.crate, refId)
-      : (await this.opts.ledger.readBalance(net, wallet)).optionz;
-
-    if (item !== null) {
-      // 24H/1H/7D items get an expiry; passes and badges are permanent.
-      await this.opts.ledger.grantItem(net, wallet, item, itemExpiry(item, nowMs));
+    if (spent.length === 0) {
+      // Roll back the cooldown claim so a no-inventory attempt does not lock.
+      await this.db
+        .update(crateCooldown)
+        .set({ readyAt: nowDate, lastTier: null, updatedAt: nowDate })
+        .where(and(eq(crateCooldown.wallet, wallet), eq(crateCooldown.net, net)));
+      throw new CrateError(
+        'no_inventory',
+        `no ${tier} crates in inventory — trade to earn SP and unlock levels`,
+      );
     }
 
-    // Crate XP is server-authored, so it carries no tx signature — which is
-    // also why `crate` is absent from CHAIN_VERIFIED_REASONS.
-    const award = await this.opts.ledger.award({
-      net,
-      wallet,
-      reason: REASONS.crate,
-      baseXp,
-      meta: { tier, dropIndex, rarity, crateOpenId: openRow.id },
-    });
-    await this.db.update(crateOpens).set({ xpAwarded: award.xp }).where(eq(crateOpens.id, openRow.id));
+    try {
+      // Per-tier open counter (stats only).
+      await this.db
+        .insert(crateState)
+        .values({ wallet, net, tier, readyAt, opens: 1, updatedAt: nowDate })
+        .onConflictDoUpdate({
+          target: [crateState.wallet, crateState.net, crateState.tier],
+          set: { readyAt, opens: sql`${crateState.opens} + 1`, updatedAt: nowDate },
+        });
 
-    await this.opts.ledger.unlock(net, wallet, 'crate');
+      const roll = this.roll(net, wallet, tier);
+      const dropIndex = rollDrop(crate, () => roll.rollValue / 100);
+      const drop = crate.drops[dropIndex] as CrateDrop;
+      const isToken = drop[1] === 'S';
+      const amount = isToken ? rollCrateAmount(drop, () => roll.amountRoll) : 0;
+      const item = isToken ? null : (drop[2] as string);
+      const rarity = (RAR[dropIndex] as (typeof RAR)[number])[0];
+      const label = isToken ? `${num(amount)} STONK OPTIONZ` : (item as string);
 
-    return {
-      tier,
-      dropIndex,
-      rarity,
-      label,
-      optionz: amount,
-      optionzTotal,
-      item,
-      xp: award.xp,
-      rankedUp: award.rankedUp,
-      readyAt: readyAt.getTime(),
-      cooldownHours: crate.cd,
-      roll,
-    };
+      const tierIndex = CRATES.findIndex((c) => c.k === tier);
+      const baseXp = crateXp(tierIndex);
+
+      const [openRow] = await this.db
+        .insert(crateOpens)
+        .values({
+          wallet,
+          net,
+          tier,
+          rollCommit: roll.rollCommit,
+          serverSeedHash: roll.serverSeedHash,
+          clientNonce: roll.clientNonce,
+          rollValue: roll.rollValue,
+          amountRoll: roll.amountRoll,
+          dropIndex,
+          rarity,
+          payloadJson: { label, kind: drop[1], amount, item, tierIndex },
+          optionzAwarded: amount,
+          itemKey: item,
+          xpAwarded: 0,
+          openedAt: nowDate,
+        })
+        .returning({ id: crateOpens.id });
+      if (!openRow) throw new CrateError('unknown_tier', 'could not record the crate open');
+
+      const refId = String(openRow.id);
+      const optionzTotal = isToken
+        ? await this.opts.ledger.creditOptionz(net, wallet, amount, REASONS.crate, refId)
+        : (await this.opts.ledger.readBalance(net, wallet)).optionz;
+
+      if (item !== null) {
+        await this.opts.ledger.grantItem(net, wallet, item, itemExpiry(item, nowMs));
+      }
+
+      const award = await this.opts.ledger.award({
+        net,
+        wallet,
+        reason: REASONS.crate,
+        baseXp,
+        meta: { tier, dropIndex, rarity, crateOpenId: openRow.id },
+      });
+      await this.db.update(crateOpens).set({ xpAwarded: award.xp }).where(eq(crateOpens.id, openRow.id));
+
+      await this.opts.ledger.unlock(net, wallet, 'crate');
+
+      return {
+        tier,
+        dropIndex,
+        rarity,
+        label,
+        optionz: amount,
+        optionzTotal,
+        item,
+        xp: award.xp,
+        rankedUp: award.rankedUp,
+        readyAt: readyAt.getTime(),
+        cooldownHours: crate.cd,
+        inventoryLeft: spent[0]?.count ?? 0,
+        roll,
+      };
+    } catch (err) {
+      // Restore inventory + clear the global lock so a mid-open failure is not
+      // a permanent soft-lock. Stats/opens rows may linger; payouts do not.
+      await this.db
+        .update(crateInventory)
+        .set({ count: sql`${crateInventory.count} + 1`, updatedAt: nowDate })
+        .where(
+          and(eq(crateInventory.wallet, wallet), eq(crateInventory.net, net), eq(crateInventory.tier, tier)),
+        );
+      await this.db
+        .update(crateCooldown)
+        .set({ readyAt: nowDate, lastTier: null, updatedAt: nowDate })
+        .where(and(eq(crateCooldown.wallet, wallet), eq(crateCooldown.net, net)));
+      throw err;
+    }
   }
 
-  /** Cooldown state for every tier — `GET /rewards`. */
-  async states(net: Net, wallet: string): Promise<
-    { tier: CrateTier; cooldownHours: number; colour: string; readyAt: number; ready: boolean; opens: number }[]
-  > {
-    const rows = await this.db
+  /** Cooldown + inventory for every tier — `GET /rewards`. */
+  async states(net: Net, wallet: string): Promise<CrateTierState[]> {
+    const bal = await this.opts.ledger.readBalance(net, wallet);
+    await this.opts.spLevels.sync(net, wallet, bal.sp);
+
+    const [cdRow] = await this.db
+      .select()
+      .from(crateCooldown)
+      .where(and(eq(crateCooldown.wallet, wallet), eq(crateCooldown.net, net)))
+      .limit(1);
+    const inv = await this.opts.spLevels.inventory(net, wallet);
+    const invMap = new Map(inv.map((r) => [r.tier, r.count]));
+
+    const openRows = await this.db
       .select()
       .from(crateState)
       .where(and(eq(crateState.wallet, wallet), eq(crateState.net, net)));
-    const byTier = new Map(rows.map((r) => [r.tier, r]));
+    const opensMap = new Map(openRows.map((r) => [r.tier, r.opens]));
+
     const nowMs = this.now();
+    const readyAt = cdRow?.readyAt.getTime() ?? nowMs;
+    const ready = readyAt <= nowMs;
+    const lastTier = (cdRow?.lastTier as CrateTier | null) ?? null;
 
     return CRATES.map((c) => {
-      const row = byTier.get(c.k);
-      const readyAt = row?.readyAt.getTime() ?? nowMs;
+      const inventory = invMap.get(c.k) ?? 0;
       return {
         tier: c.k,
         cooldownHours: c.cd,
         colour: c.col,
         readyAt,
-        ready: readyAt <= nowMs,
-        opens: row?.opens ?? 0,
+        ready,
+        lastTier,
+        opens: opensMap.get(c.k) ?? 0,
+        inventory,
+        openable: ready && inventory > 0,
       };
     });
   }
 
-  /** Emits `crate_ready` for every tier whose cooldown has just elapsed. */
   async publishReady(net: Net, wallet: string): Promise<CrateTier[]> {
-    const ready = (await this.states(net, wallet)).filter((s) => s.ready).map((s) => s.tier);
+    const ready = (await this.states(net, wallet)).filter((s) => s.openable).map((s) => s.tier);
     for (const tier of ready) {
       await this.opts.publisher.user(net, wallet, { type: 'crate_ready', net, wallet, tier });
     }

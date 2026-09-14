@@ -23,7 +23,7 @@ export function loadLastWallet(): LastWallet | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LastWallet>;
     if (
-      (parsed.net !== 'SOL' && parsed.net !== 'RH') ||
+      (parsed.net !== 'SOL' && parsed.net !== 'RH' && parsed.net !== 'BASE') ||
       typeof parsed.walletId !== 'string' ||
       typeof parsed.address !== 'string' ||
       typeof parsed.savedAt !== 'number'

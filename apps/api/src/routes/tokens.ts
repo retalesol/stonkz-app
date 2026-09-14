@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { and, desc, eq, gt, ilike, or, sql, type SQL } from 'drizzle-orm';
-import { laneOf, nativeUnit, type Lane, type Net } from '@stonkz/shared';
+import { isEvm, laneOf, nativeUnit, parseNet, type Lane } from '@stonkz/shared';
 import { fetchEvmHoldersFromExplorer, fetchSolHoldersFromRpc } from '../chain/token-holders.js';
 import { candles, holdersSnapshot, tokens, trades } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
@@ -13,9 +13,6 @@ const TIMEFRAMES = new Set(['1m', '5m', '15m', '1h', '4h', '1d']);
 /** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
 const SORTS = new Set(['new', 'mc', 'chg', 'rep']);
 
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
 
 function parseLane(raw: string | undefined): Lane | null {
   return raw === 'new' || raw === 'soon' || raw === 'grad' ? raw : null;
@@ -235,7 +232,7 @@ export function tokenRoutes(): Hono<AppEnv> {
         amount: r.tokenAmount,
         pct: supply > 0 ? (r.tokenAmount / supply) * 100 : 0,
         costNative: r.costNative,
-        ...(net === 'RH' && r.wallet.toLowerCase() === launchpad ? { curve: true } : {}),
+        ...(isEvm(net) && r.wallet.toLowerCase() === launchpad ? { curve: true } : {}),
       }));
       const holderCount = holders.filter((h) => !h.curve).length;
       return { holders, source: 'db', holderCount };
@@ -275,10 +272,10 @@ export function tokenRoutes(): Hono<AppEnv> {
 
     if (mint) {
       try {
-        if (net === 'RH') {
+        if (isEvm(net)) {
           const live = await fetchEvmHoldersFromExplorer({
             mint,
-            launchpad: deps.env.rhLaunchpadAddress,
+            launchpad: net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress,
             decimals: token.tokenDecimals || 18,
             limit: max,
             explorerUrl: deps.env.rhExplorerUrl,
@@ -338,7 +335,7 @@ export function tokenRoutes(): Hono<AppEnv> {
     return c.json({
       net,
       sym,
-      ...(net === 'RH' ? { curveWallet: deps.env.rhLaunchpadAddress } : {}),
+      ...(isEvm(net) ? { curveWallet: net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress } : {}),
       ...fallback,
     });
   });

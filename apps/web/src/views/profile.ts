@@ -1,7 +1,8 @@
-import { GRAD, RANKS, ago, inCashback, num, pct, price, rankOf, usd } from '@stonkz/shared';
+import { GRAD, RANKS, ago, inCashback, inferNetFromAddress, num, pct, price, rankOf, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import {
   follow as liveFollow,
+  likeWallPost,
   postWallTip,
   unfollow as liveUnfollow,
   fetchMember,
@@ -189,10 +190,15 @@ function shoutHTML(addr: string, own: boolean, livePosts?: LiveWallPost[] | null
           ? livePosts.map((o) => {
               const mine = isMe(o.from) || o.from === WALLET.full;
               const fromName = displayName(o.from);
+              const likes = o.likes ?? 0;
+              const likeBtn =
+                typeof o.id === 'number'
+                  ? html` <button type="button" class="tip" data-like="${attr(o.id)}" title="Like">♥ ${likes}</button>`
+                  : html` <span class="tip">♥ ${likes}</span>`;
               return html`<div class="shout${mine ? ' mine' : ''}"><div class="sh-hd"
                 ><span class="who addrlink" data-addr="${attr(o.from)}">${fromName}</span
                 ><span class="tip">+${Number(o.tip).toFixed(4)} ${nativeUnit()}</span
-                ><span class="t">${clockSec(new Date(o.createdAtMs))}</span></div
+                >${likeBtn}<span class="t">${clockSec(new Date(o.createdAtMs))}</span></div
                 ><p>${o.text}</p></div>`;
             })
           : [html`<div class="empty">NO SHOUTS YET</div>`]
@@ -429,7 +435,7 @@ export function renderProfile(addr?: string): void {
           <section class="pnl"><div class="pnl-hd"><h2>${own ? 'Coins You Launched' : 'Coins Launched'}</h2
             >${own ? html`<button class="hdbtn" id="claimBtn"${canClaim ? '' : ' disabled'}>CLAIM FEES</button>` : ''}</div
             ><div id="pfMine">${minedHTML(mine)}</div
-            >${own ? html`<div class="pnl-note">DEPLOYING A COIN PAYS 150 XP ${DOT} LP BURNS AT ${usd(GRAD)}</div>` : ''}</section
+            >${own ? html`<div class="pnl-note">DEPLOYING A COIN PAYS 50 XP ${DOT} BONDING PAYS 250 XP ${DOT} LP BURNS AT ${usd(GRAD)}</div>` : ''}</section
           ><section class="pnl"><div class="pnl-hd"><h2>Most Profitable Friends</h2
             ><span class="pnl-tabs">${(['24h', '7d', '1m'] as const).map(
               (w) => html`<button class="tab${PF.win === w ? ' on' : ''}" data-fwin="${w}">${w.toUpperCase()}</button>`,
@@ -471,9 +477,10 @@ export function renderProfile(addr?: string): void {
   // Live: hydrate from the API after first paint so we never flash RNG flavour.
   if (live && PF.addr && !LIVE_HYDRATED.has(PF.addr) && !(liveMem && LIVE_HYDRATED.has(liveMem.addr))) {
     const target = PF.addr;
+    const profileNet = inferNetFromAddress(target, WALLET.net === 'BASE' ? 'BASE' : 'RH');
     void Promise.all([
-      fetchMember(WALLET.net, target).catch(() => null),
-      fetchWall(WALLET.net, target).catch(() => null),
+      fetchMember(profileNet, target).catch(() => null),
+      fetchWall(profileNet, target).catch(() => null),
     ]).then(([mem, wall]) => {
       if (PF.addr !== target && (!mem || (PF.addr !== mem.addr && PF.addr !== target))) return;
       if (!mem) {
@@ -629,7 +636,7 @@ function postShout(addr: string): void {
   WALLET.sol -= tip;
   postToWall(addr, { from: WALLET.addr, text: txt, tip, t: 'now', mine: true });
   toast('TIPPED ' + tip.toFixed(4) + ' ' + unit + ' TO ' + memberOf(addr).name + ' ' + DOT + ' SIMULATED');
-  addXP(8, 'WALL POST');
+  addXP(1, 'WALL POST');
   unlock('social');
   renderProfile(addr);
 }
@@ -728,6 +735,31 @@ export function openProfile(addr?: string): void {
 export function initProfileView(): void {
   must('#profileView').addEventListener('click', (e) => {
     const target = e.target as Element | null;
+    const likeBtn = target?.closest<HTMLElement>('[data-like]');
+    if (likeBtn && api.mode === 'live') {
+      const postId = Number.parseInt(likeBtn.dataset['like'] ?? '', 10);
+      if (!Number.isFinite(postId)) return;
+      void (async () => {
+        try {
+          const res = await likeWallPost(WALLET.net, postId);
+          if (res.xpAwarded > 0) toast('+' + res.xpAwarded + ' XP FOR LIKE', 'gold');
+          else if (res.already) toast('ALREADY LIKED');
+          else toast('LIKED');
+          // Bump local count.
+          for (const [key, posts] of LIVE_WALLS) {
+            const hit = posts.find((p) => p.id === postId);
+            if (hit) {
+              hit.likes = (hit.likes ?? 0) + (res.already ? 0 : 1);
+              LIVE_WALLS.set(key, [...posts]);
+            }
+          }
+          if (PF.addr) renderProfile(PF.addr);
+        } catch (err) {
+          toast(err instanceof Error ? err.message : 'LIKE FAILED');
+        }
+      })();
+      return;
+    }
     const t = target?.closest<HTMLElement>('[data-ptab]');
     const a = target?.closest<HTMLElement>('[data-atab]');
     const w = target?.closest<HTMLElement>('[data-fwin]');

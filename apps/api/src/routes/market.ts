@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { MAJORS, STOCKS, RH_STOCKS, nativeUnit, type Net } from '@stonkz/shared';
+import { MAJORS, STOCKS, RH_STOCKS, nativeUnit, parseNet, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -8,9 +8,6 @@ import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
 import { resolveTokenRow } from './token-resolve.js';
 
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
 
 /** `GET /koth`, `GET /tape`, `GET /base-tokens`, `GET /treasuries`. */
 export function marketRoutes(): Hono<AppEnv> {

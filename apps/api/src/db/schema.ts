@@ -588,12 +588,56 @@ export const crateState = pgTable(
     wallet: text('wallet').notNull(),
     net: text('net').notNull(),
     tier: text('tier').notNull(),
-    /** Cooldown gate. Server clock only; the client cannot move this. */
+    /**
+     * Legacy per-tier ready gate — kept for open counts / history.
+     * Live cooldown is `crate_cooldown.ready_at` (global across tiers).
+     */
     readyAt: timestamp('ready_at', { withTimezone: true }).notNull().defaultNow(),
     opens: integer('opens').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.wallet, t.net, t.tier] })],
+);
+
+/** Lifetime SP level → crate grants already applied for this wallet/net. */
+export const spLevelClaims = pgTable(
+  'sp_level_claims',
+  {
+    wallet: text('wallet').notNull(),
+    net: text('net').notNull(),
+    level: integer('level').notNull(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.wallet, t.net, t.level] })],
+);
+
+/** Unopened crate inventory earned from SP levels. */
+export const crateInventory = pgTable(
+  'crate_inventory',
+  {
+    wallet: text('wallet').notNull(),
+    net: text('net').notNull(),
+    tier: text('tier').notNull(),
+    count: integer('count').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.wallet, t.net, t.tier] })],
+);
+
+/**
+ * Global open cooldown: opening any crate locks every tier until `readyAt`.
+ * Duration = that tier's `CRATES[].cd` hours.
+ */
+export const crateCooldown = pgTable(
+  'crate_cooldown',
+  {
+    wallet: text('wallet').notNull(),
+    net: text('net').notNull(),
+    readyAt: timestamp('ready_at', { withTimezone: true }).notNull().defaultNow(),
+    lastTier: text('last_tier'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.wallet, t.net] })],
 );
 
 export const crateOpens = pgTable(
@@ -724,3 +768,92 @@ export const xProfileCache = pgTable('x_profile_cache', {
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
+
+/* -------------------------------------------------------------------------- */
+/* 0011 — referrals, social daily caps, wall likes                            */
+/* -------------------------------------------------------------------------- */
+
+export const referralCodes = pgTable(
+  'referral_codes',
+  {
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    code: text('code').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.net, t.wallet] }),
+    uniqueIndex('referral_codes_code_uq').on(t.net, t.code),
+  ],
+);
+
+/** One referrer per referee. Immutable after insert. */
+export const referrals = pgTable(
+  'referrals',
+  {
+    net: text('net').notNull(),
+    referee: text('referee').notNull(),
+    referrer: text('referrer').notNull(),
+    code: text('code').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.net, t.referee] }),
+    index('referrals_referrer_idx').on(t.net, t.referrer),
+  ],
+);
+
+export const referralFeeBalances = pgTable(
+  'referral_fee_balances',
+  {
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    pendingNative: doublePrecision('pending_native').notNull().default(0),
+    lifetimeNative: doublePrecision('lifetime_native').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.net, t.wallet] })],
+);
+
+export const referralFeeEvents = pgTable(
+  'referral_fee_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    net: text('net').notNull(),
+    earner: text('earner').notNull(),
+    sourceTrader: text('source_trader').notNull(),
+    tier: integer('tier').notNull(),
+    txSig: text('tx_sig').notNull(),
+    feeAmount: doublePrecision('fee_amount').notNull(),
+    payoutNative: doublePrecision('payout_native').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('referral_fee_events_uq').on(t.net, t.earner, t.txSig, t.tier)],
+);
+
+export const socialDaily = pgTable(
+  'social_daily',
+  {
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    dayUtc: date('day_utc').notNull(),
+    comments: integer('comments').notNull().default(0),
+    likes: integer('likes').notNull().default(0),
+    checkinClaimed: boolean('checkin_claimed').notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.net, t.wallet, t.dayUtc] })],
+);
+
+export const wallLikes = pgTable(
+  'wall_likes',
+  {
+    net: text('net').notNull(),
+    postId: bigint('post_id', { mode: 'number' }).notNull(),
+    wallet: text('wallet').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.net, t.postId, t.wallet] }),
+    index('wall_likes_wallet_idx').on(t.net, t.wallet),
+  ],
+);

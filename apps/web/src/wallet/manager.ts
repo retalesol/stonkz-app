@@ -45,7 +45,7 @@ export function preferRealWallet(choices: readonly WalletChoice[]): WalletChoice
 
 /** Everything this browser could connect for `net`, best-first. */
 export function availableWallets(net: Net): WalletChoice[] {
-  const detected = net === 'SOL' ? listSolanaWallets() : listEvmWallets();
+  const detected = net === 'SOL' ? listSolanaWallets() : listEvmWallets(net === 'BASE' ? 'BASE' : 'RH');
   const practice = practiceWalletChoice(net);
   return sortChoices(practice ? [...detected, practice] : detected);
 }
@@ -70,10 +70,10 @@ export function requireWallet(net: Net): ConnectedWallet {
     throw new WalletError('not_connected', 'Connect a wallet before signing.');
   }
   if (active.net !== net) {
+    const label = (n: Net) => (n === 'SOL' ? 'Solana' : n === 'BASE' ? 'Coinbase Base' : 'Robinhood Chain');
     throw new WalletError(
       'not_connected',
-      `The connected wallet is on ${active.net === 'SOL' ? 'Solana' : 'Robinhood Chain'}; this action needs ` +
-        `${net === 'SOL' ? 'Solana' : 'Robinhood Chain'}. Switch networks and reconnect.`,
+      `The connected wallet is on ${label(active.net)}; this action needs ${label(net)}. Switch networks and reconnect.`,
     );
   }
   return active;

@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, type Net } from '@stonkz/shared';
 import type { Logger } from './logger.js';
 
 export type AlertSeverity = 'warn' | 'critical';
@@ -42,7 +42,7 @@ export interface MetricsSnapshot {
   chainLag: Record<Net, ChainLag>;
 }
 
-const NETS: readonly Net[] = ['SOL', 'RH'];
+const NETS: readonly Net[] = ALL_NETS;
 
 /**
  * In-process counters. Deliberately not Prometheus: the plan asks for request
@@ -63,11 +63,12 @@ export class Metrics {
   private wsSubscriptions = 0;
   private wsMessagesSent = 0;
 
-  private readonly rpcCalls: Record<Net, number> = { SOL: 0, RH: 0 };
-  private readonly rpcErrors: Record<Net, number> = { SOL: 0, RH: 0 };
+  private readonly rpcCalls: Record<Net, number> = { SOL: 0, RH: 0, BASE: 0 };
+  private readonly rpcErrors: Record<Net, number> = { SOL: 0, RH: 0, BASE: 0 };
   private readonly lag: Record<Net, ChainLag> = {
     SOL: { net: 'SOL', behind: 0, seconds: 0, alerting: false },
     RH: { net: 'RH', behind: 0, seconds: 0, alerting: false },
+    BASE: { net: 'BASE', behind: 0, seconds: 0, alerting: false },
   };
 
   /** Alerts are edge-triggered: one per transition, not one per observation. */
@@ -196,7 +197,7 @@ export class Metrics {
         messagesSent: this.wsMessagesSent,
       },
       rpc,
-      chainLag: { SOL: this.lag.SOL, RH: this.lag.RH },
+      chainLag: { SOL: this.lag.SOL, RH: this.lag.RH, BASE: this.lag.BASE },
     };
   }
 }

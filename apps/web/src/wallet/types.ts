@@ -39,7 +39,7 @@ export type SignPayload =
       readonly lastValidBlockHeight?: number;
     }
   | {
-      readonly net: 'RH';
+      readonly net: 'RH' | 'BASE';
       readonly to: string;
       /** `0x`-prefixed calldata. */
       readonly data: string;

@@ -11,6 +11,9 @@ import type { ApiEnv } from '../env.js';
 import { GameAwards } from '../game/awards.js';
 import { CrateService } from '../game/crates.js';
 import { Ledger } from '../game/ledger.js';
+import { ReferralService } from '../game/referrals.js';
+import { SocialCapsService } from '../game/social-caps.js';
+import { SpLevelService } from '../game/sp-levels.js';
 import { createLogger, type Logger } from '../observability/logger.js';
 import { Metrics, loggingAlertHook } from '../observability/metrics.js';
 import { createRedis } from '../redis/ioredis.js';
@@ -93,7 +96,14 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       RH: new EvmRpc({
         url: env.rhRpcUrl,
         chainId: env.rhChainId,
+        net: 'RH',
         onCall: (ok) => metrics.rpcCall('RH', ok),
+      }),
+      BASE: new EvmRpc({
+        url: env.baseRpcUrl,
+        chainId: env.baseChainId,
+        net: 'BASE',
+        onCall: (ok) => metrics.rpcCall('BASE', ok),
       }),
     } satisfies ChainRpcs);
 
@@ -105,7 +115,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       env.priceOracleTtlSeconds,
     );
 
-  const ethCaller = asEthCaller(rpcs.RH);
+  const ethCaller = asEthCaller(rpcs.RH) ?? asEthCaller(rpcs.BASE);
   const publisher = new Publisher(redis, now);
   const jwt = new JwtService(
     {
@@ -124,6 +134,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     domain: env.siwsDomain,
     uri: `https://${env.siwsDomain}`,
     rhChainId: env.rhChainId,
+    baseChainId: env.baseChainId,
     solanaSiwsChainId: env.solanaSiwsChainId,
     allowedRhChainIds: env.allowedRhChainIds,
     nonceTtlSeconds: env.nonceTtlSeconds,
@@ -143,8 +154,17 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     now,
   });
 
-  const awards = new GameAwards({ ledger, dust: env.dust, whaleCut: env.whaleCut });
-  const crates = new CrateService({ db, ledger, publisher, secret: env.crateHmacSecret, now });
+  const socialCaps = new SocialCapsService({ db, ledger, now });
+  const awards = new GameAwards({ ledger, socialCaps, dust: env.dust, whaleCut: env.whaleCut });
+  const spLevels = new SpLevelService({ db, now });
+  const referrals = new ReferralService({ db, ledger, now });
+  const crates = new CrateService({ db, ledger, publisher, spLevels, secret: env.crateHmacSecret, now });
+  ledger.setAfterSpCredit(async (net, wallet, totalSp) => {
+    await spLevels.sync(net, wallet, totalSp);
+  });
+  ledger.setAfterSpAwarded(async (net, wallet, spAwarded, _reason, eventId) => {
+    await referrals.kickbackSp(net, wallet, spAwarded, eventId);
+  });
 
   // No real Jupiter/Uniswap credentials exist in this environment (see the
   // phase report). These are still real HTTP clients pointed at the public
@@ -161,6 +181,8 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     createBaseMintRegistry({
       SOL: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_SOL']),
       RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
+      BASE: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_BASE']),
+      solanaCluster: env.solanaCluster,
     });
   const uniswap: UniswapClient =
     overrides.uniswap ??
@@ -211,6 +233,9 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     ledger,
     awards,
     crates,
+    spLevels,
+    referrals,
+    socialCaps,
     publisher,
     now,
     jupiter,

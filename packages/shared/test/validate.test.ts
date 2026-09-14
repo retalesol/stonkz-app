@@ -77,6 +77,20 @@ describe('nativeUnit', () => {
   it('is SOL on Solana and ETH on Robinhood', () => {
     expect(nativeUnit('SOL')).toBe('SOL');
     expect(nativeUnit('RH')).toBe('ETH');
+    expect(nativeUnit('BASE')).toBe('ETH');
+  });
+});
+
+describe('isEvm / parseNet', () => {
+  it('treats RH and BASE as EVM', async () => {
+    const { isEvm, parseNet, inferNetFromAddress } = await import('../src/validate.js');
+    expect(isEvm('RH')).toBe(true);
+    expect(isEvm('BASE')).toBe(true);
+    expect(isEvm('SOL')).toBe(false);
+    expect(parseNet('BASE')).toBe('BASE');
+    expect(parseNet('foo')).toBeNull();
+    expect(inferNetFromAddress('0x' + 'a'.repeat(40), 'BASE')).toBe('BASE');
+    expect(inferNetFromAddress('7xKQ8mNvRk4pB2sT9dLcW6hJ1yZaQe3Ux9fRt')).toBe('SOL');
   });
 });
 

@@ -25,7 +25,7 @@ export interface TestApp {
   deps: AppDeps;
   db: TestDb;
   redis: MemoryRedis;
-  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc };
+  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc };
   oracle: FakePriceOracle;
   jupiter: FakeJupiterClient;
   uniswap: FakeUniswapClient;

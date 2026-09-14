@@ -10,7 +10,7 @@
  * without producing a false green.
  */
 import { runScenarios, type Scenario } from './harness.js';
-import { rhAtomicRoundTrip, solanaRoundTrip } from './scenarios/trade.js';
+import { baseAtomicRoundTrip, rhAtomicRoundTrip, solanaRoundTrip } from './scenarios/trade.js';
 import {
   rhGraduationBurn,
   rhOracleStalenessGuard,
@@ -22,6 +22,7 @@ import {
 const ALL: Scenario[] = [
   solanaRoundTrip,
   rhAtomicRoundTrip,
+  baseAtomicRoundTrip,
   solanaGraduationBurn,
   rhGraduationBurn,
   rhOracleStalenessGuard,

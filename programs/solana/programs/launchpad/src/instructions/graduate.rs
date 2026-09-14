@@ -82,6 +82,9 @@ pub fn graduate(ctx: Context<Graduate>) -> Result<()> {
         let price = read_fresh_price(oracle, &ctx.accounts.global, now)?;
         let usd = mcap_usd_1e6(mcap, price, c.base_decimals).ok_or(LaunchpadError::MathOverflow)?;
         require!(usd >= GRAD_MCAP_USD_1E6, LaunchpadError::NotGraduable);
+        // Oracle mcap uses virtual reserves — without a raise, migrate_liquidity
+        // would always revert (base_amount == 0). Refuse until real_base > 0.
+        require!(c.real_base > 0, LaunchpadError::NotGraduable);
         (GraduationReason::OraclePrice, usd)
     };
 

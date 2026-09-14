@@ -24,6 +24,7 @@ const MINT_DOGE2 = 'mint-DOGE2';
 const MINT_MOONER = 'mint-MOONER';
 const MINT_GRADD = 'mint-GRADD';
 const MINT_RHDOG = '0x00000000000000000000000000000000000000b2';
+const MINT_BASEDOG = '0x00000000000000000000000000000000000000c3';
 
 /**
  * A small deterministic board. Ingestion is covered by the indexer's fixture
@@ -105,6 +106,24 @@ async function seed(): Promise<void> {
       lane: 'new',
       seed: 201,
       launchedAt: minutesAgo(5),
+    },
+    {
+      net: 'BASE',
+      sym: 'BASEDOG',
+      name: 'Base Dog',
+      creator: 'DevBase',
+      mint: MINT_BASEDOG,
+      baseSymbol: 'WETH',
+      baseMint: '0x4200000000000000000000000000000000000006',
+      supply: 1_000_000_000,
+      feeBps: 200,
+      mc: 18_000,
+      chg: 8,
+      replies: 0,
+      holders: 4,
+      lane: 'new',
+      seed: 301,
+      launchedAt: minutesAgo(8),
     },
   ]);
 
@@ -208,8 +227,8 @@ describe('GET /tokens', () => {
   it('returns both chains for net=ALL', async () => {
     const { body } = await get<BoardResponse>('/tokens?net=ALL');
     expect(body.net).toBe('ALL');
-    expect(body.count).toBe(4);
-    expect(new Set(body.tokens.map((t) => t.net))).toEqual(new Set(['SOL', 'RH']));
+    expect(body.count).toBe(5);
+    expect(new Set(body.tokens.map((t) => t.net))).toEqual(new Set(['SOL', 'RH', 'BASE']));
   });
 
   it('filters by lane', async () => {

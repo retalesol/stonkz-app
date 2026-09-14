@@ -9,7 +9,7 @@ exports[`achievements > snapshots all ten 1`] = `
     "xp": 50,
   },
   {
-    "d": "Buy five or more in a single fill.",
+    "d": "Hit the chain-specific whale fill threshold (5 SOL or 2 ETH).",
     "k": "whale",
     "n": "WHALE",
     "xp": 120,
@@ -67,10 +67,32 @@ exports[`achievements > snapshots all ten 1`] = `
 
 exports[`base mints > snapshots the majors for both networks 1`] = `
 {
+  "BASE": [
+    [
+      "ETH",
+      "Ethereum",
+    ],
+    [
+      "WETH",
+      "Wrapped Ether",
+    ],
+    [
+      "USDC",
+      "USD Coin",
+    ],
+  ],
   "RH": [
     [
       "ETH",
       "Ethereum",
+    ],
+    [
+      "WETH",
+      "Wrapped Ether",
+    ],
+    [
+      "USDG",
+      "Global Dollar",
     ],
     [
       "USDC",
@@ -81,12 +103,12 @@ exports[`base mints > snapshots the majors for both networks 1`] = `
       "Bitcoin",
     ],
     [
-      "XRP",
-      "XRP",
-    ],
-    [
       "SOL",
       "Solana",
+    ],
+    [
+      "XRP",
+      "XRP",
     ],
     [
       "DOGE",

@@ -1,8 +1,8 @@
 import {
   XP_FOLLOW,
   XP_LAUNCH,
+  XP_LAUNCH_BOND,
   XP_STAKE_CLAIM,
-  XP_WALL_POST,
   xpForFeeClaim,
   xpForStake,
   xpForTrade,
@@ -10,19 +10,18 @@ import {
 } from '@stonkz/shared';
 import { DEFAULT_DUST, DEFAULT_WHALE_CUT, REASONS } from './rules.js';
 import type { AwardResult, Ledger } from './ledger.js';
+import type { SocialCapsService } from './social-caps.js';
 
 /**
- * The award rule set, ported one-for-one from `legacy/index.html`.
+ * The award rule set.
  *
- * Each method is the server-side counterpart of a call site in the sim, cited
- * by line. The arithmetic is imported from `@stonkz/shared`, so this file only
- * sequences the awards and the achievement unlocks — in the same order the sim
- * fired them, because that order decides which award hits the daily cap first
- * and therefore what the user sees.
+ * Each method sequences ledger awards and achievement unlocks. Social XP is
+ * gated by {@link SocialCapsService} (comments/likes daily caps).
  */
 
 export interface GameAwardsOptions {
   ledger: Ledger;
+  socialCaps: SocialCapsService;
   dust?: Record<Net, number>;
   whaleCut?: Record<Net, number>;
 }
@@ -58,26 +57,19 @@ export class GameAwards {
     return this.opts.ledger;
   }
 
+  private get socialCaps(): SocialCapsService {
+    return this.opts.socialCaps;
+  }
+
   isDust(net: Net, nativeNotional: number): boolean {
     return nativeNotional < this.dust[net];
   }
 
-  /**
-   * `index.html:1972-1974`
-   *
-   *   unlock("first");
-   *   if (buy && sol >= 5) unlock("whale");
-   *   addXP(max(5, round(sol*40)), "TRADE");
-   *
-   * Dust fills (plan step 106) award nothing and unlock nothing, but the event
-   * is still recorded at zero so a replay cannot revisit the decision.
-   */
   async trade(event: TradeEvent): Promise<TradeAwardOutcome> {
     const { net, wallet, sym, txSig, side, nativeNotional } = event;
     const dust = this.isDust(net, nativeNotional);
     const unlocked: string[] = [];
 
-    // The streak gates every multiplier below, so it moves first.
     await this.ledger.touchStreak(net, wallet);
 
     if (!dust) {
@@ -101,7 +93,7 @@ export class GameAwards {
     return { xp: award.xp, sp: award.sp, dust, unlocked, rankedUp: award.rankedUp };
   }
 
-  /** `index.html:3967-3968` — addXP(150); unlock("deploy"); cashback ? unlock("cashback"). */
+  /** Launch a coin — 50 XP/SP. Cashback unlock still available, no double XP. */
   async launch(input: {
     net: Net;
     wallet: string;
@@ -131,7 +123,25 @@ export class GameAwards {
     return { xp: award.xp, unlocked };
   }
 
-  /** `index.html:3047` — addXP(max(10, round(tot*30)), "FEE CLAIM"). */
+  /** Creator bonus when their token bonds / graduates — 250 XP/SP. */
+  async launchBonded(input: {
+    net: Net;
+    wallet: string;
+    sym: string;
+    txSig: string;
+  }): Promise<{ xp: number }> {
+    await this.ledger.touchStreak(input.net, input.wallet);
+    const award = await this.ledger.award({
+      net: input.net,
+      wallet: input.wallet,
+      reason: REASONS.launchBond,
+      baseXp: XP_LAUNCH_BOND,
+      sym: input.sym,
+      txSig: input.txSig,
+    });
+    return { xp: award.xp };
+  }
+
   async feeClaim(input: {
     net: Net;
     wallet: string;
@@ -151,11 +161,6 @@ export class GameAwards {
     });
   }
 
-  /**
-   * `index.html:3177-3178` — addXP(max(5, round(amt/circ*400)), "STAKE");
-   * unlock("stake"). Live from Phase 4; the rule is ported now so the ledger
-   * does not need a second pass.
-   */
   async stake(input: {
     net: Net;
     wallet: string;
@@ -180,7 +185,6 @@ export class GameAwards {
     return { xp: award.xp, unlocked };
   }
 
-  /** `index.html:3203` — addXP(12, "STAKE CLAIM"). */
   async stakeClaim(input: { net: Net; wallet: string; sym: string; txSig: string }): Promise<AwardResult> {
     await this.ledger.touchStreak(input.net, input.wallet);
     return this.ledger.award({
@@ -193,10 +197,7 @@ export class GameAwards {
     });
   }
 
-  /**
-   * `index.html:3270` — addXP(6, "FOLLOW"); unlock("social").
-   * `target` becomes the dedupe key so the pair only ever pays once (gate 5.A).
-   */
+  /** Follow — achievement only; no XP (anti-farm). */
   async follow(input: { net: Net; wallet: string; target: string }): Promise<AwardResult> {
     await this.ledger.touchStreak(input.net, input.wallet);
     const award = await this.ledger.award({
@@ -206,36 +207,51 @@ export class GameAwards {
       baseXp: XP_FOLLOW,
       txSig: `follow:${input.target}`,
       meta: { target: input.target },
+      zeroAward: true,
     });
     await this.ledger.unlock(input.net, input.wallet, 'social');
     return award;
   }
 
-  /** `index.html:3332-3333` — addXP(8, "WALL POST"); unlock("social"). */
+  /** Wall comment — 1 XP if under daily social cap. */
   async wallPost(input: {
     net: Net;
     wallet: string;
     target: string;
-    /** The tip signature. Phase 5 requires one post per signature. */
     tipSig: string;
   }): Promise<AwardResult> {
     await this.ledger.touchStreak(input.net, input.wallet);
-    const award = await this.ledger.award({
-      net: input.net,
-      wallet: input.wallet,
-      reason: REASONS.wallPost,
-      baseXp: XP_WALL_POST,
-      txSig: input.tipSig,
-      meta: { target: input.target },
-    });
+    const { xp } = await this.socialCaps.tryComment(input.net, input.wallet, input.tipSig);
     await this.ledger.unlock(input.net, input.wallet, 'social');
-    return award;
+    const bal = await this.ledger.readBalance(input.net, input.wallet);
+    return {
+      awarded: xp > 0,
+      xp,
+      sp: xp,
+      baseXp: xp,
+      totalXp: bal.xp,
+      cappedBy: xp > 0 ? 'none' : 'daily_xp',
+      streak: await this.ledger.currentStreak(input.net, input.wallet),
+      mult: 1,
+      rankBefore: 0,
+      rankAfter: 0,
+      rankedUp: false,
+    };
   }
 
-  /**
-   * `index.html:4059` — unlock("grad") for a holder at the moment of
-   * graduation. The achievement itself pays the 250 XP of plan step 115.
-   */
+  /** Like a wall post — 1 XP if under daily like cap. */
+  async like(input: { net: Net; wallet: string; postId: number }): Promise<{ xp: number }> {
+    await this.ledger.touchStreak(input.net, input.wallet);
+    const { xp } = await this.socialCaps.tryLike(input.net, input.wallet, input.postId);
+    return { xp };
+  }
+
+  /** Daily check-in — 10 SP once per UTC day. */
+  async dailyCheckin(input: { net: Net; wallet: string }): Promise<{ claimed: boolean; sp: number }> {
+    await this.ledger.touchStreak(input.net, input.wallet);
+    return this.socialCaps.tryCheckin(input.net, input.wallet);
+  }
+
   async graduatedWhileHolding(input: {
     net: Net;
     wallet: string;
@@ -246,12 +262,6 @@ export class GameAwards {
     return (await this.ledger.unlock(input.net, input.wallet, 'grad', input.txSig)).unlocked;
   }
 
-  /**
-   * `index.html:4082` — unlock("diamond") at −25% unrealised. Runs as an
-   * indexer sweep (plan step 116), not off the client's animation counter.
-   * `txSig` is the fill that established the position, which is what makes the
-   * award verifiable.
-   */
   async diamondHands(input: {
     net: Net;
     wallet: string;

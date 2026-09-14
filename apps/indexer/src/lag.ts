@@ -46,7 +46,7 @@ export class LagMonitor {
   }
 
   async checkAll(): Promise<Record<Net, ChainLag | null>> {
-    const [sol, rh] = await Promise.all([this.check('SOL'), this.check('RH')]);
-    return { SOL: sol, RH: rh };
+    const [sol, rh, base] = await Promise.all([this.check('SOL'), this.check('RH'), this.check('BASE')]);
+    return { SOL: sol, RH: rh, BASE: base };
   }
 }

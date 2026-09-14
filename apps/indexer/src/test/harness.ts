@@ -109,6 +109,7 @@ export async function createIndexerRig(
     db: db.db,
     ledger: built.deps.ledger,
     awards: built.deps.awards,
+    referrals: built.deps.referrals,
     publisher: built.deps.publisher,
     logger,
     now,
@@ -118,6 +119,7 @@ export async function createIndexerRig(
   const sources: Record<Net, EventSource> = options.sources ?? {
     SOL: new FixtureEventSource('SOL', events),
     RH: new FixtureEventSource('RH', events),
+    BASE: new FixtureEventSource('BASE', []),
   };
   const deadLetters = new DeadLetters({ db: db.db, logger, now });
   const rollback = new ReorgRollback({ db: db.db, logger, now });

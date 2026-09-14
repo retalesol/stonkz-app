@@ -66,6 +66,12 @@ export interface IndexerConfig {
   rhStartBlock: number;
   /** `eth_getLogs` window; providers commonly cap this well below `batchSize`. */
   rhLogWindow: number;
+
+  /* --------------------------------------------------------------- Base */
+  baseLaunchpadAddress: string;
+  baseRouterAddress: string;
+  baseStartBlock: number;
+  baseLogWindow: number;
 }
 
 export type ConfigSource = Record<string, string | undefined>;
@@ -117,9 +123,9 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     .split(',')
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
-  const chainNets = [...new Set(chainNetsRaw)].filter((n): n is Net => n === 'SOL' || n === 'RH');
+  const chainNets = [...new Set(chainNetsRaw)].filter((n): n is Net => n === 'SOL' || n === 'RH' || n === 'BASE');
   if (mode === 'chain' && chainNets.length === 0) {
-    throw new Error('INDEXER_CHAIN_NETS must list SOL and/or RH when INDEXER_SOURCE=chain');
+    throw new Error('INDEXER_CHAIN_NETS must list SOL, RH, and/or BASE when INDEXER_SOURCE=chain');
   }
 
   const config: IndexerConfig = {
@@ -132,10 +138,12 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     confirmations: {
       SOL: int(src, 'INDEXER_SOL_CONFIRMATIONS', 0),
       RH: int(src, 'INDEXER_RH_CONFIRMATIONS', 12),
+      BASE: int(src, 'INDEXER_BASE_CONFIRMATIONS', 12),
     },
     reorgDepth: {
       SOL: int(src, 'INDEXER_SOL_REORG_DEPTH', 32),
       RH: int(src, 'INDEXER_RH_REORG_DEPTH', 64),
+      BASE: int(src, 'INDEXER_BASE_REORG_DEPTH', 64),
     },
     // Railway injects PORT; prefer an explicit INDEXER_HTTP_PORT, then PORT.
     httpPort: int(src, 'INDEXER_HTTP_PORT', int(src, 'PORT', 8788)),
@@ -153,6 +161,11 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', env.rhRouterAddress),
     rhStartBlock: int(src, 'INDEXER_RH_START_BLOCK', 0),
     rhLogWindow: int(src, 'INDEXER_RH_LOG_WINDOW', 2_000),
+
+    baseLaunchpadAddress: str(src, 'BASE_LAUNCHPAD_ADDRESS', env.baseLaunchpadAddress),
+    baseRouterAddress: str(src, 'BASE_ROUTER_ADDRESS', env.baseRouterAddress),
+    baseStartBlock: int(src, 'INDEXER_BASE_START_BLOCK', 0),
+    baseLogWindow: int(src, 'INDEXER_BASE_LOG_WINDOW', 2_000),
   };
 
   if (config.mode === 'chain') assertChainModeConfigured(config);
@@ -173,6 +186,16 @@ export function assertChainModeConfigured(config: IndexerConfig): void {
     }
     if (config.rhStartBlock <= 0) {
       throw new Error('INDEXER_SOURCE=chain needs INDEXER_RH_START_BLOCK (the deployment block)');
+    }
+  }
+  if (config.chainNets.includes('BASE')) {
+    if (config.baseLaunchpadAddress.toLowerCase() === ZERO_EVM_ADDRESS) {
+      throw new Error(
+        'INDEXER_SOURCE=chain needs BASE_LAUNCHPAD_ADDRESS; the zero address means "not deployed here"',
+      );
+    }
+    if (config.baseStartBlock <= 0) {
+      throw new Error('INDEXER_SOURCE=chain needs INDEXER_BASE_START_BLOCK (the deployment block)');
     }
   }
   if (config.chainNets.includes('SOL')) {

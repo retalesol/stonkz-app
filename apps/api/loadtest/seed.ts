@@ -53,7 +53,7 @@ const NATIVE_USD: Record<Net, number> = {
   SOL: Number(process.env['STUB_SOL_USD'] ?? 214.08),
   RH: Number(process.env['STUB_ETH_USD'] ?? 4200),
 };
-const NATIVE_DECIMALS: Record<Net, number> = { SOL: 9, RH: 18 };
+const NATIVE_DECIMALS: Record<Net, number> = { SOL: 9, RH: 18, BASE: 18 };
 const SUPPLIES = [1_000_000, 500_000_000, 1_000_000_000, 1_000_000_000_000];
 
 let lcg = 0x5eed;
@@ -111,7 +111,7 @@ interface SeedToken {
   isTradeable: boolean; // native-paired: quote/trade never touch Jupiter/Uniswap
 }
 
-const manifestWallets: Record<Net, string[]> = { SOL: [], RH: [] };
+const manifestWallets: Record<Net, string[]> = { SOL: [], RH: [], BASE: [] };
 
 async function batchInsert<T extends Record<string, unknown>>(
   db: ReturnType<typeof createDb>['db'],
@@ -139,7 +139,7 @@ async function main(): Promise<void> {
     },
   };
 
-  for (const net of ['SOL', 'RH'] as const) {
+  for (const net of ['SOL', 'RH', 'BASE'] as const) {
     const native = nativeUnit(net);
     const nativePriceUsd1e6 = BigInt(Math.round(NATIVE_USD[net] * 1e6));
     // The canonical wrapped-native mint (`router/base-mints.ts`), not a

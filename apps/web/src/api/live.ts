@@ -11,6 +11,7 @@ import {
   type Wallet,
   crateBy,
   RAR,
+  isEvm,
 } from '@stonkz/shared';
 import {
   authHeader,
@@ -19,7 +20,7 @@ import {
   invalidateAccessToken,
   sessionWallet,
 } from '../app/session.js';
-import { signAndConfirm, signPermit, type SellPermit, type SignPayload, type UiStep } from '../app/signer.js';
+import { signAndConfirm, signPermit, type SellPermit, type SignPayload } from '../app/signer.js';
 import { emit } from '../lib/bus.js';
 import { clock, shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
@@ -297,7 +298,7 @@ interface ApiTradePrepareSolAtomic {
  * either way, just two off-chain signatures for a first-time sell.
  */
 interface ApiTradePrepareRhAtomic {
-  net: 'RH';
+  net: 'RH' | 'BASE';
   atomic: true;
   to: string;
   data: string;
@@ -503,11 +504,12 @@ function applyCandles(c: SimCoin, candles: ApiCandle[]): void {
 
 function venueFor(c: SimCoin): string {
   if (c.lane === 'grad') return 'DEX';
+  const net = c.net ?? 'SOL';
   const base = (c.base || '').toUpperCase();
-  const native = c.net === 'RH' ? 'ETH' : 'SOL';
-  const wrapped = c.net === 'RH' ? 'WETH' : 'WSOL';
+  const native = isEvm(net) ? 'ETH' : 'SOL';
+  const wrapped = isEvm(net) ? 'WETH' : 'WSOL';
   if (!base || base === native || base === wrapped) return 'CURVE';
-  return c.net === 'RH' ? 'UNISWAP \u2192 CURVE' : 'JUPITER \u2192 CURVE';
+  return isEvm(net) ? 'UNISWAP \u2192 CURVE' : 'JUPITER \u2192 CURVE';
 }
 
 /** Rebuild hop legs for a fill when the quote is gone but the base is known. */
@@ -520,9 +522,10 @@ function hopsForTrade(
 ): TradeHop[] | undefined {
   const route = venueFor(c);
   if (!route.includes('\u2192')) return undefined;
-  const native = c.net === 'RH' ? 'ETH' : 'SOL';
-  const base = (c.base || (c.net === 'RH' ? 'USDG' : 'BASE')).toUpperCase();
-  const agg = c.net === 'RH' ? 'UNISWAP' : 'JUPITER';
+  const net = c.net ?? 'SOL';
+  const native = isEvm(net) ? 'ETH' : 'SOL';
+  const base = (c.base || (net === 'RH' ? 'USDG' : net === 'BASE' ? 'USDC' : 'BASE')).toUpperCase();
+  const agg = isEvm(net) ? 'UNISWAP' : 'JUPITER';
   const mid = baseAmt && baseAmt > 0 ? baseAmt : nativeInOut;
   if (side === 'buy') {
     return [
@@ -647,7 +650,7 @@ async function refreshNativePrices(): Promise<void> {
     const res = await getJson<{ SOL: number | null; ETH: number | null }>('/native-price');
     if (typeof res.SOL === 'number' && res.SOL > 0) NATIVE_PRICE.sol = res.SOL;
     if (typeof res.ETH === 'number' && res.ETH > 0) NATIVE_PRICE.eth = res.ETH;
-    NATIVE_PRICE.usd = WALLET.net === 'RH' ? NATIVE_PRICE.eth : NATIVE_PRICE.sol;
+    NATIVE_PRICE.usd = isEvm(WALLET.net) ? NATIVE_PRICE.eth : NATIVE_PRICE.sol;
     emit('tick');
   } catch {
     // Keep last marks; the footer just stays stale until the next poll.
@@ -997,9 +1000,12 @@ async function fetchQuote(
   return getJson<Quote>(`/tokens/${encodeURIComponent(sym)}/quote${qs}`);
 }
 
-/** An `EvmStep`, a `StonkzRouter` call and an RH launch/claim payload are all the same three fields. */
-function evmPayload(call: { to: string; data: string; value: string }): SignPayload {
-  return { net: 'RH', to: call.to, data: call.data, value: call.value };
+/** An `EvmStep`, a `StonkzRouter` call and an RH/Base launch/claim payload are all the same three fields. */
+function evmPayload(
+  call: { to: string; data: string; value: string },
+  net: 'RH' | 'BASE' = 'RH',
+): SignPayload {
+  return { net, to: call.to, data: call.data, value: call.value };
 }
 
 function solPayload(prep: { transaction: string; lastValidBlockHeight: number }): SignPayload {
@@ -1041,7 +1047,7 @@ async function signTradePlan(
       422,
     );
   }
-  if (prep.net === 'RH' && prep.permitTypedData) {
+  if (isEvm(prep.net) && 'permitTypedData' in prep && prep.permitTypedData) {
     const permitTypedData = prep.permitTypedData;
     // The atomic call is only known after the permit has been signed and the
     // prepare call resent, so step 2 carries both the resend and the payload
@@ -1071,7 +1077,10 @@ async function signTradePlan(
               net,
             );
             confirmed.quote = resent.quote;
-            confirmed.call = resent.atomic && resent.net === 'RH' ? evmPayload(resent) : null;
+            confirmed.call =
+              resent.atomic && isEvm(resent.net) && 'to' in resent
+                ? evmPayload(resent, resent.net)
+                : null;
           },
           payload: () => confirmed.call,
         },
@@ -1081,7 +1090,7 @@ async function signTradePlan(
     );
     return { quote: confirmed.quote, signature: last.signature };
   }
-  const { signature } = await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  const { signature } = await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
   return { quote: prep.quote, signature };
 }
 
@@ -1121,7 +1130,7 @@ function applyConfirmedTrade(
   if (inCashback(c)) unlock('cashback');
   emit('coins');
   // Prefer the chain balance over optimistic math — MetaMask is the truth.
-  if (net === 'RH' && c.mint) {
+  if (isEvm(net) && c.mint) {
     void syncHoldingFromChain(c, sessionWallet(net));
   }
   return fillFromTrade(c, t);
@@ -1139,7 +1148,10 @@ async function liveTrade(quote: Quote): Promise<Fill> {
     ...settingsPayload(),
   };
   const prep = await postJson<ApiTradePrepare>('/trade/prepare', body, net);
-  const title = (quote.side === 'buy' ? 'BUY ' : 'SELL ') + c.sym + (net === 'RH' ? ' \u00b7 ROBINHOOD CHAIN' : '');
+  const title =
+    (quote.side === 'buy' ? 'BUY ' : 'SELL ') +
+    c.sym +
+    (net === 'RH' ? ' \u00b7 ROBINHOOD CHAIN' : net === 'BASE' ? ' \u00b7 BASE' : '');
   const { quote: confirmedQuote, signature } = await signTradePlan(net, prep, title, c.sym, body);
   // Re-sync curve reserves from chain so the next sell quote is not stuck on
   // empty DB reserves if the indexer lags.
@@ -1183,7 +1195,7 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
   // worked against the old fabricated signature at all.
   const { signature } = await signAndConfirm(
     net,
-    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep),
+    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
   );
   const confirmed = await postJson<ApiLaunchConfirm>(
     '/launch/confirm',
@@ -1196,6 +1208,7 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
     id: COINS.length,
     sym: confirmed.sym,
     name: draft.name || confirmed.sym,
+    ...(confirmed.mint ? { mint: confirmed.mint, tradeable: true } : {}),
     desc: draft.desc,
     mc,
     chg: 0,
@@ -1229,7 +1242,7 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
   // the `TokenCreated` log (plain `CREATE`, not `CREATE2` — `routes/launch.ts`'s
   // header comment), so a dev buy there is necessarily a *second*,
   // independent `/trade/prepare` call, not part of the launch transaction.
-  if (net === 'RH' && draft.buy > 0) {
+  if (isEvm(net) && draft.buy > 0) {
     try {
       const quote = await fetchQuote(net, c.sym, 'buy', draft.buy);
       await liveTrade(quote);
@@ -1301,7 +1314,7 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
       { sym: v.sym, ...(v.mint ? { mint: v.mint } : {}) },
       net,
     );
-    return prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep);
+    return prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH');
   };
 
   if (targets.length === 1) {
@@ -1355,7 +1368,21 @@ function applyRewardsSnap(snap: LiveRewardsSnapshot): void {
     sp: snap.sp,
     optionz: snap.optionz,
     streak: snap.streak,
-    crates: snap.crates.map((c) => ({ tier: c.tier as CrateTier, readyAt: c.readyAt })),
+    crates: snap.crates.map((c) => ({
+      tier: c.tier as CrateTier,
+      readyAt: c.readyAt,
+      inventory: c.inventory ?? 0,
+    })),
+    ...(snap.spLevel
+      ? {
+          spLevel: {
+            level: snap.spLevel.level,
+            next: snap.spLevel.next,
+            pct: snap.spLevel.pct,
+            toNext: snap.spLevel.toNext,
+          },
+        }
+      : {}),
     dropLog: snap.dropLog.map((d) => ({ at: d.at, tier: d.tier, label: d.label })),
     achievements: snap.achievements.map((a) => ({
       key: a.key as import('@stonkz/shared').AchievementKey,
@@ -1435,7 +1462,7 @@ async function liveStake(input: StakeInput): Promise<void> {
     { sym: input.sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: input.amount, days: input.days },
     net,
   );
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
   const c = bySym(input.sym);
   if (!c) return;
   const st = ensureStake(input.sym);
@@ -1470,7 +1497,7 @@ async function liveUnstake(sym: string): Promise<number> {
     { sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: amt },
     net,
   );
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
   st.amt = 0;
   st.mult = 1;
   st.days = 0;
@@ -1492,7 +1519,7 @@ async function liveClaimStake(sym: string): Promise<StakeClaim> {
     { sym, ...(bySym(sym)?.mint ? { mint: bySym(sym)!.mint } : {}) },
     net,
   );
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep));
+  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
   const out: StakeClaim = { tokens: st?.rewTok ?? 0, native: st?.rewSol ?? 0 };
   if (out.tokens > 0) creditTokens(sym, out.tokens);
   if (out.native > 0) WALLET.sol += out.native;
@@ -1685,7 +1712,7 @@ export const liveApi: StonkzApi = {
       await refreshNativePrices();
       if (me?.native.usdPrice) {
         NATIVE_PRICE.usd = me.native.usdPrice;
-        if (net === 'RH') NATIVE_PRICE.eth = me.native.usdPrice;
+        if (isEvm(net)) NATIVE_PRICE.eth = me.native.usdPrice;
         else NATIVE_PRICE.sol = me.native.usdPrice;
       }
       if (me) {

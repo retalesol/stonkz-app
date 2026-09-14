@@ -41,14 +41,23 @@ describe('GET /me rewards payload', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as MeBody;
 
-    // A brand-new wallet: everything present and zeroed, nothing missing.
-    expect(body).toMatchObject({ net: 'SOL', xp: 0, sp: 0, optionz: 0 });
+    // Daily check-in pays 10 SP/XP on first visit of the UTC day.
+    expect(body).toMatchObject({ net: 'SOL', xp: 10, sp: 10, optionz: 0 });
     expect(body.rank).toMatchObject({ i: 0, name: RANKS[0]?.[0] });
     expect(body.achievements).toEqual([]);
     expect(body.items).toEqual([]);
     expect(body.crates).toHaveLength(CRATES.length);
     expect(body.crates.every((c) => c.ready)).toBe(true);
+    const bronze = body.crates.find((c) => c.tier === 'BRONZE') as MeBody['crates'][number] & {
+      inventory?: number;
+      openable?: boolean;
+    };
+    // L1 grant: BRONZE×2 — only bronze is openable until more SP is earned.
+    expect(bronze?.inventory).toBe(2);
+    expect(bronze?.openable).toBe(true);
+    expect(body.crates.filter((c) => (c as { openable?: boolean }).openable).length).toBe(1);
     expect(body.native.unit).toBe('SOL');
+    expect((body as { dailyCheckin?: { claimed: boolean } }).dailyCheckin?.claimed).toBe(true);
   });
 
   it('opens the streak at one on first visit and holds it the same day', async () => {
@@ -125,8 +134,15 @@ describe('GET /rewards', () => {
       }[];
     };
 
-    expect(body.cratesReady).toBe(CRATES.length);
+    // L1 grants BRONZE×2 only — cratesReady counts openable inventory, not tiers.
+    expect(body.cratesReady).toBe(1);
     expect(body.achievementCount).toBe(0);
+    const bronze = body.crates.find((c) => c.tier === 'BRONZE') as (typeof body.crates)[number] & {
+      inventory?: number;
+      openable?: boolean;
+    };
+    expect(bronze?.inventory).toBe(2);
+    expect(bronze?.openable).toBe(true);
 
     for (const crate of body.crates) {
       // Five rarity rows per crate, and the odds sum to 100.

@@ -133,7 +133,9 @@ function renderPicker(): void {
           ? html`<p class="wp-err">
               ${net === 'SOL'
                 ? 'NO SOLANA WALLET DETECTED. INSTALL PHANTOM, SOLFLARE OR BACKPACK AND RELOAD.'
-                : 'NO ROBINHOOD CHAIN WALLET AVAILABLE.'}
+                : net === 'BASE'
+                  ? 'NO BASE WALLET DETECTED. INSTALL COINBASE WALLET OR METAMASK, OR USE WALLETCONNECT.'
+                  : 'NO ROBINHOOD CHAIN WALLET AVAILABLE.'}
             </p>`
           : html`<div class="wp-list">${choices.map(choiceRow)}</div>`}
         <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:10px">CANCEL</button>`,

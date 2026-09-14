@@ -5,7 +5,13 @@
  */
 
 /** Chain a coin, wallet or session belongs to. */
-export type Net = 'SOL' | 'RH';
+export type Net = 'SOL' | 'RH' | 'BASE';
+
+/** EVM product nets — Robinhood Chain and Coinbase Base. */
+export type EvmNet = 'RH' | 'BASE';
+
+/** Every product net, in picker order. */
+export const ALL_NETS: readonly Net[] = ['SOL', 'RH', 'BASE'] as const;
 
 /** The gas token the user always pays and receives. */
 export type NativeUnit = 'SOL' | 'ETH';
@@ -96,8 +102,17 @@ export interface User {
   sp?: number;
   /** Stonk Optionz (Phase 3 server ledger; crate `S` drops pay this). */
   optionz?: number;
-  /** Tier -> epoch ms the crate becomes ready. */
+  /** Tier -> epoch ms the global crate cooldown ends (same value on every tier). */
   crates: Partial<Record<CrateTier, number>>;
+  /** Unopened crates earned from SP levels. */
+  crateInventory?: Partial<Record<CrateTier, number>>;
+  /** SP level progress from the server. */
+  spLevel?: {
+    level: number;
+    next: number | null;
+    pct: number;
+    toNext: number;
+  };
   log: DropLogEntry[];
   /** Lifetime creator fees claimed, in native units. */
   feesClaimed?: number;

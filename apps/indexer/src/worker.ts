@@ -14,7 +14,7 @@ import { ReorgRollback } from './rollback.js';
 import { IndexerRunner } from './runner.js';
 import { buildChainSources } from './chain/sources.js';
 import { FixtureEventSource, type EventSource } from './source.js';
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, type Net } from '@stonkz/shared';
 
 /**
  * The runnable indexer. `pnpm --filter @stonkz/indexer dev`.
@@ -66,6 +66,7 @@ const ingestor = new Ingestor({
   db: deps.db,
   ledger: deps.ledger,
   awards: deps.awards,
+  referrals: deps.referrals,
   publisher: deps.publisher,
   logger,
   now: deps.now,
@@ -89,6 +90,7 @@ if (config.mode === 'chain') {
       ? built.sources.SOL
       : new FixtureEventSource('SOL', []),
     RH: config.chainNets.includes('RH') ? built.sources.RH : new FixtureEventSource('RH', []),
+    BASE: config.chainNets.includes('BASE') ? built.sources.BASE : new FixtureEventSource('BASE', []),
   };
   rollback = new ReorgRollback({ db: deps.db, logger, now: deps.now });
   // A rollback can delete the `tokens` row a launch created, so the registry's
@@ -107,7 +109,7 @@ if (config.mode === 'chain') {
   });
   // Idle nets that stay on empty fixtures still need a cursor rewind so they
   // do not pretend to be mid-history from a prior fixtures deploy.
-  for (const net of ['SOL', 'RH'] as const) {
+  for (const net of ALL_NETS) {
     if (!config.chainNets.includes(net)) await cursors.rewind(net, 0);
   }
 } else {
@@ -119,10 +121,11 @@ if (config.mode === 'chain') {
   sources = {
     SOL: new FixtureEventSource('SOL', scenario.events),
     RH: new FixtureEventSource('RH', scenario.events),
+    BASE: new FixtureEventSource('BASE', scenario.events),
   };
   // Safe precisely because ingest is idempotent, and only correct because
   // there is no chain: in chain mode this would re-walk history from genesis.
-  for (const net of ['SOL', 'RH'] as const) await cursors.rewind(net, 0);
+  for (const net of ALL_NETS) await cursors.rewind(net, 0);
 }
 
 const runner = new IndexerRunner({

@@ -38,8 +38,8 @@ async function main(): Promise<void> {
   const key = new TextEncoder().encode(JWT_SECRET);
   const iat = Math.floor(Date.now() / 1000);
 
-  const out: Record<Net, { wallet: string; token: string }[]> = { SOL: [], RH: [] };
-  for (const net of ['SOL', 'RH'] as const) {
+  const out: Record<Net, { wallet: string; token: string }[]> = { SOL: [], RH: [], BASE: [] };
+  for (const net of ['SOL', 'RH', 'BASE'] as const) {
     for (const wallet of wallets[net] ?? []) {
       const token = await new SignJWT({ sub: wallet, net, typ: 'access', jti: randomBytes(16).toString('hex') })
         .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })

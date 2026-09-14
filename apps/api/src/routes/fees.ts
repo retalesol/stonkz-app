@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import type { Address } from 'viem';
 import { and, eq, gt, or } from 'drizzle-orm';
-import { nativeUnit } from '@stonkz/shared';
+import { isEvm, nativeUnit, type EvmNet } from '@stonkz/shared';
 import { creatorVaults } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -10,6 +10,7 @@ import type { AppEnv } from '../app/context.js';
 import { buildClaimCreatorFeesInstruction } from '../router/solana-instructions.js';
 import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { encodeClaimCreatorFeesCall } from '../router/evm-launch.js';
+import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { resolveTokenRow } from './token-resolve.js';
 
 /**
@@ -106,7 +107,17 @@ export function feesRoutes(): Hono<AppEnv> {
     }
 
     const data = encodeClaimCreatorFeesCall(row.mint as Address);
-    return c.json({ net, sym, mint: row.mint, to: deps.env.rhLaunchpadAddress, data, value: '0' });
+    if (!isEvm(net)) {
+      return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
+    }
+    return c.json({
+      net,
+      sym,
+      mint: row.mint,
+      to: evmLaunchpadAddress(deps.env, net as EvmNet),
+      data,
+      value: '0',
+    });
   });
 
   return app;

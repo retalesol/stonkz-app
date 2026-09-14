@@ -3,6 +3,7 @@ import {
   GRAD,
   HOUR,
   SUPPLY,
+  XP_LAUNCH,
   type CrateTier,
   type Fill,
   type Net,
@@ -35,7 +36,7 @@ import { COINS, type SimCoin, bySym, pushTrade, seedSeries, seedTrades, toFill }
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
-import { USER, addXP, pushDrop, saveUser, unlock } from '../state/user.js';
+import { USER, addXP, pushDrop, saveUser, syncSpLevelGrants, unlock } from '../state/user.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, selectNet } from '../state/wallet.js';
 import { clock, fakeAddr } from '../lib/fmt.js';
 import type { ClaimResult, CrateResult, FeeVault, QuoteInput, StakeClaim, StakeInput, StonkzApi } from './types.js';
@@ -402,8 +403,7 @@ export const simApi: StonkzApi = {
       pushTrade(c, { buy: true, sol: d.buy, mine: true });
       noteTrade(c, true, d.buy);
     }
-    addXP(150, 'LAUNCH ' + c.sym);
-    if (d.cashback) addXP(150, 'CASHBACK LAUNCH');
+    addXP(XP_LAUNCH, 'LAUNCH ' + c.sym);
     unlock('deploy');
     emit('coins');
     return c;
@@ -507,6 +507,13 @@ export const simApi: StonkzApi = {
   async openCrate(tier: CrateTier) {
     const crate = crateBy(tier);
     if (!crate) throw new Error('unknown crate ' + tier);
+    syncSpLevelGrants();
+    const inv = USER.crateInventory?.[tier] ?? 0;
+    if (inv <= 0) throw new Error('no_inventory');
+    const now = Date.now();
+    const anyReady = Object.values(USER.crates ?? {}).some((t) => typeof t === 'number' && t > now);
+    if (anyReady) throw new Error('cooling_down');
+
     const i = rollDrop(crate);
     const drop = crate.drops[i];
     if (!drop) throw new Error('empty drop table for ' + tier);
@@ -520,7 +527,14 @@ export const simApi: StonkzApi = {
             return { tier, kind: 'S' as const, amount, item: '', label: num(amount) + ' OPTIONZ', dropIndex: i, xp };
           })()
         : { tier, kind: 'I' as const, amount: 0, item: drop[2], label: drop[2], dropIndex: i, xp };
-    USER.crates[tier] = crateReadyAt(crate, Date.now());
+
+    // Global cooldown — stamp every tier with this crate's lock window.
+    const ready = crateReadyAt(crate, now);
+    if (!USER.crates) USER.crates = {};
+    for (const c of CRATES) USER.crates[c.k] = ready;
+    if (!USER.crateInventory) USER.crateInventory = {};
+    USER.crateInventory[tier] = inv - 1;
+
     pushDrop({ t: clock(), k: tier, r: res.label, col: crate.col });
     saveUser();
     addXP(xp, 'CRATE ' + tier);

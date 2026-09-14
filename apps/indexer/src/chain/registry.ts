@@ -44,7 +44,7 @@ function max0(v: bigint): bigint {
 }
 
 export function mintKey(net: Net, mint: string): string {
-  return `${net}:${net === 'RH' ? mint.toLowerCase() : mint}`;
+  return `${net}:${net === 'SOL' ? mint : mint.toLowerCase()}`;
 }
 
 /**
@@ -84,7 +84,7 @@ export class TokenRegistry {
     const hit = this.cache.get(key);
     if (hit) return hit;
 
-    const normalised = net === 'RH' ? mint.toLowerCase() : mint;
+    const normalised = net === 'SOL' ? mint : mint.toLowerCase();
     const [row] = await this.db
       .select()
       .from(tokens)

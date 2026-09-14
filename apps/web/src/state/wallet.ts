@@ -1,4 +1,11 @@
-import { type NativeUnit, type Net, type NetworkOption, type Wallet, nativeUnit as unitFor } from '@stonkz/shared';
+import {
+  type NativeUnit,
+  type Net,
+  type NetworkOption,
+  type Wallet,
+  nativeUnit as unitFor,
+} from '@stonkz/shared';
+import { SOLANA_CLUSTER } from '../wallet/chain.js';
 
 /**
  * The connected wallet.
@@ -15,7 +22,7 @@ export const NETS: Record<Net, NetworkOption> = {
   SOL: {
     k: 'SOL',
     name: 'SOLANA',
-    sub: 'MAINNET-BETA',
+    sub: SOLANA_CLUSTER.toUpperCase(),
     col: '#14f195',
     provider: 'PHANTOM',
     seed: 80231,
@@ -25,12 +32,22 @@ export const NETS: Record<Net, NetworkOption> = {
   RH: {
     k: 'RH',
     name: 'ROBINHOOD',
-    sub: 'RH CHAIN',
+    sub: 'RH TESTNET',
     col: '#00c805',
     provider: 'ROBINHOOD WALLET',
     seed: 44119,
     addr: 'RH7f..dP2c',
     full: 'RH7f2Qm9Lx4vB8nT3kW6hJ1yZaQe3Ux5dP2c',
+  },
+  BASE: {
+    k: 'BASE',
+    name: 'COINBASE BASE',
+    sub: 'BASE SEPOLIA',
+    col: '#0052ff',
+    provider: 'WALLET',
+    seed: 55102,
+    addr: '0xBa5e..0000',
+    full: '0xBa5e000000000000000000000000000000000000',
   },
 };
 

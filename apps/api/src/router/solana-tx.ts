@@ -7,6 +7,7 @@ import {
 } from '@solana/spl-token';
 import type { ChainRpc, SolanaBlockhashSource, SolanaTransactionSource } from '../chain/types.js';
 import type { JupiterInstruction, JupiterSwapInstructionsResponse } from './jupiter.js';
+import { JupiterAltRequiredError } from './errors.js';
 import { buildSolanaFeeInstructions } from './solana-fees.js';
 import { buildBuyInstruction, buildSellInstruction, traderAtas } from './solana-instructions.js';
 
@@ -84,10 +85,7 @@ function jupiterInstructions(hop: JupiterHop): TransactionInstruction[] {
     // (`getAddressLookupTable`), which is a live RPC read this composer does
     // not have wired in. Refusing loudly beats emitting a transaction that
     // fails to simulate with an opaque account-not-found error.
-    throw new Error(
-      'composeSolanaTradeTransaction: Jupiter route requires address lookup tables; ' +
-        'VersionedTransaction support is not implemented — see solana-tx.ts',
-    );
+    throw new JupiterAltRequiredError();
   }
   const out: TransactionInstruction[] = [];
   if (r.tokenLedgerInstruction) out.push(toTransactionInstruction(r.tokenLedgerInstruction));

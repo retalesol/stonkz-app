@@ -78,12 +78,12 @@ function caLabel(c: SimCoin): string {
 function tradeHint(c: SimCoin): string {
   if (api.mode !== 'live') return 'ORDERS ARE SIMULATED. NOTHING IS SIGNED, SENT OR SETTLED.';
   if (c.lane === 'grad') {
-    return 'GRADUATED — CURVE TRADING IS CLOSED. DEX ROUTING IS NOT WIRED ON STAGING YET.';
+    return 'GRADUATED — CURVE TRADING IS CLOSED. OPEN THE DEX POOL IN AN EXPLORER / UNISWAP (IN-APP DEX ROUTING NOT WIRED).';
   }
   if (!c.tradeable) {
     return 'FIXTURE TOKEN — NO ON-CHAIN MINT. PICK A TRADEABLE TOKEN (LIVE CURVE) TO PLACE ORDERS.';
   }
-  return 'LIVE CURVE ON ROBINHOOD TESTNET. YOUR WALLET SIGNS AND BROADCASTS THE TRADE.';
+  return 'LIVE CURVE — YOUR WALLET SIGNS AND BROADCASTS THE TRADE.';
 }
 
 function tokenHTML(c: SimCoin): Html {
@@ -876,9 +876,9 @@ export function openToken(c: SimCoin): void {
   must('#tk-back').addEventListener('click', () => navigate({ view: 'board' }));
   must('#tk-stake').addEventListener('click', () => openStake(c));
   must('#tk-share').addEventListener('click', () => {
-    // The canonical link, not this origin: a share from a preview build should
-    // still point at production. `plan step 31`
-    const link = 'https://ston.kz/t/' + c.sym;
+    // Canonical production host; include mint so duplicate tickers resolve.
+    const link =
+      'https://ston.kz/t/' + c.sym + (c.mint ? '?mint=' + encodeURIComponent(c.mint) : '');
     copyText(link, (ok) => toast(ok ? 'LINK COPIED ' + DOT + ' ' + link : 'COPY BLOCKED ' + DOT + ' ' + link, ok ? 'gold' : 'red'));
   });
   must('#t-side').addEventListener('click', (e) => {
@@ -1029,8 +1029,10 @@ async function submitTrade(c: SimCoin): Promise<void> {
       const msg = String(err instanceof Error ? err.message : err);
       if (code === 'not_tradeable' || msg.includes('indicative_only') || msg.includes('not_tradeable')) {
         toast('ORDER BLOCKED — FIXTURE TOKEN. OPEN A LIVE-CURVE TOKEN TO TRADE.', 'red');
+      } else if (code === 'jupiter_alt_required' || msg.includes('jupiter_alt_required')) {
+        toast('JUPITER ROUTE NEEDS ADDRESS LOOKUP TABLES — NOT SUPPORTED ON STAGING YET.', 'red');
       } else if (code === 'graduated_not_supported' || msg.includes('graduated_not_supported')) {
-        toast('GRADUATED — CURVE PREPARE DOES NOT SERVE DEX TRADES YET.', 'red');
+        toast('GRADUATED — TRADE ON THE DEX; STONKZ CURVE PREPARE IS CLOSED.', 'red');
       } else if (code === 'rh_router_required' || msg.includes('rh_router_required')) {
         toast('ATOMIC ROUTER REQUIRED — PIN RH_ROUTER / V3 FEE TIER. NON-ATOMIC TRADES DISABLED.', 'red');
       } else {

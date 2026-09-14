@@ -43,6 +43,7 @@ export interface AuthServiceOptions {
   /** The `URI` line of the signed message. */
   uri: string;
   rhChainId: number;
+  baseChainId?: number;
   /**
    * CAIP-2 chain id for Solana SIWS (`solana:devnet` / `solana:mainnet`).
    * Defaults to mainnet for backward-compatible unit tests; production
@@ -118,7 +119,7 @@ export class AuthService {
     const issuedAtMs = this.now();
     const expiresAtMs = issuedAtMs + this.opts.nonceTtlSeconds * 1000;
     const issuedAt = new Date(issuedAtMs).toISOString();
-    const chainId = chainLabel(net, this.opts.rhChainId, this.solanaChainId());
+    const chainId = chainLabel(net, this.evmChainIds(), this.solanaChainId());
 
     await this.db.insert(authNonces).values({
       nonce,
@@ -162,14 +163,18 @@ export class AuthService {
     return this.opts.solanaSiwsChainId ?? 'solana:mainnet';
   }
 
+  private evmChainIds(): { RH: number; BASE: number } {
+    return { RH: this.opts.rhChainId, BASE: this.opts.baseChainId ?? 84532 };
+  }
+
   /** The allow-list defaults to the single configured chain id. */
   private allowedChainIds(): readonly number[] {
-    return this.opts.allowedRhChainIds ?? [this.opts.rhChainId];
+    return this.opts.allowedRhChainIds ?? [this.opts.rhChainId, this.evmChainIds().BASE];
   }
 
   private assertChainAllowed(net: Net, chainId: string): void {
     if (net === 'SOL') {
-      if (chainId !== chainLabel('SOL', this.opts.rhChainId, this.solanaChainId())) {
+      if (chainId !== chainLabel('SOL', this.evmChainIds(), this.solanaChainId())) {
         throw new AuthError('chain_mismatch', 'unexpected chain id for a Solana sign-in');
       }
       return;
@@ -213,7 +218,7 @@ export class AuthService {
       uri: this.opts.uri,
       nonce: row.nonce,
       issuedAt: parsed.issuedAt,
-      chainId: chainLabel(input.net, this.opts.rhChainId, this.solanaChainId()),
+      chainId: chainLabel(input.net, this.evmChainIds(), this.solanaChainId()),
     });
     if (expected !== input.message) throw new AuthError('message_mismatch', 'signed message does not match the challenge');
     if (parsed.issuedAt !== row.issuedAt.toISOString()) {

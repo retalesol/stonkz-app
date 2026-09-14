@@ -1,5 +1,6 @@
 import type { UniversalProvider } from '@walletconnect/universal-provider';
-import { RH_CHAIN_ID, RH_RPC_URL } from './chain.js';
+import type { Net } from '@stonkz/shared';
+import { BASE_RPC_URL, RH_RPC_URL, evmChainIdForNet } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
 import type { Eip1193Provider } from './evm.js';
 
@@ -39,7 +40,13 @@ export function walletConnectUnavailableReason(projectId: string = WALLETCONNECT
   return null;
 }
 
-const RH_CAIP = 'eip155:' + RH_CHAIN_ID;
+function caipForNet(net: Net): string {
+  return 'eip155:' + evmChainIdForNet(net);
+}
+
+function rpcForNet(net: Net): string {
+  return net === 'BASE' ? BASE_RPC_URL : RH_RPC_URL;
+}
 
 /**
  * `personal_sign` for SIWE, `eth_signTypedData_v4` for the `StonkzRouter`
@@ -126,7 +133,11 @@ async function providerInstance(): Promise<WcProvider> {
  * fact, which is why `wallet/evm.ts` skips `wallet_switchEthereumChain` for
  * this transport: a wallet that agreed to the session agreed to the chain.
  */
-export async function connectWalletConnect(opts: ConnectOpts = {}): Promise<WalletConnectSession> {
+export async function connectWalletConnect(opts: ConnectOpts & { net?: Net } = {}): Promise<WalletConnectSession> {
+  const net = opts.net ?? 'RH';
+  const chainId = evmChainIdForNet(net);
+  const caip = caipForNet(net);
+  const rpcUrl = rpcForNet(net);
   const reason = walletConnectUnavailableReason();
   if (reason) throw new WalletError('unconfigured', reason);
 
@@ -143,10 +154,10 @@ export async function connectWalletConnect(opts: ConnectOpts = {}): Promise<Wall
       const connecting = provider.connect({
         optionalNamespaces: {
           eip155: {
-            chains: [RH_CAIP],
+            chains: [caip],
             methods: METHODS,
             events: EVENTS,
-            rpcMap: { [String(RH_CHAIN_ID)]: RH_RPC_URL },
+            rpcMap: { [String(chainId)]: rpcUrl },
           },
         },
       });
@@ -185,12 +196,12 @@ export async function connectWalletConnect(opts: ConnectOpts = {}): Promise<Wall
     throw new WalletError('rejected', 'The wallet approved a session with no Ethereum-family account in it.');
   }
 
-  provider.setDefaultChain(RH_CAIP, RH_RPC_URL);
+  provider.setDefaultChain(caip, rpcUrl);
 
   // `UniversalProvider.request(args, chain)` needs the CAIP chain; the rest of
   // the app speaks plain EIP-1193, so bind it here.
   const eip1193: Eip1193Provider = {
-    request: (args) => provider.request(args, RH_CAIP),
+    request: (args) => provider.request(args, caip),
     on: (event, listener) => provider.on(event, listener),
     removeListener: (event, listener) => provider.removeListener(event, listener),
   };

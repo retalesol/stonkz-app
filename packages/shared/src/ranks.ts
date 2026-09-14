@@ -54,16 +54,19 @@ export function applyXpMult(baseXp: number, streak: number | null | undefined): 
   return Math.round(baseXp * xpMult(streak));
 }
 
-/** Confirmed trade, weighted by native notional. `index.html:1974` */
+/** Confirmed trade, weighted by native notional — primary path to SP/crates. */
 export function xpForTrade(nativeNotional: number): number {
-  return Math.max(5, Math.round(nativeNotional * 40));
+  return Math.max(8, Math.round(nativeNotional * 50));
 }
 
-/** Launching a coin. `index.html:3967` */
-export const XP_LAUNCH = 150;
+/** Launching a coin — modest; bonding (graduation as creator) is the big win. */
+export const XP_LAUNCH = 50;
 
-/** Launching with cashback instead of a dev buy pays the launch amount again. */
-export const XP_CASHBACK_LAUNCH = 150;
+/** Creator bonus when their token bonds / graduates off the curve. */
+export const XP_LAUNCH_BOND = 250;
+
+/** @deprecated Cashback launch no longer doubles XP — use XP_LAUNCH. */
+export const XP_CASHBACK_LAUNCH = 0;
 
 /** Claiming creator fees, weighted by the native total. `index.html:3047` */
 export function xpForFeeClaim(nativeTotal: number): number {
@@ -78,11 +81,24 @@ export function xpForStake(amount: number, circulating: number): number {
 /** Claiming staking rewards. `index.html:3203` */
 export const XP_STAKE_CLAIM = 12;
 
-/** Following someone. `index.html:3270` */
-export const XP_FOLLOW = 6;
+/** Following someone — no XP (anti-farm); social XP is comments/likes only. */
+export const XP_FOLLOW = 0;
 
-/** Posting on a wall. `index.html:3332` */
-export const XP_WALL_POST = 8;
+/**
+ * Wall comment / chat comment. First 5 comments per UTC day pay 1 XP each
+ * (together with likes → 10 XP/day social cap).
+ */
+export const XP_COMMENT = 1;
+export const XP_WALL_POST = XP_COMMENT;
+
+/** Like a wall post. First 5 likes per UTC day pay 1 XP each. */
+export const XP_LIKE = 1;
+
+/** Max paying comments and likes per UTC day (each). */
+export const SOCIAL_DAILY_CAP = 5;
+
+/** Daily check-in SP for returning at least once every 24h (UTC day). */
+export const XP_DAILY_CHECKIN = 10;
 
 /** Holding a coin the moment it graduates. */
 export const XP_GRADUATE = 250;

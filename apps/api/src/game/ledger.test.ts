@@ -333,10 +333,10 @@ describe('native notional weighting', () => {
   it('weights trade XP on native amount, never on USD', async () => {
     // Same USD value, wildly different native amounts: 1 ETH ~ 19.6 SOL at the
     // frozen prices, and the award must follow the native figure.
-    expect(xpForTrade(1)).toBe(40);
-    expect(xpForTrade(19.6)).toBe(784);
+    expect(xpForTrade(1)).toBe(50);
+    expect(xpForTrade(19.6)).toBe(980);
     // The floor keeps a tiny (but non-dust) fill worth something.
-    expect(xpForTrade(0.02)).toBe(5);
+    expect(xpForTrade(0.02)).toBe(8);
   });
 
   it('gives a dust fill zero without unlocking anything', async () => {

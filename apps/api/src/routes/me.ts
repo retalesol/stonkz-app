@@ -32,6 +32,7 @@ export function meRoutes(): Hono<AppEnv> {
 
     // Visiting counts as showing up; the streak is a server-UTC fact.
     await deps.ledger.touchStreak(net, wallet);
+    const checkin = await deps.awards.dailyCheckin({ net, wallet });
 
     const [profileRow] = await deps.db
       .select()
@@ -63,6 +64,7 @@ export function meRoutes(): Hono<AppEnv> {
 
     const snapshot = await deps.ledger.snapshot(net, wallet);
     const crates = await deps.crates.states(net, wallet);
+    const referral = await deps.referrals.snapshot(net, wallet);
 
     return c.json({
       net,
@@ -86,6 +88,14 @@ export function meRoutes(): Hono<AppEnv> {
       achievements: snapshot.achievements,
       crates,
       items: snapshot.items,
+      dailyCheckin: checkin,
+      referral: {
+        code: referral.code,
+        pendingNative: referral.pendingNative,
+        lifetimeNative: referral.lifetimeNative,
+        directReferrals: referral.directReferrals,
+        referredBy: referral.referredBy,
+      },
       settings: settingsRow
         ? {
             slip: settingsRow.slip,

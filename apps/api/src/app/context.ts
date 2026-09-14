@@ -11,6 +11,9 @@ import type { JwtService } from '../auth/jwt.js';
 import type { GameAwards } from '../game/awards.js';
 import type { CrateService } from '../game/crates.js';
 import type { Ledger } from '../game/ledger.js';
+import type { ReferralService } from '../game/referrals.js';
+import type { SocialCapsService } from '../game/social-caps.js';
+import type { SpLevelService } from '../game/sp-levels.js';
 import type { Publisher } from '../ws/publisher.js';
 import type { BaseMintRegistry } from '../router/base-mints.js';
 import type { JupiterClient } from '../router/jupiter.js';
@@ -33,6 +36,9 @@ export interface AppDeps {
   ledger: Ledger;
   awards: GameAwards;
   crates: CrateService;
+  spLevels: SpLevelService;
+  referrals: ReferralService;
+  socialCaps: SocialCapsService;
   publisher: Publisher;
   now: () => number;
 

@@ -27,6 +27,8 @@ export interface Scenario {
 }
 
 export class AssertionFailed extends Error {}
+/** Soft skip from inside a scenario (e.g. no graduated token on the board). */
+export class ScenarioSkip extends Error {}
 
 type Status = 'pass' | 'fail' | 'skip';
 
@@ -76,6 +78,11 @@ export async function runScenarios(scenarios: Scenario[]): Promise<number> {
       await scenario.run(ctx);
       results.push({ scenario, status: 'pass', ms: Date.now() - started });
     } catch (err) {
+      if (err instanceof ScenarioSkip) {
+        results.push({ scenario, status: 'skip', reason: err.message, ms: Date.now() - started });
+        console.log(`${prefix} SKIP: ${err.message}`);
+        continue;
+      }
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`${prefix} FAILED: ${reason}`);
       results.push({ scenario, status: 'fail', reason, ms: Date.now() - started });

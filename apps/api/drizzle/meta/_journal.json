@@ -71,6 +71,34 @@
       "when": 1789035600000,
       "tag": "0009_token_mint_pk",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789311600000,
+      "tag": "0010_crate_inventory_sp_levels",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789398000000,
+      "tag": "0011_referrals_social",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789484400000,
+      "tag": "0012_net_base",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789570800000,
+      "tag": "0013_base_cursor",
+      "breakpoints": true
     }
   ]
 }

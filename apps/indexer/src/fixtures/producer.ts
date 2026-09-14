@@ -34,6 +34,7 @@ const CHAIN_DEFAULTS: Record<Net, { position: number; positionsPerStep: number }
   // ~400ms slots and ~2s blocks, so one event every 5s is 12 slots or 2 blocks.
   SOL: { position: 250_000_000, positionsPerStep: 12 },
   RH: { position: 21_000_000, positionsPerStep: 2 },
+  BASE: { position: 46_000_000, positionsPerStep: 2 },
 };
 
 export class FixtureProducer {
@@ -360,7 +361,7 @@ export function canonicalScenario(seed = 0xc0ffee): ScenarioResult {
 
   return {
     events: [...sol.all(), ...rh.all()],
-    heads: { SOL: sol.head, RH: rh.head },
+    heads: { SOL: sol.head, RH: rh.head, BASE: rh.head },
     actors,
   };
 }

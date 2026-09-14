@@ -14,21 +14,29 @@ import type { AchievementKey } from '@stonkz/shared';
 
 /** Reason strings written to `xp_events.reason`. Stable — they are ledger keys. */
 export const REASONS = {
-  /** `addXP(max(5, round(sol*40)), "TRADE")` — index.html:1974 */
+  /** `addXP(max(8, round(sol*50)), "TRADE")` */
   trade: 'trade',
-  /** `addXP(150, "COIN LAUNCH")` — index.html:3967 */
+  /** Launch a coin — 50 XP/SP. */
   launch: 'launch',
-  /** `addXP(max(10, round(tot*30)), "FEE CLAIM")` — index.html:3047 */
+  /** Creator bonus when their token bonds — 250 XP/SP. */
+  launchBond: 'launch_bond',
+  /** `addXP(max(10, round(tot*30)), "FEE CLAIM")` */
   feeClaim: 'fee_claim',
-  /** `addXP(max(5, round(amt/circ*400)), "STAKE")` — index.html:3177 */
+  /** `addXP(max(5, round(amt/circ*400)), "STAKE")` */
   stake: 'stake',
-  /** `addXP(12, "STAKE CLAIM")` — index.html:3203 */
+  /** `addXP(12, "STAKE CLAIM")` */
   stakeClaim: 'stake_claim',
-  /** `addXP(6, "FOLLOW")` — index.html:3270 */
+  /** Follow — 0 XP (anti-farm). */
   follow: 'follow',
-  /** `addXP(8, "WALL POST")` — index.html:3332 */
+  /** Wall comment — 1 XP, max 5/day. */
   wallPost: 'wall_post',
-  /** `addXP(20 + tierIndex*15, k + " CRATE")` — index.html:2383 */
+  /** Wall like — 1 XP, max 5/day. */
+  like: 'like',
+  /** Daily check-in — 10 SP once per UTC day. */
+  dailyCheckin: 'daily_checkin',
+  /** Direct-referrer SP kickback (5% of referee SP). */
+  referralSp: 'referral_sp',
+  /** Crate open XP. */
   crate: 'crate',
 } as const;
 
@@ -52,6 +60,7 @@ export function achievementReason(key: AchievementKey): `ach:${AchievementKey}` 
 export const CHAIN_VERIFIED_REASONS: ReadonlySet<string> = new Set<string>([
   REASONS.trade,
   REASONS.launch,
+  REASONS.launchBond,
   REASONS.feeClaim,
   REASONS.stake,
   REASONS.stakeClaim,

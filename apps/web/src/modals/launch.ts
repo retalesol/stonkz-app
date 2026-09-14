@@ -24,6 +24,7 @@ import { $, must } from '../lib/dom.js';
 import { DOT, MID, fmtSupply } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, netOf } from '../state/wallet.js';
+import { COINS } from '../state/coins.js';
 import { addChat } from '../views/chat.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
 
@@ -72,8 +73,13 @@ function newDefaults(): Draft {
 }
 
 function baseList(): ReadonlyArray<readonly [string, string]> {
-  const net = WALLET.net === 'RH' ? 'RH' : 'SOL';
-  const list = NEW.tab === 'majors' ? MAJORS[net] : net === 'RH' ? RH_STOCKS : STOCKS;
+  const net = WALLET.net;
+  const list =
+    NEW.tab === 'majors' || net === 'BASE'
+      ? MAJORS[net]
+      : net === 'RH'
+        ? RH_STOCKS
+        : STOCKS;
   const q = NEW.q.trim().toUpperCase();
   if (!q) return list;
   return list.filter((t) => t[0].toUpperCase().indexOf(q) > -1 || t[1].toUpperCase().indexOf(q) > -1);
@@ -111,8 +117,11 @@ function ncStep2(): Html {
   return html`<div>
       <div class="base-hd"><span class="lbl" style="margin:0">BASE TOKEN</span
         ><span class="netbadge"><i class="netdot" style="background:${attr(n.col)}"></i>${n.name}</span
-        ><span class="base-tabs"><button type="button" class="tab${NEW.tab === 'majors' ? ' on' : ''}" data-btab="majors">TOP 10</button
-          ><button type="button" class="tab${NEW.tab === 'stocks' ? ' on' : ''}" data-btab="stocks">STOCK TOKENS</button></span
+        ><span class="base-tabs"><button type="button" class="tab${NEW.tab === 'majors' ? ' on' : ''}" data-btab="majors">TOP 10</button>${
+          WALLET.net === 'BASE'
+            ? ''
+            : html`<button type="button" class="tab${NEW.tab === 'stocks' ? ' on' : ''}" data-btab="stocks">STOCK TOKENS</button>`
+        }</span
         ><input class="base-search" id="f-bq" placeholder="FILTER" value="${attr(NEW.q)}" aria-label="Filter base tokens"></div>
       <div class="base-list" id="baseList">${
         list.length
@@ -122,8 +131,11 @@ function ncStep2(): Html {
             )
           : html`<div class="base-empty">NO MATCH ${DOT} CLEAR THE FILTER</div>`
       }</div>
-      <p class="hint" style="margin-top:4px">PAIRS AGAINST ${NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'} ON
-        ${n.name} ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.</p></div>
+      <p class="hint" style="margin-top:4px">PAIRS AGAINST ${
+        NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'
+      } ON ${n.name}${
+        WALLET.net === 'BASE' ? '.' : html` ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.`
+      }</p></div>
     <div><span class="lbl">TOTAL SUPPLY</span><div class="supply-row">${SUPPLIES.map(
       (sp) => html`<button type="button" class="chipm${NEW.supply === sp[0] ? ' on' : ''}" data-sup="${attr(String(sp[0]))}">${sp[1]}</button>`,
     )}</div></div>
@@ -362,6 +374,20 @@ async function doLaunch(): Promise<void> {
       if (err.code === 'name_or_ticker_cooldown') {
         const retrySec = Math.max(1, Math.ceil((err.retryAfterMs ?? 300_000) / 1000));
         toast(`NAME OR TICKER ON COOLDOWN ${DOT} TRY AGAIN IN ${retrySec}S`, 'red');
+      } else if (err.code === 'dev_buy_failed') {
+        // Mint is live on-chain; surface the buy failure and still open the token.
+        const msg = (err.message || err.code).toUpperCase();
+        toast(msg.length > 140 ? msg.slice(0, 137) + '…' : msg, 'red');
+        closeLaunch();
+        const symGuess = normalizeTicker(NEW.tick) || NEW.tick.toUpperCase();
+        const launched = COINS.find((x) => x.sym === symGuess && x.mine);
+        if (launched) {
+          navigate({
+            view: 'token',
+            sym: launched.sym,
+            ...(launched.mint ? { mint: launched.mint } : {}),
+          });
+        }
       } else {
         const msg = (err.message || err.code).toUpperCase();
         toast(msg.length > 120 ? msg.slice(0, 117) + '…' : msg, 'red');

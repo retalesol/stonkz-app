@@ -29,6 +29,13 @@ export interface Config {
   /** Deployed ERC-1271 smart account whose owner is `rhPrivateKey`. */
   rhSmartAccountAddress: string | null;
 
+  /* -------------------------------------------------------------- Base */
+  baseRpcUrl: string | null;
+  /** Reuses `rhPrivateKey` when unset — same EVM key works on Base Sepolia. */
+  basePrivateKey: string | null;
+  baseLaunchpadAddress: string | null;
+  baseRouterAddress: string | null;
+
   /* ------------------------------------------------------------ tuning */
   /** Trade size in native units. Keep small: this spends real testnet funds. */
   tradeAmountNative: number;
@@ -66,6 +73,11 @@ export function loadConfig(): Config {
     rhRouterAddress: str('INTEGRATION_RH_ROUTER_ADDRESS'),
     rhSmartAccountAddress: str('INTEGRATION_RH_SMART_ACCOUNT'),
 
+    baseRpcUrl: str('INTEGRATION_BASE_RPC_URL'),
+    basePrivateKey: str('INTEGRATION_BASE_PRIVATE_KEY') ?? str('INTEGRATION_RH_PRIVATE_KEY'),
+    baseLaunchpadAddress: str('INTEGRATION_BASE_LAUNCHPAD_ADDRESS'),
+    baseRouterAddress: str('INTEGRATION_BASE_ROUTER_ADDRESS'),
+
     tradeAmountNative: num('INTEGRATION_TRADE_AMOUNT', 0.01),
     indexerTimeoutMs: num('INTEGRATION_INDEXER_TIMEOUT_MS', 90_000),
     runGraduation: str('INTEGRATION_RUN_GRADUATION') === '1',
@@ -86,4 +98,8 @@ export const ENV_NAMES: Partial<Record<ConfigKey, string>> = {
   rhLaunchpadAddress: 'INTEGRATION_RH_LAUNCHPAD_ADDRESS',
   rhRouterAddress: 'INTEGRATION_RH_ROUTER_ADDRESS',
   rhSmartAccountAddress: 'INTEGRATION_RH_SMART_ACCOUNT',
+  baseRpcUrl: 'INTEGRATION_BASE_RPC_URL',
+  basePrivateKey: 'INTEGRATION_BASE_PRIVATE_KEY',
+  baseLaunchpadAddress: 'INTEGRATION_BASE_LAUNCHPAD_ADDRESS',
+  baseRouterAddress: 'INTEGRATION_BASE_ROUTER_ADDRESS',
 };

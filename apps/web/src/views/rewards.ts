@@ -10,6 +10,12 @@ import {
   rankOf,
 } from '@stonkz/shared';
 import { api } from '../api/index.js';
+import {
+  attachReferral,
+  claimReferralFees,
+  fetchReferrals,
+  type LiveReferralSnapshot,
+} from '../api/social.js';
 import { back } from '../app/route.js';
 import { showView } from '../app/view.js';
 import { drawCrate } from '../canvas/crate.js';
@@ -19,7 +25,8 @@ import { $, $$, must, reflow } from '../lib/dom.js';
 import { ARR, DOT, cdText } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
-import { USER, achCount, cdPct, hasAch, isReady, readyAt, readyCount } from '../state/user.js';
+import { USER, achCount, cdPct, hasAch, inventoryOf, isReady, readyAt, readyCount } from '../state/user.js';
+import { WALLET } from '../state/wallet.js';
 import { addChat } from './chat.js';
 
 /**
@@ -31,23 +38,120 @@ import { addChat } from './chat.js';
  */
 
 let selCrate: CrateTier = 'GOLD';
+let REFERRAL: LiveReferralSnapshot | null = null;
+
+function referralHTML(): Html {
+  if (api.mode !== 'live') {
+    return html`<section class="pnl" style="grid-column:1/-1"><div class="pnl-hd"><h2>Referrals</h2
+      ><span class="sub">LIVE MODE ONLY</span></div
+      ><div class="pnl-bd"><p class="hint">CONNECT IN LIVE TO SHARE A CODE ${DOT} EARN 15/10/5% OF REFERRAL FEES + 5% OF THEIR SP.</p></div></section>`;
+  }
+  const r = REFERRAL;
+  if (!r) {
+    return html`<section class="pnl" style="grid-column:1/-1"><div class="pnl-hd"><h2>Referrals</h2
+      ><span class="sub">LOADING…</span></div><div class="pnl-bd"><p class="hint">LOADING YOUR CODE…</p></div></section>`;
+  }
+  const pending = r.pendingNative;
+  return html`<section class="pnl" style="grid-column:1/-1"><div class="pnl-hd"><h2>Referrals</h2
+    ><span class="sub">${r.directReferrals} DIRECT ${DOT} 15% / 10% / 5% FEE SHARE ${DOT} 5% SP KICKBACK</span></div
+    ><div class="pnl-bd" style="display:flex;flex-direction:column;gap:10px">
+      <div><span class="lbl">YOUR CODE</span
+        ><div style="display:flex;gap:8px;align-items:center;margin-top:4px"
+          ><code id="refCode" style="font-size:18px;letter-spacing:.12em;font-weight:700">${r.code}</code
+          ><button type="button" class="send" id="refCopy">COPY</button></div
+        ><p class="hint">FRIENDS PASTE THIS ON FIRST JOIN ${DOT} YOU EARN WHEN THEY TRADE.</p></div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap"
+        ><div><span class="lbl">PENDING FEES</span><div class="v">${pending.toFixed(4)} ${WALLET.net === 'RH' ? 'ETH' : 'SOL'}</div></div
+        ><div><span class="lbl">LIFETIME</span><div class="v">${r.lifetimeNative.toFixed(4)}</div></div
+        ><div><span class="lbl">REFERRED BY</span><div class="v">${r.referredBy ? r.referredBy.slice(0, 8) + '…' : '—'}</div></div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"
+        ><button type="button" class="openbtn" id="refClaim"${pending > 0 ? '' : ' disabled'}>CLAIM AS OPTIONZ</button
+        ><form id="refAttach" style="display:flex;gap:6px;align-items:center"
+          ><input class="fld" id="refAttachCode" maxlength="12" placeholder="ENTER A CODE" style="width:120px"
+          ><button class="send" type="submit">APPLY</button></form></div>
+      <p class="hint">CLAIM CONVERTS PENDING NATIVE FEE SHARE INTO STONK OPTIONZ ${DOT} RHODIUM NEEDS 250K SP.</p>
+    </div></section>`;
+}
+
+async function refreshReferralPanel(): Promise<void> {
+  if (api.mode !== 'live' || !WALLET.net) return;
+  try {
+    REFERRAL = await fetchReferrals(WALLET.net);
+  } catch {
+    REFERRAL = null;
+  }
+  const slot = $('#refPanel');
+  if (slot) {
+    render(slot, referralHTML());
+    bindReferralControls();
+  }
+}
+
+function bindReferralControls(): void {
+  $('#refCopy')?.addEventListener('click', () => {
+    const code = REFERRAL?.code;
+    if (!code) return;
+    void navigator.clipboard?.writeText(code).then(
+      () => toast('COPIED ' + code, 'gold'),
+      () => toast(code),
+    );
+  });
+  $('#refClaim')?.addEventListener('click', () => {
+    void (async () => {
+      try {
+        const res = await claimReferralFees(WALLET.net);
+        if (res.optionz <= 0) {
+          toast('NOTHING TO CLAIM');
+          return;
+        }
+        USER.optionz = res.optionzTotal;
+        toast('CLAIMED ' + res.optionz + ' OPTIONZ FROM REFERRALS', 'gold');
+        await refreshReferralPanel();
+        updateStrip();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'CLAIM FAILED');
+      }
+    })();
+  });
+  $('#refAttach')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const code = (($('#refAttachCode') as HTMLInputElement | null)?.value || '').trim();
+    if (!code) return;
+    void (async () => {
+      try {
+        await attachReferral(WALLET.net, code);
+        toast('REFERRAL ATTACHED', 'gold');
+        await refreshReferralPanel();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'ATTACH FAILED');
+      }
+    })();
+  });
+}
 
 /* -------------------------------- strip ----------------------------------- */
 
 function stripHTML(): Html {
   const r = rankOf(USER.xp);
+  const spLv = USER.spLevel;
   const marks: Html[] = [];
   for (let i = 1; i < 4; i++) marks.push(html`<span class="mk" style="left:${attr(i * 25)}%"></span>`);
+  const spSub =
+    spLv && spLv.next !== null
+      ? `SP LV ${spLv.level} ${DOT} ${num(spLv.toNext)} SP TO NEXT CRATE GRANT`
+      : spLv
+        ? `SP LV ${spLv.level} ${DOT} MAX`
+        : `TRADE TO EARN SP ${DOT} SP UNLOCKS CRATES`;
   return html`<div class="rw-strip">
     <div class="rw-badge"><span class="lv">${r.i + 1}</span
       ><div><h1 id="rw-name">${r.name}</h1
-        ><div class="sub" id="rw-sub">RANK ${r.i + 1} OF ${RANKS.length} ${DOT} XP IS EARNED ON EVERY TRADE</div></div></div
+        ><div class="sub" id="rw-sub">RANK ${r.i + 1} OF ${RANKS.length} ${DOT} XP FROM EVERY TRADE</div></div></div
     ><div class="rw-prog"><div class="rw-track"><i id="rw-fill" style="width:${attr(r.pct.toFixed(1))}%"></i>${marks}</div
       ><div class="rw-legend"><span id="rw-cur">${num(USER.xp)} XP TOTAL</span
         ><span id="rw-next" class="am">${r.next === null ? 'MAX RANK' : num(r.toNext) + ' XP TO ' + (RANKS[r.i + 1] as (typeof RANKS)[number])[0]}</span></div></div
     ><div class="rw-bal"><span class="lbl">SP</span><div class="v" id="rw-sp">${num(USER.sp ?? 0)}</div
       ><span class="lbl">STONK OPTIONZ</span><div class="v" id="rw-opt">${num(USER.optionz ?? 0)}</div
-      ><span class="hint" id="rw-ready">${readyCount()} CRATES READY</span></div>
+      ><span class="hint" id="rw-ready">${readyCount()} OPENABLE ${DOT} ${spSub}</span></div>
   </div>`;
 }
 
@@ -68,23 +172,38 @@ export function updateStrip(): void {
   set('#rw-opt', num(USER.optionz ?? 0));
   const lv = $('.rw-badge .lv');
   if (lv) lv.textContent = String(r.i + 1);
+  const spLv = USER.spLevel;
+  const spSub =
+    spLv && spLv.next !== null
+      ? `SP LV ${spLv.level} ${DOT} ${num(spLv.toNext)} SP TO NEXT CRATE GRANT`
+      : spLv
+        ? `SP LV ${spLv.level} ${DOT} MAX`
+        : `TRADE TO EARN SP ${DOT} SP UNLOCKS CRATES`;
+  set('#rw-ready', `${readyCount()} OPENABLE ${DOT} ${spSub}`);
 }
 
 /* -------------------------------- crates ---------------------------------- */
 
 function crateCardHTML(c: Crate): Html {
   const rdy = isReady(c.k);
+  const inv = inventoryOf(c.k);
+  const cdLeft = readyAt(c.k) - Date.now();
+  const cdOk = cdLeft <= 0;
+  const status = rdy ? 'READY' : !cdOk ? cdText(cdLeft) : inv <= 0 ? 'EARN VIA SP' : cdText(cdLeft);
   return html`<div class="crate${rdy ? '' : ' locked'}${selCrate === c.k ? ' sel' : ''}" data-k="${attr(c.k)}"
     role="button" tabindex="0">${rdy ? html`<i class="rdydot"></i>` : ''}<canvas width="72" height="72"
     aria-hidden="true"></canvas><span class="nm" style="color:${attr(c.col)}">${c.k}</span
-    ><span class="cd${rdy ? ' rdy' : ''}" data-cd="${attr(c.k)}">${rdy ? 'READY' : cdText(readyAt(c.k) - Date.now())}</span
+    ><span class="cd${rdy ? ' rdy' : ''}" data-cd="${attr(c.k)}">${status}</span
+    ><span class="hint" style="font-size:10px">×${inv}</span
     ><span class="cdt"><i data-bar="${attr(c.k)}" style="width:${attr(cdPct(c))}%;background:${attr(rdy ? '#00d26a' : c.col)}"></i></span></div>`;
 }
 
 function paneHTML(k: CrateTier): Html {
   const c = crateBy(k) as Crate;
   const rdy = isReady(k);
+  const inv = inventoryOf(k);
   const left = readyAt(k) - Date.now();
+  const cdOk = left <= 0;
   const rows = c.drops.map((d, i) => {
     const rar = RAR[i] as (typeof RAR)[number];
     const label = d[1] === 'S' ? num(d[2] as number) + ' \u2013 ' + num(d[3] as number) + ' OPTIONZ' : (d[2] as string);
@@ -92,20 +211,32 @@ function paneHTML(k: CrateTier): Html {
       ><td class="r" style="width:74px"><b>${d[0].toFixed(0)}%</b
         ><span class="pbar"><i style="width:${attr(Math.max(3, d[0]))}%;background:${attr(c.col)}"></i></span></td></tr>`;
   });
+  const stateHint = rdy
+    ? html`<span class="up">READY ${DOT} ${inv} IN INVENTORY</span>`
+    : !cdOk
+      ? `GLOBAL LOCK ${cdText(left)} ${DOT} OPENING ANY CRATE LOCKS ALL`
+      : inv <= 0
+        ? 'NO INVENTORY — TRADE TO EARN SP LEVELS'
+        : 'UNLOCKS IN ' + cdText(left);
+  const btnLabel = rdy
+    ? 'OPEN ' + c.k + ' CRATE'
+    : !cdOk
+      ? 'LOCKED ' + DOT + ' ' + cdText(left)
+      : 'NEED INVENTORY';
   return html`<div class="pnl-hd"><h2>${c.k} Crate</h2
-      ><span class="sub">COOLDOWN ${c.cd >= 24 ? c.cd / 24 + 'D' : c.cd + 'H'}</span></div>
+      ><span class="sub">GLOBAL CD ${c.cd >= 24 ? c.cd / 24 + 'D' : c.cd + 'H'} AFTER OPEN ${DOT} ×${inv} OWNED</span></div>
     <div class="pnl-bd">
       <div style="display:flex;align-items:center;gap:10px">
         <canvas id="paneCrate" width="96" height="96" style="image-rendering:pixelated;width:58px;height:58px"></canvas
         ><div><div class="nm" style="color:${attr(c.col)};font-family:'IBM Plex Sans Condensed',sans-serif;font-weight:700;font-size:15px;letter-spacing:.08em">${c.k}</div
-          ><div class="hint" id="paneState">${rdy ? html`<span class="up">READY TO OPEN</span>` : 'UNLOCKS IN ' + cdText(left)}</div></div>
+          ><div class="hint" id="paneState">${stateHint}</div></div>
       </div>
       <div><span class="lbl">DROP TABLE ${DOT} ODDS PER OPEN</span>
         <table class="drops"><thead><tr><th scope="col">RARITY</th><th scope="col">REWARD</th
           ><th scope="col" class="r">CHANCE</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div id="revealSlot"></div>
-      <button class="openbtn" id="openBtn"${rdy ? '' : ' disabled'}>${rdy ? 'OPEN ' + c.k + ' CRATE' : 'LOCKED ' + DOT + ' ' + cdText(left)}</button>
-      <p class="hint">ODDS ARE ROLLED SERVER-SIDE PER OPEN. OPENING STARTS THIS CRATE&#8217;S COOLDOWN AND PAYS XP.${
+      <button class="openbtn" id="openBtn"${rdy ? '' : ' disabled'}>${btnLabel}</button>
+      <p class="hint">TRADE TO EARN XP/SP. SP LEVELS GRANT CRATES. OPENING ANY CRATE LOCKS ALL CRATES FOR THAT TIER&#8217;S COOLDOWN.${
         api.mode === 'live'
           ? ' OPTIONZ ARE LEDGER CREDITS &#8212; NOT A TRANSFERABLE TOKEN.'
           : ' SIMULATED &#8212; NO REAL TOKEN IS DISTRIBUTED.'
@@ -152,17 +283,20 @@ export function renderRewards(): void {
       >${stripHTML()}
       <div class="rw-grid">
         <section class="pnl"><div class="pnl-hd"><h2>Stonkdrops</h2
-          ><span class="sub">CRATES EARNED BY TRADING ${DOT} EACH ON ITS OWN COOLDOWN</span></div
+          ><span class="sub">EARNED FROM SP LEVELS ${DOT} GLOBAL COOLDOWN ON EVERY OPEN</span></div
           ><div class="crates" id="crateGrid">${CRATES.map(crateCardHTML)}</div></section
         ><section class="pnl" id="cratePane">${paneHTML(selCrate)}</section
         ><section class="pnl" style="grid-column:1/-1"><div class="pnl-hd"><h2>Achievements</h2
           ><span class="sub" id="achSub">${achCount()} / ${ACH.length} UNLOCKED</span></div
           ><div id="achWrap">${achHTML()}</div></section
         ><section class="pnl" style="grid-column:1/-1"><div class="pnl-hd"><h2>Drop History</h2
-          ><span class="sub">LAST OPENS ON THIS DEVICE</span></div
-          ><div id="dropLog">${logHTML()}</div></section>
+          ><span class="sub">RECENT SERVER OPENS</span></div
+          ><div id="dropLog">${logHTML()}</div></section
+        ><div id="refPanel">${referralHTML()}</div>
       </div>`,
   );
+  bindReferralControls();
+  void refreshReferralPanel();
   paintCrates();
   must('#rw-back').addEventListener('click', () => back());
   const grid = must('#crateGrid');
@@ -278,7 +412,7 @@ export function updateCrates(): void {
   }
   refreshPaneState();
   const rc = $('#rw-ready');
-  if (rc) rc.textContent = readyCount() + ' CRATES READY';
+  if (rc) rc.textContent = readyCount() + ' OPENABLE';
 }
 
 export function openRewards(): void {

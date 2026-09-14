@@ -13,6 +13,8 @@ import {
   crateReady,
   dayKey,
   rankOf,
+  spLevelOf,
+  spLevelsReached,
   xpMult as xpMultOf,
 } from '@stonkz/shared';
 import { $ } from '../lib/dom.js';
@@ -51,6 +53,8 @@ interface StoredUser extends User {
   stonkz: number;
   /** Pinata (or other) HTTPS avatar override. */
   avatarUrl?: string;
+  /** Sim-only: which SP levels have already granted crates. */
+  spLevelClaims?: Record<number, boolean>;
 }
 
 export let USER: StoredUser = emptyUser();
@@ -69,22 +73,35 @@ export function emptyUser(): StoredUser {
 
 /** Sim-only seeded ledger so the sandbox has crates and a drop log. */
 export function defaultUser(): StoredUser {
-  const n = Date.now();
   return {
     xp: 1840,
     stonkz: 128400,
     sp: 1840,
     optionz: 128400,
+    // Global cooldown clear — inventory gates which tiers can open.
     crates: {
       BRONZE: 0,
       IRON: 0,
       SILVER: 0,
       GOLD: 0,
-      PLATINUM: n + 3 * HOUR + 5 * 60000,
-      IRIDIUM: n + 18 * HOUR,
-      PALLADIUM: n + 52 * HOUR,
-      RHODIUM: n + 126 * HOUR,
+      PLATINUM: 0,
+      IRIDIUM: 0,
+      PALLADIUM: 0,
+      RHODIUM: 0,
     },
+    crateInventory: {
+      BRONZE: 3,
+      IRON: 2,
+      SILVER: 2,
+      GOLD: 1,
+      PLATINUM: 1,
+      IRIDIUM: 0,
+      PALLADIUM: 0,
+      RHODIUM: 0,
+    },
+    spLevel: { level: 4, next: 3500, pct: 28, toNext: 1660 },
+    // Seed inventory already reflects early levels; don't re-grant on first addXP.
+    spLevelClaims: { 1: true, 2: true, 3: true, 4: true },
     log: [
       { t: '09:14', k: 'SILVER', r: '3,120 OPTIONZ', col: '#d7dde3' },
       { t: '08:02', k: 'BRONZE', r: '180 OPTIONZ', col: '#c07434' },
@@ -144,7 +161,8 @@ export interface RewardsHydration {
   optionz: number;
   streak?: number;
   achievements?: { key: AchievementKey; unlockedAt: number }[];
-  crates?: { tier: CrateTier; readyAt: number }[];
+  crates?: { tier: CrateTier; readyAt: number; inventory?: number }[];
+  spLevel?: { level: number; next: number | null; pct: number; toNext: number };
   dropLog?: { at: number; tier: string; label: string }[];
 }
 
@@ -155,6 +173,7 @@ export function hydrateRewards(snap: RewardsHydration): void {
   USER.sp = snap.sp;
   USER.optionz = snap.optionz;
   if (typeof snap.streak === 'number') USER.streak = snap.streak;
+  if (snap.spLevel) USER.spLevel = snap.spLevel;
 
   if (snap.achievements) {
     USER.ach = {};
@@ -163,7 +182,11 @@ export function hydrateRewards(snap: RewardsHydration): void {
 
   if (snap.crates) {
     USER.crates = {};
-    for (const c of snap.crates) USER.crates[c.tier] = c.readyAt;
+    USER.crateInventory = {};
+    for (const c of snap.crates) {
+      USER.crates[c.tier] = c.readyAt;
+      USER.crateInventory[c.tier] = c.inventory ?? 0;
+    }
   }
 
   if (snap.dropLog) {
@@ -218,6 +241,7 @@ export function addXP(base: number, why?: string): void {
   const before = rankOf(USER.xp).i;
   USER.xp += n;
   USER.sp = (USER.sp ?? 0) + n;
+  syncSpLevelGrants();
   saveUser();
   emit('xp', { amount: n, reason: why, gained: true });
   emit('rank');
@@ -228,6 +252,33 @@ export function addXP(base: number, why?: string): void {
   } else if (why) {
     const mult = xpMult() > 1 ? ' (x' + xpMult().toFixed(2) + ')' : '';
     toast('+' + n + ' XP for ' + why + mult);
+  }
+}
+
+/**
+ * Claim SP-level crate grants for the current SP balance (sim only).
+ * Tracks claimed levels on `USER.spLevelClaims` so grants are idempotent.
+ */
+export function syncSpLevelGrants(): void {
+  if (isLiveMode()) return;
+  const sp = USER.sp ?? 0;
+  if (!USER.spLevelClaims) USER.spLevelClaims = {};
+  if (!USER.crateInventory) USER.crateInventory = {};
+  const claimed = USER.spLevelClaims;
+  let grantedAny = false;
+  for (const def of spLevelsReached(sp)) {
+    if (claimed[def.level]) continue;
+    claimed[def.level] = true;
+    for (const [tier, n] of Object.entries(def.grants) as [CrateTier, number][]) {
+      if (!n || n <= 0) continue;
+      USER.crateInventory[tier] = (USER.crateInventory[tier] ?? 0) + n;
+      grantedAny = true;
+    }
+  }
+  const info = spLevelOf(sp);
+  USER.spLevel = { level: info.level, next: info.next, pct: info.pct, toNext: info.toNext };
+  if (grantedAny) {
+    toast('SP LEVEL ' + info.level + ' ' + DOT + ' CRATES GRANTED', 'gold');
   }
 }
 
@@ -287,12 +338,19 @@ export const ACH_TOTAL = ACH.length;
 /* Crates                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export function readyAt(k: CrateTier): number {
-  return USER.crates?.[k] ?? 0;
+export function readyAt(_k: CrateTier): number {
+  // Global cooldown — any tier's stamp (or the max if somehow desynced).
+  const vals = Object.values(USER.crates ?? {}).filter((t): t is number => typeof t === 'number');
+  if (vals.length === 0) return 0;
+  return Math.max(...vals);
+}
+
+export function inventoryOf(k: CrateTier): number {
+  return USER.crateInventory?.[k] ?? 0;
 }
 
 export function isReady(k: CrateTier): boolean {
-  return crateReady(readyAt(k) || undefined);
+  return crateReady(readyAt(k) || undefined) && inventoryOf(k) > 0;
 }
 
 export function readyCount(): number {

@@ -172,6 +172,46 @@ export async function rhSigner(cfg: Config): Promise<RhSigner> {
   };
 }
 
+/** Base Sepolia / Base mainnet — same EIP-1559 wallet shape as RH. */
+export async function baseSigner(cfg: Config): Promise<RhSigner> {
+  if (!cfg.basePrivateKey) throw new Error('no Base private key configured');
+  if (!cfg.baseRpcUrl) throw new Error('no Base RPC configured');
+
+  const account = privateKeyToAccount(cfg.basePrivateKey as Hex);
+  const publicClient = createPublicClient({ transport: http(cfg.baseRpcUrl) });
+  const chainId = await publicClient.getChainId();
+  const chain = defineChain({
+    id: chainId,
+    name: chainId === 8453 ? 'Base' : 'Base Sepolia',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [cfg.baseRpcUrl] } },
+  });
+  const walletClient = createWalletClient({ account, chain, transport: http(cfg.baseRpcUrl) });
+
+  return {
+    address: account.address,
+    publicClient,
+    walletClient,
+    signMessage: (message) => account.signMessage({ message }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    signTypedData: (typedData) => account.signTypedData(typedData as any),
+    sendAndWait: async (call) => {
+      const hash = await walletClient.sendTransaction({
+        account,
+        chain,
+        to: call.to,
+        data: call.data,
+        value: call.value === undefined ? undefined : BigInt(call.value),
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== 'success') {
+        throw new Error(`transaction ${hash} reverted on chain`);
+      }
+      return hash;
+    },
+  };
+}
+
 /* -------------------------------------------------------------------- auth */
 
 export interface Session {
@@ -186,7 +226,7 @@ export interface Session {
  */
 export async function login(
   cfg: Config,
-  net: 'SOL' | 'RH',
+  net: 'SOL' | 'RH' | 'BASE',
   address: string,
   sign: (message: string) => string | Promise<string>,
 ): Promise<Session> {

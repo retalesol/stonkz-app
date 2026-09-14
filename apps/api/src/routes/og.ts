@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { and, eq } from 'drizzle-orm';
-import { esc, usd } from '@stonkz/shared';
-import type { Net } from '@stonkz/shared';
+import { esc, inferNetFromAddress, parseNet, usd } from '@stonkz/shared';
 import { users } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -27,10 +26,6 @@ import { resolveTokenRow } from './token-resolve.js';
  * this host. See the final report for why that rewrite, not a change to
  * `apps/web`'s own (framework-less) build, is the right layer for it.
  */
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
-
 function ogPage(opts: { title: string; description: string; url: string; image?: string }): string {
   const image = opts.image ?? '';
   return `<!doctype html>
@@ -75,6 +70,24 @@ export function ogRoutes(): Hono<AppEnv> {
     const description = row.descr || `${row.name} ($${row.sym}) is trading on ston.kz.`;
     c.header('content-type', 'text/html; charset=utf-8');
     return c.body(ogPage({ title, description, url }));
+  });
+
+  /** Profile OG when net is unknown — infers SOL vs EVM from address shape. */
+  app.get('/og/u/:addr', limit(RATE_LIMITS.read), async (c) => {
+    const deps = c.get('deps');
+    const addr = c.req.param('addr') ?? '';
+    const netQ = parseNet(c.req.query('net'));
+    const net = netQ ?? (addr.startsWith('0x') ? inferNetFromAddress(addr, 'RH') : 'SOL');
+    const url = `${deps.env.publicWebOrigin}/u/${addr}`;
+    if (!addr) {
+      c.header('content-type', 'text/html; charset=utf-8');
+      return c.body(ogPage({ title: 'STONKZ', description: 'A member of ston.kz.', url }));
+    }
+    const [row] = await deps.db.select().from(users).where(and(eq(users.net, net), eq(users.wallet, addr))).limit(1);
+    const name = row?.username || `${addr.slice(0, 4)}…${addr.slice(-4)}`;
+    const description = row?.bio || `${name}'s profile on ston.kz.`;
+    c.header('content-type', 'text/html; charset=utf-8');
+    return c.body(ogPage({ title: `STONKZ · ${name}`, description, url }));
   });
 
   app.get('/og/u/:net/:addr', limit(RATE_LIMITS.read), async (c) => {

@@ -51,6 +51,15 @@ export interface LedgerOptions {
   now?: () => number;
 }
 
+type AfterSpCredit = (net: Net, wallet: string, totalSp: number) => Promise<void>;
+type AfterSpAwarded = (
+  net: Net,
+  wallet: string,
+  spAwarded: number,
+  reason: string,
+  eventId: string,
+) => Promise<void>;
+
 export interface AwardInput {
   net: Net;
   wallet: string;
@@ -64,6 +73,8 @@ export interface AwardInput {
   meta?: Record<string, unknown>;
   /** Dust fills record the event at zero rather than skipping it. */
   zeroAward?: boolean;
+  /** Skip referral SP kickback (used by the kickback award itself). */
+  skipReferralKickback?: boolean;
 }
 
 export interface AwardResult {
@@ -128,9 +139,21 @@ export interface RewardsSnapshot {
  */
 export class Ledger {
   private readonly now: () => number;
+  private afterSpCredit: AfterSpCredit | null = null;
+  private afterSpAwarded: AfterSpAwarded | null = null;
 
   constructor(private readonly opts: LedgerOptions) {
     this.now = opts.now ?? Date.now;
+  }
+
+  /** Wired by `buildDeps` so SP credits unlock crate inventory without a cycle. */
+  setAfterSpCredit(hook: AfterSpCredit): void {
+    this.afterSpCredit = hook;
+  }
+
+  /** Wired by `buildDeps` for referral SP kickbacks. */
+  setAfterSpAwarded(hook: AfterSpAwarded): void {
+    this.afterSpAwarded = hook;
   }
 
   private get db(): Db {
@@ -330,6 +353,10 @@ export class Ledger {
     }
     if (sp > 0) {
       await this.opts.publisher.user(net, wallet, { type: 'sp', net, wallet, delta: sp, total: after.sp });
+      if (this.afterSpCredit) await this.afterSpCredit(net, wallet, after.sp);
+      if (!input.skipReferralKickback && this.afterSpAwarded) {
+        await this.afterSpAwarded(net, wallet, sp, reason, String(eventId));
+      }
     }
     if (rankAfter > rankBefore) {
       await this.opts.publisher.user(net, wallet, {
@@ -480,6 +507,66 @@ export class Ledger {
       );
     }
     return totals;
+  }
+
+  /**
+   * Credits SP only (no XP, no streak mult). Used for referral kickbacks so
+   * the 5% rate stays exact and does not inflate referrer rank.
+   */
+  async creditSpOnly(
+    net: Net,
+    wallet: string,
+    amount: number,
+    reason: string,
+    refId: string,
+    meta?: Record<string, unknown>,
+  ): Promise<{ awarded: boolean; sp: number; totalSp: number }> {
+    if (amount <= 0) {
+      const bal = await this.readBalance(net, wallet);
+      return { awarded: false, sp: 0, totalSp: bal.sp };
+    }
+    const dayUtc = utcDayKey(this.now());
+    let sp = amount;
+    const usedSp = await this.spAwardedToday(net, wallet, dayUtc);
+    sp = Math.min(sp, Math.max(0, this.opts.dailySpCap - usedSp));
+    if (sp <= 0) {
+      const bal = await this.readBalance(net, wallet);
+      return { awarded: false, sp: 0, totalSp: bal.sp };
+    }
+
+    let eventId: number;
+    try {
+      const [inserted] = await this.db
+        .insert(xpEvents)
+        .values({
+          wallet,
+          net,
+          amount: 0,
+          baseAmount: amount,
+          reason,
+          txSig: refId,
+          sym: null,
+          dayUtc,
+          meta: { spOnly: true, ...(meta ?? {}) },
+        })
+        .returning({ id: xpEvents.id });
+      if (!inserted) throw new Error('xp_events insert returned no row');
+      eventId = inserted.id;
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        const bal = await this.readBalance(net, wallet);
+        return { awarded: false, sp: 0, totalSp: bal.sp };
+      }
+      throw err;
+    }
+
+    const after = await this.applyBalanceDeltas(net, wallet, dayUtc, reason, 'xp_event', String(eventId), {
+      SP: sp,
+    });
+    await this.opts.publisher.user(net, wallet, { type: 'sp', net, wallet, delta: sp, total: after.sp });
+    if (this.afterSpCredit) await this.afterSpCredit(net, wallet, after.sp);
+    // No afterSpAwarded — SP-only credits must not recurse into referral kickbacks.
+    return { awarded: true, sp, totalSp: after.sp };
   }
 
   /**

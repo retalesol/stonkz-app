@@ -27,8 +27,14 @@ export const SIWS_STATEMENT = 'Sign in to Stonkz. This request will not trigger 
  * Solana uses `solanaSiwsChainId` (e.g. `solana:devnet` / `solana:mainnet`)
  * so a staging signature cannot replay into production.
  */
-export function chainLabel(net: Net, rhChainId: number, solanaSiwsChainId = 'solana:mainnet'): string {
-  return net === 'SOL' ? solanaSiwsChainId : String(rhChainId);
+export function chainLabel(
+  net: Net,
+  evmChainIds: { RH: number; BASE: number },
+  solanaSiwsChainId = 'solana:mainnet',
+): string {
+  if (net === 'SOL') return solanaSiwsChainId;
+  if (net === 'BASE') return String(evmChainIds.BASE);
+  return String(evmChainIds.RH);
 }
 
 export function buildSignInMessage(p: SignInMessageParams): string {

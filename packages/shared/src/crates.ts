@@ -34,9 +34,9 @@ export function rollCrateAmount(drop: CrateDrop, random: Random = Math.random): 
   return Math.round((drop[2] + random() * (drop[3] - drop[2])) / 10) * 10;
 }
 
-/** XP for opening a crate: 20 for BRONZE, +15 per tier. `index.html:2373` */
+/** XP for opening a crate: modest vs trade XP so trading stays the grind. */
 export function crateXp(tierIndex: number): number {
-  return 20 + tierIndex * 15;
+  return 10 + tierIndex * 10;
 }
 
 /** Epoch ms the crate becomes openable again after an open at `now`. `index.html:2369` */

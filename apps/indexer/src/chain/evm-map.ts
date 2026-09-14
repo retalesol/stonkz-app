@@ -33,6 +33,7 @@ import { UnknownMintError, type TokenMeta } from './registry.js';
  *    at the decode boundary is the only place it can be done once.
  */
 export interface EvmMapContext {
+  net: 'RH' | 'BASE';
   txHash: string;
   blockNumber: number;
   blockTimeMs: number;
@@ -136,16 +137,17 @@ export async function mapEvmTransaction(
   const trade = logs.find((l) => l.event.name === 'Trade')?.event;
   const migrated = logs.find((l) => l.event.name === 'LiquidityMigrated')?.event;
 
+  const net = ctx.net;
   const base = {
-    net: 'RH' as const,
+    net,
     txSig: ctx.txHash.toLowerCase(),
     chainPosition: ctx.blockNumber,
     blockTimeMs: ctx.blockTimeMs,
   };
 
   const need = async (token: string): Promise<TokenMeta> => {
-    const meta = await ctx.registry.resolve('RH', token);
-    if (!meta) throw new UnknownMintError('RH', token);
+    const meta = await ctx.registry.resolve(net, token);
+    if (!meta) throw new UnknownMintError(net, token);
     return meta;
   };
 
@@ -165,17 +167,17 @@ export async function mapEvmTransaction(
         const baseDecimals = inferBaseDecimals(gradMcapBase, basePrice1e6);
         if (baseDecimals === null) {
           throw new Error(
-            `RH TokenCreated ${text(args, 'ticker')} (${token}): base decimals are not recoverable from gradMcapBase=${gradMcapBase} basePrice1e6=${basePrice1e6}`,
+            `${net} TokenCreated ${text(args, 'ticker')} (${token}): base decimals are not recoverable from gradMcapBase=${gradMcapBase} basePrice1e6=${basePrice1e6}`,
           );
         }
-        const tokenDecimals = TOKEN_DECIMALS.RH;
+        const tokenDecimals = TOKEN_DECIMALS[net];
         const supply = big(args, 'supply');
         const tokensForSale = big(args, 'tokensForSale');
         const virtualBase = big(args, 'virtualBase');
         const virtualToken = big(args, 'virtualToken');
 
         ctx.registry.remember({
-          net: 'RH',
+          net,
           mint: token,
           sym: text(args, 'ticker'),
           creator: addr(args, 'creator'),
@@ -202,7 +204,7 @@ export async function mapEvmTransaction(
           name: text(args, 'ticker'),
           descr: '',
           creator: addr(args, 'creator'),
-          baseSymbol: ctx.baseMints.symbolFor('RH', baseToken) ?? baseToken.slice(0, 8),
+          baseSymbol: ctx.baseMints.symbolFor(net, baseToken) ?? baseToken.slice(0, 8),
           baseMint: baseToken,
           supply: toWhole(supply, tokenDecimals),
           feeBps: num(args, 'feeBps'),
@@ -240,7 +242,7 @@ export async function mapEvmTransaction(
         const realToken = big(args, 'realToken');
         const usdValue = baseAtomsToUsd(baseAmount, meta.basePrice1e6, meta.baseDecimals);
         const circulating = meta.tokensForSale > realToken ? meta.tokensForSale - realToken : 0n;
-        ctx.registry.observeFill('RH', token, circulating);
+        ctx.registry.observeFill(net, token, circulating);
 
         out.push({
           ...base,
@@ -254,7 +256,7 @@ export async function mapEvmTransaction(
           side: bool(args, 'isBuy') ? 'buy' : 'sell',
           nativeAmount:
             routerNative(logs, token) ??
-            nativeNotional('RH', meta.baseMint, baseAmount, meta.baseDecimals, usdValue, ctx.nativeUsdPrice),
+            nativeNotional(net, meta.baseMint, baseAmount, meta.baseDecimals, usdValue, ctx.nativeUsdPrice),
           baseAmount: toWhole(baseAmount, meta.baseDecimals),
           tokenAmount: toWhole(big(args, 'tokenAmount'), meta.tokenDecimals),
           usdValue,
@@ -292,7 +294,7 @@ export async function mapEvmTransaction(
           sym: meta.sym,
           creator: meta.creator,
           ...nativeFeeLegs(
-            nativeNotional('RH', meta.baseMint, feeTotal, meta.baseDecimals, feeUsd, ctx.nativeUsdPrice),
+            nativeNotional(net, meta.baseMint, feeTotal, meta.baseDecimals, feeUsd, ctx.nativeUsdPrice),
             trade ? big(trade.args, 'feeStakers') : 0n,
             big(args, 'creatorBucket'),
           ),
@@ -340,7 +342,7 @@ export async function mapEvmTransaction(
           sym: meta.sym,
           creator: addr(args, 'creator'),
           nativeAmount: nativeNotional(
-            'RH',
+            net,
             meta.baseMint,
             baseAmount,
             meta.baseDecimals,
@@ -401,7 +403,7 @@ export async function mapEvmTransaction(
           sym: meta.sym,
           wallet: addr(args, 'owner'),
           rewardNative: nativeNotional(
-            'RH',
+            net,
             meta.baseMint,
             baseAmount,
             meta.baseDecimals,

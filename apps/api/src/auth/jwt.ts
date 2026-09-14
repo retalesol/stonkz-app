@@ -78,7 +78,9 @@ export class JwtService {
     });
     const claims = payload as StonkzClaims;
     if (claims.typ !== expected) throw new Error(`expected a ${expected} token, got ${String(claims.typ)}`);
-    if (claims.net !== 'SOL' && claims.net !== 'RH') throw new Error('token is missing a valid net claim');
+    if (claims.net !== 'SOL' && claims.net !== 'RH' && claims.net !== 'BASE') {
+      throw new Error('token is missing a valid net claim');
+    }
     if (typeof claims.sub !== 'string' || claims.sub === '') throw new Error('token is missing sub');
     return claims;
   }

@@ -17,10 +17,11 @@ export const TOKEN_DECIMALS: Record<Net, number> = {
   SOL: 6,
   // `programs/evm/src/StonkzToken.sol`: `uint8 public constant decimals = 18`.
   RH: 18,
+  BASE: 18,
 };
 
 /** Native gas-token decimals, per chain. */
-export const NATIVE_DECIMALS: Record<Net, number> = { SOL: 9, RH: 18 };
+export const NATIVE_DECIMALS: Record<Net, number> = { SOL: 9, RH: 18, BASE: 18 };
 
 /** The canonical wrapped-native base mint per chain — see `router/base-mints.ts`. */
 export const NATIVE_BASE_MINTS: Record<Net, readonly string[]> = {
@@ -29,11 +30,17 @@ export const NATIVE_BASE_MINTS: Record<Net, readonly string[]> = {
     '0x0000000000000000000000000000000000000000',
     // aeWETH — docs/robinhood-chain.md row 25.
     '0x0bd7d308f8e1639fab988df18a8011f41eacad73',
+    // Robinhood testnet WETH (46630).
+    '0x7943e237c7f95da44e0301572d358911207852fa',
+  ],
+  BASE: [
+    '0x0000000000000000000000000000000000000000',
+    '0x4200000000000000000000000000000000000006',
   ],
 };
 
 export function isNativeBaseMint(net: Net, baseMint: string): boolean {
-  const needle = net === 'RH' ? baseMint.toLowerCase() : baseMint;
+  const needle = net === 'SOL' ? baseMint : baseMint.toLowerCase();
   return NATIVE_BASE_MINTS[net].includes(needle);
 }
 

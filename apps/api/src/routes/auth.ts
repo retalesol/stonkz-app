@@ -1,14 +1,13 @@
+import { eq } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
-import type { Net } from '@stonkz/shared';
+import { isEvm, parseNet, type Net } from '@stonkz/shared';
+import { parseSignInMessage } from '../auth/message.js';
 import { AuthError } from '../auth/service.js';
+import { authNonces } from '../db/schema.js';
 import { limit, requireAuth } from '../app/middleware.js';
 import { resolveClientIp } from '../net/client-ip.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
-
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
 
 const STATUS: Record<AuthError['code'], 400 | 401 | 409> = {
   bad_address: 400,
@@ -42,19 +41,23 @@ export function authRoutes(): Hono<AppEnv> {
 
   app.get('/auth/nonce', async (c) => {
     const net = parseNet(c.req.query('net'));
-    if (!net) return c.json({ error: 'bad_request', detail: 'net must be SOL or RH' }, 400);
+    if (!net) return c.json({ error: 'bad_request', detail: 'net must be SOL, RH, or BASE' }, 400);
     const address = c.req.query('address');
     const challenge = await c.get('deps').auth.issueNonce(net, address);
     return c.json(challenge);
   });
 
-  const login = async (c: Context<AppEnv>, net: Net) => {
+  const login = async (c: Context<AppEnv>, net: Net, bodyIn?: LoginBody) => {
     const deps = c.get('deps');
     let body: LoginBody;
-    try {
-      body = (await c.req.json()) as LoginBody;
-    } catch {
-      return c.json({ error: 'bad_request', detail: 'body must be JSON' }, 400);
+    if (bodyIn) {
+      body = bodyIn;
+    } else {
+      try {
+        body = (await c.req.json()) as LoginBody;
+      } catch {
+        return c.json({ error: 'bad_request', detail: 'body must be JSON' }, 400);
+      }
     }
     const { address, message, signature } = body;
     if (typeof address !== 'string' || typeof message !== 'string' || typeof signature !== 'string') {
@@ -96,8 +99,27 @@ export function authRoutes(): Hono<AppEnv> {
   /** Sign-In With Solana. */
   app.post('/auth/siws', (c) => login(c, 'SOL'));
 
-  /** Sign-In With Ethereum, for the Robinhood net. */
-  app.post('/auth/siwe', (c) => login(c, 'RH'));
+  /** Sign-In With Ethereum — net is read from the nonce row (RH or BASE). */
+  app.post('/auth/siwe', async (c) => {
+    let body: LoginBody;
+    try {
+      body = (await c.req.json()) as LoginBody;
+    } catch {
+      return c.json({ error: 'bad_request', detail: 'body must be JSON' }, 400);
+    }
+    if (typeof body.message !== 'string') {
+      return c.json({ error: 'bad_request', detail: 'message is required' }, 400);
+    }
+    const parsed = parseSignInMessage(body.message);
+    if (!parsed) return c.json({ error: 'bad_request', detail: 'unparseable sign-in message' }, 400);
+    const deps = c.get('deps');
+    const [nonceRow] = await deps.db.select().from(authNonces).where(eq(authNonces.nonce, parsed.nonce)).limit(1);
+    const nonceNet = parseNet(nonceRow?.net);
+    if (!nonceRow || !nonceNet || !isEvm(nonceNet)) {
+      return c.json({ error: 'bad_nonce', detail: 'unknown or non-EVM nonce' }, 400);
+    }
+    return login(c, nonceNet, body);
+  });
 
   app.post('/auth/refresh', async (c) => {
     const deps = c.get('deps');

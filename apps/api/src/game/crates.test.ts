@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { CRATES, HOUR, RAR, crateXp } from '@stonkz/shared';
 import { crateOpens, crateState, itemFlags } from '../db/schema.js';
-import { CrateError, CrateService, itemExpiry } from './crates.js';
+import { CrateService, itemExpiry } from './crates.js';
 import { authed, createTestApp, FROZEN_NOW, type TestApp } from '../test/app.js';
 import { solanaWallet } from '../test/wallets.js';
 
@@ -42,6 +42,7 @@ describe('crate RNG', () => {
       db: h.deps.db,
       ledger: h.deps.ledger,
       publisher: h.deps.publisher,
+      spLevels: h.deps.spLevels,
       secret: 'a-completely-different-server-secret-000000',
       now: h.now,
     });
@@ -111,16 +112,17 @@ describe('crate opens', () => {
     expect(await h.deps.ledger.unlockedKeys('SOL', W)).toContain('crate');
   });
 
-  it('enforces the cooldown from the server clock', async () => {
+  it('enforces a global cooldown from the opened tier', async () => {
     const bronze = CRATES[0];
     const first = await h.deps.crates.open('SOL', W, 'BRONZE');
     expect(first.cooldownHours).toBe(bronze?.cd);
 
-    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toThrow(CrateError);
+    // Same tier still cooling.
     await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
+    // Every other tier is locked too — global cooldown.
+    await expect(h.deps.crates.open('SOL', W, 'IRON')).rejects.toMatchObject({ code: 'cooling_down' });
 
-    // One millisecond short is still cooling.
-    h.advance((bronze?.cd ?? 4) * HOUR - 1);
+    h.advance((bronze?.cd ?? 1) * HOUR - 1);
     await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
 
     h.advance(1);
@@ -135,12 +137,26 @@ describe('crate opens', () => {
     expect(state?.opens).toBe(2);
   });
 
-  it('keeps tiers on independent cooldowns', async () => {
-    await h.deps.crates.open('SOL', W, 'BRONZE');
-    // IRON is a separate crate with its own timer.
-    const iron = await h.deps.crates.open('SOL', W, 'IRON');
-    expect(iron.tier).toBe('IRON');
-    expect(iron.xp).toBe(crateXp(1));
+  it('locks all crates for the longer cooldown when a higher tier is opened', async () => {
+    // SP level 3 (750) grants IRON×1.
+    await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'follow',
+      baseXp: 750,
+      mirrorSp: true,
+    });
+    const iron = CRATES[1];
+    await h.deps.crates.open('SOL', W, 'IRON');
+    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
+    h.advance((iron?.cd ?? 2) * HOUR);
+    // After IRON's 2h window, BRONZE inventory from L1 may still remain.
+    const states = await h.deps.crates.states('SOL', W);
+    expect(states.every((s) => s.ready)).toBe(true);
+  });
+
+  it('refuses a tier with empty inventory', async () => {
+    await expect(h.deps.crates.open('SOL', W, 'RHODIUM')).rejects.toMatchObject({ code: 'no_inventory' });
   });
 
   it('keeps cooldowns per net, so switching nets is not a second crate', async () => {
@@ -148,18 +164,24 @@ describe('crate opens', () => {
     const rh = await h.deps.crates.open('RH', W, 'BRONZE');
     expect(rh.tier).toBe('BRONZE');
 
-    // …but the RH crate is now cooling on its own.
     await expect(h.deps.crates.open('RH', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
   });
 
   it('survives a concurrent double-open with exactly one payout', async () => {
+    // SP level 7 (11_000) grants GOLD×1.
+    await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'follow',
+      baseXp: 11_000,
+      mirrorSp: true,
+    });
     const results = await Promise.allSettled([
       h.deps.crates.open('SOL', W, 'GOLD'),
       h.deps.crates.open('SOL', W, 'GOLD'),
       h.deps.crates.open('SOL', W, 'GOLD'),
     ]);
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
-    // The cooldown guard lives in the upsert's WHERE, so only one can win.
     expect(fulfilled).toHaveLength(1);
     expect(await h.deps.db.select().from(crateOpens).where(eq(crateOpens.wallet, W))).toHaveLength(1);
   });
@@ -250,8 +272,10 @@ describe('POST /rewards/crates/:tier/open', () => {
       dropLog: { tier: string; rarity: string }[];
     };
     expect(body.crates).toHaveLength(CRATES.length);
+    // Global cooldown: opening BRONZE locks every tier, including IRON.
     expect(body.crates.find((c) => c.tier === 'BRONZE')?.ready).toBe(false);
-    expect(body.crates.find((c) => c.tier === 'IRON')?.ready).toBe(true);
+    expect(body.crates.find((c) => c.tier === 'IRON')?.ready).toBe(false);
+    expect(body.crates.every((c) => c.ready === false)).toBe(true);
     expect(body.crates[0]?.drops).toHaveLength(5);
     expect(body.dropLog).toHaveLength(1);
     expect(body.dropLog[0]?.tier).toBe('BRONZE');

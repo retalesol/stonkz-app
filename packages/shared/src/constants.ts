@@ -63,7 +63,7 @@ export const MIN_TIP_ETH = 0.0001;
  * Lives here rather than in `apps/api` so the sim and the server award it on
  * exactly the same boundary (security review L3).
  */
-export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2 };
+export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2, BASE: 2 };
 
 /**
  * Dust floor, in native units. Below this a fill awards nothing at all — no
@@ -75,7 +75,7 @@ export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2 };
  *
  * Shared with the sim for the same reason as `DEFAULT_WHALE_CUT`.
  */
-export const DEFAULT_DUST: Record<Net, number> = { SOL: 0.01, RH: 0.0005 };
+export const DEFAULT_DUST: Record<Net, number> = { SOL: 0.01, RH: 0.0005, BASE: 0.0005 };
 
 /** `[days, weightMultiplier, label]`. `index.html:1565` */
 export const LOCKS = [
@@ -236,7 +236,7 @@ export interface Achievement {
 /** The ten achievements. `index.html:2166-2177` */
 export const ACH = [
   { k: 'first', n: 'FIRST BLOOD', d: 'Make your first trade.', xp: 50 },
-  { k: 'whale', n: 'WHALE', d: 'Buy five or more in a single fill.', xp: 120 },
+  { k: 'whale', n: 'WHALE', d: 'Hit the chain-specific whale fill threshold (5 SOL or 2 ETH).', xp: 120 },
   { k: 'deploy', n: 'DEPLOYER', d: 'Launch a coin.', xp: 100 },
   {
     k: 'cashback',
@@ -336,6 +336,12 @@ export const MAJORS = {
     ['AVAX', 'Avalanche'],
     ['LINK', 'Chainlink'],
     ['LTC', 'Litecoin'],
+  ],
+  /** Coinbase Base — ETH/WETH/USDC only; no RH stock tokens. */
+  BASE: [
+    ['ETH', 'Ethereum'],
+    ['WETH', 'Wrapped Ether'],
+    ['USDC', 'USD Coin'],
   ],
 } as const satisfies Record<Net, readonly (readonly [symbol: string, name: string])[]>;
 

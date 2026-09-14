@@ -14,7 +14,7 @@ import type { Db } from '../db/client.js';
 import { tokens } from '../db/schema.js';
 import { derivePdas } from './solana-idl.js';
 import { hasCurveState, liveCurveState, type CurveStateRow } from './curve-state.js';
-import { laneOf } from '@stonkz/shared';
+import { isEvm, laneOf, type Net } from '@stonkz/shared';
 
 export interface EthCaller {
   ethCall(to: string, data: string): Promise<string>;
@@ -242,15 +242,18 @@ export async function syncRhCurveReserves<T extends CurveSyncRow>(opts: {
 export async function syncCurveReserves<T extends CurveSyncRow>(opts: {
   db: Db;
   row: T;
+  /** EVM curve read (Robinhood or Base). `rh` is kept as an alias. */
+  evm?: { eth: EthCaller | undefined; launchpad: string };
   rh?: { eth: EthCaller | undefined; launchpad: string };
   sol?: { rpc: SolanaAccountSource | undefined; programId: string };
 }): Promise<T> {
   const { db, row } = opts;
   if (!hasCurveState(row) || !row.mint) return row;
 
+  const evm = opts.evm ?? opts.rh;
   let live: CurveReserves | null = null;
-  if (row.net === 'RH' && opts.rh?.eth) {
-    live = await fetchRhCurveReserves(opts.rh.eth, opts.rh.launchpad, row.mint);
+  if (isEvm(row.net as Net) && evm?.eth) {
+    live = await fetchRhCurveReserves(evm.eth, evm.launchpad, row.mint);
   } else if (row.net === 'SOL' && opts.sol?.rpc && row.baseMint) {
     live = await fetchSolCurveReserves({
       rpc: opts.sol.rpc,

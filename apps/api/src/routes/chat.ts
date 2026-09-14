@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { and, eq, inArray } from 'drizzle-orm';
-import type { Net } from '@stonkz/shared';
+import { parseNet, type Net } from '@stonkz/shared';
 import { users } from '../db/schema.js';
 import { limit, requireAuth } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -17,9 +17,6 @@ import type { AppDeps, AppEnv } from '../app/context.js';
  * History and live frames carry `username` / `avatarUrl` when the sender has
  * a profile row, so the drawer never invents "YOU" or RNG handles.
  */
-function parseNet(raw: string | undefined): Net | null {
-  return raw === 'SOL' || raw === 'RH' ? raw : null;
-}
 
 async function profileMap(
   deps: AppDeps,

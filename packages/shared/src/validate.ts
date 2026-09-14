@@ -6,7 +6,8 @@ import {
   MIN_TIP_SOL,
   SUPPLIES,
 } from './constants.js';
-import type { NativeUnit, Net } from './types.js';
+import type { EvmNet, NativeUnit, Net } from './types.js';
+import { ALL_NETS } from './types.js';
 
 /**
  * Ticker normalisation as the launch stepper does it: uppercase, drop
@@ -32,9 +33,36 @@ export function isTickerTaken(ticker: string, taken: Iterable<string>): boolean 
   return false;
 }
 
+/** True for Robinhood Chain and Coinbase Base (ETH gas, EVM tooling). */
+export function isEvm(net: Net): net is EvmNet {
+  return net === 'RH' || net === 'BASE';
+}
+
+/** Parse a net string; returns `null` when unknown. */
+export function parseNet(raw: string | null | undefined): Net | null {
+  if (raw === 'SOL' || raw === 'RH' || raw === 'BASE') return raw;
+  return null;
+}
+
+/**
+ * Infer product net from an address shape.
+ * Solana base58 vs `0x` EVM — when both RH and BASE are possible for an
+ * EVM address, the caller must pass the connected/session net.
+ */
+export function inferNetFromAddress(address: string, fallbackEvm: EvmNet = 'RH'): Net {
+  const a = address.trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(a)) return fallbackEvm;
+  return 'SOL';
+}
+
 /** The gas token the user pays on a given network. */
 export function nativeUnit(net: Net): NativeUnit {
-  return net === 'RH' ? 'ETH' : 'SOL';
+  return isEvm(net) ? 'ETH' : 'SOL';
+}
+
+/** Exhaustive list for loops that previously hard-coded `['SOL','RH']`. */
+export function allNets(): readonly Net[] {
+  return ALL_NETS;
 }
 
 /** Minimum wall tip: 0.001 SOL, 0.0001 ETH. `index.html:3312` */

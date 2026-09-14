@@ -54,6 +54,8 @@ export type { RedisLike } from './redis/types.js';
 export { Ledger, UnverifiedEventError, type AwardInput, type AwardResult, type RewardsSnapshot } from './game/ledger.js';
 export { GameAwards, type TradeEvent as TradeAwardEvent } from './game/awards.js';
 export { CrateError, CrateService, type CrateOpenResult } from './game/crates.js';
+export { ReferralService } from './game/referrals.js';
+export { SocialCapsService } from './game/social-caps.js';
 export { REASONS, requiresVerifiedEvent, DEFAULT_DUST, DEFAULT_WHALE_CUT } from './game/rules.js';
 export { daysBetween, previousUtcDay, utcDayKey } from './game/day.js';
 

@@ -9,7 +9,7 @@
  * `rh_router_required` — there is no multi-signature `EvmStep[]` fallback.
  */
 import { encodeFunctionData, type Address, type Hex } from 'viem';
-import type { Net } from '@stonkz/shared';
+import { isEvm, type Net } from '@stonkz/shared';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import { STONKZ_ROUTER_ABI } from './evm-abi.js';
 
@@ -75,7 +75,7 @@ export function stonkzRouterDecision(
   feeTierOverrides: Record<string, number>,
   quotedFeeTier?: number | null,
 ): RouterRoute | null {
-  if (net !== 'RH') return null;
+  if (!isEvm(net)) return null;
   if (!routerAddress || routerAddress.toLowerCase() === ZERO_EVM_ADDRESS) return null;
   if (isDirectPair) return { mode: 'direct' };
   if (quotedFeeTier && quotedFeeTier > 0) return { mode: 'aggregator', feeTier: quotedFeeTier };

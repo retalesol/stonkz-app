@@ -1,7 +1,7 @@
 import { createPublicClient, http, type PublicClient } from 'viem';
-import { RH_RPC_URL } from './chain.js';
+import { BASE_RPC_URL, RH_RPC_URL } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
-import { robinhoodChain } from './evm.js';
+import { baseChain, robinhoodChain } from './evm.js';
 import type { ConnectedWallet } from './types.js';
 
 /**
@@ -58,9 +58,16 @@ const NONCES_ABI = [
   },
 ] as const;
 
-let client: PublicClient | null = null;
-function rpc(): PublicClient {
-  client ??= createPublicClient({ chain: robinhoodChain, transport: http(RH_RPC_URL) });
+const clients: Partial<Record<'RH' | 'BASE', PublicClient>> = {};
+function rpc(chainId: number): PublicClient {
+  const net = chainId === 8453 || chainId === 84532 ? 'BASE' : 'RH';
+  const existing = clients[net];
+  if (existing) return existing;
+  const client = createPublicClient({
+    chain: net === 'BASE' ? baseChain : robinhoodChain,
+    transport: http(net === 'BASE' ? BASE_RPC_URL : RH_RPC_URL),
+  });
+  clients[net] = client;
   return client;
 }
 
@@ -82,16 +89,16 @@ export function assertPermitShape(raw: unknown): ServerPermitTypedData {
 }
 
 /** `nonces(owner)` on the token, read now rather than trusted from the response. */
-export async function readPermitNonce(token: string, owner: string): Promise<bigint> {
+export async function readPermitNonce(token: string, owner: string, chainId = 0): Promise<bigint> {
   try {
-    return await rpc().readContract({
+    return await rpc(chainId).readContract({
       address: token as `0x${string}`,
       abi: NONCES_ABI,
       functionName: 'nonces',
       args: [owner as `0x${string}`],
     });
   } catch (err) {
-    throw mapWalletError(err, 'Could not read the token\u2019s permit nonce from Robinhood Chain.');
+    throw mapWalletError(err, 'Could not read the token\u2019s permit nonce from chain.');
   }
 }
 
@@ -132,7 +139,7 @@ export function splitSignature(signature: string): { v: number; r: string; s: st
 }
 
 /** How the nonce is obtained. Overridden only by tests. */
-export type PermitNonceReader = (token: string, owner: string) => Promise<bigint>;
+export type PermitNonceReader = (token: string, owner: string, chainId?: number) => Promise<bigint>;
 
 /**
  * Fill in the nonce, get the wallet to sign, and split the result into the
@@ -146,7 +153,7 @@ export async function signSellPermit(
   if (!wallet.signTypedData) {
     throw new WalletError(
       'unsupported_method',
-      `${wallet.label} cannot sign EIP-712 typed data, which a first-time Robinhood sell needs. ` +
+      `${wallet.label} cannot sign EIP-712 typed data, which a first-time EVM sell needs. ` +
         'Approve the router on this token manually, or use another wallet.',
     );
   }
@@ -160,7 +167,7 @@ export async function signSellPermit(
   }
   // Read from the token named in the permit domain (EIP-2612 domains are the
   // token itself), now, not from the response — see the header.
-  const nonce = await readNonce(td.domain.verifyingContract, owner);
+  const nonce = await readNonce(td.domain.verifyingContract, owner, td.domain.chainId);
   const signature = await wallet.signTypedData(buildPermitPayload(td, nonce));
   const { v, r, s } = splitSignature(signature);
   return { value: td.message.value, deadline: td.message.deadline, v, r, s };
