@@ -663,7 +663,7 @@ export class Ingestor {
   /* ------------------------------------------------------------------ fees */
 
   private async onFeeAccrued(event: FeeAccruedEvent): Promise<void> {
-    // Stakers' cut comes out of the creator's 70%, never out of the other legs.
+    // Stakers' cut comes out of the creator's 60%, never out of the other legs.
     const creatorNet = event.creatorBucket - event.stakerShare;
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
@@ -706,11 +706,12 @@ export class Ingestor {
     );
     await this.creditVault(event, 'protocol', Math.max(0, event.protocol - referralCut));
     await this.creditVault(event, 'stonkz_ops', event.stonkzOps);
+    await this.creditVault(event, 'burn', event.burn);
   }
 
   private async creditVault(
     event: FeeAccruedEvent | TreasuryCreditEvent,
-    kind: 'protocol' | 'stonkz_ops',
+    kind: 'protocol' | 'stonkz_ops' | 'burn',
     amount: number,
   ): Promise<void> {
     if (amount === 0) return;

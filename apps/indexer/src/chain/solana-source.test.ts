@@ -125,6 +125,7 @@ function fillLogs(): string[] {
         feeTotal: FILL.fee,
         feeProtocol: CHAIN_LEGS.protocol,
         feeOps: CHAIN_LEGS.stonkzOps,
+        feeBurn: CHAIN_LEGS.burn,
         feeCreatorBucket: CHAIN_LEGS.creatorBucket,
         feeStakers: FEE_STAKERS,
         feeCreator: CHAIN_LEGS.creatorBucket - FEE_STAKERS,
@@ -145,6 +146,7 @@ function fillLogs(): string[] {
         feeTotal: FILL.fee,
         protocol: CHAIN_LEGS.protocol,
         ops: CHAIN_LEGS.stonkzOps,
+        burn: CHAIN_LEGS.burn,
         creatorBucket: CHAIN_LEGS.creatorBucket,
         ts: 1_757_000_100n,
       }),
@@ -155,6 +157,7 @@ function fillLogs(): string[] {
         baseMint: WSOL_MINT,
         protocolDelta: CHAIN_LEGS.protocol,
         opsDelta: CHAIN_LEGS.stonkzOps,
+        burnDelta: CHAIN_LEGS.burn,
         ts: 1_757_000_100n,
       }),
     ),
@@ -313,7 +316,7 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
     await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(UnknownMintError);
   });
 
-  it('rejects a fee split the chain did not settle 20/70/10', async () => {
+  it('rejects a fee split the chain did not settle 20/60/10/10', async () => {
     const bent = fillLogs();
     bent[3] = programDataLine(
       'FeeAccrued',
@@ -324,6 +327,7 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
         // A protocol leg skimmed by one atom.
         protocol: CHAIN_LEGS.protocol + 1n,
         ops: CHAIN_LEGS.stonkzOps,
+        burn: CHAIN_LEGS.burn,
         creatorBucket: CHAIN_LEGS.creatorBucket - 1n,
         ts: 1n,
       }),
@@ -333,7 +337,7 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
       { signature: 'sigBent', slot: 1_150, blockTimeSecs: 1_757_000_100, logs: bent },
     ]);
     await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(
-      /do not match the integer 20\/70\/10/,
+      /do not match the integer 20\/60\/10\/10/,
     );
   });
 

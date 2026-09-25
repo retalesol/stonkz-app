@@ -319,7 +319,7 @@ Do all of these against the deployment, not against a local test.
 - [ ] `Global` exists with the intended admin/authorities (read the account, don't trust the script's log).
 - [ ] `dex_program` and `dex_config` (Meteora DLMM + PresetParameter2) are set and match §1.3.
 - [ ] Protocol and ops vault PDAs are distinct addresses.
-- [ ] Launch a throwaway token, buy, sell. Confirm the 20/70/10 split lands in the three expected places.
+- [ ] Launch a throwaway token, buy, sell. Confirm the 20/10/10/60 split lands in the four expected places (protocol, game, burn, creator bucket).
 - [ ] Force a graduation. On the explorer, confirm the Meteora DLMM pool exists and the position has `lock_release_point = u64::MAX` with operator at the incinerator. This is the claim that liquidity is gone; verify it, don't assume it.
 - [ ] Confirm the migration authority never held withdrawable liquidity (check the escrow ATA's history).
 

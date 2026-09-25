@@ -266,9 +266,10 @@ function ncStep2(): Html {
         /><span class="fee-val" id="feeVal">${Number(NEW.fee).toFixed(1)}%</span>
       </div>
       <p class="hint">
-        CHARGED ON EVERY TRADE ${DOT} ${(FEE_SPLIT.protocol * 100).toFixed(0)}% TO THE PROTOCOL,
-        ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% TO YOU AS CREATOR FEES (SHARED WITH YOUR
-        STAKERS) AND ${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}% TO $STONKZ OPS.
+        CHARGED ON EVERY BUY AND SELL ${DOT} ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% TO YOU
+        AS CREATOR FEES (STAKERS TAKE UP TO HALF OF THAT), ${(FEE_SPLIT.protocol * 100).toFixed(0)}%
+        PROTOCOL, ${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}% $STONKZ BUYBACK FOR THE STONKZ GAME,
+        ${(FEE_SPLIT.burn * 100).toFixed(0)}% $STONKZ BUYBACK AND BURN.
       </p>
     </div>`;
 }

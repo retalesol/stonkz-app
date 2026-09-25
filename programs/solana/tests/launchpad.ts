@@ -114,6 +114,7 @@ describe('stonkz launchpad', () => {
 
   const protocolVault = () => vault('protocol_vault', baseMint);
   const opsVault = () => vault('ops_vault', baseMint);
+  const burnVault = () => vault('burn_vault', baseMint);
 
   let launchSalt = 0;
 
@@ -191,6 +192,7 @@ describe('stonkz launchpad', () => {
         bucketTokenVault: coin.bucketTokenVault,
         protocolVault: protocolVault(),
         opsVault: opsVault(),
+        burnVault: burnVault(),
         trader: who.publicKey,
         traderBaseAccount: whoBase,
         traderTokenAccount: whoToken,
@@ -249,6 +251,7 @@ describe('stonkz launchpad', () => {
         bucketTokenVault: coin.bucketTokenVault,
         protocolVault: protocolVault(),
         opsVault: opsVault(),
+        burnVault: burnVault(),
         trader: who.publicKey,
         traderBaseAccount: whoBase,
         traderTokenAccount: whoToken,
@@ -317,6 +320,7 @@ describe('stonkz launchpad', () => {
         baseMint,
         protocolVault: protocolVault(),
         opsVault: opsVault(),
+        burnVault: burnVault(),
         payer: admin.publicKey,
         baseTokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,

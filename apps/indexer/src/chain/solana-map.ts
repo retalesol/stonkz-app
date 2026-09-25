@@ -171,6 +171,7 @@ export async function mapSolanaTransaction(
           record.feeTotal,
           record.feeProtocol,
           record.feeOps,
+          record.feeBurn,
           record.feeCreatorBucket,
         );
         const usdValue = baseAtomsToUsd(record.baseAmount, meta.basePrice1e6, meta.baseDecimals);
@@ -215,6 +216,7 @@ export async function mapSolanaTransaction(
           record.feeTotal,
           record.protocol,
           record.ops,
+          record.burn,
           record.creatorBucket,
         );
         const feeUsd = baseAtomsToUsd(record.feeTotal, meta.basePrice1e6, meta.baseDecimals);

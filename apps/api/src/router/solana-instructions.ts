@@ -122,6 +122,7 @@ function tradeKeys(accounts: TradeAccounts) {
       { pubkey: pdas.bucketTokenVault, isSigner: false, isWritable: true },
       { pubkey: pdas.protocolVault, isSigner: false, isWritable: true },
       { pubkey: pdas.opsVault, isSigner: false, isWritable: true },
+      { pubkey: pdas.burnVault, isSigner: false, isWritable: true },
       { pubkey: accounts.trader, isSigner: true, isWritable: true },
       { pubkey: atas.base, isSigner: false, isWritable: true },
       { pubkey: atas.token, isSigner: false, isWritable: true },

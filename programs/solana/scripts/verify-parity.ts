@@ -111,9 +111,10 @@ for (const row of rows(vectors.feeSplit)) {
   const s = splitFee(BigInt(row.fee));
   eq(s.protocol, BigInt(row.protocol), `splitFee(${row.fee}).protocol`);
   eq(s.stonkzOps, BigInt(row.ops), `splitFee(${row.fee}).ops`);
+  eq(s.burn, BigInt(row.burn), `splitFee(${row.fee}).burn`);
   eq(s.creatorBucket, BigInt(row.creatorBucket), `splitFee(${row.fee}).creatorBucket`);
   eq(
-    s.protocol + s.stonkzOps + s.creatorBucket,
+    s.protocol + s.stonkzOps + s.burn + s.creatorBucket,
     BigInt(row.fee),
     `splitFee(${row.fee}) must reconstruct the fee`,
   );
@@ -177,6 +178,7 @@ for (const c of vectors.curves) {
       const s = splitFee(f.fee);
       eq(s.protocol, BigInt(fill.protocol), `${label} fill ${i} protocol`);
       eq(s.stonkzOps, BigInt(fill.ops), `${label} fill ${i} ops`);
+      eq(s.burn, BigInt(fill.burn), `${label} fill ${i} burn`);
       eq(s.creatorBucket, BigInt(fill.creatorBucket), `${label} fill ${i} creatorBucket`);
       st = applyBuy(st, f);
     } else {
@@ -192,6 +194,7 @@ for (const c of vectors.curves) {
       const s = splitFee(f.fee);
       eq(s.protocol, BigInt(fill.protocol), `${label} fill ${i} protocol`);
       eq(s.stonkzOps, BigInt(fill.ops), `${label} fill ${i} ops`);
+      eq(s.burn, BigInt(fill.burn), `${label} fill ${i} burn`);
       eq(s.creatorBucket, BigInt(fill.creatorBucket), `${label} fill ${i} creatorBucket`);
       st = applySell(st, f, amount);
     }

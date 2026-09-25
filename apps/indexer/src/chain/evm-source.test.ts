@@ -136,6 +136,7 @@ function tradeLog(
       feeTotal: FILL.fee,
       feeProtocol: LEGS.protocol,
       feeOps: LEGS.stonkzOps,
+      feeBurn: LEGS.burn,
       feeCreatorBucket: LEGS.creatorBucket,
       feeStakers: FEE_STAKERS,
       feeCreator: LEGS.creatorBucket - FEE_STAKERS,
@@ -169,6 +170,7 @@ function feeLog(
       feeTotal: FILL.fee,
       protocol: LEGS.protocol,
       ops: LEGS.stonkzOps,
+      burn: LEGS.burn,
       creatorBucket: LEGS.creatorBucket,
       ...overrides,
     },
@@ -188,7 +190,12 @@ function treasuryLog(
   const blockNumber = placement.blockNumber ?? 1_001;
   return encodeLog(
     'TreasuryCredit',
-    { baseToken: WETH, protocolDelta: LEGS.protocol, opsDelta: LEGS.stonkzOps },
+    {
+      baseToken: WETH,
+      protocolDelta: LEGS.protocol,
+      opsDelta: LEGS.stonkzOps,
+      burnDelta: LEGS.burn,
+    },
     {
       address: LAUNCHPAD,
       blockNumber,
@@ -431,7 +438,7 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     await expect(source.pollRange(1_000, 1_001)).rejects.toThrow(UnknownMintError);
   });
 
-  it('rejects a fee split the contract did not settle 20/70/10', async () => {
+  it('rejects a fee split the contract did not settle 20/60/10/10', async () => {
     const { source } = makeSource([
       launchLog(),
       tradeLog(),

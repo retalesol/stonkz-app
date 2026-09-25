@@ -41,16 +41,17 @@
   "feeSplitBps": {
     "protocol": 2000,
     "stonkzOps": 1000,
+    "burn": 1000,
     "creatorBucket": "remainder",
-    "note": "protocol and ops are floor(fee*bps/10000); the creator bucket takes fee - protocol - ops so the three always sum to the fee exactly. Dust (<= 2 atoms) lands in the creator bucket."
+    "note": "protocol, stonkzOps (the Stonkz Game buyback vault, historical name) and burn (buyback-and-burn) are floor(fee*bps/10000); the creator bucket takes fee - protocol - ops - burn so the four always sum to the fee exactly. Dust (<= 3 atoms) lands in the creator bucket. Referral commissions are settled off the protocol leg until the on-chain referrer arg lands."
   },
   "creatorBucketSplit": {
     "poolFracFormula": "min(1/2, eligibleStaked / (2 * circulating))",
     "stakersFormula": "floor(creatorBucket * eligibleStaked / (2 * circulating)), clamped to floor(creatorBucket / 2)",
     "creatorFormula": "creatorBucket - stakers",
     "circulatingFormula": "tokensForSale - realTokenReserves",
-    "maxStakerShareOfCurveFee": 0.35,
-    "minCreatorShareOfCurveFee": 0.35
+    "maxStakerShareOfCurveFee": 0.3,
+    "minCreatorShareOfCurveFee": 0.3
   },
   "lockWeightsBps": {
     "0": 0,

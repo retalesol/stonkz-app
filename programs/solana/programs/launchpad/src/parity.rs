@@ -98,6 +98,12 @@ fn parity_vectors() {
         false,
     ));
     out.push_str(&col_str(
+        "burn",
+        &shares.iter().map(|s| s.burn).collect::<Vec<_>>(),
+        "    ",
+        false,
+    ));
+    out.push_str(&col_str(
         "creatorBucket",
         &shares.iter().map(|s| s.creator_bucket).collect::<Vec<_>>(),
         "    ",
@@ -176,7 +182,8 @@ fn parity_vectors() {
         let (mut side, mut fee_bps_c, mut amount_in) = (vec![], vec![], vec![]);
         let (mut s_vb, mut s_vt, mut s_rb, mut s_rt) = (vec![], vec![], vec![], vec![]);
         let (mut gross, mut fee_c, mut net, mut tokens_out) = (vec![], vec![], vec![], vec![]);
-        let (mut complete, mut proto, mut ops_c, mut bucket_c) = (vec![], vec![], vec![], vec![]);
+        let (mut complete, mut proto, mut ops_c, mut burn_c, mut bucket_c) =
+            (vec![], vec![], vec![], vec![], vec![]);
 
         // A fixed script: buys of growing size, two sells, then a buy that has
         // to be capped because it asks for more than the curve can deliver.
@@ -209,6 +216,7 @@ fn parity_vectors() {
                 complete.push(f.curve_complete);
                 proto.push(s.protocol);
                 ops_c.push(s.stonkz_ops);
+                burn_c.push(s.burn);
                 bucket_c.push(s.creator_bucket);
                 st.virtual_base += f.net_base as u128;
                 st.virtual_token -= f.tokens_out as u128;
@@ -228,6 +236,7 @@ fn parity_vectors() {
                 complete.push(false);
                 proto.push(s.protocol);
                 ops_c.push(s.stonkz_ops);
+                burn_c.push(s.burn);
                 bucket_c.push(s.creator_bucket);
                 st.virtual_base -= f.gross_base as u128;
                 st.virtual_token += amount as u128;
@@ -263,6 +272,7 @@ fn parity_vectors() {
         out.push_str(&col_raw("curveComplete", &complete, "        ", false));
         out.push_str(&col_str("protocol", &proto, "        ", false));
         out.push_str(&col_str("ops", &ops_c, "        ", false));
+        out.push_str(&col_str("burn", &burn_c, "        ", false));
         out.push_str(&col_str("creatorBucket", &bucket_c, "        ", true));
         out.push_str("      },\n");
 

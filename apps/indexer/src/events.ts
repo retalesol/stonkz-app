@@ -112,7 +112,7 @@ export interface GraduatedEvent extends EventBase {
 
 /**
  * The fee split, as the program settled it. Carries all three legs
- * (20% protocol / 70% creator bucket / 10% `$STONKZ` ops) so the indexer can
+ * (20% protocol / 60% creator bucket / 10% Stonkz Game buyback (`stonkz_ops`) / 10% burn) so the indexer can
  * check the on-chain arithmetic rather than recomputing and trusting itself.
  */
 export interface FeeAccruedEvent extends EventBase {
@@ -125,9 +125,11 @@ export interface FeeAccruedEvent extends EventBase {
   protocol: number;
   creatorBucket: number;
   stonkzOps: number;
+  /** Buyback-and-burn leg (10%). */
+  burn: number;
   /** Portion of the creator bucket peeled to that coin's stakers (Phase 4). */
   stakerShare: number;
-  /** During a cashback window the creator's 70% arrives as tokens. */
+  /** During a cashback window the creator's 60% arrives as tokens. */
   creatorTokens: number;
 }
 
@@ -178,7 +180,7 @@ export interface CashbackWindowEvent extends EventBase {
  */
 export interface TreasuryCreditEvent extends EventBase {
   kind: 'TreasuryCredit';
-  vault: 'protocol' | 'stonkz_ops';
+  vault: 'protocol' | 'stonkz_ops' | 'burn';
   sym: string | null;
   amount: number;
 }
@@ -245,7 +247,7 @@ export class EventIntegrityError extends Error {
 const SPLIT_EPSILON = 1e-9;
 
 /**
- * Rejects a `FeeAccrued` whose legs do not add up to the 20/70/10 split.
+ * Rejects a `FeeAccrued` whose legs do not add up to the 20/60/10/10 split.
  *
  * The programs settle the split on-chain and the client never computes it, so
  * a mismatch here means either a program bug or a decoder bug — both of which
@@ -257,6 +259,7 @@ export function assertFeeSplit(event: FeeAccruedEvent): void {
     ['protocol', event.protocol],
     ['creatorBucket', event.creatorBucket],
     ['stonkzOps', event.stonkzOps],
+    ['burn', event.burn],
   ];
   for (const [leg, actual] of legs) {
     if (Math.abs(actual - expected[leg]) > SPLIT_EPSILON) {
@@ -266,11 +269,11 @@ export function assertFeeSplit(event: FeeAccruedEvent): void {
       );
     }
   }
-  const sum = event.protocol + event.creatorBucket + event.stonkzOps;
+  const sum = event.protocol + event.creatorBucket + event.stonkzOps + event.burn;
   if (Math.abs(sum - event.feeAmount) > SPLIT_EPSILON) {
     throw new EventIntegrityError(event, `legs sum to ${sum}, not ${event.feeAmount}`);
   }
-  // Stakers take at most half the creator bucket — 35% of the whole fee.
+  // Stakers take at most half the creator bucket — 30% of the whole fee.
   if (event.stakerShare < 0 || event.stakerShare > event.creatorBucket / 2 + SPLIT_EPSILON) {
     throw new EventIntegrityError(
       event,

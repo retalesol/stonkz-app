@@ -81,6 +81,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 poolDustToken;
         uint256 stakerAccruedBase;
         uint256 stakerAccruedToken;
+        /// Appended last (UUPS storage): the burn leg accrued by this coin.
+        uint256 burnAccrued;
     }
 
     struct Position {
@@ -100,7 +102,10 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     /// Treasury balances per base token. Not claimable by any user path.
     mapping(address => uint256) public protocolRevenue;
+    /// Stonkz Game buyback vault (historical name).
     mapping(address => uint256) public stonkzOps;
+    /// Buyback-and-burn vault, per base token. Not claimable by any user path.
+    mapping(address => uint256) public stonkzBurn;
 
     address public admin;
     address public pendingAdmin;
@@ -171,6 +176,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 feeTotal,
         uint256 feeProtocol,
         uint256 feeOps,
+        uint256 feeBurn,
         uint256 feeCreatorBucket,
         uint256 feeStakers,
         uint256 feeCreator,
@@ -187,9 +193,12 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 feeTotal,
         uint256 protocol,
         uint256 ops,
+        uint256 burn,
         uint256 creatorBucket
     );
-    event TreasuryCredit(address indexed baseToken, uint256 protocolDelta, uint256 opsDelta);
+    event TreasuryCredit(
+        address indexed baseToken, uint256 protocolDelta, uint256 opsDelta, uint256 burnDelta
+    );
     event TreasuryWithdrawn(address indexed baseToken, uint8 which, uint256 amount, address to);
     event Graduated(
         address indexed token,
@@ -339,12 +348,19 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
             require(!protocolWithdrawalsPaused, "withdrawals paused");
             require(protocolRevenue[baseToken] >= amount, "balance");
             protocolRevenue[baseToken] -= amount;
-        } else {
-            require(which == 1, "which");
+        } else if (which == 1) {
             require(msg.sender == opsWithdrawAuthority, "not authority");
             require(!opsWithdrawalsPaused, "withdrawals paused");
             require(stonkzOps[baseToken] >= amount, "balance");
             stonkzOps[baseToken] -= amount;
+        } else {
+            // The burn vault is swept by the same ops authority: the keeper
+            // buys $STONKZ with it and burns what it bought.
+            require(which == 2, "which");
+            require(msg.sender == opsWithdrawAuthority, "not authority");
+            require(!opsWithdrawalsPaused, "withdrawals paused");
+            require(stonkzBurn[baseToken] >= amount, "balance");
+            stonkzBurn[baseToken] -= amount;
         }
         _send(baseToken, to, amount);
         emit TreasuryWithdrawn(baseToken, which, amount, to);
@@ -424,13 +440,14 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee);
         // The identity the fee model rests on, asserted on every fill.
-        require(s.protocol + s.stonkzOps + s.creatorBucket == f.fee, "split");
+        require(CurveMath.feeOf(s) == f.fee, "split");
 
         // Pull the whole gross once; routing happens in storage from here.
         _pull(c.baseToken, msg.sender, f.grossBase);
 
         protocolRevenue[c.baseToken] += s.protocol;
         stonkzOps[c.baseToken] += s.stonkzOps;
+        stonkzBurn[c.baseToken] += s.burn;
 
         c.virtualBase += f.netBase;
         c.virtualToken -= f.tokensOut;
@@ -467,6 +484,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         c.protocolAccrued += s.protocol;
         c.opsAccrued += s.stonkzOps;
+        c.burnAccrued += s.burn;
         c.creatorBucketAccrued += s.creatorBucket;
         if (c.realToken == 0) c.complete = true;
 
@@ -494,7 +512,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         require(f.netBase >= minOut, "slippage");
 
         CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee);
-        require(s.protocol + s.stonkzOps + s.creatorBucket == f.fee, "split");
+        require(CurveMath.feeOf(s) == f.fee, "split");
 
         require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "transferFrom");
 
@@ -505,6 +523,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         protocolRevenue[c.baseToken] += s.protocol;
         stonkzOps[c.baseToken] += s.stonkzOps;
+        stonkzBurn[c.baseToken] += s.burn;
         // A sell inside the cashback window pays the elevated fee, but its
         // bucket accrues in base: converting it would be buy pressure the
         // seller never asked for. See SPEC.md §3.
@@ -516,6 +535,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         c.protocolAccrued += s.protocol;
         c.opsAccrued += s.stonkzOps;
+        c.burnAccrued += s.burn;
         c.creatorBucketAccrued += s.creatorBucket;
 
         _send(c.baseToken, msg.sender, f.netBase);
@@ -847,13 +867,13 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 toStakers,
         uint256 cashbackTokens
     ) internal {
-        uint256 fee = s.protocol + s.stonkzOps + s.creatorBucket;
+        uint256 fee = CurveMath.feeOf(s);
         emit Trade(
             c.token, trader, isBuy, baseAmount, tokenAmount, bps, inCashback,
-            fee, s.protocol, s.stonkzOps, s.creatorBucket, toStakers, toCreator, cashbackTokens,
+            fee, s.protocol, s.stonkzOps, s.burn, s.creatorBucket, toStakers, toCreator, cashbackTokens,
             c.virtualBase, c.virtualToken, c.realBase, c.realToken
         );
-        emit FeeAccrued(c.token, c.baseToken, fee, s.protocol, s.stonkzOps, s.creatorBucket);
-        emit TreasuryCredit(c.baseToken, s.protocol, s.stonkzOps);
+        emit FeeAccrued(c.token, c.baseToken, fee, s.protocol, s.stonkzOps, s.burn, s.creatorBucket);
+        emit TreasuryCredit(c.baseToken, s.protocol, s.stonkzOps, s.burn);
     }
 }

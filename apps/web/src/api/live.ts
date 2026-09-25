@@ -10,6 +10,7 @@ import {
   type Net,
   type Quote,
   type Settings,
+  type TokenFees,
   type Wallet,
   crateBy,
   RAR,
@@ -1870,6 +1871,12 @@ export const liveApi: StonkzApi = {
   },
   async claimableFees(): Promise<FeeVault[]> {
     return liveClaimableFees();
+  },
+  async tokenFees(c: SimCoin): Promise<TokenFees> {
+    const net = c.net ?? WALLET.net;
+    return getJson<TokenFees>(
+      '/tokens/' + encodeURIComponent(c.sym) + '/fees?net=' + net + mintQs(c),
+    );
   },
   async claimCreatorFees(sym?: string): Promise<ClaimResult> {
     return liveClaimCreatorFees(sym);

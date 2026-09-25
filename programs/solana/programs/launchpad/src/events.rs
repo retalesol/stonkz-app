@@ -34,6 +34,8 @@ pub struct Trade {
     pub fee_total: u64,
     pub fee_protocol: u64,
     pub fee_ops: u64,
+    /// Buyback-and-burn leg (10%).
+    pub fee_burn: u64,
     pub fee_creator_bucket: u64,
     /// The slice of the creator bucket peeled off to this coin's stakers.
     pub fee_stakers: u64,
@@ -58,6 +60,7 @@ pub struct FeeAccrued {
     pub fee_total: u64,
     pub protocol: u64,
     pub ops: u64,
+    pub burn: u64,
     pub creator_bucket: u64,
     pub ts: i64,
 }
@@ -68,6 +71,7 @@ pub struct TreasuryCredit {
     pub base_mint: Pubkey,
     pub protocol_delta: u64,
     pub ops_delta: u64,
+    pub burn_delta: u64,
     pub ts: i64,
 }
 

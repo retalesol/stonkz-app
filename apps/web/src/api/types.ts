@@ -1,4 +1,13 @@
-import type { CrateTier, Fill, Net, Quote, Settings, SupplyOption, Wallet } from '@stonkz/shared';
+import type {
+  CrateTier,
+  Fill,
+  Net,
+  Quote,
+  Settings,
+  SupplyOption,
+  TokenFees,
+  Wallet,
+} from '@stonkz/shared';
 import type { SimCoin } from '../state/coins.js';
 
 /**
@@ -126,4 +135,7 @@ export interface StonkzApi {
   hydrateStake?(sym: string): Promise<void>;
 
   openCrate(tier: CrateTier): Promise<CrateResult>;
+
+  /** The Fees tab: lifetime split for one coin. Sim estimates it from volume. */
+  tokenFees?(coin: SimCoin): Promise<TokenFees>;
 }

@@ -34,11 +34,11 @@ describe('scalar constants', () => {
 });
 
 describe('fee constants', () => {
-  it('snapshots the 20 / 70 / 10 curve split', () => {
+  it('snapshots the 20 / 60 / 10 / 10 curve split', () => {
     expect(FEE_SPLIT).toMatchSnapshot();
   });
 
-  it('snapshots the 50 / 25 / 25 $STONKZ ops recipe', () => {
+  it('snapshots the $STONKZ vault sweep recipe', () => {
     expect(OPS_SPLIT).toMatchSnapshot();
   });
 });

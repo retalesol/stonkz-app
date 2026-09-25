@@ -13,7 +13,7 @@ import { USER } from './user.js';
 /**
  * Per-memecoin staking.
  *
- * The pool is funded exclusively from the creator's 70% bucket — protocol 20%
+ * The pool is funded exclusively from the creator's 60% bucket — protocol 20%
  * and `$STONKZ` ops 10% never enter it. Phase 4.B moves escrow, weights and
  * `poolFrac` on-chain; the shapes here are what `GET /stake/:sym` will fill.
  * `index.html:1574`
@@ -57,7 +57,7 @@ export function stakedFrac(c: SimCoin): number {
   return stakedFracOf(c, totalStaked(c));
 }
 
-/** Share of the 70% creator bucket that goes to stakers. Caps at 0.5. */
+/** Share of the 60% creator bucket that goes to stakers. Caps at 0.5. */
 export function poolFrac(c: SimCoin): number {
   return poolFracOf(c, totalStaked(c));
 }

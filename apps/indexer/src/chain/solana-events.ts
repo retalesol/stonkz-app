@@ -47,6 +47,7 @@ export interface SolTrade {
   feeTotal: bigint;
   feeProtocol: bigint;
   feeOps: bigint;
+  feeBurn: bigint;
   feeCreatorBucket: bigint;
   feeStakers: bigint;
   feeCreator: bigint;
@@ -66,6 +67,7 @@ export interface SolFeeAccrued {
   feeTotal: bigint;
   protocol: bigint;
   ops: bigint;
+  burn: bigint;
   creatorBucket: bigint;
   ts: bigint;
 }
@@ -75,6 +77,7 @@ export interface SolTreasuryCredit {
   baseMint: string;
   protocolDelta: bigint;
   opsDelta: bigint;
+  burnDelta: bigint;
   ts: bigint;
 }
 
@@ -204,6 +207,7 @@ const layouts: readonly EventLayout<SolanaLaunchpadEvent>[] = [
       feeTotal: r.u64(),
       feeProtocol: r.u64(),
       feeOps: r.u64(),
+      feeBurn: r.u64(),
       feeCreatorBucket: r.u64(),
       feeStakers: r.u64(),
       feeCreator: r.u64(),
@@ -225,6 +229,7 @@ const layouts: readonly EventLayout<SolanaLaunchpadEvent>[] = [
       feeTotal: r.u64(),
       protocol: r.u64(),
       ops: r.u64(),
+      burn: r.u64(),
       creatorBucket: r.u64(),
       ts: r.i64(),
     }),
@@ -236,6 +241,7 @@ const layouts: readonly EventLayout<SolanaLaunchpadEvent>[] = [
       baseMint: r.pubkey(),
       protocolDelta: r.u64(),
       opsDelta: r.u64(),
+      burnDelta: r.u64(),
       ts: r.i64(),
     }),
   },

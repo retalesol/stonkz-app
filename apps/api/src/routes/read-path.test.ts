@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GRAD, MAJORS, RH_STOCKS, STOCKS, nativeUnit } from '@stonkz/shared';
-import { candles, holdersSnapshot, koth, tape, tokens, trades } from '../db/schema.js';
+import {
+  candles,
+  creatorVaults,
+  holdersSnapshot,
+  koth,
+  tape,
+  tokens,
+  trades,
+  treasuryCredits,
+} from '../db/schema.js';
 import { createTestApp, type TestApp } from '../test/app.js';
 import type { SerialisedToken } from './serialise.js';
 
@@ -416,6 +425,70 @@ describe('GET /tokens/:sym/holders', () => {
   });
 });
 
+describe('GET /tokens/:sym/fees', () => {
+  it('reads the four-leg ledger back from the indexer tables', async () => {
+    // Two fills' worth of vault credits plus the creator vault they fed.
+    const credit = (kind: 'protocol' | 'stonkz_ops' | 'burn', amount: number, sig: string) => ({
+      net: 'SOL' as const,
+      kind,
+      sym: 'DOGE2',
+      amount,
+      txSig: sig,
+      logIndex: 0,
+      blockTime: minutesAgo(5),
+      chainPosition: 1,
+    });
+    await h.deps.db
+      .insert(treasuryCredits)
+      .values([
+        credit('protocol', 0.2, 'f1'),
+        credit('stonkz_ops', 0.1, 'f1'),
+        credit('burn', 0.1, 'f1'),
+        credit('protocol', 0.2, 'f2'),
+        credit('stonkz_ops', 0.1, 'f2'),
+        credit('burn', 0.1, 'f2'),
+      ]);
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'SOL',
+      sym: 'DOGE2',
+      mint: MINT_DOGE2,
+      creator: 'DevOne',
+      unclaimedNative: 0.9,
+      unclaimedTokens: 0,
+      stakerPoolNative: 0.3,
+      lifetimeNative: 1.2,
+    });
+
+    const { status, body } = await get<{
+      unit: string;
+      feeBps: number;
+      split: { protocol: number; creatorBucket: number; stonkzOps: number; burn: number };
+      totals: Record<string, number>;
+      source: string;
+    }>('/tokens/DOGE2/fees?net=SOL');
+    expect(status).toBe(200);
+    expect(body.unit).toBe('SOL');
+    expect(body.feeBps).toBe(250);
+    expect(body.split).toEqual({ protocol: 0.2, creatorBucket: 0.6, stonkzOps: 0.1, burn: 0.1 });
+    expect(body.totals['protocol']).toBeCloseTo(0.4, 9);
+    expect(body.totals['game']).toBeCloseTo(0.2, 9);
+    expect(body.totals['burn']).toBeCloseTo(0.2, 9);
+    expect(body.totals['creatorBucket']).toBeCloseTo(1.2, 9);
+    expect(body.totals['stakers']).toBeCloseTo(0.3, 9);
+    expect(body.totals['creator']).toBeCloseTo(0.9, 9);
+    expect(body.totals['gross']).toBeCloseTo(2.0, 9);
+    expect(body.source).toBe('chain');
+  });
+
+  it('is empty, not an error, for a coin that has never traded', async () => {
+    const { status, body } = await get<{ totals: Record<string, number> }>(
+      '/tokens/MOONER/fees?net=SOL',
+    );
+    expect(status).toBe(200);
+    expect(body.totals['gross']).toBe(0);
+  });
+});
+
 describe('GET /koth', () => {
   it('returns the reigning king with the crown freshness the glow uses', async () => {
     const { status, body } = await get<{
@@ -520,9 +593,11 @@ describe('GET /treasuries', () => {
     expect(status).toBe(200);
     expect(body.claimable).toBe(false);
     // SOL + RH from 0001, BASE from 0014, ARC from 0015.
-    expect(body.vaults).toHaveLength(8);
+    // Three vaults per net: protocol, Stonkz Game buyback (stonkz_ops), burn.
+    expect(body.vaults).toHaveLength(12);
     expect(body.vaults.filter((v) => v.kind === 'protocol')).toHaveLength(4);
     expect(body.vaults.filter((v) => v.kind === 'stonkz_ops')).toHaveLength(4);
+    expect(body.vaults.filter((v) => v.kind === 'burn')).toHaveLength(4);
     expect(body.vaults.find((v) => v.net === 'RH')?.nativeUnit).toBe('ETH');
     expect(body.vaults.find((v) => v.net === 'BASE')?.nativeUnit).toBe('ETH');
     // Arc's gas token is USDC, so its vaults are USDC-denominated.

@@ -259,6 +259,16 @@ pub struct InitTreasury<'info> {
         token::token_program = base_token_program,
     )]
     pub ops_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        seeds = [SEED_BURN_VAULT, base_mint.key().as_ref()],
+        bump,
+        token::mint = base_mint,
+        token::authority = global,
+        token::token_program = base_token_program,
+    )]
+    pub burn_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub base_token_program: Interface<'info, TokenInterface>,
@@ -273,7 +283,11 @@ pub fn init_treasury(_ctx: Context<InitTreasury>) -> Result<()> {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum Treasury {
     Protocol,
+    /// Stonkz Game buyback vault (historical name).
     Ops,
+    /// Buyback-and-burn vault. Swept by the same ops authority; the keeper
+    /// buys `$STONKZ` and burns it.
+    Burn,
 }
 
 #[derive(Accounts)]
@@ -313,6 +327,12 @@ pub fn withdraw_treasury(
             g.ops_withdrawals_paused,
             SEED_OPS_VAULT,
             1u8,
+        ),
+        Treasury::Burn => (
+            g.ops_withdraw_authority,
+            g.ops_withdrawals_paused,
+            SEED_BURN_VAULT,
+            2u8,
         ),
     };
 

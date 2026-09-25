@@ -24,7 +24,7 @@ user-facing paths.
 ## Verify on-chain, not in a test
 
 - [ ] Graduate a throwaway token on **each** chain and confirm on a block explorer that the LP is gone: Solana LP mint supply is `0`; EVM LP sits at `0x…dEaD`.
-- [ ] Confirm a real trade's fee split landed 20/70/10 in the three expected places.
+- [ ] Confirm a real trade's fee split landed 20/10/10/60 in the four expected places (protocol, game, burn, creator bucket).
 - [ ] Confirm the aggregator hop took **zero** platform fee.
 - [ ] Confirm a memecoin staker cannot draw more than half the creator bucket.
 - [ ] Confirm the protocol treasury and the ops vault are distinct addresses and that neither is reachable from a user-facing claim.

@@ -12,7 +12,7 @@ import type { ChainEvent } from '../events.js';
  *
  * Two properties matter for the review gates:
  *
- *  - fee legs are produced with `splitFee()`, so the 20/70/10 assertion in
+ *  - fee legs are produced with `splitFee()`, so the 20/60/10/10 assertion in
  *    `assertFeeSplit` is checking real arithmetic rather than a copy of itself;
  *  - amounts straddle the dust floor and the whale cut deliberately, so a
  *    replay exercises the zero-award and achievement paths, not just the happy
@@ -195,6 +195,7 @@ export class FixtureProducer {
       protocol: legs.protocol,
       creatorBucket: legs.creatorBucket,
       stonkzOps: legs.stonkzOps,
+      burn: legs.burn,
       stakerShare,
       // In a cashback window the creator's cut arrives as tokens, not native.
       creatorTokens: (input.cashback ?? false) ? legs.creatorBucket * nativeUsd : 0,

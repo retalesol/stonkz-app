@@ -649,19 +649,20 @@ exports[`crate tables > snapshots the rarity ladder 1`] = `
 ]
 `;
 
-exports[`fee constants > snapshots the 20 / 70 / 10 curve split 1`] = `
+exports[`fee constants > snapshots the $STONKZ vault sweep recipe 1`] = `
 {
-  "creatorBucket": 0.7,
-  "protocol": 0.2,
-  "stonkzOps": 0.1,
+  "burnBuy": 1,
+  "lpNative": 0,
+  "lpTokenBuy": 0,
 }
 `;
 
-exports[`fee constants > snapshots the 50 / 25 / 25 $STONKZ ops recipe 1`] = `
+exports[`fee constants > snapshots the 20 / 60 / 10 / 10 curve split 1`] = `
 {
-  "burnBuy": 0.5,
-  "lpNative": 0.25,
-  "lpTokenBuy": 0.25,
+  "burn": 0.1,
+  "creatorBucket": 0.6,
+  "protocol": 0.2,
+  "stonkzOps": 0.1,
 }
 `;
 

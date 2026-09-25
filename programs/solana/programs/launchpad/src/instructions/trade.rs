@@ -42,6 +42,8 @@ pub struct TradeCtx<'info> {
     pub protocol_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, seeds = [SEED_OPS_VAULT, base_mint.key().as_ref()], bump)]
     pub ops_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [SEED_BURN_VAULT, base_mint.key().as_ref()], bump)]
+    pub burn_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut)]
     pub trader: Signer<'info>,
@@ -223,19 +225,18 @@ pub fn buy(ctx: Context<TradeCtx>, amount_base: u64, min_out: u64) -> Result<()>
     let shares = split_fee(fill.fee);
     // The identity the whole fee model rests on. Cheap to assert, so assert it
     // on every fill rather than trusting the unit tests alone.
-    require!(
-        shares.protocol + shares.stonkz_ops + shares.creator_bucket == fill.fee,
-        LaunchpadError::MathOverflow
-    );
+    require!(shares.total() == fill.fee, LaunchpadError::MathOverflow);
 
-    // Move the trader's base: pool, protocol, ops. The bucket is routed below,
-    // because during cashback it goes back through the curve instead.
+    // Move the trader's base: pool, protocol, game (ops), burn. The bucket is
+    // routed below, because during cashback it goes back through the curve.
     ctx.accounts
         .pull_base(&ctx.accounts.curve_base_vault, fill.net_base)?;
     ctx.accounts
         .pull_base(&ctx.accounts.protocol_vault, shares.protocol)?;
     ctx.accounts
         .pull_base(&ctx.accounts.ops_vault, shares.stonkz_ops)?;
+    ctx.accounts
+        .pull_base(&ctx.accounts.burn_vault, shares.burn)?;
 
     // Apply the main fill before anything reads reserves again.
     let c = &mut ctx.accounts.curve;
@@ -341,10 +342,7 @@ pub fn sell(ctx: Context<TradeCtx>, amount_token: u64, min_out: u64) -> Result<(
     require!(fill.net_base >= min_out, LaunchpadError::SlippageExceeded);
 
     let shares = split_fee(fill.fee);
-    require!(
-        shares.protocol + shares.stonkz_ops + shares.creator_bucket == fill.fee,
-        LaunchpadError::MathOverflow
-    );
+    require!(shares.total() == fill.fee, LaunchpadError::MathOverflow);
 
     // Tokens in first, then base out of the pool.
     transfer_checked(
@@ -375,6 +373,11 @@ pub fn sell(ctx: Context<TradeCtx>, amount_token: u64, min_out: u64) -> Result<(
         &ctx.accounts.curve_base_vault,
         &ctx.accounts.ops_vault,
         shares.stonkz_ops,
+    )?;
+    ctx.accounts.push_base(
+        &ctx.accounts.curve_base_vault,
+        &ctx.accounts.burn_vault,
+        shares.burn,
     )?;
     // A sell inside the cashback window pays the elevated fee like any other
     // fill, but its bucket accrues in base: swapping it into the token would be
@@ -451,9 +454,10 @@ fn emit_fill(
         token_amount,
         eff_fee_bps: bps,
         in_cashback,
-        fee_total: shares.protocol + shares.stonkz_ops + shares.creator_bucket,
+        fee_total: shares.total(),
         fee_protocol: shares.protocol,
         fee_ops: shares.stonkz_ops,
+        fee_burn: shares.burn,
         fee_creator_bucket: shares.creator_bucket,
         fee_stakers: to_stakers,
         fee_creator: to_creator,
@@ -468,9 +472,10 @@ fn emit_fill(
     emit!(FeeAccrued {
         mint: c.mint,
         base_mint: c.base_mint,
-        fee_total: shares.protocol + shares.stonkz_ops + shares.creator_bucket,
+        fee_total: shares.total(),
         protocol: shares.protocol,
         ops: shares.stonkz_ops,
+        burn: shares.burn,
         creator_bucket: shares.creator_bucket,
         ts,
     });
@@ -478,6 +483,7 @@ fn emit_fill(
         base_mint: c.base_mint,
         protocol_delta: shares.protocol,
         ops_delta: shares.stonkz_ops,
+        burn_delta: shares.burn,
         ts,
     });
 }

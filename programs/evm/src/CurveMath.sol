@@ -15,7 +15,10 @@ library CurveMath {
     uint256 internal constant BPS_DEN = 10_000;
 
     uint256 internal constant FEE_PROTOCOL_BPS = 2_000;
+    /// Stonkz Game buyback leg (the vault keeps its historical `ops` name).
     uint256 internal constant FEE_OPS_BPS = 1_000;
+    /// Buyback-and-burn leg.
+    uint256 internal constant FEE_BURN_BPS = 1_000;
 
     uint16 internal constant MIN_FEE_BPS = 100;
     uint16 internal constant MAX_FEE_BPS = 500;
@@ -54,6 +57,7 @@ library CurveMath {
     struct FeeShares {
         uint256 protocol;
         uint256 stonkzOps;
+        uint256 burn;
         uint256 creatorBucket;
     }
 
@@ -95,14 +99,20 @@ library CurveMath {
 
     /* ------------------------------------------------------------ fee split */
 
-    /// @notice 20% protocol, 10% ops, remainder to the creator bucket.
-    /// @dev The bucket is the remainder rather than a third floor, which is
-    /// exactly why the three shares reconstruct the fee for every input. At
-    /// most 2 wei of floor dust lands in the bucket; none is ever lost.
+    /// @notice 20% protocol, 10% game buyback (ops), 10% burn, remainder (60%) to the creator bucket.
+    /// @dev The bucket is the remainder rather than a fourth floor, which is
+    /// exactly why the four shares reconstruct the fee for every input. At
+    /// most 3 wei of floor dust lands in the bucket; none is ever lost.
     function splitFee(uint256 fee) internal pure returns (FeeShares memory s) {
         s.protocol = (fee * FEE_PROTOCOL_BPS) / BPS_DEN;
         s.stonkzOps = (fee * FEE_OPS_BPS) / BPS_DEN;
-        s.creatorBucket = fee - s.protocol - s.stonkzOps;
+        s.burn = (fee * FEE_BURN_BPS) / BPS_DEN;
+        s.creatorBucket = fee - s.protocol - s.stonkzOps - s.burn;
+    }
+
+    /// @notice The fee a split came from.
+    function feeOf(FeeShares memory s) internal pure returns (uint256) {
+        return s.protocol + s.stonkzOps + s.burn + s.creatorBucket;
     }
 
     /// @notice Split the creator bucket between the creator and that token's stakers.

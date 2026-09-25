@@ -16,7 +16,10 @@
 
 export const BPS_DEN = 10_000n;
 export const FEE_PROTOCOL_BPS = 2_000n;
+/** Stonkz Game buyback leg (the vault keeps its historical `ops` name). */
 export const FEE_OPS_BPS = 1_000n;
+/** Buyback-and-burn leg. */
+export const FEE_BURN_BPS = 1_000n;
 
 export const TOKENS_FOR_SALE_NUM = 4n;
 export const TOKENS_FOR_SALE_DEN = 5n;
@@ -51,18 +54,20 @@ const ceilDiv = (a: bigint, b: bigint) => (a + b - 1n) / b;
 export interface FeeShares {
   protocol: bigint;
   stonkzOps: bigint;
+  burn: bigint;
   creatorBucket: bigint;
 }
 
 /**
- * The 20 / 10 / 70 split. `creatorBucket` is the remainder rather than a third
- * floor, which is what makes the three shares reconstruct the fee exactly for
- * every input. At most 2 atoms of floor dust land in the bucket.
+ * The 20 / 10 / 10 / 60 split. `creatorBucket` is the remainder rather than a
+ * fourth floor, which is what makes the four shares reconstruct the fee
+ * exactly for every input. At most 3 atoms of floor dust land in the bucket.
  */
 export function splitFee(fee: bigint): FeeShares {
   const protocol = (fee * FEE_PROTOCOL_BPS) / BPS_DEN;
   const stonkzOps = (fee * FEE_OPS_BPS) / BPS_DEN;
-  return { protocol, stonkzOps, creatorBucket: fee - protocol - stonkzOps };
+  const burn = (fee * FEE_BURN_BPS) / BPS_DEN;
+  return { protocol, stonkzOps, burn, creatorBucket: fee - protocol - stonkzOps - burn };
 }
 
 export interface BucketSplit {

@@ -40,6 +40,7 @@ contract ParityTest is Test {
         uint256[] memory fee = _col("$.feeSplit.fee");
         uint256[] memory protocol = _col("$.feeSplit.protocol");
         uint256[] memory ops = _col("$.feeSplit.ops");
+        uint256[] memory burn = _col("$.feeSplit.burn");
         uint256[] memory bucket = _col("$.feeSplit.creatorBucket");
         assertGt(fee.length, 0, "vectors present");
 
@@ -47,9 +48,10 @@ contract ParityTest is Test {
             CurveMath.FeeShares memory s = CurveMath.splitFee(fee[i]);
             assertEq(s.protocol, protocol[i], "protocol");
             assertEq(s.stonkzOps, ops[i], "ops");
+            assertEq(s.burn, burn[i], "burn");
             assertEq(s.creatorBucket, bucket[i], "creatorBucket");
             assertEq(
-                s.protocol + s.stonkzOps + s.creatorBucket, fee[i], "shares must reconstruct the fee"
+                s.protocol + s.stonkzOps + s.burn + s.creatorBucket, fee[i], "shares must reconstruct the fee"
             );
         }
     }
@@ -130,6 +132,7 @@ contract ParityTest is Test {
         uint256[] tokensOut;
         uint256[] protocol;
         uint256[] ops;
+        uint256[] burn;
         uint256[] bucket;
         uint256[] stateVb;
         uint256[] stateVt;
@@ -167,6 +170,7 @@ contract ParityTest is Test {
             tokensOut: _col(string.concat(f, ".tokensOut")),
             protocol: _col(string.concat(f, ".protocol")),
             ops: _col(string.concat(f, ".ops")),
+            burn: _col(string.concat(f, ".burn")),
             bucket: _col(string.concat(f, ".creatorBucket")),
             stateVb: _col(string.concat(f, ".virtualBase")),
             stateVt: _col(string.concat(f, ".virtualToken")),
@@ -211,6 +215,7 @@ contract ParityTest is Test {
             CurveMath.FeeShares memory sh = CurveMath.splitFee(fee);
             assertEq(sh.protocol, v.protocol[i], "fill protocol");
             assertEq(sh.stonkzOps, v.ops[i], "fill ops");
+            assertEq(sh.burn, v.burn[i], "fill burn");
             assertEq(sh.creatorBucket, v.bucket[i], "fill bucket");
             assertGe(st.virtualBase * st.virtualToken, p.k, "constant product held");
         }

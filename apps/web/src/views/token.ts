@@ -4,6 +4,7 @@ import {
   SUPPLY,
   type Quote,
   type QuoteHop,
+  type TokenFees,
   ago,
   cbLeft,
   curve,
@@ -58,7 +59,7 @@ import { connectWallet } from '../app/wallet.js';
 
 export interface TokenViewState {
   c: SimCoin | null;
-  tab: 'trades' | 'holders' | 'comments';
+  tab: 'trades' | 'holders' | 'comments' | 'fees';
   side: 'BUY' | 'SELL';
   range: number;
   cross: number | null;
@@ -248,7 +249,8 @@ function tokenHTML(c: SimCoin): Html {
           <div class="rt tabs">
             <button class="tab on" data-tab="trades">RECENT TRADES</button
             ><button class="tab" data-tab="holders">HOLDERS</button
-            ><button class="tab" data-tab="comments">COMMENTS</button>
+            ><button class="tab" data-tab="comments">COMMENTS</button
+            ><button class="tab" data-tab="fees">FEES</button>
           </div>
         </div>
         <div id="tabbody"></div>
@@ -787,14 +789,113 @@ async function loadLiveComments(c: SimCoin): Promise<void> {
   paint(c);
 }
 
+/* --------------------------------- fees ----------------------------------- */
+
+function feesLoadingHTML(): Html {
+  return html`<div class="pnl-bd"><p class="hint">LOADING THE FEE LEDGER…</p></div>`;
+}
+
+async function loadFees(c: SimCoin): Promise<void> {
+  const b = $('#tabbody');
+  if (!b || !api.tokenFees) return;
+  try {
+    const f = await api.tokenFees(c);
+    if (TV.c !== c || TV.tab !== 'fees') return;
+    render(b, feesHTML(f));
+  } catch (err) {
+    if (TV.c !== c || TV.tab !== 'fees') return;
+    render(b, html`<div class="pnl-bd"><p class="hint dn">FEE LEDGER UNAVAILABLE: ${String(err)}</p></div>`);
+  }
+}
+
+function feesHTML(f: TokenFees): Html {
+  const u = f.unit;
+  const nat = (v: number): string => v.toFixed(u === 'USDC' ? 2 : 4) + ' ' + u;
+  const usdOf = (v: number): string => usd(v * NATIVE_PRICE.usd);
+  const pctOf = (v: number): string => (f.totals.gross > 0 ? ((v / f.totals.gross) * 100).toFixed(1) : '0.0') + '%';
+  const row = (k: string, share: string, v: number, note: string, cls = ''): Html =>
+    html`<tr>
+      <td class="${cls}">${k}</td>
+      <td class="r">${share}</td>
+      <td class="r">${usdOf(v)}</td>
+      <td class="r dm">${nat(v)}</td>
+      <td class="dm">${note}</td>
+    </tr>`;
+  const stakerShare = f.totals.creatorBucket > 0 ? f.totals.stakers / f.totals.creatorBucket : 0;
+  return html`<div class="pnl-bd">
+    <div class="quad" style="margin:0">
+      <div>
+        <div class="lbl">BUY / SELL TAX</div>
+        <div class="val am">${(f.effFeeBps / 100).toFixed(1)}%</div>
+        <span class="hint"
+          >${
+            f.effFeeBps > f.feeBps
+              ? 'CASHBACK ' + DOT + ' DECAYING TO ' + (f.feeBps / 100).toFixed(1) + '%'
+              : 'SET BY THE CREATOR ' + DOT + ' 1% TO 5%'
+          }</span
+        >
+      </div>
+      <div>
+        <div class="lbl">FEES COLLECTED</div>
+        <div class="val">${usdOf(f.totals.gross)}</div>
+        <span class="hint">${nat(f.totals.gross)} LIFETIME</span>
+      </div>
+      <div>
+        <div class="lbl">CREATOR EARNED</div>
+        <div class="val up">${usdOf(f.totals.creator)}</div>
+        <span class="hint">${nat(f.totals.creator)}</span>
+      </div>
+      <div>
+        <div class="lbl">TO STONKZ GAME</div>
+        <div class="val gd">${usdOf(f.totals.game)}</div>
+        <span class="hint">$STONKZ BUYBACK FOR THE DAILY POT</span>
+      </div>
+    </div>
+    <div class="scrolly">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>WHERE THE TAX GOES</th>
+            <th class="r">SHARE</th>
+            <th class="r">USD</th>
+            <th class="r">${u}</th>
+            <th>NOTE</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${row('CREATOR', pctOf(f.totals.creator), f.totals.creator, (f.split.creatorBucket * 100).toFixed(0) + '% BUCKET, LESS THE STAKING CUT', 'gd')}
+          ${row('STAKERS', pctOf(f.totals.stakers), f.totals.stakers, (stakerShare * 100).toFixed(1) + '% OF THE CREATOR BUCKET ' + DOT + ' UP TO HALF', 'am')}
+          ${row('PROTOCOL REVENUE', pctOf(f.totals.protocol), f.totals.protocol, (f.split.protocol * 100).toFixed(0) + '% OF EVERY TAX')}
+          ${row('STONKZ GAME BUYBACK', pctOf(f.totals.game), f.totals.game, (f.split.stonkzOps * 100).toFixed(0) + '% ' + DOT + ' BUYS $STONKZ FOR THE DAILY POT', 'gd')}
+          ${row('BUYBACK AND BURN', pctOf(f.totals.burn), f.totals.burn, (f.split.burn * 100).toFixed(0) + '% ' + DOT + ' BUYS $STONKZ AND BURNS IT', 'dn')}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">
+      ${
+        f.source === 'chain'
+          ? 'SETTLED ON CHAIN ON EVERY FILL AND READ BACK FROM THE INDEXER. REFERRAL COMMISSIONS (15 / 10 / 5%) ARE PAID FROM THE PROTOCOL LEG.'
+          : 'SANDBOX ESTIMATE FROM 24H VOLUME AND AGE, SPLIT EXACTLY THE WAY THE PROGRAMS DO IT.'
+      }
+    </p>
+  </div>`;
+}
+
 export function renderTab(): void {
   const c = TV.c;
   const b = $('#tabbody');
   if (!c || !b) return;
   render(
     b,
-    TV.tab === 'trades' ? tradesHTML(c) : TV.tab === 'holders' ? holdersHTML(c) : commentsHTML(c),
+    TV.tab === 'trades'
+      ? tradesHTML(c)
+      : TV.tab === 'holders'
+        ? holdersHTML(c)
+        : TV.tab === 'fees'
+          ? feesLoadingHTML()
+          : commentsHTML(c),
   );
+  if (TV.tab === 'fees') void loadFees(c);
   // `fresh` drives the one-shot orange `newrow` flash. Clear after paint so
   // the 5s board poll (which re-renders this tab) does not restart it.
   if (TV.tab === 'trades' && c.trades) {

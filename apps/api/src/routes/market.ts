@@ -124,7 +124,7 @@ export function marketRoutes(): Hono<AppEnv> {
     const rows = await deps.db.select().from(treasuries);
     return c.json({
       claimable: false,
-      note: 'Ops-visible only. Protocol 20% and $STONKZ-ops 10% are never user-claimable and never enter memecoin staking.',
+      note: 'Ops-visible only. Protocol 20%, the Stonkz Game buyback 10% (stonkz_ops) and the burn 10% are never user-claimable and never enter memecoin staking.',
       vaults: rows.map((r) => ({
         net: r.net as Net,
         kind: r.kind,

@@ -38,19 +38,22 @@ describe('migration history', () => {
       '0014_base_treasuries',
       // 0015 widens every net CHECK to Circle's Arc and seeds its cursor + vaults.
       '0015_net_arc',
+      '0016_burn_vault',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(16);
+    expect(second.skipped).toHaveLength(17);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
-    expect(files.map((f) => f.idx)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(files.map((f) => f.idx)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    ]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });
 
-  it('seeds four replay cursors and eight treasury vaults', async () => {
+  it('seeds four replay cursors and twelve treasury vaults', async () => {
     // 0001 seeds SOL + RH; 0013 adds the BASE cursor (284ae9a); 0014 adds the
     // BASE vaults so Base fees have somewhere to land; 0015 does both for ARC.
     const cursors = await h.db.select().from(schema.indexerCursors);
@@ -58,12 +61,16 @@ describe('migration history', () => {
 
     const vaults = await h.db.select().from(schema.treasuries);
     expect(vaults.map((v) => `${v.net}:${v.kind}`).sort()).toEqual([
+      'ARC:burn',
       'ARC:protocol',
       'ARC:stonkz_ops',
+      'BASE:burn',
       'BASE:protocol',
       'BASE:stonkz_ops',
+      'RH:burn',
       'RH:protocol',
       'RH:stonkz_ops',
+      'SOL:burn',
       'SOL:protocol',
       'SOL:stonkz_ops',
     ]);

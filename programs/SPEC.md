@@ -129,21 +129,25 @@ On every curve fill, on the **base** amount:
 ```
 fee            = floor(gross_base · eff_fee_bps / 10_000)
 protocol       = floor(fee · 2_000 / 10_000)      → protocol_revenue vault
-stonkz_ops     = floor(fee · 1_000 / 10_000)      → stonkz_ops vault
-creator_bucket = fee − protocol − stonkz_ops      → creator bucket vault
+stonkz_ops     = floor(fee · 1_000 / 10_000)      → stonkz_ops vault (Stonkz Game buyback)
+burn           = floor(fee · 1_000 / 10_000)      → burn vault (buyback-and-burn)
+creator_bucket = fee − protocol − stonkz_ops − burn → creator bucket vault (60% nominal)
 ```
 
-`protocol + stonkz_ops + creator_bucket == fee` **exactly, always** — the
-creator bucket is defined as the remainder, so the ≤2 atoms of floor dust land
-there. Dust never accumulates in the program and is never lost.
+`protocol + stonkz_ops + burn + creator_bucket == fee` **exactly, always** —
+the creator bucket is defined as the remainder, so the ≤3 atoms of floor dust
+land there. Dust never accumulates in the program and is never lost. The
+`stonkz_ops` vault keeps its historical name on chain; it is swept into
+`$STONKZ` for the daily Stonkz Game pot. The burn vault is swept into
+`$STONKZ` and burned.
 
 The client never computes this for settlement. `packages/shared`'s `splitFee`
 is the float mirror used for previews only.
 
-### The staker peel lives *inside* the 70%
+### The staker peel lives *inside* the 60%
 
-Phase 4.B is an additive split of the creator bucket, applied after the 20/10
-have already been moved to their own vaults:
+Phase 4.B is an additive split of the creator bucket, applied after the
+20/10/10 have already been moved to their own vaults:
 
 ```
 circulating = tokens_for_sale − real_token_reserves        (tokens actually sold)
@@ -154,8 +158,8 @@ creator     = creator_bucket − stakers
 
 `eligible_staked / (2·circulating)` is `poolFrac` from `packages/shared`
 (`0.5 × staked/circulating`), and the clamp is the `min(0.5, …)` in
-`creatorVsStakers`. Fully staked ⟹ stakers take 35% of the curve fee and the
-creator floors at 35%. Protocol 20% and ops 10% are already in different
+`creatorVsStakers`. Fully staked ⟹ stakers take 30% of the curve fee and the
+creator floors at 30%. Protocol 20%, game 10% and burn 10% are already in different
 accounts by the time this runs and are structurally unable to enter the stake
 pool.
 
@@ -176,7 +180,7 @@ once, by the program, from `Clock` at `create_token`; there is no instruction
 that can move it, so no client can extend the window.
 
 The 20/10/70 split runs **first and unchanged** — protocol and ops always stay
-in the base mint. Only the 70% creator bucket is then swapped, through the same
+in the base mint. Only the 60% creator bucket is then swapped, through the same
 curve at **zero fee**, into the launched token and credited to the creator (and,
 if a stake pool exists, split by the same `poolFrac` on the token side).
 

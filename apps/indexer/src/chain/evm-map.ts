@@ -246,6 +246,7 @@ export async function mapEvmTransaction(
           feeTotal,
           big(args, 'feeProtocol'),
           big(args, 'feeOps'),
+          big(args, 'feeBurn'),
           big(args, 'feeCreatorBucket'),
         );
         const baseAmount = big(args, 'baseAmount');
@@ -300,6 +301,7 @@ export async function mapEvmTransaction(
           feeTotal,
           big(args, 'protocol'),
           big(args, 'ops'),
+          big(args, 'burn'),
           big(args, 'creatorBucket'),
         );
         const feeUsd = baseAtomsToUsd(feeTotal, meta.basePrice1e6, meta.baseDecimals);

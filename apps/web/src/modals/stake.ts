@@ -101,8 +101,13 @@ export function renderStake(c: SimCoin): void {
               >
             </div>
             <div>
-              <i style="background:${attr(PIE_COLOURS.stonkzOps)}"></i>$STONKZ OPS<b
+              <i style="background:${attr(PIE_COLOURS.stonkzOps)}"></i>STONKZ GAME<b
                 >${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}%</b
+              >
+            </div>
+            <div>
+              <i style="background:${attr(PIE_COLOURS.burn)}"></i>BURN<b
+                >${(FEE_SPLIT.burn * 100).toFixed(0)}%</b
               >
             </div>
             <div>

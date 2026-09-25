@@ -43,7 +43,7 @@ afterAll(async () => {
   await rig.close();
 });
 
-const vault = async (kind: 'protocol' | 'stonkz_ops') => {
+const vault = async (kind: 'protocol' | 'stonkz_ops' | 'burn') => {
   const [row] = await rig.db.db
     .select()
     .from(treasuries)
@@ -61,7 +61,7 @@ describe('BASE fee accrual', () => {
       .select()
       .from(treasuryCredits)
       .where(eq(treasuryCredits.net, 'BASE'));
-    expect(credits.map((c) => c.kind).sort()).toEqual(['protocol', 'stonkz_ops']);
+    expect(credits.map((c) => c.kind).sort()).toEqual(['burn', 'protocol', 'stonkz_ops']);
 
     // No referral on this trade, so the whole protocol leg lands in the vault.
     const protocol = await vault('protocol');

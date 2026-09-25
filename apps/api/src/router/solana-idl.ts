@@ -34,6 +34,7 @@ export const LAUNCHPAD_SEEDS = {
   stakePosition: 'stake',
   protocolVault: 'protocol_vault',
   opsVault: 'ops_vault',
+  burnVault: 'burn_vault',
   oracle: 'oracle',
 } as const;
 
@@ -52,6 +53,7 @@ export interface LaunchpadPdas {
   stakeEscrow: PublicKey;
   protocolVault: PublicKey;
   opsVault: PublicKey;
+  burnVault: PublicKey;
   oracle: PublicKey;
 }
 
@@ -90,6 +92,7 @@ export function derivePdas(
     baseMint.toBuffer(),
   ]);
   const opsVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.opsVault), baseMint.toBuffer()]);
+  const burnVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.burnVault), baseMint.toBuffer()]);
   const oracle = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.oracle), baseMint.toBuffer()]);
   return {
     global,
@@ -102,6 +105,7 @@ export function derivePdas(
     stakeEscrow,
     protocolVault,
     opsVault,
+    burnVault,
     oracle,
   };
 }

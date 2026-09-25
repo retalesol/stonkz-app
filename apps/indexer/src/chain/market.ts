@@ -110,7 +110,7 @@ export class FeeSplitMismatchError extends Error {
 }
 
 /**
- * Checks the chain's own fee legs against the 20/70/10 split **in integer
+ * Checks the chain's own fee legs against the 20/60/10/10 split **in integer
  * arithmetic**, using the same `splitFee` mirror the programs are held to by
  * `programs/parity-vectors.json`.
  *
@@ -126,16 +126,18 @@ export function assertOnChainFeeSplit(
   feeTotal: bigint,
   protocol: bigint,
   ops: bigint,
+  burn: bigint,
   creatorBucket: bigint,
 ): void {
   const expected = splitFeeAtoms(feeTotal);
   if (
     protocol !== expected.protocol ||
     ops !== expected.stonkzOps ||
+    burn !== expected.burn ||
     creatorBucket !== expected.creatorBucket
   ) {
     throw new FeeSplitMismatchError(
-      `${context}: on-chain legs (${protocol}/${creatorBucket}/${ops}) do not match the integer 20/70/10 split of ${feeTotal} (${expected.protocol}/${expected.creatorBucket}/${expected.stonkzOps})`,
+      `${context}: on-chain legs (${protocol}/${creatorBucket}/${ops}/${burn}) do not match the integer 20/60/10/10 split of ${feeTotal} (${expected.protocol}/${expected.creatorBucket}/${expected.stonkzOps}/${expected.burn})`,
     );
   }
 }
@@ -146,7 +148,7 @@ export function assertOnChainFeeSplit(
  * The legs are derived by re-splitting the converted total with the shared
  * `splitFee`, not by converting each on-chain leg independently. That is
  * deliberate: `events.ts::assertFeeSplit` requires the three `double` legs to
- * be exactly 20/70/10 of the `double` total within 1e-9, and independently
+ * be exactly 20/60/10/10 of the `double` total within 1e-9, and independently
  * converting three floored integers cannot satisfy that. The chain's actual
  * integer legs are verified separately and exactly by
  * {@link assertOnChainFeeSplit}, so nothing is being taken on trust — the
@@ -156,7 +158,10 @@ export function nativeFeeLegs(
   feeTotalNative: number,
   stakerShareAtoms: bigint,
   creatorBucketAtoms: bigint,
-): Pick<FeeAccruedEvent, 'feeAmount' | 'protocol' | 'creatorBucket' | 'stonkzOps' | 'stakerShare'> {
+): Pick<
+  FeeAccruedEvent,
+  'feeAmount' | 'protocol' | 'creatorBucket' | 'stonkzOps' | 'burn' | 'stakerShare'
+> {
   const legs = splitFee(feeTotalNative);
   // The staker peel is a fraction of the bucket on-chain; carry that same
   // fraction across so it stays inside the bucket after rescaling.
@@ -167,6 +172,7 @@ export function nativeFeeLegs(
     protocol: legs.protocol,
     creatorBucket: legs.creatorBucket,
     stonkzOps: legs.stonkzOps,
+    burn: legs.burn,
     stakerShare: legs.creatorBucket * Math.min(0.5, Math.max(0, stakerFraction)),
   };
 }

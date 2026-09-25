@@ -472,7 +472,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
 
     const vaultAfter = (await rig.db.db.select().from(creatorVaults))[0];
     expect(vaultAfter?.lifetimeNative).toBeCloseTo(
-      (vaultBefore?.lifetimeNative ?? 0) - lastFee * 0.7,
+      (vaultBefore?.lifetimeNative ?? 0) - lastFee * 0.6,
       9,
     );
     const protocolAfter = (
@@ -765,8 +765,9 @@ describe('the dead-letter path', () => {
       creator: CREATOR,
       feeAmount: 1,
       protocol: 0.9,
-      creatorBucket: 0.05,
-      stonkzOps: 0.05,
+      creatorBucket: 0.04,
+      stonkzOps: 0.03,
+      burn: 0.03,
       stakerShare: 0,
       creatorTokens: 0,
     };

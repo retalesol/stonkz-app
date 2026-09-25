@@ -30,6 +30,9 @@ import {
   xpForStake,
   xpForTrade,
   circ,
+  splitFee,
+  type TokenFees,
+  nativeUnit as unitFor,
 } from '@stonkz/shared';
 import { isEvm } from '@stonkz/shared';
 import { emit } from '../lib/bus.js';
@@ -195,7 +198,7 @@ function accrueStake(c: SimCoin, now: number): void {
   if (!st || st.amt <= 0) return;
   const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
   const feeNative = (turnover * (effFee(c, now) / 100)) / NATIVE_PRICE.usd;
-  // Only the creator's 70% bucket funds stakers, and poolFrac splits that
+  // Only the creator's 60% bucket funds stakers, and poolFrac splits that
   // bucket between the creator and the pool. Protocol and ops never enter it.
   const pool = feeNative * FEE_SPLIT.creatorBucket * poolFrac(c);
   const weight = totalWeight(c);
@@ -376,6 +379,38 @@ export const simApi: StonkzApi = {
     if (inCashback(c)) unlock('cashback');
     emit('coins');
     return toFill(c, t);
+  },
+
+  /**
+   * The sandbox has no ledger, so estimate the lifetime take from 24h volume
+   * and age, then split it exactly the way the programs do.
+   */
+  async tokenFees(c: SimCoin): Promise<TokenFees> {
+    const net = c.net ?? WALLET.net;
+    const feePct = Number(c.tfee || 1);
+    const grossUsd = vol24(c) * Math.min(40, Math.max(0.15, c.age / 1440)) * (feePct / 100);
+    const gross = grossUsd / nativeUsd(unitFor(net));
+    const s = splitFee(gross);
+    const stakers = s.creatorBucket * poolFrac(c);
+    return {
+      sym: c.sym,
+      net,
+      unit: unitFor(net),
+      feeBps: Math.round(feePct * 100),
+      effFeeBps: Math.round(effFee(c) * 100),
+      split: { ...FEE_SPLIT },
+      totals: {
+        gross,
+        protocol: s.protocol,
+        game: s.stonkzOps,
+        burn: s.burn,
+        creatorBucket: s.creatorBucket,
+        creator: s.creatorBucket - stakers,
+        stakers,
+        referrals: 0,
+      },
+      source: 'sim',
+    };
   },
 
   /** TODO(Phase 1.B): SIWS / SIWE, then read the balance from RPC. */

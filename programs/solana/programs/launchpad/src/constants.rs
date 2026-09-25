@@ -13,12 +13,15 @@ pub const BPS_DEN: u64 = 10_000;
 
 /// Protocol revenue share of the curve fee.
 pub const FEE_PROTOCOL_BPS: u64 = 2_000;
-/// `$STONKZ` operations share of the curve fee.
+/// Stonkz Game share of the curve fee: buys `$STONKZ` for the daily game pot.
+/// (The vault keeps its historical `ops` name on chain and on the wire.)
 pub const FEE_OPS_BPS: u64 = 1_000;
+/// Buyback-and-burn share of the curve fee: buys `$STONKZ` and burns it.
+pub const FEE_BURN_BPS: u64 = 1_000;
 /// The creator bucket is deliberately *not* a constant: it is the remainder,
-/// so the three shares sum to the fee exactly. This value exists only so tests
-/// and the IDL can assert the nominal 70%.
-pub const FEE_CREATOR_BUCKET_BPS_NOMINAL: u64 = 7_000;
+/// so the four shares sum to the fee exactly. This value exists only so tests
+/// and the IDL can assert the nominal 60%.
+pub const FEE_CREATOR_BUCKET_BPS_NOMINAL: u64 = 6_000;
 
 /// Creator-set curve fee bounds, matching the launch slider's 1.0–5.0%.
 pub const MIN_FEE_BPS: u16 = 100;
@@ -135,6 +138,7 @@ pub const SEED_STAKE_ESCROW: &[u8] = b"stake_escrow";
 pub const SEED_STAKE_POSITION: &[u8] = b"stake";
 pub const SEED_PROTOCOL_VAULT: &[u8] = b"protocol_vault";
 pub const SEED_OPS_VAULT: &[u8] = b"ops_vault";
+pub const SEED_BURN_VAULT: &[u8] = b"burn_vault";
 
 /* -------------------------------------------------------------------------- */
 /* Graduation migration (Meteora DLMM) — see SPEC.md §5 and §6                */

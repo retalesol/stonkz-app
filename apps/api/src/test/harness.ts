@@ -116,7 +116,8 @@ export async function createTestDb(): Promise<TestDb> {
       await pg.exec(
         `INSERT INTO "treasuries" ("net", "kind") VALUES
            ('SOL','protocol'), ('SOL','stonkz_ops'), ('RH','protocol'), ('RH','stonkz_ops'),
-           ('BASE','protocol'), ('BASE','stonkz_ops'), ('ARC','protocol'), ('ARC','stonkz_ops')`,
+           ('BASE','protocol'), ('BASE','stonkz_ops'), ('ARC','protocol'), ('ARC','stonkz_ops'),
+           ('SOL','burn'), ('RH','burn'), ('BASE','burn'), ('ARC','burn')`,
       );
     },
   };

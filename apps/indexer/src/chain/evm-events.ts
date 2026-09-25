@@ -50,6 +50,7 @@ export const LAUNCHPAD_EVENTS_ABI = [
       { name: 'feeTotal', type: 'uint256', indexed: false },
       { name: 'feeProtocol', type: 'uint256', indexed: false },
       { name: 'feeOps', type: 'uint256', indexed: false },
+      { name: 'feeBurn', type: 'uint256', indexed: false },
       { name: 'feeCreatorBucket', type: 'uint256', indexed: false },
       { name: 'feeStakers', type: 'uint256', indexed: false },
       { name: 'feeCreator', type: 'uint256', indexed: false },
@@ -69,6 +70,7 @@ export const LAUNCHPAD_EVENTS_ABI = [
       { name: 'feeTotal', type: 'uint256', indexed: false },
       { name: 'protocol', type: 'uint256', indexed: false },
       { name: 'ops', type: 'uint256', indexed: false },
+      { name: 'burn', type: 'uint256', indexed: false },
       { name: 'creatorBucket', type: 'uint256', indexed: false },
     ],
   },
@@ -79,6 +81,7 @@ export const LAUNCHPAD_EVENTS_ABI = [
       { name: 'baseToken', type: 'address', indexed: true },
       { name: 'protocolDelta', type: 'uint256', indexed: false },
       { name: 'opsDelta', type: 'uint256', indexed: false },
+      { name: 'burnDelta', type: 'uint256', indexed: false },
     ],
   },
   {

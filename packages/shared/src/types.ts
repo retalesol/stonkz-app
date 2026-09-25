@@ -152,6 +152,39 @@ export interface DropLogEntry {
   col: string;
 }
 
+/**
+ * Lifetime fee ledger for one coin, as `GET /tokens/:sym/fees` returns it and
+ * the Fees tab renders it. Every amount is in the net's native unit.
+ */
+export interface TokenFees {
+  sym: string;
+  net: Net;
+  unit: NativeUnit;
+  /** Creator-set tax, bps. */
+  feeBps: number;
+  /** Effective tax right now (cashback decay), bps. */
+  effFeeBps: number;
+  /** The nominal split the programs assert on every fill. */
+  split: { protocol: number; creatorBucket: number; stonkzOps: number; burn: number };
+  totals: {
+    /** Everything taken in fees since launch. */
+    gross: number;
+    protocol: number;
+    /** Stonkz Game buyback vault (`stonkz_ops`). */
+    game: number;
+    burn: number;
+    /** The 60% bucket before the staker peel. */
+    creatorBucket: number;
+    /** What the creator kept (claimed + unclaimed). */
+    creator: number;
+    /** What this coin's stakers were paid out of the bucket. */
+    stakers: number;
+    /** Referral commissions paid out of the protocol leg for this coin's fills. */
+    referrals: number;
+  };
+  source: 'chain' | 'sim';
+}
+
 /** §5.3 — connected wallet. */
 export interface Wallet {
   on: boolean;

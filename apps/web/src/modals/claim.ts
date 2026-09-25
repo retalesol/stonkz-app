@@ -18,7 +18,7 @@ import { closeScrim, isOpen, openScrim, wireBackdrop } from './scrim.js';
  *
  * The window's subtitle is the honest one now — a creator's share of curve fees
  * on coins they launched, not "all fees". Protocol 20% and `$STONKZ` ops 10%
- * are never claimable here, and the creator's own 70% bucket is shared with
+ * are never claimable here, and the creator's own 60% bucket is shared with
  * that coin's stakers. `index.html:2996`
  *
  * Live mode reads `GET /fees` (`api.claimableFees()`) instead of `SimCoin.fee`/
