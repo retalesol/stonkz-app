@@ -1,3 +1,4 @@
+import { isEvm, type Net } from '@stonkz/shared';
 import { deriveCurve, freshState, type CurveParams, type CurveState } from '@stonkz/curve-sim';
 
 /**
@@ -101,8 +102,10 @@ export function deriveCurveColumns(
   basePrice1e6: bigint,
   baseDecimals: number,
   tokenDecimals: number,
+  /** Which chain will hold the curve: EVM nets skip Solana's u64 ceiling. */
+  net: Net = 'SOL',
 ): { params: CurveParams; state: CurveState; columns: CurveStateColumns } | null {
-  const params = deriveCurve(supplyAtoms, basePrice1e6, baseDecimals);
+  const params = deriveCurve(supplyAtoms, basePrice1e6, baseDecimals, { evm: isEvm(net) });
   if (!params) return null;
   const state = freshState(params);
   return {

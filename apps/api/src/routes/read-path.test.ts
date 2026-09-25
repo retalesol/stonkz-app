@@ -519,11 +519,13 @@ describe('GET /treasuries', () => {
     }>('/treasuries');
     expect(status).toBe(200);
     expect(body.claimable).toBe(false);
-    // SOL + RH from 0001, BASE from 0014.
-    expect(body.vaults).toHaveLength(6);
-    expect(body.vaults.filter((v) => v.kind === 'protocol')).toHaveLength(3);
-    expect(body.vaults.filter((v) => v.kind === 'stonkz_ops')).toHaveLength(3);
+    // SOL + RH from 0001, BASE from 0014, ARC from 0015.
+    expect(body.vaults).toHaveLength(8);
+    expect(body.vaults.filter((v) => v.kind === 'protocol')).toHaveLength(4);
+    expect(body.vaults.filter((v) => v.kind === 'stonkz_ops')).toHaveLength(4);
     expect(body.vaults.find((v) => v.net === 'RH')?.nativeUnit).toBe('ETH');
     expect(body.vaults.find((v) => v.net === 'BASE')?.nativeUnit).toBe('ETH');
+    // Arc's gas token is USDC, so its vaults are USDC-denominated.
+    expect(body.vaults.find((v) => v.net === 'ARC')?.nativeUnit).toBe('USDC');
   });
 });

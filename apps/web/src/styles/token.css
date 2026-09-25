@@ -104,3 +104,12 @@ tr.newrow td{animation:rowin .5s ease-out}
 .xmeta b{color:var(--txt2);font-weight:400}
 .xnote{font-size:9.5px;color:var(--dim);border-top:1px solid var(--line);padding-top:5px}
 
+
+/* ---------- wrong-chain strip ---------- */
+.xchain{display:flex;align-items:center;gap:10px;border:1px solid var(--down);background:linear-gradient(90deg,#2a0f0c,#0b0d14 70%);
+  padding:7px 10px;margin-top:8px;flex-wrap:wrap}
+.xchain .xl{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:11px;letter-spacing:.12em;color:var(--down)}
+.xchain .xs{font-size:10.5px;color:var(--txt2)}
+.xchain .xs b{color:var(--txt)}
+.xchain .grow{flex:1}
+#xchainWrap:empty{display:none}

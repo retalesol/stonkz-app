@@ -1,4 +1,15 @@
-import { type Lane, type Net, ago, curve, laneOf, num, pct, usd } from '@stonkz/shared';
+import {
+  ALL_NETS,
+  NET_INFO,
+  type Lane,
+  type Net,
+  ago,
+  curve,
+  laneOf,
+  num,
+  pct,
+  usd,
+} from '@stonkz/shared';
 import { navigate } from '../app/route.js';
 import { paintCoinArt } from '../canvas/pix.js';
 import { spark } from '../canvas/spark.js';
@@ -24,9 +35,27 @@ import { currentView } from '../app/view.js';
  */
 
 type SortKey = 'new' | 'mc' | 'chg' | 'rep';
+export type NetFilter = Net | 'ALL';
 
 let LANES: Record<Lane, HTMLElement>;
 let sortKey: SortKey = 'new';
+/** Which chain the board shows. `ALL` is the guest view; a wallet pins its own net. */
+let netFilter: NetFilter = 'ALL';
+let query = '';
+/** Installed by the shell: what to do when a connected user taps another chain's chip. */
+let switchNet: ((net: Net) => void) | null = null;
+
+export function setNetSwitchHandler(fn: (net: Net) => void): void {
+  switchNet = fn;
+}
+
+/** The chain badge every card and token header carries. */
+export function netPill(net: Net): ReturnType<typeof html> {
+  const info = NET_INFO[net];
+  return html`<span class="netpill" style="--nc:${attr(info.col)}" title="${attr(info.name)}"
+    ><i></i>${info.short}</span
+  >`;
+}
 
 /** Build a card once. `index.html:1418` */
 function card(c: SimCoin): HTMLElement {
@@ -45,7 +74,8 @@ function card(c: SimCoin): HTMLElement {
           ><span class="chg ${ud(c.chg)}" data-f="chg">${pct(c.chg)}</span>
         </div>
         <div class="cmeta">
-          by <i class="addrlink" data-addr="${attr(c.dev)}">${c.dev}</i> ${DOT} ${ago(c.age)}
+          ${netPill(c.net ?? 'SOL')} by
+          <i class="addrlink" data-addr="${attr(c.dev)}">${c.dev}</i> ${DOT} ${ago(c.age)}
         </div>
         <p class="cdesc">${c.desc}</p>
         <div class="cstats">
@@ -124,24 +154,75 @@ export function addCoin(c: SimCoin): void {
  * A filter, not a re-render: hiding is a `display` flip on the cached nodes so
  * the flash classes and scroll position survive. `index.html:4014`
  */
-export function filterBoard(query: string): void {
+export function filterBoard(q: string): void {
+  query = q;
+  applyFilters();
+}
+
+function matchesNet(c: SimCoin): boolean {
+  return netFilter === 'ALL' || (c.net ?? 'SOL') === netFilter;
+}
+
+/** Text query and chain filter together; both are `display` flips. */
+function applyFilters(): void {
   const v = query.trim().toUpperCase();
   let n = 0;
   for (const c of COINS) {
     const hit =
-      !v ||
-      c.sym.indexOf(v) > -1 ||
-      c.name.toUpperCase().indexOf(v) > -1 ||
-      c.dev.toUpperCase().indexOf(v) > -1;
+      matchesNet(c) &&
+      (!v ||
+        c.sym.indexOf(v) > -1 ||
+        c.name.toUpperCase().indexOf(v) > -1 ||
+        c.dev.toUpperCase().indexOf(v) > -1);
     if (c.el) c.el.style.display = hit ? '' : 'none';
     if (hit) n++;
   }
-  must('#count').textContent = n + (v ? ' MATCH' : ' COINS');
+  const filtered = v !== '' || netFilter !== 'ALL';
+  must('#count').textContent = n + (filtered ? ' MATCH' : ' COINS');
+}
+
+/**
+ * Pin the board to one chain (or `ALL`). Called on connect with the wallet's
+ * net and on disconnect with `ALL`; the chips call it directly for guests.
+ */
+export function setNetFilter(net: NetFilter): void {
+  netFilter = net;
+  renderNetChips();
+  if (LANES) applyFilters();
+}
+
+export function currentNetFilter(): NetFilter {
+  return netFilter;
+}
+
+function renderNetChips(): void {
+  const box = $('#netChips');
+  if (!box) return;
+  const chips: NetFilter[] = ['ALL', ...ALL_NETS];
+  render(
+    box,
+    html`${chips.map((k) => {
+      const info = k === 'ALL' ? null : NET_INFO[k];
+      const on = k === netFilter;
+      const locked = WALLET.on && k !== WALLET.net;
+      return html`<button
+        type="button"
+        class="chip net${on ? ' on' : ''}"
+        data-net="${attr(k)}"
+        style="--nc:${attr(info ? info.col : '#cac6ba')}"
+        title="${attr(
+          k === 'ALL' ? 'EVERY CHAIN' : locked ? 'SWITCH YOUR WALLET TO ' + info!.name : info!.name,
+        )}"
+      >
+        ${info ? html`<i></i>` : ''}${k === 'ALL' ? 'ALL' : info!.short}
+      </button>`;
+    })}`,
+  );
 }
 
 export function counts(): void {
   const n: Record<Lane, number> = { new: 0, soon: 0, grad: 0 };
-  for (const c of COINS) if (c.lane) n[c.lane]++;
+  for (const c of COINS) if (c.lane && matchesNet(c)) n[c.lane]++;
   must('#n-new').textContent = n.new + ' LIVE';
   must('#n-soon').textContent = n.soon + ' CLOSE';
   must('#n-grad').textContent = n.grad + ' ON DEX';
@@ -156,6 +237,7 @@ export function renderBoard(): void {
   }
   for (const c of sortCoins(COINS)) LANES[c.lane as Lane].appendChild(c.el as HTMLElement);
   counts();
+  applyFilters();
 }
 
 /** FLIP: the neighbours start where they were and slide to where they are. `index.html:1475` */
@@ -307,13 +389,38 @@ export function initBoard(): void {
   renderBoard();
   king();
 
-  for (const chip of $$('.filters .chip')) {
+  for (const chip of $$('.filters .chip[data-sort]')) {
     chip.addEventListener('click', () => {
       sortKey = (chip.dataset['sort'] as SortKey) ?? 'new';
-      for (const other of $$('.filters .chip')) other.classList.toggle('on', other === chip);
+      for (const other of $$('.filters .chip[data-sort]'))
+        other.classList.toggle('on', other === chip);
       renderBoard();
     });
   }
+  renderNetChips();
+  must('#netChips').addEventListener('click', (e) => {
+    const chip = (e.target as Element | null)?.closest<HTMLElement>('[data-net]');
+    if (!chip) return;
+    const k = chip.dataset['net'] as NetFilter;
+    if (WALLET.on && k !== WALLET.net) {
+      // A connected wallet only ever sees its own chain; another chip is a
+      // request to move the wallet there, not a filter.
+      if (k === 'ALL') {
+        toast(
+          'DISCONNECT TO BROWSE EVERY CHAIN ' +
+            DOT +
+            ' YOUR WALLET PINS THE BOARD TO ' +
+            NET_INFO[WALLET.net].name,
+        );
+        return;
+      }
+      switchNet?.(k);
+      return;
+    }
+    setNetFilter(k);
+    if (k !== 'ALL')
+      toast('SHOWING ' + NET_INFO[k].name + ' COINS ' + DOT + ' TAP ALL FOR EVERY CHAIN');
+  });
 
   // One delegated listener for every creator link on the board.
   must('.board').addEventListener('click', (e) => {

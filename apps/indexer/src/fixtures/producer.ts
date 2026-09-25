@@ -35,6 +35,8 @@ const CHAIN_DEFAULTS: Record<Net, { position: number; positionsPerStep: number }
   SOL: { position: 250_000_000, positionsPerStep: 12 },
   RH: { position: 21_000_000, positionsPerStep: 2 },
   BASE: { position: 46_000_000, positionsPerStep: 2 },
+  // ~1s blocks: one event every 5s is 5 blocks.
+  ARC: { position: 1_000_000, positionsPerStep: 5 },
 };
 
 export class FixtureProducer {
@@ -431,7 +433,7 @@ export function canonicalScenario(seed = 0xc0ffee): ScenarioResult {
 
   return {
     events: [...sol.all(), ...rh.all()],
-    heads: { SOL: sol.head, RH: rh.head, BASE: rh.head },
+    heads: { SOL: sol.head, RH: rh.head, BASE: rh.head, ARC: rh.head },
     actors,
   };
 }

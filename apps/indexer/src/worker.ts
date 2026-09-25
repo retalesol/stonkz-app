@@ -95,6 +95,7 @@ if (config.mode === 'chain') {
     BASE: config.chainNets.includes('BASE')
       ? built.sources.BASE
       : new FixtureEventSource('BASE', []),
+    ARC: config.chainNets.includes('ARC') ? built.sources.ARC : new FixtureEventSource('ARC', []),
   };
   rollback = new ReorgRollback({ db: deps.db, logger, now: deps.now });
   // A rollback can delete the `tokens` row a launch created, so the registry's
@@ -126,6 +127,7 @@ if (config.mode === 'chain') {
     SOL: new FixtureEventSource('SOL', scenario.events),
     RH: new FixtureEventSource('RH', scenario.events),
     BASE: new FixtureEventSource('BASE', scenario.events),
+    ARC: new FixtureEventSource('ARC', scenario.events),
   };
   // Safe precisely because ingest is idempotent, and only correct because
   // there is no chain: in chain mode this would re-walk history from genesis.

@@ -609,6 +609,106 @@ describe('POST /trade/prepare', () => {
     });
   });
 
+  describe('Arc: real funds, capped at NET_INFO.ARC.maxTradeUsd', () => {
+    // Nothing is deployed on Arc; the launchpad address is set here only so
+    // SIWE accepts chain id 5042 (env.ts adds it to the allow-list on that
+    // condition alone) and a session can reach /trade/prepare at all.
+    const ARC_LAUNCHPAD = getAddress(`0x${'a4c0'.padStart(40, '0')}`);
+    const ARC_NATIVE = '0x0000000000000000000000000000000000000000';
+    const ARC_TOKEN_MINT = getAddress(`0x${'a4cd06'.padStart(40, '0')}`);
+    let ha: TestApp;
+
+    beforeAll(async () => {
+      ha = await createTestApp({ env: { ARC_LAUNCHPAD_ADDRESS: ARC_LAUNCHPAD } });
+    });
+    afterAll(async () => {
+      await ha.close();
+    });
+    beforeEach(async () => {
+      await ha.db.reset();
+      await ha.clearRateLimits();
+    });
+
+    async function seedArcToken(): Promise<void> {
+      const supplyAtoms = 10n ** 9n * 10n ** 18n;
+      // Native USDC at $1 with 18 decimals only fits the EVM (uint256) curve.
+      const derived = deriveCurveColumns(supplyAtoms, 1_000_000n, 18, 18, 'ARC');
+      if (!derived) throw new Error('seedArcToken: curve derivation failed');
+      const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
+      const mc = Number(mcapUsd1e6(mcapBaseAtoms, 1_000_000n, 18)) / 1e6;
+      await ha.deps.db.insert(tokens).values({
+        net: 'ARC',
+        sym: 'ARCDOG',
+        name: 'ARCDOG',
+        creator: 'Dev',
+        mint: ARC_TOKEN_MINT,
+        baseSymbol: 'USDC',
+        baseMint: ARC_NATIVE,
+        supply: 1e9,
+        feeBps: 250,
+        mc,
+        lastMc: mc,
+        lane: 'new',
+        seed: 1,
+        launchedAt: new Date(ha.now() - 600_000),
+        ...derived.columns,
+      });
+    }
+
+    async function arcPrepare(
+      token: string,
+      body: TradeBody,
+    ): Promise<{ status: number; body: TradePrepareResponse }> {
+      const res = await ha.app.request('/trade/prepare', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...authed(token) },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, body: (await res.json()) as TradePrepareResponse };
+    }
+
+    it('refuses a buy worth more than 25 USD before touching a route or balance', async () => {
+      await seedArcToken();
+      const { token, address } = await ha.login('ARC');
+      ha.rpcs.ARC.setBalance(address, 1_000);
+
+      const { status, body } = await arcPrepare(token, {
+        sym: 'ARCDOG',
+        side: 'buy',
+        amount: 25.01,
+      });
+      expect(status).toBe(422);
+      expect(body.error).toBe('max_trade_usd_exceeded');
+      expect(body.detail).toMatch(/capped at 25 USD/);
+      expect(body.atomic).toBeUndefined();
+    });
+
+    it('refuses a quote above the cap too, so the UI never shows a trade it cannot prepare', async () => {
+      await seedArcToken();
+      const res = await ha.app.request('/tokens/ARCDOG/quote?net=ARC&side=buy&amount=30');
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as { error: string }).error).toBe('max_trade_usd_exceeded');
+
+      const ok = await ha.app.request('/tokens/ARCDOG/quote?net=ARC&side=buy&amount=20');
+      expect(ok.status).toBe(200);
+      expect(((await ok.json()) as { nativeUnit: string }).nativeUnit).toBe('USDC');
+    });
+
+    it('refuses an under-cap prepare while nothing is deployed on Arc', async () => {
+      await seedArcToken();
+      const { token, address } = await ha.login('ARC');
+      ha.rpcs.ARC.setBalance(address, 1_000);
+
+      // Same fail-closed path Base takes with BASE_ROUTER_ADDRESS unset: no
+      // atomic router means no prepare, never a multi-step fallback.
+      const { status, body } = await arcPrepare(token, { sym: 'ARCDOG', side: 'buy', amount: 10 });
+      expect(status).toBe(422);
+      expect(body.error).toBe('rh_router_required');
+      expect(body.detail).toMatch(/ARC_ROUTER_ADDRESS is not configured/);
+      expect(body.steps).toBeUndefined();
+    });
+  });
+
   it('rejects a Jupiter response that smuggles a platform fee on hop 1', async () => {
     await seedTradeableToken({
       net: 'SOL',

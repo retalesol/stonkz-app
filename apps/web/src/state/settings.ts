@@ -1,4 +1,5 @@
-import type { MevMode, Settings } from '@stonkz/shared';
+import { DEFAULT_TRADE_CAP, type MevMode, type NativeUnit, type Settings } from '@stonkz/shared';
+import { nativeUnit } from './wallet.js';
 
 /**
  * Transaction defaults.
@@ -55,14 +56,25 @@ export function resetSettings(): void {
   saveSettings();
 }
 
+/**
+ * The cap in the unit the ticket is denominated in. A cap saved while on
+ * Solana (5 SOL) must not travel to Arc as 5 USDC, so a unit mismatch falls
+ * back to that unit's default until the user sets one there.
+ */
+export function capFor(unit: NativeUnit = nativeUnit()): number {
+  return (SET.capUnit ?? 'SOL') === unit ? SET.cap : DEFAULT_TRADE_CAP[unit];
+}
+
 /** Payload for prepare + PUT /me/settings. */
 export function settingsPayload(): Settings {
+  const unit = nativeUnit();
   return {
     slip: SET.slip,
     prio: SET.prio,
     mev: SET.mev as MevMode,
     mevTip: SET.mevTip,
-    cap: SET.cap,
+    cap: capFor(unit),
+    capUnit: unit,
     defBuy: SET.defBuy,
     confirm: SET.confirm,
   };

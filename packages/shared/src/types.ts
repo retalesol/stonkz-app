@@ -5,16 +5,24 @@
  */
 
 /** Chain a coin, wallet or session belongs to. */
-export type Net = 'SOL' | 'RH' | 'BASE';
+export type Net = 'SOL' | 'RH' | 'BASE' | 'ARC';
 
-/** EVM product nets — Robinhood Chain and Coinbase Base. */
-export type EvmNet = 'RH' | 'BASE';
+/** EVM product nets — Robinhood Chain, Coinbase Base and Circle's Arc. */
+export type EvmNet = 'RH' | 'BASE' | 'ARC';
 
-/** Every product net, in picker order. */
-export const ALL_NETS: readonly Net[] = ['SOL', 'RH', 'BASE'] as const;
+/**
+ * Every product net, in picker order. Everything else about a net (gas unit,
+ * decimals, colours, DEX, caps) lives in `nets.ts`; add a net there and here
+ * and the exhaustive `Record<Net, …>` maps across the workspace tell you the
+ * rest.
+ */
+export const ALL_NETS: readonly Net[] = ['SOL', 'BASE', 'ARC', 'RH'] as const;
 
-/** The gas token the user always pays and receives. */
-export type NativeUnit = 'SOL' | 'ETH';
+/**
+ * The gas token the user always pays and receives. Arc's gas is USDC: the EVM
+ * native value carries 18 decimals there, the ERC-20 face carries 6.
+ */
+export type NativeUnit = 'SOL' | 'ETH' | 'USDC';
 
 /** Board lane, derived from market cap against `GRAD`. */
 export type Lane = 'new' | 'soon' | 'grad';
@@ -178,8 +186,14 @@ export interface Settings {
   mev: MevMode;
   /** MEV tip, native units. */
   mevTip: number;
-  /** Abort above this total, native units. */
+  /** Abort above this total, native units of `capUnit` (or the connected net). */
   cap: number;
+  /**
+   * The unit `cap` was set in. When the connected net's unit differs, the
+   * per-unit default (`DEFAULT_TRADE_CAP`) applies instead of a number that
+   * meant something else (5 ETH is not 5 USDC).
+   */
+  capUnit?: NativeUnit;
   /** Prefilled buy amount, native units. */
   defBuy: number;
   confirm: boolean;

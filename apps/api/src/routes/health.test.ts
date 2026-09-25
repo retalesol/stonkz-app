@@ -43,11 +43,13 @@ describe('GET /health', () => {
     expect(body.chains.RH.alerting).toBe(true);
   });
 
-  it('is green once all three cursors are caught up', async () => {
-    // BASE joined ALL_NETS in 284ae9a, so /health is only `ok` once it is level too.
+  it('is green once all four cursors are caught up', async () => {
+    // BASE joined ALL_NETS in 284ae9a and ARC after it, so /health is only
+    // `ok` once every net is level.
     h.rpcs.SOL.setHead(1000);
     h.rpcs.RH.setHead(500);
     h.rpcs.BASE.setHead(300);
+    h.rpcs.ARC.setHead(200);
     await h.deps.db
       .update(indexerCursors)
       .set({ position: 1000 })
@@ -60,10 +62,16 @@ describe('GET /health', () => {
       .update(indexerCursors)
       .set({ position: 300 })
       .where(eq(indexerCursors.net, 'BASE'));
+    await h.deps.db
+      .update(indexerCursors)
+      .set({ position: 200 })
+      .where(eq(indexerCursors.net, 'ARC'));
 
     const { status, body } = await health();
     expect(status).toBe(200);
     expect(body.status).toBe('ok');
+    expect(body.chains.ARC.lagSeconds).toBe(0);
+    expect(body.chains.ARC.alerting).toBe(false);
     expect(body.chains.SOL.lagSeconds).toBe(0);
     expect(body.chains.RH.lagSeconds).toBe(0);
     expect(body.chains.BASE.lagSeconds).toBe(0);
@@ -107,8 +115,8 @@ describe('GET /health', () => {
   it('exposes the WS gauge and per-chain lag in the metrics block', async () => {
     const { body } = await health();
     expect(body.metrics.ws).toMatchObject({ connections: 0, peakConnections: 0 });
-    // One lag gauge per net in ALL_NETS — BASE included since 284ae9a.
-    expect(Object.keys(body.metrics.chainLag).sort()).toEqual(['BASE', 'RH', 'SOL']);
+    // One lag gauge per net in ALL_NETS — BASE included since 284ae9a, ARC after.
+    expect(Object.keys(body.metrics.chainLag).sort()).toEqual(['ARC', 'BASE', 'RH', 'SOL']);
     expect(body.metrics.rpc.SOL.calls).toBeGreaterThan(0);
     expect(body.metrics.requests.total).toBeGreaterThan(0);
   });

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
-import { isEvm, parseNet, type Net } from '@stonkz/shared';
+import { ALL_NETS, isEvm, parseNet, type Net } from '@stonkz/shared';
 import { parseSignInMessage } from '../auth/message.js';
 import { AuthError } from '../auth/service.js';
 import { authNonces } from '../db/schema.js';
@@ -41,7 +41,12 @@ export function authRoutes(): Hono<AppEnv> {
 
   app.get('/auth/nonce', async (c) => {
     const net = parseNet(c.req.query('net'));
-    if (!net) return c.json({ error: 'bad_request', detail: 'net must be SOL, RH, or BASE' }, 400);
+    if (!net) {
+      return c.json(
+        { error: 'bad_request', detail: `net must be one of ${ALL_NETS.join(', ')}` },
+        400,
+      );
+    }
     const address = c.req.query('address');
     const challenge = await c.get('deps').auth.issueNonce(net, address);
     return c.json(challenge);

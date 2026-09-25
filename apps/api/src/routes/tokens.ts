@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { and, desc, eq, gt, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { isEvm, laneOf, nativeUnit, parseNet, type Lane } from '@stonkz/shared';
+import { evmExplorerUrl, evmLaunchpadAddress } from '../chain/evm-net.js';
 import { fetchEvmHoldersFromExplorer, fetchSolHoldersFromRpc } from '../chain/token-holders.js';
 import { candles, holdersSnapshot, tokens, trades } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
@@ -282,10 +283,10 @@ export function tokenRoutes(): Hono<AppEnv> {
         if (isEvm(net)) {
           const live = await fetchEvmHoldersFromExplorer({
             mint,
-            launchpad: net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress,
+            launchpad: evmLaunchpadAddress(deps.env, net),
             decimals: token.tokenDecimals || 18,
             limit: max,
-            explorerUrl: deps.env.rhExplorerUrl,
+            explorerUrl: evmExplorerUrl(deps.env, net),
           });
           const holders: HolderOut[] = live.holders.map((h) => ({
             wallet: h.wallet,
@@ -344,8 +345,7 @@ export function tokenRoutes(): Hono<AppEnv> {
       sym,
       ...(isEvm(net)
         ? {
-            curveWallet:
-              net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress,
+            curveWallet: evmLaunchpadAddress(deps.env, net),
           }
         : {}),
       ...fallback,

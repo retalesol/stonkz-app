@@ -122,7 +122,7 @@ describe('base mints', () => {
     expect(STOCKS).toMatchSnapshot();
   });
 
-  it('snapshots the majors for both networks', () => {
+  it('snapshots the majors for every network', () => {
     expect(MAJORS).toMatchSnapshot();
   });
 
@@ -130,12 +130,15 @@ describe('base mints', () => {
     expect(MAJORS.SOL[0][0]).toBe('SOL');
     expect(MAJORS.RH[0][0]).toBe('ETH');
     expect(MAJORS.BASE[0][0]).toBe('ETH');
+    // Arc pays gas in USDC, so USDC is its native-first base.
+    expect(MAJORS.ARC[0][0]).toBe('USDC');
   });
 
-  it('lists twenty stocks and the majors per network', () => {
+  it('lists twenty stocks and ten majors per network', () => {
     expect(STOCKS).toHaveLength(20);
     expect(MAJORS.SOL).toHaveLength(10);
     expect(MAJORS.RH.length).toBeGreaterThanOrEqual(10);
-    expect(MAJORS.BASE).toHaveLength(3);
+    expect(MAJORS.BASE).toHaveLength(10);
+    expect(MAJORS.ARC).toHaveLength(10);
   });
 });

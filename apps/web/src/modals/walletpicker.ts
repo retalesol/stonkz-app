@@ -1,4 +1,6 @@
 import type { Net } from '@stonkz/shared';
+import { NET_INFO } from '@stonkz/shared';
+import { EVM_CHAINS, envLabel, faucetUrl, isMainnet } from '../wallet/chain.js';
 import qrcode from 'qrcode-generator';
 import { $, must } from '../lib/dom.js';
 import { attr, html, render } from '../lib/html.js';
@@ -91,6 +93,40 @@ function drawQr(uri: string): void {
   qr.renderTo2dContext(ctx, cell);
 }
 
+/**
+ * What the user is about to connect to: environment, chain id, the unit they
+ * need in the wallet and where to get it. On a mainnet net this is where the
+ * "real funds" warning lives, before any wallet prompt.
+ */
+function envBlock(net: Net): ReturnType<typeof html> {
+  const info = NET_INFO[net];
+  const main = isMainnet(net);
+  const faucet = faucetUrl(net);
+  const chainId = net === 'SOL' ? null : EVM_CHAINS[net].chainId;
+  return html`<div class="wp-env${main ? ' main' : ''}">
+    <span class="wp-env-row"
+      ><i class="netdot" style="background:${attr(info.col)}"></i><b>${info.name}</b>
+      <span class="dm">${envLabel(net)}${chainId === null ? '' : ' · CHAIN ' + chainId}</span></span
+    >
+    <span class="wp-env-row"
+      ><span class="dm">YOU NEED</span> <b>${info.unit}</b>
+      <span class="dm">FOR GAS AND TRADES</span>${
+        faucet
+          ? html` <a class="wp-faucet" href="${attr(faucet)}" target="_blank" rel="noopener"
+              >GET TEST ${info.unit} &#8599;</a
+            >`
+          : ''
+      }</span
+    >
+    ${info.gasNote ? html`<span class="wp-env-note">${info.gasNote}</span>` : ''}
+    ${
+      main && !info.gasNote
+        ? html`<span class="wp-env-note">THIS IS MAINNET. REAL FUNDS.</span>`
+        : ''
+    }
+  </div>`;
+}
+
 function renderPicker(): void {
   if (!st) return;
   const { net, phase } = st;
@@ -139,17 +175,11 @@ function renderPicker(): void {
     const choices = availableWallets(net);
     render(
       body,
-      html`<p class="hint" style="margin-bottom:10px">${chainLabel(net)}</p>
+      html`${envBlock(net)}
         ${
           choices.length === 0
             ? html`<p class="wp-err">
-                ${
-                  net === 'SOL'
-                    ? 'NO SOLANA WALLET DETECTED. INSTALL PHANTOM, SOLFLARE OR BACKPACK AND RELOAD.'
-                    : net === 'BASE'
-                      ? 'NO BASE WALLET DETECTED. INSTALL COINBASE WALLET OR METAMASK, OR USE WALLETCONNECT.'
-                      : 'NO ROBINHOOD CHAIN WALLET AVAILABLE.'
-                }
+                ${'NO ' + NET_INFO[net].name + ' WALLET DETECTED. ' + NET_INFO[net].walletHint}
               </p>`
             : html`<div class="wp-list">${choices.map(choiceRow)}</div>`
         }

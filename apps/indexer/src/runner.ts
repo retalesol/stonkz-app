@@ -337,7 +337,7 @@ export class IndexerRunner {
    * current price, not of any single event, so it has to run on a timer.
    */
   async sweepAchievements(): Promise<Record<Net, string[]>> {
-    const out: Record<Net, string[]> = { SOL: [], RH: [], BASE: [] };
+    const out: Record<Net, string[]> = { SOL: [], RH: [], BASE: [], ARC: [] };
     for (const net of ALL_NETS) {
       try {
         const price = await this.opts.oracle.nativeUsd(nativeUnit(net));

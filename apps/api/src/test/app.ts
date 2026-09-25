@@ -25,7 +25,7 @@ export interface TestApp {
   deps: AppDeps;
   db: TestDb;
   redis: MemoryRedis;
-  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc };
+  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc; ARC: FakeChainRpc };
   oracle: FakePriceOracle;
   jupiter: FakeJupiterClient;
   uniswap: FakeUniswapClient;
@@ -66,7 +66,7 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
 
   const redis = new MemoryRedis(now);
   const rpcs = createFakeRpcs();
-  const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200 });
+  const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200, USDC: 1 });
   const jupiter = new FakeJupiterClient();
   const uniswap = new FakeUniswapClient();
 

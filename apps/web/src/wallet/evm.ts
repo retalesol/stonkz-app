@@ -1,4 +1,5 @@
 import {
+  type Chain,
   createPublicClient,
   defineChain,
   formatEther,
@@ -7,18 +8,7 @@ import {
   http,
   type PublicClient,
 } from 'viem';
-import {
-  BASE_ADD_CHAIN_PARAMS,
-  BASE_CHAIN_ID,
-  BASE_EXPLORER_URL,
-  BASE_RPC_URL,
-  RH_ADD_CHAIN_PARAMS,
-  RH_CHAIN_ID,
-  RH_EXPLORER_URL,
-  RH_RPC_URL,
-  evmAddChainParams,
-  evmChainIdForNet,
-} from './chain.js';
+import { EVM_CHAINS, evmAddChainParams, evmChainIdForNet } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
 import type {
   BroadcastResult,
@@ -32,7 +22,7 @@ import {
   connectWalletConnect,
   walletConnectUnavailableReason,
 } from './walletconnect.js';
-import type { EvmNet } from '@stonkz/shared';
+import { EVM_NETS, NET_INFO, isEvm, type EvmNet, type Net } from '@stonkz/shared';
 
 /**
  * Real Robinhood Chain wallets.
@@ -182,14 +172,14 @@ function injectedDetails(): Eip6963ProviderDetail[] {
 }
 
 /**
- * EVM wallets for RH or Base. MetaMask always; Coinbase Wallet emphasized on
- * Base; WalletConnect always listed (disabled when project id unset).
+ * EVM wallets for any EVM net. MetaMask always; Coinbase Wallet listed first
+ * on Base and Arc; WalletConnect always listed (disabled when project id unset).
  */
 export function listEvmWallets(net: EvmNet = 'RH'): WalletChoice[] {
   const details = injectedDetails();
   const out: WalletChoice[] = [];
 
-  if (net === 'BASE') {
+  if (net !== 'RH') {
     const preferredCb = details.filter(isCoinbaseDetail)[0];
     if (preferredCb) {
       out.push({
@@ -224,7 +214,7 @@ export function listEvmWallets(net: EvmNet = 'RH'): WalletChoice[] {
     id: 'walletconnect',
     net,
     kind: 'evm-walletconnect',
-    name: net === 'BASE' ? 'WalletConnect' : 'WalletConnect (Robinhood Wallet)',
+    name: net === 'RH' ? 'WalletConnect (Robinhood Wallet)' : 'WalletConnect',
     icon: WALLETCONNECT_ICON,
     ...(reason ? { unavailable: reason } : {}),
   });
@@ -241,39 +231,45 @@ export function onEvmWalletsChange(cb: () => void): () => void {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Chain 4663 is not in `viem/chains` (it postdates the published set, the
- * same reason `docs/robinhood-chain.md` §3.1 warns that `@uniswap/sdk-core`
- * has no address map for it), so it is defined here from config.
+ * None of the product chains are in `viem/chains` at the pinned version
+ * (4663 postdates the published set, the same reason `docs/robinhood-chain.md`
+ * §3.1 warns that `@uniswap/sdk-core` has no address map for it), so every
+ * chain is defined here from `EVM_CHAINS`. Arc's native currency is USDC with
+ * 18 decimals at the EVM layer, which viem formats as whole USDC.
  */
-export const robinhoodChain = defineChain({
-  id: RH_CHAIN_ID,
-  name: RH_ADD_CHAIN_PARAMS.chainName,
-  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [RH_RPC_URL] } },
-  blockExplorers: { default: { name: 'Blockscout', url: RH_EXPLORER_URL } },
-});
+function chainFor(net: EvmNet): Chain {
+  const c = EVM_CHAINS[net];
+  return defineChain({
+    id: c.chainId,
+    name: c.chainName,
+    nativeCurrency: c.addChainParams.nativeCurrency,
+    rpcUrls: { default: { http: [c.rpcUrl] } },
+    blockExplorers: { default: { name: 'Explorer', url: c.explorerUrl } },
+  });
+}
 
-export const baseChain = defineChain({
-  id: BASE_CHAIN_ID,
-  name: BASE_ADD_CHAIN_PARAMS.chainName,
-  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [BASE_RPC_URL] } },
-  blockExplorers: { default: { name: 'Basescan', url: BASE_EXPLORER_URL } },
-});
+export const evmChains: Record<EvmNet, Chain> = Object.fromEntries(
+  EVM_NETS.map((net) => [net, chainFor(net)]),
+) as Record<EvmNet, Chain>;
+
+/** @deprecated Use `evmChains.RH` / `evmChains.BASE` — kept for existing imports. */
+export const robinhoodChain = evmChains.RH;
+export const baseChain = evmChains.BASE;
 
 const publicClients: Partial<Record<EvmNet, PublicClient>> = {};
 function rpc(net: EvmNet): PublicClient {
   const existing = publicClients[net];
   if (existing) return existing;
-  const chain = net === 'BASE' ? baseChain : robinhoodChain;
-  const url = net === 'BASE' ? BASE_RPC_URL : RH_RPC_URL;
-  const client = createPublicClient({ chain, transport: http(url) });
+  const client = createPublicClient({
+    chain: evmChains[net],
+    transport: http(EVM_CHAINS[net].rpcUrl),
+  }) as PublicClient;
   publicClients[net] = client;
   return client;
 }
 
 function explorerBase(net: EvmNet): string {
-  return (net === 'BASE' ? BASE_EXPLORER_URL : RH_EXPLORER_URL).replace(/\/+$/, '');
+  return EVM_CHAINS[net].explorerUrl;
 }
 
 function utf8ToHex(text: string): string {
@@ -329,10 +325,7 @@ function toChainId(raw: unknown): number {
  * Taking a bare `request` rather than a provider keeps this unit-testable
  * against scripted responses, with no browser and no extension.
  */
-export async function enforceEvmChain(
-  request: ChainRequest,
-  net: 'RH' | 'BASE' = 'RH',
-): Promise<void> {
+export async function enforceEvmChain(request: ChainRequest, net: EvmNet = 'RH'): Promise<void> {
   const targetId = evmChainIdForNet(net);
   const targetHex = '0x' + targetId.toString(16);
   const addParams = evmAddChainParams(net);
@@ -486,10 +479,16 @@ class EvmWallet implements ConnectedWallet {
   }
 
   async signAndSend(payload: SignPayload): Promise<BroadcastResult> {
-    if (payload.net !== 'RH' && payload.net !== 'BASE') {
+    if (!isEvm(payload.net)) {
       throw new WalletError(
         'unsupported_method',
         'An EVM wallet cannot sign a Solana transaction.',
+      );
+    }
+    if (payload.net !== this.net) {
+      throw new WalletError(
+        'wrong_chain',
+        `This wallet is connected to ${NET_INFO[this.net].name}; the transaction is for ${NET_INFO[payload.net].name}. Switch networks and reconnect.`,
       );
     }
     await this.ensureChain();
@@ -621,7 +620,7 @@ export async function connectEvmWallet(
     const reason = walletConnectUnavailableReason();
     if (reason) throw new WalletError('unconfigured', reason);
     const { WALLET } = await import('../state/wallet.js');
-    const wcNet = WALLET.net === 'BASE' ? 'BASE' : 'RH';
+    const wcNet: EvmNet = isEvm(WALLET.net as Net) ? (WALLET.net as EvmNet) : 'RH';
     const { provider, address, disconnect } = await connectWalletConnect({
       net: wcNet,
       ...(hooks.onWalletConnectUri ? { onUri: hooks.onWalletConnectUri } : {}),
@@ -657,7 +656,7 @@ export async function connectEvmWallet(
   if (!account) throw new WalletError('rejected', `${detail.info.name} authorised no accounts.`);
 
   const { WALLET } = await import('../state/wallet.js');
-  const injectedNet: EvmNet = WALLET.net === 'BASE' ? 'BASE' : 'RH';
+  const injectedNet: EvmNet = isEvm(WALLET.net as Net) ? (WALLET.net as EvmNet) : 'RH';
   return new EvmWallet(
     'evm-injected',
     detail.info.name.toUpperCase(),

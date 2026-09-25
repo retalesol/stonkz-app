@@ -1,6 +1,6 @@
 import type { UniversalProvider } from '@walletconnect/universal-provider';
 import type { Net } from '@stonkz/shared';
-import { BASE_RPC_URL, RH_RPC_URL, evmChainIdForNet } from './chain.js';
+import { EVM_CHAINS, evmChainIdForNet } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
 import type { Eip1193Provider } from './evm.js';
 
@@ -47,7 +47,7 @@ function caipForNet(net: Net): string {
 }
 
 function rpcForNet(net: Net): string {
-  return net === 'BASE' ? BASE_RPC_URL : RH_RPC_URL;
+  return net === 'SOL' ? EVM_CHAINS.RH.rpcUrl : EVM_CHAINS[net].rpcUrl;
 }
 
 /**

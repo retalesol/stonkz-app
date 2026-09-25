@@ -1,5 +1,5 @@
 import type { Fill } from '@stonkz/shared';
-import { isEvm, pct, usd } from '@stonkz/shared';
+import { nativeUnit as nativeUnitOf, pct, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
 import { miniChart } from '../canvas/spark.js';
@@ -52,7 +52,7 @@ function build(f: Fill): HTMLElement {
     html`<span class="tx" data-sym="${attr(f.sym)}"
       ><i class="blk ${f.buy ? 'up' : 'dn'}"></i
       ><b class="${f.buy ? 'up' : 'dn'}">${f.buy ? 'BUY' : 'SELL'}</b
-      ><span>${f.sol.toFixed(2)} ${isEvm(f.net) ? 'ETH' : 'SOL'}</span><b class="gd">${f.sym}</b
+      ><span>${f.sol.toFixed(2)} ${nativeUnitOf(f.net)}</span><b class="gd">${f.sym}</b
       ><b class="dm">${DOT}</b><span class="dm">${f.w}</span></span
     >`,
   );

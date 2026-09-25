@@ -138,15 +138,27 @@ export function gradMcapBaseAtoms(price1e6: bigint, baseDecimals: number): bigin
   return (GRAD_MCAP_USD_1E6 * 10n ** BigInt(baseDecimals)) / price1e6;
 }
 
+export interface DeriveCurveOptions {
+  /**
+   * The EVM launchpad keeps amounts in `uint256`, so the u64 ceiling on
+   * `virtualBase` does not apply there. It matters for Arc: native USDC at
+   * $1 with 18 decimals puts `virtualBase` at ~4.3e21, far past `u64::MAX/4`,
+   * which is fine on chain and must not be refused by this mirror.
+   */
+  evm?: boolean;
+}
+
 /**
  * Derive a curve from its fixed supply and the base price read at launch.
  * Returns `null` for combinations Solana cannot represent (see
- * `MAX_VIRTUAL_BASE`); the EVM mirror accepts a wider range.
+ * `MAX_VIRTUAL_BASE`) unless `opts.evm` is set; the EVM mirror accepts a
+ * wider range.
  */
 export function deriveCurve(
   supplyAtoms: bigint,
   price1e6: bigint,
   baseDecimals: number,
+  opts: DeriveCurveOptions = {},
 ): CurveParams | null {
   if (supplyAtoms <= 0n) return null;
   const tokensForSale = (supplyAtoms * TOKENS_FOR_SALE_NUM) / TOKENS_FOR_SALE_DEN;
@@ -157,7 +169,8 @@ export function deriveCurve(
   const gradMcapBase = gradMcapBaseAtoms(price1e6, baseDecimals);
   // Ceil: graduation mcap is 15x this, so the residue must land above target.
   const virtualBase = ceilDiv(gradMcapBase, VIRTUAL_BASE_DEN);
-  if (virtualBase === 0n || virtualBase > MAX_VIRTUAL_BASE) return null;
+  if (virtualBase === 0n) return null;
+  if (!opts.evm && virtualBase > MAX_VIRTUAL_BASE) return null;
 
   return {
     tokensForSale,

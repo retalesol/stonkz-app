@@ -1,4 +1,5 @@
 import type { Net } from '@stonkz/shared';
+import { isEvm, parseNet } from '@stonkz/shared';
 import { WalletError, activeWallet, mapWalletError } from '../wallet/index.js';
 
 /**
@@ -58,7 +59,7 @@ function readStore(): StoredAuth | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredAuth>;
     if (
-      (parsed.net !== 'SOL' && parsed.net !== 'RH' && parsed.net !== 'BASE') ||
+      parseNet(parsed.net) === null ||
       typeof parsed.wallet !== 'string' ||
       typeof parsed.accessToken !== 'string' ||
       typeof parsed.refreshToken !== 'string' ||
@@ -182,7 +183,7 @@ function refreshUsable(s: Session): boolean {
 
 /** EVM addresses are case-insensitive; Solana base58 is not. */
 function sameAddress(net: Net, a: string, b: string): boolean {
-  return net === 'RH' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  return isEvm(net) ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 /**

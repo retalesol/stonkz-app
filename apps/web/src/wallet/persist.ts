@@ -1,4 +1,5 @@
 import type { Net } from '@stonkz/shared';
+import { parseNet } from '@stonkz/shared';
 
 /**
  * Last successful wallet connect — used to silent-reconnect after a reload.
@@ -23,7 +24,7 @@ export function loadLastWallet(): LastWallet | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LastWallet>;
     if (
-      (parsed.net !== 'SOL' && parsed.net !== 'RH' && parsed.net !== 'BASE') ||
+      parseNet(parsed.net) === null ||
       typeof parsed.walletId !== 'string' ||
       typeof parsed.address !== 'string' ||
       typeof parsed.savedAt !== 'number'

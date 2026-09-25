@@ -115,6 +115,51 @@ describe('chain-mode configuration', () => {
     expect(config.httpPort).toBe(0);
   });
 
+  it('keeps ARC out of the default nets until a launchpad exists there', () => {
+    const config = readIndexerConfig(env, {
+      INDEXER_SOURCE: 'chain',
+      RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0',
+      INDEXER_SOL_START_SLOT: '250000000',
+      INDEXER_RH_START_BLOCK: '21000000',
+    });
+    expect(config.chainNets).not.toContain('ARC');
+    // The per-net knobs still exist so the runner's exhaustive maps are total.
+    expect(config.confirmations.ARC).toBe(1);
+    expect(config.reorgDepth.ARC).toBe(0);
+    expect(config.arcStartBlock).toBe(0);
+  });
+
+  it('accepts ARC in INDEXER_CHAIN_NETS and then requires its launchpad and start block', () => {
+    const chain = {
+      INDEXER_SOURCE: 'chain',
+      INDEXER_CHAIN_NETS: 'SOL,RH,BASE,ARC',
+      RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0',
+      BASE_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000ba5e',
+      INDEXER_SOL_START_SLOT: '250000000',
+      INDEXER_RH_START_BLOCK: '21000000',
+      INDEXER_BASE_START_BLOCK: '46000000',
+    };
+    expect(() => readIndexerConfig(env, chain)).toThrow(/ARC_LAUNCHPAD_ADDRESS/);
+    expect(() =>
+      readIndexerConfig(env, {
+        ...chain,
+        ARC_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000a4c0',
+      }),
+    ).toThrow(/INDEXER_ARC_START_BLOCK/);
+
+    const config = readIndexerConfig(env, {
+      ...chain,
+      ARC_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000a4c0',
+      INDEXER_ARC_START_BLOCK: '1000000',
+    });
+    expect(config.chainNets).toEqual(['SOL', 'RH', 'BASE', 'ARC']);
+    expect(config.arcStartBlock).toBe(1_000_000);
+    // Sub-second finality: one confirmation, and a reorg depth of 0 is legal
+    // on ARC alone (every probabilistic chain still needs at least 1).
+    expect(config.confirmations.ARC).toBe(1);
+    expect(config.reorgDepth.ARC).toBe(0);
+  });
+
   it('rejects a negative confirmation depth and a zero reorg depth', () => {
     const chain = {
       INDEXER_SOURCE: 'chain',
@@ -171,7 +216,7 @@ describe('the health and metrics surface', () => {
       confirmations,
     });
     const idle = new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
-    rig = await createIndexerRig([], { sources: { SOL: source, RH: idle, BASE: idle } });
+    rig = await createIndexerRig([], { sources: { SOL: source, RH: idle, BASE: idle, ARC: idle } });
     await rig.runner.drain();
 
     const opts = {
@@ -180,7 +225,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000 },
+      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000, ARC: 1_000 },
       maxLagSeconds,
       mode: 'chain',
       isLeader: () => true,
@@ -226,7 +271,7 @@ describe('the health and metrics surface', () => {
       confirmations: 0,
     });
     const idle = new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
-    rig = await createIndexerRig([], { sources: { SOL: sol, RH: idle, BASE: idle } });
+    rig = await createIndexerRig([], { sources: { SOL: sol, RH: idle, BASE: idle, ARC: idle } });
     // Nothing was ingested, but the head is a million slots away.
     await rig.cursors.observeHead('SOL', 1_000_000, 1_000_000);
 
@@ -236,7 +281,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000 },
+      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000, ARC: 1_000 },
       maxLagSeconds: 30,
       mode: 'chain',
       isLeader: () => true,
@@ -286,7 +331,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000 },
+      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000, ARC: 1_000 },
       maxLagSeconds: 30,
       mode: 'chain',
       isLeader: () => true,
@@ -330,7 +375,7 @@ describe('backfill argument parsing', () => {
   it('requires a chain it can actually index', () => {
     expect(() => parseBackfillArgs(['--from', '1', '--to', '2'])).toThrow(BackfillArgsError);
     expect(() => parseBackfillArgs(['--net', 'ETH', '--from', '1', '--to', '2'])).toThrow(
-      /SOL, RH, or BASE/,
+      /SOL, BASE, ARC, RH/,
     );
   });
 

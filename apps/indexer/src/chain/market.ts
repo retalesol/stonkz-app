@@ -23,10 +23,15 @@ export const TOKEN_DECIMALS: Record<Net, number> = {
   // `programs/evm/src/StonkzToken.sol`: `uint8 public constant decimals = 18`.
   RH: 18,
   BASE: 18,
+  ARC: 18,
 };
 
-/** Native gas-token decimals, per chain. */
-export const NATIVE_DECIMALS: Record<Net, number> = { SOL: 9, RH: 18, BASE: 18 };
+/**
+ * Native gas-token decimals, per chain. Arc's gas is USDC, but at the EVM
+ * layer (`msg.value`, balances) it carries 18 decimals; only the ERC-20 face
+ * of USDC has 6.
+ */
+export const NATIVE_DECIMALS: Record<Net, number> = { SOL: 9, RH: 18, BASE: 18, ARC: 18 };
 
 /** The canonical wrapped-native base mint per chain — see `router/base-mints.ts`. */
 export const NATIVE_BASE_MINTS: Record<Net, readonly string[]> = {
@@ -42,6 +47,8 @@ export const NATIVE_BASE_MINTS: Record<Net, readonly string[]> = {
     '0x0000000000000000000000000000000000000000',
     '0x4200000000000000000000000000000000000006',
   ],
+  // Native USDC only; no wrapped-USDC address is confirmed for Arc yet.
+  ARC: ['0x0000000000000000000000000000000000000000'],
 };
 
 export function isNativeBaseMint(net: Net, baseMint: string): boolean {

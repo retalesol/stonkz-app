@@ -76,17 +76,23 @@ async function scriptedRig(
   // BASE gets its own idle source: aliasing it to `rh` made every RH scenario
   // run twice under two nets and leaked BASE passes into per-chain assertions.
   const base = idleBase();
-  rig = await createIndexerRig([], { ...options, sources: { SOL: sol, RH: rh, BASE: base } });
+  const arc = idleArc();
+  rig = await createIndexerRig([], {
+    ...options,
+    sources: { SOL: sol, RH: rh, BASE: base, ARC: arc },
+  });
   // The lag monitor probes the RPCs, not the sources.
   rig.rpcs.SOL.setHead(await sol.head());
   rig.rpcs.RH.setHead(await rh.head());
   rig.rpcs.BASE.setHead(await base.head());
+  rig.rpcs.ARC.setHead(await arc.head());
   return rig;
 }
 
 const idleRh = (): ScriptedSource => new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
 const idleBase = (): ScriptedSource =>
   new ScriptedSource({ net: 'BASE', head: 0, startPosition: 1 });
+const idleArc = (): ScriptedSource => new ScriptedSource({ net: 'ARC', head: 0, startPosition: 1 });
 
 /* ------------------------------------------------------ confirmation depth */
 
@@ -332,7 +338,10 @@ describe('reorg detection', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 24, RH: 64, BASE: 64 } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 24, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const at = (await rig.cursors.read('SOL')).position;
@@ -364,7 +373,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64, BASE: 64 } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const before = {
@@ -408,7 +420,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
     });
     await scriptedRig(sol, idleRh(), {
       rollback: true,
-      reorgDepth: { SOL: 5_000, RH: 64, BASE: 64 },
+      reorgDepth: { SOL: 5_000, RH: 64, BASE: 64, ARC: 0 },
     });
     await rig.runner.drainNet('SOL');
     expect(await rig.db.db.select().from(tokens)).toHaveLength(1);
@@ -436,7 +448,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64, BASE: 64 } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const vaultBefore = (await rig.db.db.select().from(creatorVaults))[0];
@@ -482,7 +497,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64, BASE: 64 } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const balanceOf = async (wallet: string) =>
@@ -554,7 +572,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
     });
     await scriptedRig(source, idleRh(), {
       rollback: true,
-      reorgDepth: { SOL: 12, RH: 64, BASE: 64 },
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
     });
     await rig.runner.drainNet('SOL');
 
@@ -580,7 +598,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64, BASE: 64 } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const snapshot = async () => ({
@@ -639,7 +660,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
     });
     await scriptedRig(source, idleRh(), {
       rollback: true,
-      reorgDepth: { SOL: 12, RH: 64, BASE: 64 },
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
     });
     await rig.runner.drainNet('SOL');
     expect((await rig.db.db.select().from(stakePositions))[0]?.amount).toBe(1_000_000);
@@ -857,7 +878,7 @@ describe('per-chain isolation', () => {
     // (RH with work, BASE idle since 284ae9a) still report theirs.
     expect(results.some((r) => r.net === 'SOL')).toBe(false);
     expect(results.some((r) => r.net === 'RH')).toBe(true);
-    expect(results.every((r) => r.net === 'RH' || r.net === 'BASE')).toBe(true);
+    expect(results.every((r) => r.net === 'RH' || r.net === 'BASE' || r.net === 'ARC')).toBe(true);
 
     // The stalled chain's cursor stays where it was; the healthy one advanced.
     expect((await rig.cursors.read('SOL')).position).toBe(0);
@@ -896,7 +917,10 @@ describe('per-chain isolation', () => {
     );
     for (const p of solPositions) sol.setHash(p, `hash-a-${p}`);
 
-    await scriptedRig(sol, rh, { rollback: true, reorgDepth: { SOL: 12, RH: 64, BASE: 64 } });
+    await scriptedRig(sol, rh, {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drain();
 
     const rhBefore = (await rig.db.db.select().from(chainEvents)).filter(

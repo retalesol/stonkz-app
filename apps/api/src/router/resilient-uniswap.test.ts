@@ -25,7 +25,7 @@ describe('ResilientUniswapClient', () => {
   it('falls back to the oracle hop when Trading API has no route', async () => {
     const baseMints = createBaseMintRegistry({ RH: { WETH, USDG, ETH: NATIVE_ETH_MINT } });
     const oracle = new OracleHopClient({
-      oracle: new FakePriceOracle({ ETH: 3000, SOL: 150 }),
+      oracle: new FakePriceOracle({ ETH: 3000, SOL: 150, USDC: 1 }),
       baseMints,
       wethMint: WETH,
     });

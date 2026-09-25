@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
-import { nativeUnit, parseNet } from '@stonkz/shared';
+import { isEvm, nativeUnit, parseNet } from '@stonkz/shared';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
+import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { SolanaRpc } from '../chain/solana.js';
 import { aggregatorFor, composeQuote } from '../router/compose.js';
 import { RouterError } from '../router/errors.js';
+import { assertUnderMaxTradeUsd } from '../router/max-trade.js';
 import {
   reserveFingerprint,
   syncCurveReserves,
@@ -59,7 +61,14 @@ export function quoteRoutes(): Hono<AppEnv> {
     const synced = await syncCurveReserves({
       db: deps.db,
       row: row as TokenRow,
-      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
+      ...(isEvm(net)
+        ? {
+            evm: {
+              eth: asEthCaller(deps.rpcs[net]),
+              launchpad: evmLaunchpadAddress(deps.env, net),
+            },
+          }
+        : {}),
       sol: {
         rpc: asSolanaAccountSource(deps.rpcs.SOL),
         programId: deps.env.solanaLaunchpadProgramId,
@@ -80,6 +89,9 @@ export function quoteRoutes(): Hono<AppEnv> {
           const now = deps.now();
           const native = nativeUnit(net);
           const usdPrice = await deps.oracle.nativeUsd(native).catch(() => null);
+          // Per-net USD cap (Arc: 25 USD of real funds). A buy's `amount` is
+          // the native leg; a sell's native leg is only known after compose.
+          if (side === 'buy') assertUnderMaxTradeUsd(net, amount, usdPrice);
           const aggregatorVenue = aggregatorFor(net, synced.baseSymbol);
           const aggregator =
             aggregatorVenue === 'JUPITER'
@@ -88,7 +100,7 @@ export function quoteRoutes(): Hono<AppEnv> {
                 ? deps.uniswap
                 : null;
 
-          return composeQuote({
+          const quote = await composeQuote({
             net,
             side,
             amount,
@@ -97,6 +109,8 @@ export function quoteRoutes(): Hono<AppEnv> {
             now,
             aggregator,
           });
+          if (side === 'sell') assertUnderMaxTradeUsd(net, quote.amountOut, usdPrice);
+          return quote;
         },
       );
 

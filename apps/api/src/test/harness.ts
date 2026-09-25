@@ -107,13 +107,16 @@ export async function createTestDb(): Promise<TestDb> {
       );
       const names = rows.map((r) => `"${r.tablename}"`).join(', ');
       if (names) await pg.exec(`TRUNCATE ${names} RESTART IDENTITY CASCADE`);
-      // The seed rows in 0001 (SOL, RH), 0013 (BASE cursor) and 0014 (BASE
-      // vaults) are part of the schema contract, not test data.
-      await pg.exec(`INSERT INTO "indexer_cursors" ("net") VALUES ('SOL'), ('RH'), ('BASE')`);
+      // The seed rows in 0001 (SOL, RH), 0013 (BASE cursor), 0014 (BASE
+      // vaults) and 0015 (ARC cursor + vaults) are part of the schema
+      // contract, not test data.
+      await pg.exec(
+        `INSERT INTO "indexer_cursors" ("net") VALUES ('SOL'), ('RH'), ('BASE'), ('ARC')`,
+      );
       await pg.exec(
         `INSERT INTO "treasuries" ("net", "kind") VALUES
            ('SOL','protocol'), ('SOL','stonkz_ops'), ('RH','protocol'), ('RH','stonkz_ops'),
-           ('BASE','protocol'), ('BASE','stonkz_ops')`,
+           ('BASE','protocol'), ('BASE','stonkz_ops'), ('ARC','protocol'), ('ARC','stonkz_ops')`,
       );
     },
   };

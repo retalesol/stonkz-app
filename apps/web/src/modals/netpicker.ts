@@ -1,5 +1,6 @@
 import type { Net } from '@stonkz/shared';
 import { paintNetMarks } from '../canvas/netmark.js';
+import { NETS } from '../state/wallet.js';
 import { must } from '../lib/dom.js';
 
 /**
@@ -14,7 +15,16 @@ import { must } from '../lib/dom.js';
 export function netOpen(v: boolean): void {
   must('#netMenu').hidden = !v;
   must('#connectBtn').setAttribute('aria-expanded', v ? 'true' : 'false');
-  if (v) paintNetMarks();
+  if (v) {
+    paintNetMarks();
+    // The rows are static markup; the environment line under each name is
+    // whatever this build settles on (devnet, Sepolia, mainnet-capped).
+    for (const row of must('#netMenu').querySelectorAll<HTMLElement>('[data-net]')) {
+      const n = NETS[row.dataset['net'] as Net];
+      const ns = row.querySelector('.ns');
+      if (n && ns) ns.textContent = n.sub;
+    }
+  }
 }
 
 export function isNetOpen(): boolean {

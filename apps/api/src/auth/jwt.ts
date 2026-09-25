@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
-import type { Net } from '@stonkz/shared';
+import { parseNet, type Net } from '@stonkz/shared';
 
 export type TokenType = 'access' | 'refresh';
 
@@ -85,7 +85,7 @@ export class JwtService {
     const claims = payload as StonkzClaims;
     if (claims.typ !== expected)
       throw new Error(`expected a ${expected} token, got ${String(claims.typ)}`);
-    if (claims.net !== 'SOL' && claims.net !== 'RH' && claims.net !== 'BASE') {
+    if (parseNet(typeof claims.net === 'string' ? claims.net : null) === null) {
       throw new Error('token is missing a valid net claim');
     }
     if (typeof claims.sub !== 'string' || claims.sub === '')

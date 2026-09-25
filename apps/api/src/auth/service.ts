@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 import type { Db } from '../db/client.js';
 import { authNonces, sessions, users } from '../db/schema.js';
 import { blacklistToken } from '../redis/blacklist.js';
@@ -39,6 +39,8 @@ export interface AuthServiceOptions {
   uri: string;
   rhChainId: number;
   baseChainId?: number;
+  /** Arc mainnet, 5042. Only ever *accepted* when the env allow-list names it. */
+  arcChainId?: number;
   /**
    * CAIP-2 chain id for Solana SIWS (`solana:devnet` / `solana:mainnet`).
    * Defaults to mainnet for backward-compatible unit tests; production
@@ -160,11 +162,18 @@ export class AuthService {
     return this.opts.solanaSiwsChainId ?? 'solana:mainnet';
   }
 
-  private evmChainIds(): { RH: number; BASE: number } {
-    return { RH: this.opts.rhChainId, BASE: this.opts.baseChainId ?? 84532 };
+  private evmChainIds(): Record<EvmNet, number> {
+    return {
+      RH: this.opts.rhChainId,
+      BASE: this.opts.baseChainId ?? 84532,
+      ARC: this.opts.arcChainId ?? 5042,
+    };
   }
 
-  /** The allow-list defaults to the single configured chain id. */
+  /**
+   * The allow-list defaults to RH + Base. Arc is deliberately absent here:
+   * `env.ts` adds 5042 only when `ARC_LAUNCHPAD_ADDRESS` is configured.
+   */
   private allowedChainIds(): readonly number[] {
     return this.opts.allowedRhChainIds ?? [this.opts.rhChainId, this.evmChainIds().BASE];
   }

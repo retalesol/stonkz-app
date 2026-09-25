@@ -15,6 +15,7 @@ import {
   RAR,
   isEvm,
 } from '@stonkz/shared';
+import { NET_INFO, nativeUnit as nativeUnitOf, type EvmNet } from '@stonkz/shared';
 import {
   authHeader,
   clearSession,
@@ -51,7 +52,7 @@ import {
 } from '../state/user.js';
 import { applySettings, saveSettings, settingsPayload } from '../state/settings.js';
 import { fillCandleGaps, mergeFillIntoSeries } from '../lib/candles.js';
-import { NATIVE_PRICE, WALLET, selectNet } from '../state/wallet.js';
+import { NATIVE_PRICE, WALLET, selectNet, nativeUsd } from '../state/wallet.js';
 import { activeWallet } from '../wallet/index.js';
 import { fetchRewards, openCrateLive, type LiveRewardsSnapshot } from './social.js';
 import { simApi } from './sim.js';
@@ -310,7 +311,7 @@ interface ApiTradePrepareSolAtomic {
  * either way, just two off-chain signatures for a first-time sell.
  */
 interface ApiTradePrepareRhAtomic {
-  net: 'RH' | 'BASE';
+  net: EvmNet;
   atomic: true;
   to: string;
   data: string;
@@ -523,8 +524,8 @@ function venueFor(c: SimCoin): string {
   if (c.lane === 'grad') return 'DEX';
   const net = c.net ?? 'SOL';
   const base = (c.base || '').toUpperCase();
-  const native = isEvm(net) ? 'ETH' : 'SOL';
-  const wrapped = isEvm(net) ? 'WETH' : 'WSOL';
+  const native = nativeUnitOf(net);
+  const wrapped = isEvm(net) ? (native === 'USDC' ? 'WUSDC' : 'WETH') : 'WSOL';
   if (!base || base === native || base === wrapped) return 'CURVE';
   return isEvm(net) ? 'UNISWAP \u2192 CURVE' : 'JUPITER \u2192 CURVE';
 }
@@ -540,8 +541,8 @@ function hopsForTrade(
   const route = venueFor(c);
   if (!route.includes('\u2192')) return undefined;
   const net = c.net ?? 'SOL';
-  const native = isEvm(net) ? 'ETH' : 'SOL';
-  const base = (c.base || (net === 'RH' ? 'USDG' : net === 'BASE' ? 'USDC' : 'BASE')).toUpperCase();
+  const native = nativeUnitOf(net);
+  const base = (c.base || (net === 'RH' ? 'USDG' : NET_INFO[net].defaultBase)).toUpperCase();
   const agg = isEvm(net) ? 'UNISWAP' : 'JUPITER';
   const mid = baseAmt && baseAmt > 0 ? baseAmt : nativeInOut;
   if (side === 'buy') {
@@ -669,7 +670,7 @@ async function refreshNativePrices(): Promise<void> {
     const res = await getJson<{ SOL: number | null; ETH: number | null }>('/native-price');
     if (typeof res.SOL === 'number' && res.SOL > 0) NATIVE_PRICE.sol = res.SOL;
     if (typeof res.ETH === 'number' && res.ETH > 0) NATIVE_PRICE.eth = res.ETH;
-    NATIVE_PRICE.usd = isEvm(WALLET.net) ? NATIVE_PRICE.eth : NATIVE_PRICE.sol;
+    NATIVE_PRICE.usd = nativeUsd(nativeUnitOf(WALLET.net));
     emit('tick');
   } catch {
     // Keep last marks; the footer just stays stale until the next poll.
@@ -1028,7 +1029,7 @@ async function fetchQuote(
 /** An `EvmStep`, a `StonkzRouter` call and an RH/Base launch/claim payload are all the same three fields. */
 function evmPayload(
   call: { to: string; data: string; value: string },
-  net: 'RH' | 'BASE' = 'RH',
+  net: EvmNet = 'RH',
 ): SignPayload {
   return { net, to: call.to, data: call.data, value: call.value };
 }
@@ -1214,7 +1215,7 @@ async function liveTrade(quote: Quote): Promise<Fill> {
   const title =
     (quote.side === 'buy' ? 'BUY ' : 'SELL ') +
     c.sym +
-    (net === 'RH' ? ' \u00b7 ROBINHOOD CHAIN' : net === 'BASE' ? ' \u00b7 BASE' : '');
+    (isEvm(net) ? ' \u00b7 ' + NET_INFO[net].name : '');
   const { quote: confirmedQuote, signature } = await signTradePlan(net, prep, title, c.sym, body);
   // Re-sync curve reserves from chain so the next sell quote is not stuck on
   // empty DB reserves if the indexer lags.
@@ -1519,7 +1520,7 @@ interface ApiStakePrepareSol {
 }
 
 interface ApiStakePrepareEvm {
-  net: 'RH' | 'BASE';
+  net: EvmNet;
   sym: string;
   action: string;
   to: string;

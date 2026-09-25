@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, parseNet, type Net } from '@stonkz/shared';
 
 /**
  * The backfill CLI's argument contract, split out from `backfill.ts` so it can
@@ -65,9 +65,9 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
     return n;
   };
 
-  const net = value('net')?.toUpperCase();
-  if (net !== 'SOL' && net !== 'RH' && net !== 'BASE') {
-    throw new BackfillArgsError('--net must be SOL, RH, or BASE');
+  const net = parseNet(value('net')?.toUpperCase());
+  if (net === null) {
+    throw new BackfillArgsError(`--net must be one of ${ALL_NETS.join(', ')}`);
   }
 
   const from = int('from');

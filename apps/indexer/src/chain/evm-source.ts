@@ -1,6 +1,6 @@
 import type { BaseMintRegistry } from '@stonkz/api/router/base-mints';
 import type { Logger } from '@stonkz/api/observability/logger';
-import type { EvmNet, Net } from '@stonkz/shared';
+import { isEvmNet, type EvmNet, type Net } from '@stonkz/shared';
 import type { ChainEvent } from '../events.js';
 import { compareEvents } from '../events.js';
 import type { EventSource, PollResult } from '../source.js';
@@ -114,7 +114,7 @@ export class EvmChainSource implements EventSource {
     for (const group of groups) {
       events.push(
         ...(await mapEvmTransaction(group.logs, {
-          net: this.net === 'BASE' ? 'BASE' : 'RH',
+          net: isEvmNet(this.net) ? this.net : 'RH',
           txHash: group.txHash,
           blockNumber: group.blockNumber,
           blockTimeMs: await this.blockTimeMs(group.blockNumber, blockTimes),

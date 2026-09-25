@@ -34,6 +34,7 @@ beforeAll(async () => {
       SOL: new FixtureEventSource('SOL', []),
       RH: new FixtureEventSource('RH', []),
       BASE: new FixtureEventSource('BASE', events),
+      ARC: new FixtureEventSource('ARC', []),
     },
   });
   await rig.runner.drain();

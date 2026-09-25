@@ -18,6 +18,7 @@ import {
   usd,
   vol24,
 } from '@stonkz/shared';
+import { NET_INFO, isEvm, nativeUnit as nativeUnitOf, type Net } from '@stonkz/shared';
 import { fetchChatHistory, fetchXProfile, sendChatMessage, SocialApiError } from '../api/social.js';
 import { api } from '../api/index.js';
 import { LiveApiError, subscribeChatRoom, type LiveChatFrame } from '../api/live.js';
@@ -44,7 +45,8 @@ import { SET } from '../state/settings.js';
 import { NATIVE_PRICE, WALLET, nativeUnit } from '../state/wallet.js';
 import { openStake } from '../modals/stake.js';
 import { setChatToken, roomOf, addChat } from './chat.js';
-import { paint } from './board.js';
+import { netPill, paint } from './board.js';
+import { connectWallet } from '../app/wallet.js';
 
 /**
  * The token page.
@@ -94,6 +96,26 @@ function tradeHint(c: SimCoin): string {
   return 'LIVE CURVE — YOUR WALLET SIGNS AND BROADCASTS THE TRADE.';
 }
 
+/** True when the connected wallet cannot sign for this coin's chain. */
+function crossChain(c: SimCoin): boolean {
+  return WALLET.on && (c.net ?? 'SOL') !== WALLET.net;
+}
+
+function crossChainHTML(c: SimCoin): Html {
+  if (!crossChain(c)) return html``;
+  const here = NET_INFO[c.net ?? 'SOL'];
+  const mine = NET_INFO[WALLET.net];
+  return html`<div class="xchain" role="status">
+    <span class="xl">WRONG CHAIN</span>
+    <span class="xs"
+      >THIS COIN LIVES ON <b>${here.name}</b>. YOUR WALLET IS CONNECTED TO <b>${mine.name}</b>, SO
+      IT CANNOT SIGN HERE.</span
+    >
+    <span class="grow"></span>
+    <button type="button" class="custbtn" id="xchain-switch">SWITCH TO ${here.short}</button>
+  </div>`;
+}
+
 function tokenHTML(c: SimCoin): Html {
   const grad = c.lane === 'grad';
   const unit = nativeUnit();
@@ -124,7 +146,7 @@ function tokenHTML(c: SimCoin): Html {
           <b class="addrlink" data-addr="${attr(c.dev)}"
             >${c.dev.length > 12 ? c.dev.slice(0, 4) + '…' + c.dev.slice(-4) : c.dev}</b
           >
-          ${DOT} ${ago(c.age)} ${DOT}
+          ${DOT} ${ago(c.age)} ${DOT} ON ${netPill(c.net ?? 'SOL')} ${DOT}
           <span class="${grad ? 'gd' : 'up'}" id="s-state">${grad ? 'BONDED' : 'ACTIVE'}</span>
         </div>
       </div>
@@ -148,6 +170,7 @@ function tokenHTML(c: SimCoin): Html {
       <button class="stakebtn" id="tk-stake">STAKE</button>
     </div>
     <div id="cbWrap">${cbBannerHTML(c)}</div>
+    <div id="xchainWrap">${crossChainHTML(c)}</div>
 
     <div class="tk-grid">
       <section class="pnl">
@@ -370,8 +393,8 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
       <span>NETWORK</span
       ><b
         >${
-          (c.net ?? WALLET.net) === 'RH'
-            ? 'ETH GAS · PRIO/MEV N/A ON ROBINHOOD'
+          isEvm(c.net ?? WALLET.net)
+            ? nativeUnitOf(c.net ?? WALLET.net) + ' GAS · PRIO/MEV N/A ON ' + NET_INFO[c.net ?? WALLET.net].name
             : 'PRIO ' +
               Number(SET.prio).toFixed(4) +
               ' ' +
@@ -407,7 +430,9 @@ export function renderQuote(): void {
 
   const go = $('#t-go') as HTMLButtonElement | null;
   if (go) {
-    go.textContent = TV.side + ' ' + c.sym;
+    go.textContent = crossChain(c)
+      ? 'SWITCH TO ' + NET_INFO[c.net ?? 'SOL'].short + ' TO TRADE'
+      : TV.side + ' ' + c.sym;
     go.className = 'big' + (buy ? '' : ' sell');
     if (api.mode === 'live') go.disabled = !c.tradeable || c.lane === 'grad';
   }
@@ -478,8 +503,8 @@ function syncPosition(c: SimCoin): void {
 
   // Live RH: overwrite HOLD from ERC-20 balance so we never show the
   // usd÷price fantasy that invents ~2.7M when MetaMask holds 21M.
-  if (api.mode === 'live' && c.net === 'RH' && c.mint && WALLET.on && WALLET.full) {
-    void syncHoldingFromChain(c, WALLET.full || sessionWallet('RH')).then((tok) => {
+  if (api.mode === 'live' && c.net && isEvm(c.net) && c.mint && WALLET.on && WALLET.full) {
+    void syncHoldingFromChain(c, WALLET.full || sessionWallet(c.net)).then((tok) => {
       if (tok === null || TV.c !== c) return;
       paintPosition(c);
     });
@@ -693,8 +718,8 @@ function commentsHTML(c: SimCoin): Html {
 let commentUnsub: (() => void) | null = null;
 let commentsLoadedFor: string | null = null;
 
-function commentRoomNet(c: SimCoin): 'SOL' | 'RH' {
-  return c.net === 'RH' ? 'RH' : 'SOL';
+function commentRoomNet(c: SimCoin): Net {
+  return c.net ?? 'SOL';
 }
 
 function pushComment(c: SimCoin, m: Comment): void {
@@ -978,17 +1003,13 @@ function updateCurveNote(): void {
   if (c.lane === 'grad') {
     const net = c.net ?? 'SOL';
     n.textContent =
-      net === 'SOL'
-        ? 'GRADUATED ' +
-          MID +
-          ' LIQUIDITY MIGRATED TO METEORA DLMM AND THE POSITION IS PERMANENTLY LOCKED.'
-        : 'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO UNISWAP AND LP TOKENS WERE BURNED.';
+      'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO ' + NET_INFO[net].dex + ' AND ' + NET_INFO[net].lpNote + '.';
   } else {
     const net = c.net ?? 'SOL';
     render(
       n,
       html`AT ${usd(GRAD)} MARKET CAP THE CURVE FILLS, LIQUIDITY MIGRATES
-        (${net === 'SOL' ? 'METEORA DLMM' : 'UNISWAP'}) AND THE LP LOCKS.
+        (${NET_INFO[net].dex}) AND THE LP LOCKS.
         <b class="am">${usd(Math.max(0, GRAD - c.mc))}</b> TO GO.`,
     );
   }
@@ -1097,6 +1118,7 @@ export function openToken(c: SimCoin): void {
     });
   }
   must('#tk-back').addEventListener('click', () => navigate({ view: 'board' }));
+  $('#xchain-switch')?.addEventListener('click', () => void connectWallet(c.net ?? 'SOL'));
   must('#tk-stake').addEventListener('click', () => openStake(c));
   must('#tk-share').addEventListener('click', () => {
     // Canonical production host; include mint so duplicate tickers resolve.
@@ -1199,6 +1221,10 @@ export function openToken(c: SimCoin): void {
 }
 
 async function submitTrade(c: SimCoin): Promise<void> {
+  if (crossChain(c)) {
+    void connectWallet(c.net ?? 'SOL');
+    return;
+  }
   const amount = parseFloat(must<HTMLInputElement>('#t-amt').value) || 0;
   if (amount <= 0) return;
   if (api.mode === 'live' && (!c.tradeable || c.lane === 'grad')) {

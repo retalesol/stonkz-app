@@ -8,6 +8,7 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import type { Net } from '@stonkz/shared';
+import { NET_INFO, isEvm } from '@stonkz/shared';
 import { isAddress, parseEther } from 'viem';
 import {
   SOLANA_RPC_URL,
@@ -99,13 +100,13 @@ export async function attemptTip(
     throw new TipBroadcastError('Connect a wallet on this network to send a tip.');
   }
 
-  if (net === 'RH') {
+  if (isEvm(net)) {
     if (!isAddress(toAddress)) {
-      throw new TipBroadcastError('Not a valid Robinhood Chain address: ' + toAddress);
+      throw new TipBroadcastError('Not a valid ' + NET_INFO[net].name + ' address: ' + toAddress);
     }
     try {
       const { signature } = await signAndConfirm(net, {
-        net: 'RH',
+        net,
         to: toAddress,
         data: '0x',
         value: parseEther(String(amountNative)).toString(),

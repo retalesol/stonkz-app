@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 
 /**
  * One message builder for both chains.
@@ -30,12 +30,11 @@ export const SIWS_STATEMENT =
  */
 export function chainLabel(
   net: Net,
-  evmChainIds: { RH: number; BASE: number },
+  evmChainIds: Record<EvmNet, number>,
   solanaSiwsChainId = 'solana:mainnet',
 ): string {
   if (net === 'SOL') return solanaSiwsChainId;
-  if (net === 'BASE') return String(evmChainIds.BASE);
-  return String(evmChainIds.RH);
+  return String(evmChainIds[net]);
 }
 
 export function buildSignInMessage(p: SignInMessageParams): string {

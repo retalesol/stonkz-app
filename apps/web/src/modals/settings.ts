@@ -1,10 +1,17 @@
-import type { MevMode } from '@stonkz/shared';
+import { DEFAULT_TRADE_CAP, MAX_TRADE_CAP, type MevMode } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, must } from '../lib/dom.js';
 import { DOT } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
-import { DEFAULTS, SET, resetSettings, saveSettings, settingsPayload } from '../state/settings.js';
+import {
+  DEFAULTS,
+  SET,
+  capFor,
+  resetSettings,
+  saveSettings,
+  settingsPayload,
+} from '../state/settings.js';
 import { nativeUnit } from '../state/wallet.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
 
@@ -82,7 +89,7 @@ function formHTML(): ReturnType<typeof html> {
       <div class="set-row">
         <span class="k">MAX FEE CAP<small>ABORT BUY ABOVE THIS TOTAL SPEND</small></span>
         <span class="set-ctl"
-          ><input class="fld r" id="st-cap" value="${attr(SET.cap)}" />
+          ><input class="fld r" id="st-cap" value="${attr(capFor(unit))}" />
           <span class="hint">${unit}</span></span
         >
       </div>
@@ -197,7 +204,9 @@ export function initSettings(onSaved: () => void): void {
     SET.slip = field('#st-slip', 0.1, 50, DEFAULTS.slip);
     SET.prio = field('#st-prio', 0, 1, DEFAULTS.prio);
     SET.mevTip = field('#st-mev', 0, 1, DEFAULTS.mevTip);
-    SET.cap = field('#st-cap', 0.001, 50, DEFAULTS.cap);
+    const unit = nativeUnit();
+    SET.cap = field('#st-cap', 0.001, MAX_TRADE_CAP[unit], DEFAULT_TRADE_CAP[unit]);
+    SET.capUnit = unit;
     SET.defBuy = field('#st-buy', 0.01, 999, DEFAULTS.defBuy);
     saveSettings();
     void pushOrToast().then((ok) => {

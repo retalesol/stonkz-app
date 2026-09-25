@@ -1,4 +1,16 @@
-import { GRAD, RANKS, ago, inCashback, inferNetFromAddress, num, pct, price, rankOf, usd } from '@stonkz/shared';
+import {
+  GRAD,
+  RANKS,
+  ago,
+  inCashback,
+  inferNetFromAddress,
+  isEvm,
+  num,
+  pct,
+  price,
+  rankOf,
+  usd,
+} from '@stonkz/shared';
 import { api } from '../api/index.js';
 import {
   follow as liveFollow,
@@ -477,7 +489,7 @@ export function renderProfile(addr?: string): void {
   // Live: hydrate from the API after first paint so we never flash RNG flavour.
   if (live && PF.addr && !LIVE_HYDRATED.has(PF.addr) && !(liveMem && LIVE_HYDRATED.has(liveMem.addr))) {
     const target = PF.addr;
-    const profileNet = inferNetFromAddress(target, WALLET.net === 'BASE' ? 'BASE' : 'RH');
+    const profileNet = inferNetFromAddress(target, isEvm(WALLET.net) ? WALLET.net : 'RH');
     void Promise.all([
       fetchMember(profileNet, target).catch(() => null),
       fetchWall(profileNet, target).catch(() => null),

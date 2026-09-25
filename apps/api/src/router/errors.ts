@@ -58,6 +58,25 @@ export class CapExceededError extends RouterError {
   }
 }
 
+/**
+ * The trade's native leg is worth more than `NET_INFO[net].maxTradeUsd`. Only
+ * nets where "testing" means real funds carry a cap (Arc mainnet, 25 USD); the
+ * cap is a product rule, so it is checked before any balance or route work.
+ */
+export class MaxTradeUsdExceededError extends RouterError {
+  readonly code = 'max_trade_usd_exceeded';
+  readonly httpStatus = 422;
+
+  constructor(
+    readonly net: string,
+    readonly tradeUsd: number,
+    readonly maxTradeUsd: number,
+  ) {
+    super(`${net} trades are capped at ${maxTradeUsd} USD; this one is worth ${tradeUsd} USD`);
+    this.name = 'MaxTradeUsdExceededError';
+  }
+}
+
 /** The trader's native balance cannot cover hop 1 plus fees. */
 export class InsufficientNativeError extends RouterError {
   readonly code = 'insufficient_native';

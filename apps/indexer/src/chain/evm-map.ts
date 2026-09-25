@@ -1,4 +1,5 @@
 import type { BaseMintRegistry } from '@stonkz/api/router/base-mints';
+import type { EvmNet } from '@stonkz/shared';
 import { getAddress } from 'viem';
 import type { ChainEvent } from '../events.js';
 import type { DecodedEvmEvent } from './evm-events.js';
@@ -34,7 +35,7 @@ import { UnknownMintError, type TokenMeta } from './registry.js';
  *    after a successful on-chain stake. Normalise at the decode boundary.
  */
 export interface EvmMapContext {
-  net: 'RH' | 'BASE';
+  net: EvmNet;
   txHash: string;
   blockNumber: number;
   blockTimeMs: number;

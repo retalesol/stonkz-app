@@ -272,6 +272,10 @@ export const COINS: SimCoin[] = RAW.map((a, i) => {
     trades: null,
     comments: null,
     mine,
+    // The sandbox spreads its older coins across the EVM nets so every chain
+    // chip has something to show; the youngest (first in NEW MINTS) and the
+    // coins "you" launched stay on Solana, which the sim journeys assume.
+    net: (a[7] >= 300 && !mine ? (['BASE', 'ARC', 'RH'] as const)[i % 3] : 'SOL') ?? 'SOL',
     fee: mine ? (MINE[a[0]] as number) : 0,
   } satisfies SimCoin;
 });

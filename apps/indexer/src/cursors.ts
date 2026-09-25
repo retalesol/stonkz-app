@@ -79,12 +79,13 @@ export class ReplayCursors {
   }
 
   async readAll(): Promise<Record<Net, CursorState>> {
-    const [sol, rh, base] = await Promise.all([
+    const [sol, rh, base, arc] = await Promise.all([
       this.read('SOL'),
       this.read('RH'),
       this.read('BASE'),
+      this.read('ARC'),
     ]);
-    return { SOL: sol, RH: rh, BASE: base };
+    return { SOL: sol, RH: rh, BASE: base, ARC: arc };
   }
 
   /**

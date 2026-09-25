@@ -1,4 +1,4 @@
-import type { AchievementKey, CrateTier, Net } from './types.js';
+import type { AchievementKey, CrateTier, NativeUnit, Net } from './types.js';
 
 /** Graduation market cap, USD. `index.html:1084` */
 export const GRAD = 69000;
@@ -50,6 +50,16 @@ export const MAX_TICKER_LEN = 10;
 /** Minimum wall tip per native unit. `index.html:3312` */
 export const MIN_TIP_SOL = 0.001;
 export const MIN_TIP_ETH = 0.0001;
+/** Arc tips are denominated in USDC, so the floor is a quarter dollar. */
+export const MIN_TIP_USDC = 0.25;
+
+/**
+ * `Settings.cap` ("abort above this total") is in the connected net's native
+ * unit, so its default and ceiling scale with the unit: 5 SOL / 5 ETH are
+ * a few thousand dollars, and USDC needs the same order of magnitude.
+ */
+export const DEFAULT_TRADE_CAP: Record<NativeUnit, number> = { SOL: 5, ETH: 5, USDC: 5_000 };
+export const MAX_TRADE_CAP: Record<NativeUnit, number> = { SOL: 50, ETH: 50, USDC: 50_000 };
 
 /**
  * Fill size, in native units, that unlocks the WHALE achievement.
@@ -63,7 +73,7 @@ export const MIN_TIP_ETH = 0.0001;
  * Lives here rather than in `apps/api` so the sim and the server award it on
  * exactly the same boundary (security review L3).
  */
-export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2, BASE: 2 };
+export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2, BASE: 2, ARC: 500 };
 
 /**
  * Dust floor, in native units. Below this a fill awards nothing at all — no
@@ -75,7 +85,7 @@ export const DEFAULT_WHALE_CUT: Record<Net, number> = { SOL: 5, RH: 2, BASE: 2 }
  *
  * Shared with the sim for the same reason as `DEFAULT_WHALE_CUT`.
  */
-export const DEFAULT_DUST: Record<Net, number> = { SOL: 0.01, RH: 0.0005, BASE: 0.0005 };
+export const DEFAULT_DUST: Record<Net, number> = { SOL: 0.01, RH: 0.0005, BASE: 0.0005, ARC: 1 };
 
 /** `[days, weightMultiplier, label]`. `index.html:1565` */
 export const LOCKS = [
@@ -342,11 +352,31 @@ export const MAJORS = {
     ['LINK', 'Chainlink'],
     ['LTC', 'Litecoin'],
   ],
-  /** Coinbase Base — ETH/WETH/USDC only; no RH stock tokens. */
+  /** Coinbase Base — the chain's top majors; no RH stock tokens. */
   BASE: [
     ['ETH', 'Ethereum'],
     ['WETH', 'Wrapped Ether'],
     ['USDC', 'USD Coin'],
+    ['CBBTC', 'Coinbase Wrapped BTC'],
+    ['AERO', 'Aerodrome'],
+    ['DEGEN', 'Degen'],
+    ['BRETT', 'Brett'],
+    ['VIRTUAL', 'Virtuals Protocol'],
+    ['DAI', 'Dai'],
+    ['USDT', 'Tether'],
+  ],
+  /** Circle's Arc — USDC is the gas token, so the list is stablecoin-first. */
+  ARC: [
+    ['USDC', 'USD Coin'],
+    ['EURC', 'Euro Coin'],
+    ['USYC', 'Circle USYC'],
+    ['WETH', 'Wrapped Ether'],
+    ['WBTC', 'Wrapped BTC'],
+    ['CBBTC', 'Coinbase Wrapped BTC'],
+    ['USDT', 'Tether'],
+    ['DAI', 'Dai'],
+    ['PYUSD', 'PayPal USD'],
+    ['FRAX', 'Frax'],
   ],
 } as const satisfies Record<Net, readonly (readonly [symbol: string, name: string])[]>;
 

@@ -295,9 +295,46 @@ describe('cross-environment replay', () => {
 
   it('defaults the allow-list to the configured RH and Base ids', () => {
     // 284ae9a: with no EVM_ALLOWED_CHAIN_IDS the list is [rhChainId, baseChainId],
-    // i.e. RH testnet 46630 plus Base Sepolia 84532.
+    // i.e. RH testnet 46630 plus Base Sepolia 84532. Arc (5042) is absent until
+    // something is deployed there.
     expect(h.deps.env.allowedRhChainIds).toEqual([h.deps.env.rhChainId, h.deps.env.baseChainId]);
     expect(h.deps.env.allowedRhChainIds).toEqual([46630, 84532]);
+    expect(h.deps.env.allowedRhChainIds).not.toContain(h.deps.env.arcChainId);
+  });
+
+  it('refuses an Arc sign-in while no Arc launchpad is configured', async () => {
+    const w = evmWallet('arc-nobody');
+    const nonceRes = await h.app.request(
+      `/auth/nonce?net=ARC&address=${encodeURIComponent(w.address)}`,
+    );
+    expect(nonceRes.status).toBe(200);
+    const challenge = (await nonceRes.json()) as Challenge;
+    expect(challenge.chainId).toBe('5042');
+
+    const res = await h.app.request('/auth/siwe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: TEST_ORIGIN },
+      body: JSON.stringify({
+        address: w.address,
+        message: challenge.message,
+        signature: w.sign(challenge.message),
+      }),
+    });
+    expect(res.status).not.toBe(200);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: 'chain_mismatch' });
+  });
+
+  it('adds Arc to the allow-list once ARC_LAUNCHPAD_ADDRESS is set', async () => {
+    const arc = await createTestApp({
+      env: { ARC_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000a4c0' },
+    });
+    try {
+      expect(arc.deps.env.allowedRhChainIds).toEqual([46630, 84532, 5042]);
+      const { address } = await arc.login('ARC', evmWallet('arc-user'));
+      expect(address).toBe(evmWallet('arc-user').address);
+    } finally {
+      await arc.close();
+    }
   });
 });
 

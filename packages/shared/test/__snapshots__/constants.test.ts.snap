@@ -65,8 +65,50 @@ exports[`achievements > snapshots all ten 1`] = `
 ]
 `;
 
-exports[`base mints > snapshots the majors for both networks 1`] = `
+exports[`base mints > snapshots the majors for every network 1`] = `
 {
+  "ARC": [
+    [
+      "USDC",
+      "USD Coin",
+    ],
+    [
+      "EURC",
+      "Euro Coin",
+    ],
+    [
+      "USYC",
+      "Circle USYC",
+    ],
+    [
+      "WETH",
+      "Wrapped Ether",
+    ],
+    [
+      "WBTC",
+      "Wrapped BTC",
+    ],
+    [
+      "CBBTC",
+      "Coinbase Wrapped BTC",
+    ],
+    [
+      "USDT",
+      "Tether",
+    ],
+    [
+      "DAI",
+      "Dai",
+    ],
+    [
+      "PYUSD",
+      "PayPal USD",
+    ],
+    [
+      "FRAX",
+      "Frax",
+    ],
+  ],
   "BASE": [
     [
       "ETH",
@@ -79,6 +121,34 @@ exports[`base mints > snapshots the majors for both networks 1`] = `
     [
       "USDC",
       "USD Coin",
+    ],
+    [
+      "CBBTC",
+      "Coinbase Wrapped BTC",
+    ],
+    [
+      "AERO",
+      "Aerodrome",
+    ],
+    [
+      "DEGEN",
+      "Degen",
+    ],
+    [
+      "BRETT",
+      "Brett",
+    ],
+    [
+      "VIRTUAL",
+      "Virtuals Protocol",
+    ],
+    [
+      "DAI",
+      "Dai",
+    ],
+    [
+      "USDT",
+      "Tether",
     ],
   ],
   "RH": [

@@ -174,6 +174,11 @@
           <span><span class="nn">COINBASE BASE</span><span class="ns">BASE SEPOLIA</span></span>
           <span class="arrow">&#8250;</span>
         </button>
+        <button class="net-item" data-net="ARC">
+          <canvas width="44" height="44" data-mark="ARC" aria-hidden="true"></canvas>
+          <span><span class="nn">ARC</span><span class="ns">ARC MAINNET &#183; USDC GAS &#183; CAPPED</span></span>
+          <span class="arrow">&#8250;</span>
+        </button>
       </span>
       <button class="wchip" id="wchip" hidden aria-haspopup="true" aria-expanded="false">
         <i class="netdot" id="wNetDot"></i>
@@ -188,6 +193,7 @@
           <span class="wrow"><span class="v" id="wBal">0.00 SOL</span>
             <span class="usd" id="wUsd">&#8776; $0</span></span>
           <button type="button" class="addr" id="wFull" title="Copy full address"></button></span>
+        <button class="wmi" data-w="switch">SWITCH NETWORK</button>
         <button class="wmi" data-w="profile">PROFILE</button>
         <button class="wmi" data-w="settings">SETTINGS</button>
         <button class="wmi dc" data-w="disconnect">DISCONNECT</button>
@@ -218,6 +224,8 @@
     <button class="chip" data-sort="mc">MARKET CAP</button>
     <button class="chip" data-sort="chg">GAINERS</button>
     <button class="chip" data-sort="rep">MOST REPLIES</button>
+    <span class="fl netfl">NET</span>
+    <span class="netchips" id="netChips" role="group" aria-label="Filter the board by network"></span>
     <button class="launch-cta" id="createBtn">+ LAUNCH A COIN</button>
   </div>
 
@@ -252,7 +260,7 @@
   <span class="sol"><span class="led"></span>SOL <b id="solpx">$0.00</b></span>
   <span class="sol eth"><span class="led"></span>ETH <b id="ethpx">$0.00</b></span>
   <span class="grad">GRADUATION: <b id="gradCap">$69K</b></span>
-  <span class="demo">DEVNET / RH TESTNET / BASE SEPOLIA &#183; NOT MAINNET &#183; NOT FINANCIAL ADVICE</span>
+  <span class="demo" id="disclosure">SOLANA DEVNET / BASE SEPOLIA / ARC MAINNET (CAPPED) / RH TESTNET &#183; NOT FINANCIAL ADVICE</span>
   <span class="brk" id="count">0 COINS</span>
   <button type="button" class="foot-legal" id="legalLink">RISK &amp; LEGAL DISCLOSURE</button>
 </footer>

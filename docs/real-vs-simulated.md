@@ -32,6 +32,23 @@ Status legend:
 
 ---
 
+## 0. Networks (Phase 1 of the Base + Arc rollout)
+
+`Net` is now `'SOL' | 'BASE' | 'ARC' | 'RH'`, and every fact about a net that is
+not an environment secret (gas unit, decimals, colours, DEX, tip floor, trade
+cap) lives in one place: `packages/shared/src/nets.ts` (`NET_INFO`). The web
+wallet layer keys chain ids / RPCs / explorers off the same union in
+`apps/web/src/wallet/chain.ts` (`EVM_CHAINS`). Adding a fifth net is one row
+in each plus whatever the exhaustive `Record<Net, …>` maps then demand.
+
+| Surface                                                      | Status           | Evidence                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Arc in the picker, chips, badges, wallet chip, connect sheet | **REAL (UI)**    | `ALL_NETS` drives the net chips on the board, the chain badge on every card and token header, the SWITCH NETWORK row in the wallet menu, and the environment block on the connect sheet (env, chain id, unit, faucet, mainnet warning).                        |
+| Arc settlement                                               | **NOT DEPLOYED** | No launchpad / router on 5042. The API refuses Arc trade prepare and does not add 5042 to the SIWE allow-list until `ARC_LAUNCHPAD_ADDRESS` is set. Web falls back to `NET_INFO.ARC.maxTradeUsd` messaging only.                                               |
+| Arc gas / decimals                                           | **DESIGNED**     | Native USDC is 18-decimal at the EVM layer (`wallet_addEthereumChain` declares `decimals: 18`, symbol `USDC`), 6-decimal as ERC-20. `formatEther` therefore yields whole USDC; display uses `NET_INFO.ARC.displayDecimals`. Unverified against a live Arc RPC. |
+| Cross-chain guard                                            | **REAL (UI)**    | Opening a coin on a net other than the connected wallet's shows the WRONG CHAIN strip; the ticket button becomes SWITCH TO <net> and reopens the picker instead of signing.                                                                                    |
+| Sim sandbox                                                  | **REAL (sim)**   | Older sim coins are spread across BASE / ARC / RH so each chain chip has rows; the youngest coins and the ones "you" launched stay on Solana, which the sim journeys rely on.                                                                                  |
+
 ## 1. Wallets and settlement
 
 Phase B replaced the browser-local practice keypair with real wallet

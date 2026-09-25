@@ -1,5 +1,7 @@
 import { GRAD, usd } from '@stonkz/shared';
 import { api, DISCLOSURE } from '../api/index.js';
+import { setNetSwitchHandler } from '../views/board.js';
+import { savedNet, selectNet } from '../state/wallet.js';
 import { initFx } from '../fx/debris.js';
 import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
@@ -145,6 +147,8 @@ export async function boot(): Promise<void> {
     console.warn('api.ready failed', err);
   }
 
+  const remembered = savedNet();
+  if (remembered) selectNet(remembered);
   initBoard();
   initTape();
   initChat();
@@ -165,6 +169,7 @@ export async function boot(): Promise<void> {
   initClaim(() => renderWallet());
 
   initNetPicker((net) => void connectWallet(net));
+  setNetSwitchHandler((net) => void connectWallet(net));
   initWalletChip({
     onChange: () => {
       if (currentView() === 'profile') renderProfile();

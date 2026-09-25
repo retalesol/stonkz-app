@@ -106,6 +106,13 @@
       "when": 1789657200000,
       "tag": "0014_base_treasuries",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789743600000,
+      "tag": "0015_net_arc",
+      "breakpoints": true
     }
   ]
 }

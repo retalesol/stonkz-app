@@ -63,12 +63,13 @@ export class Metrics {
   private wsSubscriptions = 0;
   private wsMessagesSent = 0;
 
-  private readonly rpcCalls: Record<Net, number> = { SOL: 0, RH: 0, BASE: 0 };
-  private readonly rpcErrors: Record<Net, number> = { SOL: 0, RH: 0, BASE: 0 };
+  private readonly rpcCalls: Record<Net, number> = { SOL: 0, RH: 0, BASE: 0, ARC: 0 };
+  private readonly rpcErrors: Record<Net, number> = { SOL: 0, RH: 0, BASE: 0, ARC: 0 };
   private readonly lag: Record<Net, ChainLag> = {
     SOL: { net: 'SOL', behind: 0, seconds: 0, alerting: false },
     RH: { net: 'RH', behind: 0, seconds: 0, alerting: false },
     BASE: { net: 'BASE', behind: 0, seconds: 0, alerting: false },
+    ARC: { net: 'ARC', behind: 0, seconds: 0, alerting: false },
   };
 
   /** Alerts are edge-triggered: one per transition, not one per observation. */
@@ -203,7 +204,7 @@ export class Metrics {
         messagesSent: this.wsMessagesSent,
       },
       rpc,
-      chainLag: { SOL: this.lag.SOL, RH: this.lag.RH, BASE: this.lag.BASE },
+      chainLag: { SOL: this.lag.SOL, RH: this.lag.RH, BASE: this.lag.BASE, ARC: this.lag.ARC },
     };
   }
 }

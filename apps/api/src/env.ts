@@ -1,4 +1,6 @@
 import type { Net } from '@stonkz/shared';
+import { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
+import { ARC_BLOCK_MS, ARC_CHAIN_ID, ARC_EXPLORER_URL, ARC_RPC_URL } from './chain/arc.js';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BASE_SEPOLIA_EXPLORER_URL,
@@ -61,7 +63,10 @@ export interface ApiEnv {
   /** Blockscout / RH explorer base (no trailing slash). Used for live token holders. */
   rhExplorerUrl: string;
   rhChainId: number;
-  /** EVM chain ids a SIWE message may name (RH + Base). See `AuthServiceOptions`. */
+  /**
+   * EVM chain ids a SIWE message may name (RH + Base, plus Arc once
+   * `ARC_LAUNCHPAD_ADDRESS` is configured). See `AuthServiceOptions`.
+   */
   allowedRhChainIds: readonly number[];
   rhNetworkLabel: string;
   baseRpcUrl: string;
@@ -72,6 +77,20 @@ export interface ApiEnv {
   baseV3FeeTierOverrides: Record<string, number>;
   baseV3FactoryAddress: string;
   baseV3QuoterAddress: string;
+  /* ------------------------------------------------------------------ Arc */
+  /** Circle's Arc (chain id 5042, USDC gas). See `chain/arc.ts`. */
+  arcRpcUrl: string;
+  arcExplorerUrl: string;
+  arcChainId: number;
+  /**
+   * Zero address (the default) means "not deployed on Arc": `/trade/prepare`
+   * refuses Arc trades and SIWE does not accept 5042 until this is set.
+   */
+  arcLaunchpadAddress: string;
+  arcRouterAddress: string;
+  arcV3FeeTierOverrides: Record<string, number>;
+  arcV3FactoryAddress: string;
+  arcV3QuoterAddress: string;
   maxChainLagSeconds: number;
   chainTickMs: Record<Net, number>;
 
@@ -334,8 +353,13 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     allowedRhChainIds: (() => {
       const rhId = int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID);
       const baseId = int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID);
+      // Arc joins the default allow-list only once something is deployed
+      // there: a deployment with nothing on Arc must not accept a 5042 SIWE.
+      const arcDeployed = str(src, 'ARC_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS) !== ZERO_EVM_ADDRESS;
+      const arcId = int(src, 'ARC_CHAIN_ID', ARC_CHAIN_ID);
       const fromEnv = ints(src, 'EVM_ALLOWED_CHAIN_IDS', ints(src, 'RH_ALLOWED_CHAIN_IDS', []));
-      const merged = fromEnv.length > 0 ? fromEnv : [rhId, baseId];
+      const merged =
+        fromEnv.length > 0 ? fromEnv : arcDeployed ? [rhId, baseId, arcId] : [rhId, baseId];
       return [...new Set(merged)];
     })(),
     rhNetworkLabel: str(src, 'RH_NETWORK_LABEL', 'ROBINHOOD'),
@@ -353,11 +377,22 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
         : '0x33128a8fC17869897dc68A926803F6140319853',
     ),
     baseV3QuoterAddress: str(src, 'BASE_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
+    arcRpcUrl: str(src, 'ARC_RPC_URL', ARC_RPC_URL),
+    arcExplorerUrl: str(src, 'ARC_EXPLORER', ARC_EXPLORER_URL).replace(/\/$/, ''),
+    arcChainId: int(src, 'ARC_CHAIN_ID', ARC_CHAIN_ID),
+    arcLaunchpadAddress: str(src, 'ARC_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
+    arcRouterAddress: str(src, 'ARC_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
+    arcV3FeeTierOverrides: intMap(src, 'ARC_V3_FEE_TIER_OVERRIDES'),
+    // No canonical Uniswap v3 factory is confirmed for Arc yet; zero means
+    // "no on-chain pool hop" until an operator pins one.
+    arcV3FactoryAddress: str(src, 'ARC_V3_FACTORY_ADDRESS', ZERO_EVM_ADDRESS),
+    arcV3QuoterAddress: str(src, 'ARC_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
     maxChainLagSeconds: int(src, 'MAX_CHAIN_LAG_SECONDS', 30),
     chainTickMs: {
       SOL: int(src, 'SOLANA_SLOT_MS', 400),
       RH: int(src, 'RH_BLOCK_MS', 2000),
       BASE: int(src, 'BASE_BLOCK_MS', 2000),
+      ARC: int(src, 'ARC_BLOCK_MS', ARC_BLOCK_MS),
     },
 
     priceOracleUrl: str(src, 'PRICE_ORACLE_URL', 'https://api.coinbase.com/v2/prices'),
@@ -370,11 +405,14 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
       SOL: float(src, 'DUST_SOL', 0.01),
       RH: float(src, 'DUST_ETH', 0.0005),
       BASE: float(src, 'DUST_BASE_ETH', float(src, 'DUST_ETH', 0.0005)),
+      // USDC-denominated: the shared registry's floor, not the ETH one.
+      ARC: float(src, 'DUST_ARC_USDC', DEFAULT_DUST.ARC),
     },
     whaleCut: {
       SOL: float(src, 'WHALE_SOL', 5),
       RH: float(src, 'WHALE_ETH', 2),
       BASE: float(src, 'WHALE_BASE_ETH', float(src, 'WHALE_ETH', 2)),
+      ARC: float(src, 'WHALE_ARC_USDC', DEFAULT_WHALE_CUT.ARC),
     },
 
     quoteCacheTtlSeconds: int(src, 'QUOTE_CACHE_TTL_SECONDS', 8),

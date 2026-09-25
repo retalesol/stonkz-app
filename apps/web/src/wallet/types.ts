@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 
 /**
  * The one interface every write path in the app signs through.
@@ -39,7 +39,7 @@ export type SignPayload =
       readonly lastValidBlockHeight?: number;
     }
   | {
-      readonly net: 'RH' | 'BASE';
+      readonly net: EvmNet;
       readonly to: string;
       /** `0x`-prefixed calldata. */
       readonly data: string;

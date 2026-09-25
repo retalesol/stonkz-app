@@ -31,6 +31,7 @@ import {
   xpForTrade,
   circ,
 } from '@stonkz/shared';
+import { isEvm } from '@stonkz/shared';
 import { emit } from '../lib/bus.js';
 import {
   COINS,
@@ -45,7 +46,14 @@ import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/h
 import { SET } from '../state/settings.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
 import { USER, addXP, pushDrop, saveUser, syncSpLevelGrants, unlock } from '../state/user.js';
-import { NATIVE_PRICE, WALLET, nativeUnit, selectNet } from '../state/wallet.js';
+import {
+  NATIVE_PRICE,
+  SIM_BALANCE,
+  WALLET,
+  nativeUnit,
+  nativeUsd,
+  selectNet,
+} from '../state/wallet.js';
 import { clock, fakeAddr } from '../lib/fmt.js';
 import type {
   ClaimResult,
@@ -104,8 +112,7 @@ function beat(): void {
   NATIVE_PRICE.usd = Math.max(120, NATIVE_PRICE.usd * (1 + (Math.random() - 0.5) * 0.0018));
   NATIVE_PRICE.sol = Math.max(120, NATIVE_PRICE.sol * (1 + (Math.random() - 0.5) * 0.0018));
   NATIVE_PRICE.eth = Math.max(800, NATIVE_PRICE.eth * (1 + (Math.random() - 0.5) * 0.0018));
-  if (WALLET.net === 'RH') NATIVE_PRICE.usd = NATIVE_PRICE.eth;
-  else NATIVE_PRICE.usd = NATIVE_PRICE.sol;
+  NATIVE_PRICE.usd = nativeUsd(nativeUnit());
 
   for (const c of COINS) {
     c.lastMc = c.mc;
@@ -203,7 +210,7 @@ function accrueStake(c: SimCoin, now: number): void {
 
 /** The aggregator that fronts each network. `index.html` had no hop 1 at all. */
 function aggregatorOf(net: Net): Venue {
-  return net === 'RH' ? 'UNISWAP' : 'JUPITER';
+  return isEvm(net) ? 'UNISWAP' : 'JUPITER';
 }
 
 /**
@@ -375,7 +382,7 @@ export const simApi: StonkzApi = {
   async connect(net: Net): Promise<Wallet> {
     selectNet(net);
     WALLET.on = true;
-    WALLET.sol = net === 'RH' ? 3.18 : 12.4;
+    WALLET.sol = SIM_BALANCE[nativeUnit()];
     emit('wallet');
     return WALLET;
   },

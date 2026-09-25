@@ -7,6 +7,11 @@ import type { Net } from '@stonkz/shared';
  * mainnet-beta — then only SOL/WSOL are allowed unless overridden.
  * Robinhood defaults below are the **testnet (46630)** pins Robinhood documents.
  * Base defaults target **Base Sepolia** canonical WETH.
+ * Arc has only its native marker: USDC *is* the gas token there, so the zero
+ * address plays the role `ETH` plays on RH/Base. No canonical Arc ERC-20
+ * addresses (wrapped USDC, EURC, USYC, …) are confirmed yet, so every other
+ * `MAJORS.ARC` symbol resolves to `null` until pinned via
+ * `BASE_MINT_OVERRIDES_ARC`.
  */
 const BASE_MINTS: Record<Net, Record<string, string>> = {
   SOL: {
@@ -37,6 +42,9 @@ const BASE_MINTS: Record<Net, Record<string, string>> = {
     WETH: '0x4200000000000000000000000000000000000006',
     // Base Sepolia USDC — override via BASE_MINT_OVERRIDES_BASE if your deployment differs.
     USDC: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  },
+  ARC: {
+    USDC: '0x0000000000000000000000000000000000000000',
   },
 };
 
@@ -80,6 +88,7 @@ export function createBaseMintRegistry(
     SOL: solTable,
     RH: { ...BASE_MINTS.RH, ...overrides.RH },
     BASE: { ...BASE_MINTS.BASE, ...overrides.BASE },
+    ARC: { ...BASE_MINTS.ARC, ...overrides.ARC },
   };
 
   return {

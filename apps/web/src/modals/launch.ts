@@ -12,6 +12,7 @@ import {
   px,
   usd,
 } from '@stonkz/shared';
+import { NET_INFO } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { LiveApiError } from '../api/live.js';
 import { SocialApiError, uploadImage } from '../api/social.js';
@@ -81,8 +82,8 @@ function newDefaults(): Draft {
 
 function baseList(): ReadonlyArray<readonly [string, string]> {
   const net = WALLET.net;
-  const list =
-    NEW.tab === 'majors' || net === 'BASE' ? MAJORS[net] : net === 'RH' ? RH_STOCKS : STOCKS;
+  const stocks = NET_INFO[net].stocks;
+  const list = NEW.tab === 'majors' || !stocks ? MAJORS[net] : stocks === 'rh' ? RH_STOCKS : STOCKS;
   const q = NEW.q.trim().toUpperCase();
   if (!q) return list;
   return list.filter(
@@ -193,7 +194,7 @@ function ncStep2(): Html {
           ><button type="button" class="tab${NEW.tab === 'majors' ? ' on' : ''}" data-btab="majors">
             TOP 10</button
           >${
-            WALLET.net === 'BASE'
+            !NET_INFO[WALLET.net].stocks
               ? ''
               : html`<button
                   type="button"
@@ -230,7 +231,7 @@ function ncStep2(): Html {
       <p class="hint" style="margin-top:4px">
         PAIRS AGAINST ${NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'} ON
         ${n.name}${
-          WALLET.net === 'BASE'
+          !NET_INFO[WALLET.net].stocks
             ? '.'
             : html` ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.`
         }

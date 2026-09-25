@@ -2,7 +2,13 @@ import { Hono } from 'hono';
 import { PublicKey } from '@solana/web3.js';
 import { decodeAbiParameters, type Address, type Hex } from 'viem';
 import { and, eq } from 'drizzle-orm';
-import { isEvm, nativeUnit } from '@stonkz/shared';
+import {
+  DEFAULT_TRADE_CAP,
+  MAX_TRADE_CAP,
+  isEvm,
+  nativeUnit,
+  type NativeUnit,
+} from '@stonkz/shared';
 import { settings } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -16,6 +22,7 @@ import {
   RouterError,
   SlippageExceededError,
 } from '../router/errors.js';
+import { assertUnderMaxTradeUsd } from '../router/max-trade.js';
 import { isOracleHopRaw } from '../router/oracle-hop.js';
 import { isV3PoolHopRaw } from '../router/v3-pool-hop.js';
 import {
@@ -29,6 +36,12 @@ import { SolanaRpc } from '../chain/solana.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import { asSolanaBlockhashSource, composeSolanaTradeTransaction } from '../router/solana-tx.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
+import {
+  evmChainId as evmChainIdFor,
+  evmLaunchpadAddress,
+  evmRouterAddress,
+  evmV3FeeTierOverrides,
+} from '../chain/evm-net.js';
 import {
   buildAtomicBuyCall,
   buildAtomicSellCall,
@@ -133,6 +146,9 @@ function mergePrepareSettings(
     confirm: boolean;
   },
   body: TradePrepareBody,
+  unit: NativeUnit,
+  /** False when the wallet has no settings row yet, so the unit default applies. */
+  stored = true,
 ): typeof DEFAULT_SETTINGS {
   const mevRaw = typeof body.mev === 'string' ? body.mev.toUpperCase() : row.mev.toUpperCase();
   const mev: 'SHIELD' | 'RELAY' | 'OFF' =
@@ -142,7 +158,7 @@ function mergePrepareSettings(
     prio: clampNum(body.prio, 0, 1, row.prio),
     mev,
     mevTip: clampNum(body.mevTip, 0, 1, row.mevTip),
-    cap: clampNum(body.cap, 0.001, 50, row.cap),
+    cap: clampNum(body.cap, 0.001, MAX_TRADE_CAP[unit], stored ? row.cap : DEFAULT_TRADE_CAP[unit]),
     defBuy: row.defBuy,
     confirm: row.confirm,
   };
@@ -207,15 +223,36 @@ export function tradeRoutes(): Hono<AppEnv> {
       );
     }
 
+    // A buy's `amount` *is* the native leg, so a capped net (Arc: real funds,
+    // 25 USD) can refuse before touching the DB or an RPC. Sells are checked
+    // again below once the curve has priced the native proceeds.
+    if (side === 'buy') {
+      try {
+        assertUnderMaxTradeUsd(
+          net,
+          amount,
+          await deps.oracle.nativeUsd(nativeUnit(net)).catch(() => null),
+        );
+      } catch (err) {
+        if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
+        throw err;
+      }
+    }
+
     const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row) return c.json({ error: 'not_found' }, 404);
 
-    const evmLaunchpad =
-      net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress;
     const synced = await syncCurveReserves({
       db: deps.db,
       row: row as TokenRow,
-      ...(isEvm(net) ? { evm: { eth: asEthCaller(deps.rpcs[net]), launchpad: evmLaunchpad } } : {}),
+      ...(isEvm(net)
+        ? {
+            evm: {
+              eth: asEthCaller(deps.rpcs[net]),
+              launchpad: evmLaunchpadAddress(deps.env, net),
+            },
+          }
+        : {}),
       sol: {
         rpc: asSolanaAccountSource(deps.rpcs.SOL),
         programId: deps.env.solanaLaunchpadProgramId,
@@ -246,7 +283,12 @@ export function tradeRoutes(): Hono<AppEnv> {
       .from(settings)
       .where(and(eq(settings.net, net), eq(settings.wallet, wallet)))
       .limit(1);
-    const s = mergePrepareSettings(settingsRow ?? DEFAULT_SETTINGS, body);
+    const s = mergePrepareSettings(
+      settingsRow ?? DEFAULT_SETTINGS,
+      body,
+      nativeUnit(net),
+      !!settingsRow,
+    );
     const now = deps.now();
 
     // Plan step 85: abort before signing if the composed cost exceeds the
@@ -316,6 +358,17 @@ export function tradeRoutes(): Hono<AppEnv> {
     } catch (err) {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
       throw err;
+    }
+
+    // Sell side of the per-net USD cap: `quote.amountOut` is the native the
+    // trader receives, which is the number the cap is about.
+    if (side === 'sell') {
+      try {
+        assertUnderMaxTradeUsd(net, trade.quote.amountOut, usdPrice);
+      } catch (err) {
+        if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
+        throw err;
+      }
     }
 
     // Oracle-priced hops make `/quote` honest when the Trading API / pool is
@@ -392,13 +445,16 @@ export function tradeRoutes(): Hono<AppEnv> {
         });
       }
 
-      // EVM chains (Robinhood + Base).
+      // EVM chains (Robinhood, Base, Arc). `StonkzRouter` wraps the gas token
+      // into its canonical wrapped form for the pair; on Arc that is wrapped
+      // USDC, whose address is not pinned yet, so `weth` is null there and the
+      // router-missing branch below refuses the prepare (nothing is deployed
+      // on Arc either way).
       const isDirectPair = trade.aggregatorQuote === null;
       const weth = deps.baseMints.mintFor(net, 'WETH');
-      const routerAddr = net === 'BASE' ? deps.env.baseRouterAddress : deps.env.rhRouterAddress;
-      const feeOverrides =
-        net === 'BASE' ? deps.env.baseV3FeeTierOverrides : deps.env.rhV3FeeTierOverrides;
-      const evmChainId = net === 'BASE' ? deps.env.baseChainId : deps.env.rhChainId;
+      const routerAddr = evmRouterAddress(deps.env, net);
+      const feeOverrides = evmV3FeeTierOverrides(deps.env, net);
+      const evmChainId = evmChainIdFor(deps.env, net);
       const quotedFee =
         trade.aggregatorQuote && isV3PoolHopRaw(trade.aggregatorQuote.raw)
           ? trade.aggregatorQuote.raw.fee
@@ -549,7 +605,7 @@ export function tradeRoutes(): Hono<AppEnv> {
 
     // Best-effort proof check: confirm the tx exists / succeeded. We still
     // sync reserves from chain even if the indexer never sees the fill.
-    if (net === 'RH' || net === 'BASE') {
+    if (isEvm(net)) {
       const rpc = deps.rpcs[net] as {
         getTransactionReceipt?: (h: string) => Promise<{ status: string } | null>;
       };
@@ -571,12 +627,17 @@ export function tradeRoutes(): Hono<AppEnv> {
       }
     }
 
-    const evmLaunchpad =
-      net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress;
     const synced = await syncCurveReserves({
       db: deps.db,
       row: resolved as TokenRow,
-      ...(isEvm(net) ? { evm: { eth: asEthCaller(deps.rpcs[net]), launchpad: evmLaunchpad } } : {}),
+      ...(isEvm(net)
+        ? {
+            evm: {
+              eth: asEthCaller(deps.rpcs[net]),
+              launchpad: evmLaunchpadAddress(deps.env, net),
+            },
+          }
+        : {}),
       sol: {
         rpc: asSolanaAccountSource(deps.rpcs.SOL),
         programId: deps.env.solanaLaunchpadProgramId,

@@ -109,6 +109,12 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
         net: 'BASE',
         onCall: (ok) => metrics.rpcCall('BASE', ok),
       }),
+      ARC: new EvmRpc({
+        url: env.arcRpcUrl,
+        chainId: env.arcChainId,
+        net: 'ARC',
+        onCall: (ok) => metrics.rpcCall('ARC', ok),
+      }),
     } satisfies ChainRpcs);
 
   const oracle =
@@ -139,6 +145,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     uri: `https://${env.siwsDomain}`,
     rhChainId: env.rhChainId,
     baseChainId: env.baseChainId,
+    arcChainId: env.arcChainId,
     solanaSiwsChainId: env.solanaSiwsChainId,
     allowedRhChainIds: env.allowedRhChainIds,
     nonceTtlSeconds: env.nonceTtlSeconds,
@@ -193,6 +200,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       SOL: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_SOL']),
       RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
       BASE: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_BASE']),
+      ARC: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_ARC']),
       solanaCluster: env.solanaCluster,
     });
   const uniswap: UniswapClient =
