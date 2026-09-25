@@ -89,5 +89,7 @@ export function spLevelsReached(totalSp: number): readonly SpLevelDef[] {
 export function nextSpLevelGrants(totalSp: number): SpLevelDef | null {
   const info = spLevelOf(totalSp);
   if (info.next === null) return null;
+  // `next` is read off SP_LEVELS, so the lookup cannot miss.
+  /* v8 ignore next */
   return SP_LEVELS.find((l) => l.sp === info.next) ?? null;
 }
