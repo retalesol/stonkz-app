@@ -144,6 +144,12 @@ export function loadUser(): void {
   if (!USER.log) USER.log = [];
   if (typeof USER.optionz !== 'number') USER.optionz = USER.stonkz || 0;
   if (typeof USER.sp !== 'number') USER.sp = USER.xp || 0;
+  // Legacy sim blobs predate inventory — grant any SP levels not yet claimed.
+  if (!isLiveMode()) {
+    if (!USER.crateInventory) USER.crateInventory = {};
+    syncSpLevelGrants();
+    saveUser();
+  }
 }
 
 export function saveUser(): void {

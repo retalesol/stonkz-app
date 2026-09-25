@@ -80,6 +80,9 @@ export function pfValue(): number {
  *
  * Prefer `tokOut` when known (live quotes / prepare). Falling back to
  * `usdIn / price(c)` invents garbage when `mc` is still 0 on a fresh launch.
+ *
+ * `sol` is always the **native** notional (SOL/ETH spent on buy, received on
+ * sell) — never the token quantity.
  */
 export function noteTrade(c: SimCoin, buy: boolean, sol: number, tokOut?: number): void {
   const h = holdOf(c.sym);

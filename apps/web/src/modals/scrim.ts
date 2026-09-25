@@ -15,6 +15,7 @@ import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
 
 export type ScrimId =
   | '#newScrim'
+  | '#cropScrim'
   | '#setScrim'
   | '#wizScrim'
   | '#editScrim'
@@ -33,6 +34,7 @@ export function isOpen(id: ScrimId): boolean {
 export function anyOpen(): boolean {
   return (
     [
+      '#cropScrim',
       '#stakeScrim',
       '#wizScrim',
       '#claimScrim',

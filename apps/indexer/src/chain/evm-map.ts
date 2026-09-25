@@ -1,4 +1,5 @@
 import type { BaseMintRegistry } from '@stonkz/api/router/base-mints';
+import { getAddress } from 'viem';
 import type { ChainEvent } from '../events.js';
 import type { DecodedEvmEvent } from './evm-events.js';
 import {
@@ -28,9 +29,9 @@ import { UnknownMintError, type TokenMeta } from './registry.js';
  *    / `AtomicSell.ethOut` in the same transaction as the curve `Trade`, so a
  *    routed fill records the ETH the user actually paid instead of a USD
  *    reconstruction. Solana has no router event, so it always reconstructs.
- * 2. **Addresses are lowercased.** `eth_getLogs` casing is provider-dependent
- *    and every join key downstream is a plain string compare, so normalising
- *    at the decode boundary is the only place it can be done once.
+ * 2. **Addresses are EIP-55 checksummed.** Auth sessions store checksummed
+ *    EVM wallets; joining on lowercase used to make `GET /stake` look empty
+ *    after a successful on-chain stake. Normalise at the decode boundary.
  */
 export interface EvmMapContext {
   net: 'RH' | 'BASE';
@@ -74,7 +75,12 @@ type Args = Record<string, unknown>;
 function addr(args: Args, key: string): string {
   const value = args[key];
   if (typeof value !== 'string') throw new Error(`RH log field ${key} is not an address: ${JSON.stringify(value)}`);
-  return value.toLowerCase();
+  // Keep EIP-55 checksum so joins against auth sessions (`toChecksumAddress`) match.
+  try {
+    return getAddress(value);
+  } catch {
+    return value.toLowerCase();
+  }
 }
 
 function big(args: Args, key: string): bigint {

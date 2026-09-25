@@ -9,11 +9,53 @@
  * 2.5.5 target size, and hover-only decoration is switched off so a tap does
  * not leave a stuck highlight.
  *
- * Guarded by `hover: none` so desktop rendering — and the 1440/1120/680 visual
- * QA against legacy/index.html — is untouched.
+ * Also: Phantom / Jupiter in-app browsers — safe-area insets and dynamic
+ * viewport height so iOS chrome does not cover the top bar, footer, drawers,
+ * or trade/launch modals.
  *
- * @see plan step 37
+ * Guarded by `hover: none` so desktop rendering — and the 1440/1120/680 visual
+ * QA against legacy/index.html — is untouched for hit-target rules.
+ *
+ * @see plan step 37; Meteora DLMM + mobile wallet plan
  */
+
+/* ---- In-wallet browser safe areas + dynamic viewport -------------------- */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+.top {
+  padding-top: max(0px, var(--safe-top));
+  padding-left: max(0px, var(--safe-left));
+  padding-right: max(0px, var(--safe-right));
+}
+
+.foot {
+  padding-bottom: max(0px, var(--safe-bottom));
+  padding-left: max(0px, var(--safe-left));
+  padding-right: max(0px, var(--safe-right));
+}
+
+.drawer {
+  padding-bottom: max(12px, var(--safe-bottom));
+  max-height: 100dvh;
+}
+
+.scrim,
+.win,
+#bootSplash {
+  min-height: 100dvh;
+}
+
+/* Chat tab floats on the left edge — keep it clear of the home indicator. */
+.chat-tab,
+.chattab {
+  bottom: max(12px, calc(12px + var(--safe-bottom)));
+}
+
 @media (hover: none) {
   .pill,
   .chip,
@@ -26,7 +68,17 @@
   .room,
   .wiz-btn,
   .win-hd .x,
-  .drawer-hd .x {
+  .drawer-hd .x,
+  .openbtn,
+  .hdbtn,
+  .buy,
+  .sell,
+  .tbuy,
+  .tsell,
+  .netrow,
+  .npick,
+  .crate-open,
+  .launch-go {
     position: relative;
   }
   .pill::after,
@@ -40,7 +92,17 @@
   .room::after,
   .wiz-btn::after,
   .win-hd .x::after,
-  .drawer-hd .x::after {
+  .drawer-hd .x::after,
+  .openbtn::after,
+  .hdbtn::after,
+  .buy::after,
+  .sell::after,
+  .tbuy::after,
+  .tsell::after,
+  .netrow::after,
+  .npick::after,
+  .crate-open::after,
+  .launch-go::after {
     content: "";
     position: absolute;
     left: 0;

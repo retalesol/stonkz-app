@@ -47,54 +47,22 @@ fee bucket overdraw another, and no unauthenticated write path was found.
 
 ### H1. Solana graduation's "LP burn" is not implemented on-chain or anywhere in this repo — it is a fully trusted, unconstrained hand-off — **RESOLVED**
 
-**Resolution (post-review fix, `programs/solana`):** `migrate_liquidity` no
-longer hands the graduated reserves to caller-supplied token accounts. It now
-CPIs into the real Raydium CPMM program to create a pool seeded with the
-curve's `real_base`/`lp_reserve`, then issues a genuine SPL `burn` of 100% of
-the LP that pool mints — reducing `lp_mint.supply` to zero, not merely sending
-tokens to an address nobody uses. This mirrors `UniswapV2Migrator.sol`'s
-guarantee (real pool, atomic, pre-seeded-pool protection) with two chain-shape
-differences, both strictly at least as strong:
+**Resolution (post-review fix, updated 2026-09):** Solana graduation now CPIs
+into **Meteora DLMM** (`lb_clmm`) via two instructions — `migrate_create_pool`
+then `migrate_seed_liquidity` — rather than handing reserves to caller-named
+accounts. DLMM has no fungible LP mint; permanence is a PositionV2 with
+`lock_release_point = u64::MAX` and operator cleared to the Solana incinerator
+so nobody can `remove_liquidity`. An escrow PDA (`SEED_METEORA_ESCROW`) signs
+as funder / position base / liquidity sender; `migration_authority` only funds
+rent. Pool creation uses admin-chosen `PresetParameter2` (`global.dex_config`)
+and opens at the curve close price. CPI is hand-built from the published IDL
+(no foreign Anchor CPI crate), matching SPEC §6. (An earlier fix used Raydium
+CPMM + SPL LP burn; replaced per product decision.)
 
-- **Pre-seeded-pool protection is structural, not a price check.**
-  `UniswapV2Migrator` defends a *canonical, guessable* pair address by
-  comparing the pool's existing reserve ratio to the deposit and reverting on
-  a large deviation. On Solana, `pool_state` is this program's own PDA
-  (`SEED_RAYDIUM_POOL`, one per mint), passed to Raydium's `Initialize` via
-  the "non-canonical pool" path its own instruction supports for exactly this
-  front-running class. Nobody but this program can ever produce a valid
-  signature for that address, so nobody can occupy or fund it ahead of a
-  graduation — there is no reserve ratio to check because there is no way for
-  the pool to exist first. A `require!` still asserts the account is
-  untouched immediately before the CPI, as defence in depth, and is covered
-  by a dedicated test that forces the "already exists" precondition directly.
-- **The burn is a real supply reduction, not a dead-address transfer.** SPL
-  tokens have no analogue of `0xdead` that is simultaneously "unusable" and
-  "still counted in `totalSupply`" the way EVM's burn-address convention is.
-  `migrate_liquidity` calls the SPL `Burn` instruction on 100% of the LP a
-  dedicated escrow PDA receives, so `lp_mint.supply` is verifiably `0`
-  afterward — strictly stronger than "sent to an address nobody controls."
-
-The escrow PDA that stands in as Raydium's `creator` (funds-source, rent
-payer, LP recipient in Raydium's account model) is itself a second
-program-derived account nothing but this program can ever sign for again, so
-neither `migration_authority` nor any other signer ever holds the tokens, the
-pool, or the LP at any point — `migration_authority` only funds the SOL the
-pool creation and Raydium's `create_pool_fee` cost.
-
-Covered by `programs/solana/tests/launchpad.ts`'s "graduation liquidity
-migration (Raydium CPMM)" suite, which clones the actual Raydium CPMM devnet
-program plus its default fee-tier config onto the local validator (rather
-than mocking it) and asserts: a successful migration burns 100% of the
-minted LP (mint supply reads exactly zero afterward) against a pool
-confirmed real and Raydium-owned on chain; a second migration attempt is
-rejected (`AlreadyMigrated`); a forced pre-existing `pool_state` is rejected
-(`PoolAlreadyExists`); and the instruction's account list no longer accepts
-any caller-named destination. See `programs/solana/programs/launchpad/src/
-instructions/graduate.rs`'s `MigrateLiquidity` doc comment for the full
-design rationale, including why the integration is a hand-built CPI
-(`invoke_signed` against a manually constructed `Instruction`) rather than a
-dependency on the `raydium-cp-swap` crate.
+Covered by unit/CPI path in `graduate.rs`; the legacy Raydium local-validator
+suite in `tests/launchpad.ts` is skipped pending `lb_clmm` clones in
+`Anchor.toml`. Integration verify asserts lock + dead operator on graduated
+positions.
 
 <details>
 <summary>Original finding (pre-fix), left for the record</summary>

@@ -96,11 +96,12 @@ export interface SolLiquidityMigrated {
   mint: string;
   baseMint: string;
   pool: string;
-  lpMint: string;
+  /** DLMM PositionV2 account (formerly Raydium LP mint). */
+  position: string;
   baseDeposited: bigint;
   tokenDeposited: bigint;
-  lpMinted: bigint;
-  lpBurned: bigint;
+  lockReleasePoint: bigint;
+  positionLocked: bigint;
   ts: bigint;
 }
 
@@ -260,11 +261,11 @@ const layouts: readonly EventLayout<SolanaLaunchpadEvent>[] = [
       mint: r.pubkey(),
       baseMint: r.pubkey(),
       pool: r.pubkey(),
-      lpMint: r.pubkey(),
+      position: r.pubkey(),
       baseDeposited: r.u64(),
       tokenDeposited: r.u64(),
-      lpMinted: r.u64(),
-      lpBurned: r.u64(),
+      lockReleasePoint: r.u64(),
+      positionLocked: r.u64(),
       ts: r.i64(),
     }),
   },

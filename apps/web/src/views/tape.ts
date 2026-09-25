@@ -1,5 +1,5 @@
 import type { Fill } from '@stonkz/shared';
-import { pct, usd } from '@stonkz/shared';
+import { isEvm, pct, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
 import { miniChart } from '../canvas/spark.js';
@@ -51,7 +51,7 @@ function build(f: Fill): HTMLElement {
   const el = node(
     html`<span class="tx" data-sym="${attr(f.sym)}"
       ><i class="blk ${f.buy ? 'up' : 'dn'}"></i><b class="${f.buy ? 'up' : 'dn'}">${f.buy ? 'BUY' : 'SELL'}</b
-      ><span>${f.sol.toFixed(2)} ${f.net === 'RH' ? 'ETH' : 'SOL'}</span><b class="gd">${f.sym}</b><b class="dm">${DOT}</b
+      ><span>${f.sol.toFixed(2)} ${isEvm(f.net) ? 'ETH' : 'SOL'}</span><b class="gd">${f.sym}</b><b class="dm">${DOT}</b
       ><span class="dm">${f.w}</span></span
     >`,
   );
@@ -92,6 +92,15 @@ function push(f: Fill, animate: boolean): void {
 /** The live renderer: a real `board`/`tape` WS fill, or the initial seed batch. */
 export function pushFill(f: Fill, animate: boolean): void {
   push(f, animate);
+}
+
+/** Drop every print — call before reseeding on connect / disconnect / net switch. */
+export function clearTape(): void {
+  if (!run) return;
+  run.replaceChildren();
+  run.style.transition = 'none';
+  run.style.transform = 'translateX(0)';
+  unpin();
 }
 
 /* ----------------------------- hover: freeze one print, chart it ----------- */

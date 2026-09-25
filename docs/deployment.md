@@ -110,24 +110,21 @@ pnpm exec ts-node scripts/init-deployment.ts --dry-run
 Run with `--dry-run` first; it prints every derived address and sends nothing.
 Drop the flag to execute.
 
-The script also derives Raydium's `AmmConfig` (index 0, the permissionless tier
-with no OpenBook market requirement) from the CPMM program ID and
-**cross-checks the derivation** against the known devnet address. If Raydium
-ever changes its seed layout, the script aborts rather than writing a wrong
-CPI target into `Global`.
+The script also derives Meteora's `PresetParameter2` (default index 1) under
+`lb_clmm` (`LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo`, same on mainnet and
+devnet). Override with `STONKZ_METEORA_PRESET` / `STONKZ_METEORA_PRESET_INDEX`.
 
-### 1.3 Raydium config (admin key)
+### 1.3 Meteora DLMM config (admin key)
 
-`set_raydium_config` is admin-gated. If the deployer is the admin (devnet
+`set_meteora_config` is admin-gated. If the deployer is the admin (devnet
 convenience) the script sends it; otherwise it prints the call for the admin
-signer:
+signer. One-shot helper: `pnpm exec ts-node scripts/set-meteora-config.ts`.
 
-| Cluster | Raydium CPMM program |
+| Cluster | Meteora DLMM (`lb_clmm`) |
 |---|---|
-| mainnet-beta | `CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C` |
-| devnet | `DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb` |
+| mainnet-beta / devnet | `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo` |
 
-**Until this lands, `migrate_liquidity` fails closed** (Anchor's `address = …`
+**Until this lands, `migrate_create_pool` fails closed** (Anchor's `address = …`
 constraint against `Pubkey::default()`) and nothing can graduate. That is the
 intended fail-closed behaviour, not a bug.
 
@@ -282,11 +279,20 @@ Do all of these against the deployment, not against a local test.
 **Solana**
 
 - [ ] `Global` exists with the intended admin/authorities (read the account, don't trust the script's log).
-- [ ] `raydium_program` and `raydium_amm_config` are set and match §1.3.
+- [ ] `dex_program` and `dex_config` (Meteora DLMM + PresetParameter2) are set and match §1.3.
 - [ ] Protocol and ops vault PDAs are distinct addresses.
 - [ ] Launch a throwaway token, buy, sell. Confirm the 20/70/10 split lands in the three expected places.
-- [ ] Force a graduation. On the explorer, confirm the Raydium pool exists and the **LP mint supply is 0**. This is the claim that liquidity is gone; verify it, don't assume it.
-- [ ] Confirm the migration authority never held the LP (check the escrow ATA's history).
+- [ ] Force a graduation. On the explorer, confirm the Meteora DLMM pool exists and the position has `lock_release_point = u64::MAX` with operator at the incinerator. This is the claim that liquidity is gone; verify it, don't assume it.
+- [ ] Confirm the migration authority never held withdrawable liquidity (check the escrow ATA's history).
+
+### Mobile / in-wallet browser smoke (Phantom, Jupiter)
+
+Load the web app at ~390px width (or open inside Phantom / Jupiter browser):
+
+- [ ] Connect wallet sheet opens and net picker rows are tappable (≥44px hit).
+- [ ] Board scrolls; King of the Hill stacks; footer does not cover content behind the URL bar (`dvh` / safe-area).
+- [ ] Trade modal and launch wizard scroll inside the viewport with bottom safe inset.
+- [ ] Rewards / crates controls remain reachable above the home indicator.
 
 **Robinhood Chain**
 

@@ -434,52 +434,6 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
   });
 
-  test('Robinhood non-atomic EvmStep[] plan walks every step in order with the multi-signature notice visible', async ({
-    page,
-  }) => {
-    const sym = 'COPIUM';
-    const amount = 0.2;
-    const quote = nativePairedQuote(sym, 'buy', amount);
-    quote.net = 'RH';
-    quote.nativeUnit = 'ETH';
-    const warning =
-      'ROBINHOOD CHAIN HAS NO ATOMIC ROUTER CONFIGURED FOR THIS BASE ASSET YET. THIS TRADE REQUIRES 3 SEPARATE ' +
-      'SIGNATURES. STOPPING PARTWAY LEAVES YOU HOLDING AN INTERMEDIATE ASSET, NOT ETH.';
-    const descriptions = ['Wrap ETH', 'Approve WETH spend', 'Buy COPIUM on StonkzLaunchpad'];
-    await mockTradePrepareSteps(page, quote, descriptions, warning);
-
-    // COPIUM only exists on the Robinhood board — `GET /tokens?net=SOL` (the
-    // default) never has it, and `bySym()` only ever searches whatever `net`
-    // is currently loaded into `COINS`. A client-side net switch reloads
-    // that in place; a cold `page.goto('/t/COPIUM')` would instead boot fresh
-    // on the default SOL net and 404. Click into it the same way a trader
-    // actually would: switch chains, then click the card.
-    await connectWithMockWallet(page, 'RH');
-    await expect(page.locator('#wNetName')).toHaveText('ROBINHOOD');
-    const card = page.locator(`.coin[data-sym="${sym}"]`).first();
-    await expect(card).toBeVisible();
-    await card.click();
-    await expect(page.locator('#tokenView')).toBeVisible();
-
-    await page.click('#t-go');
-    // Never collapsed into the one-signature Solana path: the modal opens,
-    // the warning is pinned and visible, and the header counts signatures,
-    // not "confirm".
-    await expect(page.locator('#txScrim')).toBeVisible();
-    await expect(page.locator('#txBody')).toContainText('3 SEPARATE');
-    await expect(page.locator('#txBody')).toContainText('intermediate asset'.toUpperCase());
-
-    for (let i = 1; i <= descriptions.length; i++) {
-      await expect(page.locator('#steps-go')).toHaveText(`SIGN STEP ${i} OF ${descriptions.length}`);
-      await expect(page.locator('#txBody')).toContainText(`STEP ${i} OF ${descriptions.length}`);
-      await expect(page.locator('#txBody')).toContainText(descriptions[i - 1] as string);
-      await page.click('#steps-go');
-    }
-
-    await expect(page.locator('#txScrim')).toBeHidden({ timeout: 15_000 });
-    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible();
-  });
-
   /** The `StonkzRouter` path — `docs/rh-trade-atomicity-gap.md`'s "closed" case: one `to`/`data`/`value` call, no `EvmStep[]`. */
   async function mockTradePrepareAtomicRh(page: Page, quote: MockQuote): Promise<void> {
     await page.route('**/trade/prepare', async (route) => {

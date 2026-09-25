@@ -19,17 +19,15 @@ pub struct Global {
     pub ops_withdraw_authority: Pubkey,
     /// Pushes base-mint USD prices. A Pyth/Switchboard crank in production.
     pub oracle_authority: Pubkey,
-    /// Runs `migrate_liquidity` after a graduation: creates the Raydium/Meteora
-    /// pool and burns the LP. See SPEC.md §5 for why this is a separate key and
-    /// a separate instruction.
+    /// Runs migration after a graduation: creates the Meteora DLMM pool and
+    /// permanently locks the position. See SPEC.md §5.
     pub migration_authority: Pubkey,
-    /// Raydium CPMM program. Admin-settable rather than hardcoded so a devnet
-    /// deploy or a future program upgrade doesn't require a code change — see
-    /// `set_raydium_config`. `migrate_liquidity` CPIs into whatever is set
-    /// here; it does not trust the caller to name the program.
-    pub raydium_program: Pubkey,
-    /// The `AmmConfig` (fee tier) every graduation pool is created under.
-    pub raydium_amm_config: Pubkey,
+    /// Meteora `lb_clmm` program. Admin-settable via `set_meteora_config`.
+    /// Layout-compatible rename of the former `raydium_program` slot.
+    pub dex_program: Pubkey,
+    /// Meteora `PresetParameter2` (fee / bin-step tier) every graduation pool
+    /// is created under. Layout-compatible rename of `raydium_amm_config`.
+    pub dex_config: Pubkey,
     /// Halts buy and sell. Does not block claims or unstakes.
     pub trading_paused: bool,
     /// Halts create_token only.
@@ -107,19 +105,18 @@ pub struct Curve {
     pub graduated: bool,
     pub graduation_reason: Option<GraduationReason>,
     pub graduated_at: i64,
-    /// Set once `migrate_liquidity` has seeded a real Raydium CPMM pool and
-    /// burned 100% of the LP it received. See `graduate.rs::MigrateLiquidity`.
-    /// Once true, `real_base`/`lp_reserve` are permanently zero and the
-    /// instruction refuses to run again.
+    /// Set once `migrate_seed_liquidity` has deposited reserves into a Meteora
+    /// DLMM position and permanently locked it. Once true, `real_base` /
+    /// `lp_reserve` are zero and seeding refuses to run again.
     pub migrated: bool,
-    /// The Raydium CPMM pool this coin's liquidity now lives in. Verifiable on
-    /// any block explorer independent of this program.
-    pub raydium_pool: Pubkey,
-    /// LP atoms burned at migration — always exactly the LP mint's total
-    /// supply immediately after `Initialize`, since nothing is withdrawn
-    /// first. Recorded so an indexer/user can cross-check
-    /// `lp_mint.supply == 0` after this instruction without re-deriving it.
-    pub raydium_lp_burned: u64,
+    /// Meteora DLMM `LbPair` address. Set by `migrate_create_pool`; verifiable
+    /// independently on a block explorer. Layout-compatible rename of
+    /// `raydium_pool`.
+    pub dex_pool: Pubkey,
+    /// Packed migration meta: lower 32 bits = `lower_bin_id` as u32 bit pattern,
+    /// upper 32 bits = position `width` as u32. Enough to re-derive the DLMM
+    /// position PDA with the escrow as base. Replaces `raydium_lp_burned`.
+    pub dex_position_meta: u64,
 
     /* fee ledger — lifetime totals, for the indexer to reconcile against */
     pub protocol_accrued: u64,

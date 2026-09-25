@@ -11,6 +11,7 @@ import {
 } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import {
+  SocialApiError,
   attachReferral,
   claimReferralFees,
   fetchReferrals,
@@ -26,7 +27,7 @@ import { ARR, DOT, cdText } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
 import { USER, achCount, cdPct, hasAch, inventoryOf, isReady, readyAt, readyCount } from '../state/user.js';
-import { WALLET } from '../state/wallet.js';
+import { WALLET, nativeUnit } from '../state/wallet.js';
 import { addChat } from './chat.js';
 
 /**
@@ -61,7 +62,7 @@ function referralHTML(): Html {
           ><button type="button" class="send" id="refCopy">COPY</button></div
         ><p class="hint">FRIENDS PASTE THIS ON FIRST JOIN ${DOT} YOU EARN WHEN THEY TRADE.</p></div>
       <div style="display:flex;gap:16px;flex-wrap:wrap"
-        ><div><span class="lbl">PENDING FEES</span><div class="v">${pending.toFixed(4)} ${WALLET.net === 'RH' ? 'ETH' : 'SOL'}</div></div
+        ><div><span class="lbl">PENDING FEES</span><div class="v">${pending.toFixed(4)} ${nativeUnit()}</div></div
         ><div><span class="lbl">LIFETIME</span><div class="v">${r.lifetimeNative.toFixed(4)}</div></div
         ><div><span class="lbl">REFERRED BY</span><div class="v">${r.referredBy ? r.referredBy.slice(0, 8) + '…' : '—'}</div></div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"
@@ -69,7 +70,7 @@ function referralHTML(): Html {
         ><form id="refAttach" style="display:flex;gap:6px;align-items:center"
           ><input class="fld" id="refAttachCode" maxlength="12" placeholder="ENTER A CODE" style="width:120px"
           ><button class="send" type="submit">APPLY</button></form></div>
-      <p class="hint">CLAIM CONVERTS PENDING NATIVE FEE SHARE INTO STONK OPTIONZ ${DOT} RHODIUM NEEDS 250K SP.</p>
+      <p class="hint">15/10/5% OF REFERRED TRADERS&#8217; CURVE FEES (FROM THE PROTOCOL LEG) ${DOT} CLAIM ANYTIME AS OPTIONZ ${DOT} NOT A NATIVE WITHDRAW.</p>
     </div></section>`;
 }
 
@@ -300,16 +301,24 @@ export function renderRewards(): void {
   paintCrates();
   must('#rw-back').addEventListener('click', () => back());
   const grid = must('#crateGrid');
+  const pickCrate = (k: CrateTier): void => {
+    // Second activate on an already-selected ready crate opens it.
+    if (selCrate === k && isReady(k)) {
+      void doOpen(k);
+      return;
+    }
+    selectCrate(k);
+  };
   grid.addEventListener('click', (e) => {
     const el = (e.target as Element | null)?.closest<HTMLElement>('[data-k]');
-    if (el) selectCrate(el.dataset['k'] as CrateTier);
+    if (el?.dataset['k']) pickCrate(el.dataset['k'] as CrateTier);
   });
   grid.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const el = (e.target as Element | null)?.closest<HTMLElement>('[data-k]');
-    if (el) {
+    if (el?.dataset['k']) {
       e.preventDefault();
-      selectCrate(el.dataset['k'] as CrateTier);
+      pickCrate(el.dataset['k'] as CrateTier);
     }
   });
   wirePane();
@@ -334,8 +343,26 @@ function selectCrate(k: CrateTier): void {
   wirePane();
 }
 
+function crateStatusLabel(k: CrateTier): string {
+  if (isReady(k)) return 'READY';
+  const left = readyAt(k) - Date.now();
+  if (left > 0) return cdText(left);
+  if (inventoryOf(k) <= 0) return 'EARN VIA SP';
+  return cdText(left);
+}
+
+function notReadyReason(k: CrateTier): string {
+  const left = readyAt(k) - Date.now();
+  if (left > 0) return 'CRATES LOCKED ' + DOT + ' ' + cdText(left);
+  if (inventoryOf(k) <= 0) return 'NO ' + k + ' INVENTORY ' + DOT + ' TRADE TO EARN SP';
+  return 'CRATE NOT READY';
+}
+
 async function doOpen(k: CrateTier): Promise<void> {
-  if (!isReady(k)) return;
+  if (!isReady(k)) {
+    toast(notReadyReason(k));
+    return;
+  }
   const el = $('#crateGrid [data-k="' + k + '"]');
   if (el && !reducedMotion()) {
     el.classList.remove('shake');
@@ -344,42 +371,60 @@ async function doOpen(k: CrateTier): Promise<void> {
     const r = el.getBoundingClientRect();
     burst(r.left + r.width / 2, r.top + 4, Math.max(8, r.height - 8), { n: 34, gold: true, spread: 1.35 });
   }
-  const res = await api.openCrate(k);
-  const rarity = ((RAR[res.dropIndex] ?? RAR[0]) as (typeof RAR)[number])[0];
-  setTimeout(
-    () => {
-      const slot = $('#revealSlot');
-      if (slot) {
-        render(
-          slot,
-          html`<div class="reveal in"><span class="lbl">${rarity} DROP</span><div class="amt">${res.label}</div
-            ><div class="from">FROM ${k} CRATE ${DOT} +${res.xp} XP</div></div>`,
-        );
-      }
-      render($('#dropLog'), logHTML());
-      updateCrates();
-      updateStrip();
-      if ($('#cratePane')) refreshPaneState();
-      toast('STONKDROP ' + DOT + ' ' + res.label + ' FROM ' + k, 'gold');
-      addChat('GLOBAL', { sys: true, who: '', text: 'STONKDROP ' + DOT + ' YOU PULLED ' + res.label + ' FROM A ' + k + ' CRATE' }, true);
-    },
-    reducedMotion() ? 0 : 520,
-  );
+  try {
+    const res = await api.openCrate(k);
+    const rarity = ((RAR[res.dropIndex] ?? RAR[0]) as (typeof RAR)[number])[0];
+    setTimeout(
+      () => {
+        const slot = $('#revealSlot');
+        if (slot) {
+          render(
+            slot,
+            html`<div class="reveal in"><span class="lbl">${rarity} DROP</span><div class="amt">${res.label}</div
+              ><div class="from">FROM ${k} CRATE ${DOT} +${res.xp} XP</div></div>`,
+          );
+        }
+        render($('#dropLog'), logHTML());
+        updateCrates();
+        updateStrip();
+        if ($('#cratePane')) refreshPaneState();
+        toast('STONKDROP ' + DOT + ' ' + res.label + ' FROM ' + k, 'gold');
+        addChat('GLOBAL', { sys: true, who: '', text: 'STONKDROP ' + DOT + ' YOU PULLED ' + res.label + ' FROM A ' + k + ' CRATE' }, true);
+      },
+      reducedMotion() ? 0 : 520,
+    );
+  } catch (err) {
+    const code = err instanceof SocialApiError ? err.code : err instanceof Error ? err.message : '';
+    if (code === 'no_inventory') toast('NO ' + k + ' INVENTORY ' + DOT + ' TRADE TO EARN SP', 'red');
+    else if (code === 'cooling_down') toast('CRATES LOCKED ' + DOT + ' GLOBAL COOLDOWN', 'red');
+    else if (code === 'unauthorized' || code === 'auth_required') toast('CONNECT WALLET TO OPEN CRATES', 'red');
+    else toast(err instanceof Error ? err.message.toUpperCase() : 'OPEN FAILED', 'red');
+    updateCrates();
+    refreshPaneState();
+  }
 }
 
 function refreshPaneState(): void {
   const c = crateBy(selCrate) as Crate;
   const rdy = isReady(selCrate);
+  const inv = inventoryOf(selCrate);
   const left = readyAt(selCrate) - Date.now();
+  const cdOk = left <= 0;
   const st = $('#paneState');
   const b = $('#openBtn') as HTMLButtonElement | null;
   if (st) {
-    if (rdy) render(st, html`<span class="up">READY TO OPEN</span>`);
+    if (rdy) render(st, html`<span class="up">READY ${DOT} ${inv} IN INVENTORY</span>`);
+    else if (!cdOk) st.textContent = 'GLOBAL LOCK ' + cdText(left) + ' ' + DOT + ' OPENING ANY CRATE LOCKS ALL';
+    else if (inv <= 0) st.textContent = 'NO INVENTORY — TRADE TO EARN SP LEVELS';
     else st.textContent = 'UNLOCKS IN ' + cdText(left);
   }
   if (b) {
     b.disabled = !rdy;
-    b.textContent = rdy ? 'OPEN ' + c.k + ' CRATE' : 'LOCKED ' + DOT + ' ' + cdText(left);
+    b.textContent = rdy
+      ? 'OPEN ' + c.k + ' CRATE'
+      : !cdOk
+        ? 'LOCKED ' + DOT + ' ' + cdText(left)
+        : 'NEED INVENTORY';
   }
 }
 
@@ -390,11 +435,11 @@ export function updateCrates(): void {
     const el = $('#crateGrid [data-k="' + c.k + '"]');
     if (!el) continue;
     const rdy = isReady(c.k);
-    const left = readyAt(c.k) - Date.now();
+    const status = crateStatusLabel(c.k);
     const cd = $('[data-cd="' + c.k + '"]', el);
     const bar = $('[data-bar="' + c.k + '"]', el);
     if (cd) {
-      cd.textContent = rdy ? 'READY' : cdText(left);
+      cd.textContent = status;
       cd.className = 'cd' + (rdy ? ' rdy' : '');
     }
     if (bar) {
@@ -412,7 +457,15 @@ export function updateCrates(): void {
   }
   refreshPaneState();
   const rc = $('#rw-ready');
-  if (rc) rc.textContent = readyCount() + ' OPENABLE';
+  if (rc) {
+    const spLv = USER.spLevel;
+    const spSub = !spLv
+      ? 'TRADE TO EARN SP'
+      : spLv.next == null
+        ? `SP LV ${spLv.level} ${DOT} MAX`
+        : `TRADE TO EARN SP ${DOT} SP UNLOCKS CRATES`;
+    rc.textContent = `${readyCount()} OPENABLE ${DOT} ${spSub}`;
+  }
 }
 
 export function openRewards(): void {

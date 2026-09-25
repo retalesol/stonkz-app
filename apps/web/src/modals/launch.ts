@@ -14,15 +14,17 @@ import {
 } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { LiveApiError } from '../api/live.js';
+import { SocialApiError, uploadImage } from '../api/social.js';
 import { navigate } from '../app/route.js';
 import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isRejection } from '../wallet/index.js';
 import { drawLaunchChart } from '../canvas/chart.js';
-import { pix } from '../canvas/pix.js';
+import { paintCoinArt } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { DOT, MID, fmtSupply } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
+import { SquareCropper, imageNaturalSize, isSquareAspect } from '../lib/crop.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, netOf } from '../state/wallet.js';
 import { COINS } from '../state/coins.js';
 import { addChat } from '../views/chat.js';
@@ -48,9 +50,13 @@ interface Draft {
   fee: number;
   buy: number;
   cashback: boolean;
+  /** Pinata / IPFS gateway URL after upload (or local object URL in sim). */
+  uri: string;
 }
 
 let NEW: Draft = newDefaults();
+let cropper: SquareCropper | null = null;
+let cropBusy = false;
 
 function newDefaults(): Draft {
   return {
@@ -69,6 +75,7 @@ function newDefaults(): Draft {
     fee: 2,
     buy: 0,
     cashback: false,
+    uri: '',
   };
 }
 
@@ -85,12 +92,22 @@ function baseList(): ReadonlyArray<readonly [string, string]> {
   return list.filter((t) => t[0].toUpperCase().indexOf(q) > -1 || t[1].toUpperCase().indexOf(q) > -1);
 }
 
+function paintLaunchAvatar(): void {
+  const cv = $<HTMLCanvasElement>('#nc-av');
+  if (!cv) return;
+  cv.classList.toggle('has-img', !!NEW.uri);
+  paintCoinArt(cv, NEW.seed, NEW.uri || null);
+}
+
 /* --------------------------------- steps ---------------------------------- */
 
 function ncStep1(): Html {
   return html`<div class="det">
-      <div><canvas class="av" id="nc-av" width="128" height="128"></canvas
-        ><button type="button" class="chip" id="nc-roll" style="width:64px;margin-top:5px;padding:2px 0;text-align:center">REROLL</button></div
+      <div class="nc-av-col"><canvas class="av${NEW.uri ? ' has-img' : ''}" id="nc-av" width="128" height="128"></canvas
+        ><div class="nc-av-actions"
+          ><button type="button" class="chip" id="nc-upload">UPLOAD</button
+          >${NEW.uri ? html`<button type="button" class="chip" id="nc-clear">CLEAR</button>` : ''}</div
+        ><input type="file" id="nc-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></div
       ><div class="rowf" style="align-content:start">
         <div class="nc-field"><span class="lbl">NAME</span
           ><input class="fld" id="f-name" maxlength="28" value="${attr(NEW.name)}" placeholder="Token name" autocomplete="off"></div
@@ -107,8 +124,8 @@ function ncStep1(): Html {
       ><div class="nc-field"><span class="lbl">TELEGRAM</span
         ><input class="fld" id="f-tg" maxlength="40" value="${attr(NEW.tg)}" placeholder="t.me/…" autocomplete="off"></div>
     </div>
-    <p class="hint">FIXED SUPPLY ${DOT} MINT AND FREEZE AUTHORITY REVOKED AT DEPLOY ${DOT} LP BURNS AUTOMATICALLY WHEN THE
-      CURVE FILLS TO ${usd(GRAD)}.</p>`;
+    <p class="hint">DEFAULT ART IS MEMEMAN ON AMBER ${DOT} UPLOAD A SQUARE (OR CROP) TO REPLACE IT ON IPFS ${DOT}
+      FIXED SUPPLY ${DOT} MINT AND FREEZE AUTHORITY REVOKED AT DEPLOY ${DOT} LP BURNS WHEN THE CURVE HITS ${usd(GRAD)}.</p>`;
 }
 
 function ncStep2(): Html {
@@ -165,6 +182,112 @@ function ncStep3(): Html {
     <p class="hint">YOUR BUY IS THE FIRST TRADE ON THE CURVE. IT SETS THE OPENING PRICE FOR EVERYONE ELSE.</p>`;
 }
 
+/* --------------------------- image upload / crop -------------------------- */
+
+function closeCrop(): void {
+  cropper?.destroy();
+  cropper = null;
+  cropBusy = false;
+  closeScrim('#cropScrim');
+}
+
+async function persistImageBlob(blob: Blob, filename: string): Promise<void> {
+  if (api.mode !== 'live') {
+    if (NEW.uri.startsWith('blob:')) URL.revokeObjectURL(NEW.uri);
+    NEW.uri = URL.createObjectURL(blob);
+    toast('IMAGE READY ' + DOT + ' LIVE MODE UPLOADS TO IPFS');
+    renderNew();
+    return;
+  }
+  toast('UPLOADING TO IPFS…');
+  const res = await uploadImage(WALLET.net, blob, filename);
+  if (NEW.uri.startsWith('blob:')) URL.revokeObjectURL(NEW.uri);
+  NEW.uri = res.url;
+  toast('COIN ART SAVED');
+  renderNew();
+}
+
+async function openCropForFile(file: File): Promise<void> {
+  openScrim('#cropScrim');
+  const canvas = must<HTMLCanvasElement>('#crop-canvas');
+  cropper?.destroy();
+  cropper = new SquareCropper(canvas, { size: 512, mimeType: 'image/png' });
+  await cropper.loadFile(file);
+  const zoom = must<HTMLInputElement>('#crop-zoom');
+  zoom.value = '100';
+  zoom.oninput = () => {
+    if (!cropper) return;
+    cropper.setRelativeZoom(Number(zoom.value) / 100);
+  };
+}
+
+async function handleImageFile(file: File): Promise<void> {
+  if (!file.type.startsWith('image/')) {
+    toast('PICK A PNG, JPEG, WEBP OR GIF', 'red');
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    toast('IMAGE MUST BE UNDER 5 MB', 'red');
+    return;
+  }
+  const { w, h } = await imageNaturalSize(file);
+  if (!(w > 0 && h > 0)) {
+    toast('COULD NOT READ IMAGE', 'red');
+    return;
+  }
+  if (isSquareAspect(w, h)) {
+    await persistImageBlob(file, file.name || 'token.png');
+    return;
+  }
+  await openCropForFile(file);
+}
+
+function wireCropOnce(): void {
+  must('#crop-x').addEventListener('click', closeCrop);
+  must('#crop-cancel').addEventListener('click', closeCrop);
+  must('#crop-apply').addEventListener('click', () => {
+    if (!cropper || cropBusy) return;
+    cropBusy = true;
+    const btn = must<HTMLButtonElement>('#crop-apply');
+    btn.disabled = true;
+    void (async () => {
+      try {
+        const { blob } = await cropper!.export();
+        closeCrop();
+        await persistImageBlob(blob, 'token.png');
+      } catch (err) {
+        toast(err instanceof SocialApiError ? err.message : 'CROP FAILED', 'red');
+      } finally {
+        cropBusy = false;
+        btn.disabled = false;
+      }
+    })();
+  });
+  wireBackdrop('#cropScrim', closeCrop);
+}
+
+function wireStep1Art(): void {
+  paintLaunchAvatar();
+  must('#nc-upload').addEventListener('click', () => must<HTMLInputElement>('#nc-file').click());
+  const clearBtn = $('#nc-clear');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (NEW.uri.startsWith('blob:')) URL.revokeObjectURL(NEW.uri);
+      NEW.uri = '';
+      renderNew();
+    });
+  }
+  must<HTMLInputElement>('#nc-file').addEventListener('change', () => {
+    const input = must<HTMLInputElement>('#nc-file');
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    void handleImageFile(file).catch((err) => {
+      toast(err instanceof SocialApiError ? err.message : 'IMAGE UPLOAD FAILED', 'red');
+    });
+  });
+}
+
 /* -------------------------------- render ---------------------------------- */
 
 function renderNew(): void {
@@ -181,11 +304,7 @@ function renderNew(): void {
   refreshScrim('#newScrim');
 
   if (i === 0) {
-    pix($<HTMLCanvasElement>('#nc-av'), NEW.seed);
-    must('#nc-roll').addEventListener('click', () => {
-      NEW.seed = Math.floor(Math.random() * 1e6);
-      pix($<HTMLCanvasElement>('#nc-av'), NEW.seed);
-    });
+    wireStep1Art();
     bind('f-name', 'name');
     bind('f-tick', 'tick');
     bind('f-desc', 'desc');
@@ -194,8 +313,6 @@ function renderNew(): void {
     bind('f-tg', 'tg');
   }
   if (i === 1) {
-    // One delegated listener per paint; previous render's node is replaced by
-    // `render()`, so listeners do not stack.
     must('#createBody').addEventListener('click', (e) => {
       const target = e.target as Element | null;
       const t = target?.closest<HTMLElement>('[data-btab]');
@@ -361,6 +478,7 @@ async function doLaunch(): Promise<void> {
       buy,
       base: NEW.base,
       cashback,
+      ...(NEW.uri && !NEW.uri.startsWith('blob:') ? { uri: NEW.uri } : {}),
       x: xh,
       web: NEW.web.trim(),
       tg: NEW.tg.trim(),
@@ -375,7 +493,6 @@ async function doLaunch(): Promise<void> {
         const retrySec = Math.max(1, Math.ceil((err.retryAfterMs ?? 300_000) / 1000));
         toast(`NAME OR TICKER ON COOLDOWN ${DOT} TRY AGAIN IN ${retrySec}S`, 'red');
       } else if (err.code === 'dev_buy_failed') {
-        // Mint is live on-chain; surface the buy failure and still open the token.
         const msg = (err.message || err.code).toUpperCase();
         toast(msg.length > 140 ? msg.slice(0, 137) + '…' : msg, 'red');
         closeLaunch();
@@ -412,12 +529,14 @@ async function doLaunch(): Promise<void> {
 }
 
 export function openLaunch(opener?: Element | null): void {
+  if (NEW.uri.startsWith('blob:')) URL.revokeObjectURL(NEW.uri);
   NEW = newDefaults();
   renderNew();
   openScrim('#newScrim', opener);
 }
 
 export function closeLaunch(): void {
+  closeCrop();
   closeScrim('#newScrim');
 }
 
@@ -425,6 +544,15 @@ export function isLaunchOpen(): boolean {
   return isOpen('#newScrim');
 }
 
+export function isCropOpen(): boolean {
+  return isOpen('#cropScrim');
+}
+
+export function cancelCrop(): void {
+  closeCrop();
+}
+
 export function initLaunch(onDismiss: () => void): void {
   wireBackdrop('#newScrim', onDismiss);
+  wireCropOnce();
 }

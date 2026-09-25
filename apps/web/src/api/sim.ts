@@ -332,15 +332,18 @@ export const simApi: StonkzApi = {
     const c = bySym(q.sym);
     if (!c) throw new Error('unknown ticker ' + q.sym);
     const buy = q.side === 'buy';
-    const t = pushTrade(c, { buy, sol: q.amountIn, mine: true });
-    noteTrade(c, buy, q.amountIn);
+    // Buy amountIn is native; sell amountIn is tokens (matches live quotes).
+    const nativeAmt = buy ? q.amountIn : q.amountOut;
+    const tokAmt = buy ? q.amountOut : q.amountIn;
+    const t = pushTrade(c, { buy, sol: nativeAmt, tok: tokAmt, mine: true });
+    noteTrade(c, buy, nativeAmt, tokAmt);
     // A fill moves the curve, which is what makes the board feel alive.
-    const push = (q.amountIn * NATIVE_PRICE.usd) / Math.max(1, liq(c));
+    const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
     c.lastMc = c.mc;
     c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
-    addXP(xpForTrade(q.amountIn), (buy ? 'BUY ' : 'SELL ') + c.sym);
+    addXP(xpForTrade(nativeAmt), (buy ? 'BUY ' : 'SELL ') + c.sym);
     unlock('first');
-    if (q.amountIn * NATIVE_PRICE.usd >= 1000) unlock('whale');
+    if (nativeAmt * NATIVE_PRICE.usd >= 1000) unlock('whale');
     if (inCashback(c)) unlock('cashback');
     emit('coins');
     return toFill(c, t);
@@ -396,6 +399,7 @@ export const simApi: StonkzApi = {
       ...(d.x ? { x: d.x } : {}),
       ...(d.web ? { web: d.web } : {}),
       ...(d.tg ? { tg: d.tg } : {}),
+      ...(d.uri ? { image: d.uri } : {}),
     };
     COINS.unshift(c);
     if (d.buy > 0) {

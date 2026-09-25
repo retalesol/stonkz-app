@@ -34,6 +34,8 @@ export interface BusEvents {
    * every fill after that. `plan step 65`
    */
   fill: { fill: Fill; animate: boolean };
+  /** Board scope changed — wipe the strip before a fresh `GET /tape` seed. */
+  tapeClear: void;
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Stonkz - a memecoin launchpad in Bloomberg-terminal dress. Fair launches on a bonding curve, graduation at $69K, XP, crates, staking and cashback launches.">
 <meta name="theme-color" content="#000000">
 <!--
@@ -27,6 +27,7 @@
     position:fixed;inset:0;z-index:10000;
     display:flex;align-items:center;justify-content:center;
     background:#000;
+    min-height:100vh;min-height:100dvh;
     font-family:"IBM Plex Mono",ui-monospace,monospace;
     color:#ffa22b;
     transition:opacity .45s ease,visibility .45s ease;
@@ -279,6 +280,25 @@
     <div class="win-hd"><h2>Launch A Coin</h2><span class="sub" id="nc-count">STEP 1 OF 3</span>
       <button class="x" id="nc-x" aria-label="Close">&#10005;</button></div>
     <div class="win-bd" id="createBody"></div>
+  </div>
+</div>
+
+<!-- ============ SQUARE CROP (launch image) ============ -->
+<div class="scrim" id="cropScrim">
+  <div class="win" role="dialog" aria-modal="true" aria-label="Crop coin image" style="max-width:420px">
+    <div class="win-hd"><h2>Crop Square</h2><span class="sub">DRAG TO PAN · SCROLL TO ZOOM</span>
+      <button class="x" id="crop-x" aria-label="Close">&#10005;</button></div>
+    <div class="win-bd crop-bd">
+      <canvas id="crop-canvas" class="crop-canvas" width="320" height="320" aria-label="Crop preview"></canvas>
+      <label class="crop-zoom-row"><span class="lbl">ZOOM</span>
+        <input type="range" id="crop-zoom" min="100" max="400" value="100" aria-label="Zoom"></label>
+      <p class="hint">SELECT THE SQUARE THAT BECOMES YOUR COIN ART. IT UPLOADS TO IPFS AFTER YOU CONFIRM.</p>
+      <div class="wiz-foot">
+        <button type="button" class="wiz-btn" id="crop-cancel">CANCEL</button>
+        <span class="grow"></span>
+        <button type="button" class="wiz-btn go" id="crop-apply">USE CROP</button>
+      </div>
+    </div>
   </div>
 </div>
 

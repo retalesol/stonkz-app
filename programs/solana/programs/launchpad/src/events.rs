@@ -85,20 +85,22 @@ pub struct Graduated {
     pub ts: i64,
 }
 
-/// Emitted once per coin, when `migrate_liquidity` seeds the Raydium CPMM pool
-/// and burns everything it received. `lp_burned` should always equal the pool
-/// mint's total supply immediately after creation — anyone can verify that
-/// independently on a block explorer, which is the whole point.
+/// Emitted once per coin, when `migrate_seed_liquidity` deposits into a Meteora
+/// DLMM position and permanently locks it (owner → dead / lock_release = max).
+/// DLMM has no fungible LP mint; `position` is the PositionV2 account.
 #[event]
 pub struct LiquidityMigrated {
     pub mint: Pubkey,
     pub base_mint: Pubkey,
     pub pool: Pubkey,
-    pub lp_mint: Pubkey,
+    /// DLMM PositionV2 account (replaces the former Raydium `lp_mint` field).
+    pub position: Pubkey,
     pub base_deposited: u64,
     pub token_deposited: u64,
-    pub lp_minted: u64,
-    pub lp_burned: u64,
+    /// `lock_release_point` written on the position (`u64::MAX` = permanent).
+    pub lock_release_point: u64,
+    /// Non-zero once the position operator has been cleared to the dead address.
+    pub position_locked: u64,
     pub ts: i64,
 }
 

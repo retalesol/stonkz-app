@@ -99,13 +99,15 @@ export interface TradeEvent extends EventBase {
   realToken?: string;
 }
 
-/** $69K market cap reached; reserves migrated and LP burned. */
+/** $69K market cap reached; reserves migrated to Meteora DLMM and position locked. */
 export interface GraduatedEvent extends EventBase {
   kind: 'Graduated';
   mint?: string;
   sym: string;
   mc: number;
   poolAddress?: string;
+  /** Meteora DLMM PositionV2 account (permanent lock / dead operator). */
+  positionAddress?: string;
 }
 
 /**

@@ -1,5 +1,6 @@
 import {
   SUPPLY,
+  CRATES,
   inCashback,
   liq,
   type CrateTier,
@@ -7,7 +8,6 @@ import {
   type Lane,
   type Net,
   type Quote,
-  type QuoteHop,
   type Wallet,
   crateBy,
   RAR,
@@ -961,8 +961,10 @@ function stopPolling(): void {
 
 /** Seed the tape with the last real fills before the WS starts pushing more. */
 async function seedTape(net: BoardScope): Promise<void> {
+  emit('tapeClear');
   try {
     const res = await getJson<ApiTapeResponse>('/tape?net=' + net + '&limit=16');
+    if (net !== boardScope()) return;
     for (const f of [...res.fills].reverse()) emit('fill', { fill: toFill(f), animate: false });
   } catch {
     // No tape yet (or the API is still coming up) — the strip stays empty
@@ -1104,17 +1106,21 @@ function applyConfirmedTrade(
   signature?: string,
 ): Fill {
   const buy = side === 'buy';
+  // Buy: amountIn is native. Sell: amountIn is tokens; native out is amountOut.
+  // Never credit `WALLET.sol` with the token quantity — that is what made RH
+  // sells paint "BALANCE 6.7M ETH" after dumping RHLIVE.
+  const nativeAmt = buy ? amountIn : quote.amountOut;
+  const tokAmt = buy ? quote.amountOut : amountIn;
   // Prefer server `/trade/confirm` + chain sync for the next quote; the local
   // mc nudge is display-only until the board refresh lands.
-  const push = (amountIn * NATIVE_PRICE.usd) / Math.max(1, liq(c));
+  const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
   c.lastMc = c.mc;
   c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
-  const tok = buy ? quote.amountOut : (quote.hops[0] as QuoteHop).inAmount;
-  const hops = hopsFromQuote(quote) ?? hopsForTrade(c, side, amountIn, tok);
+  const hops = hopsFromQuote(quote) ?? hopsForTrade(c, side, nativeAmt, tokAmt);
   const t = pushTrade(c, {
     buy,
-    sol: amountIn,
-    tok,
+    sol: nativeAmt,
+    tok: tokAmt,
     mc: c.mc,
     w: shortAddr(sessionWallet(net)),
     addr: sessionWallet(net),
@@ -1122,18 +1128,45 @@ function applyConfirmedTrade(
     ...(hops ? { hops } : {}),
     ...(signature ? { sig: signature } : {}),
   });
-  noteTrade(c, buy, amountIn, tok);
+  noteTrade(c, buy, nativeAmt, tokAmt);
   // XP is server-authoritative in live mode — `addXP` is a no-op, and the
   // ledger credits on the matching chain_events row once the indexer sees it.
   unlock('first');
-  if (amountIn * NATIVE_PRICE.usd >= 1000) unlock('whale');
+  if (nativeAmt * NATIVE_PRICE.usd >= 1000) unlock('whale');
   if (inCashback(c)) unlock('cashback');
   emit('coins');
   // Prefer the chain balance over optimistic math — MetaMask is the truth.
   if (isEvm(net) && c.mint) {
     void syncHoldingFromChain(c, sessionWallet(net));
   }
+  void refreshNativeBalance(net);
   return fillFromTrade(c, t);
+}
+
+/** Re-read gas balance from `/me` or the wallet RPC after a fill. */
+async function refreshNativeBalance(net: Net): Promise<void> {
+  try {
+    const me = await getJsonAuthed<{ native: { balance: number } }>('/me', net).catch(() => null);
+    if (me && Number.isFinite(me.native.balance)) {
+      WALLET.sol = Math.max(0, me.native.balance);
+      emit('wallet');
+      return;
+    }
+  } catch {
+    // Fall through to the wallet client.
+  }
+  try {
+    const wallet = activeWallet();
+    if (wallet?.net === net) {
+      const bal = await wallet.nativeBalance();
+      if (bal !== null && Number.isFinite(bal)) {
+        WALLET.sol = Math.max(0, bal);
+        emit('wallet');
+      }
+    }
+  } catch {
+    // Keep the optimistic noteTrade update if both reads fail.
+  }
 }
 
 async function liveTrade(quote: Quote): Promise<Fill> {
@@ -1177,7 +1210,7 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
       ticker: draft.sym,
       name: draft.name,
       descr: draft.desc,
-      uri: '',
+      uri: draft.uri?.trim() || '',
       supply: Number(draft.supply),
       feePct: draft.tfee,
       cashback: draft.cashback,
@@ -1235,6 +1268,7 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
     ...(draft.x ? { x: draft.x } : {}),
     ...(draft.web ? { web: draft.web } : {}),
     ...(draft.tg ? { tg: draft.tg } : {}),
+    ...(draft.uri ? { image: draft.uri } : {}),
   };
   COINS.unshift(c);
 
@@ -1419,7 +1453,11 @@ async function liveOpenCrate(tier: CrateTier): Promise<CrateResult> {
     xp: res.xp,
   };
   USER.optionz = res.optionzTotal;
-  USER.crates[tier] = res.readyAt;
+  // Global cooldown — stamp every tier before hydrate in case re-fetch fails.
+  if (!USER.crates) USER.crates = {};
+  for (const c of CRATES) USER.crates[c.k] = res.readyAt;
+  if (!USER.crateInventory) USER.crateInventory = {};
+  USER.crateInventory[tier] = res.inventoryLeft;
   if (crate) pushDrop({ t: clock(), k: tier, r: res.label, col: crate.col });
   saveUser();
   // Re-hydrate rank/XP from the server so ceremonies match the ledger.
@@ -1441,8 +1479,8 @@ interface ApiStakePrepareSol {
   days?: number;
 }
 
-interface ApiStakePrepareRh {
-  net: 'RH';
+interface ApiStakePrepareEvm {
+  net: 'RH' | 'BASE';
   sym: string;
   action: string;
   to: string;
@@ -1450,9 +1488,12 @@ interface ApiStakePrepareRh {
   value: string;
   amount?: number;
   days?: number;
+  atomic?: boolean;
+  warning?: string;
+  steps?: { to: string; data: string; value: string; label?: string }[];
 }
 
-type ApiStakePrepare = ApiStakePrepareSol | ApiStakePrepareRh;
+type ApiStakePrepare = ApiStakePrepareSol | ApiStakePrepareEvm;
 
 async function liveStake(input: StakeInput): Promise<void> {
   const net = WALLET.net;
@@ -1462,7 +1503,21 @@ async function liveStake(input: StakeInput): Promise<void> {
     { sym: input.sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: input.amount, days: input.days },
     net,
   );
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
+  if (prep.net === 'SOL') {
+    await signAndConfirm(net, solPayload(prep));
+  } else if (prep.steps && prep.steps.length > 0) {
+    await openSteps(
+      net,
+      'STAKE ' + input.sym,
+      prep.steps.map((s) => ({
+        description: s.label || 'Confirm stake step',
+        payload: () => evmPayload(s, isEvm(prep.net) ? prep.net : 'RH'),
+      })),
+      prep.warning,
+    );
+  } else {
+    await signAndConfirm(net, evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
+  }
   const c = bySym(input.sym);
   if (!c) return;
   const st = ensureStake(input.sym);

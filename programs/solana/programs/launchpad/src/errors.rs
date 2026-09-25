@@ -52,10 +52,12 @@ pub enum LaunchpadError {
     BaseMintMismatch,
     #[msg("Cashback requires a zero dev buy at launch")]
     CashbackRequiresNoDevBuy,
-    #[msg("This coin's liquidity has already been migrated and burned")]
+    #[msg("This coin's liquidity has already been migrated and locked")]
     AlreadyMigrated,
-    #[msg("The Raydium pool address for this migration is already in use")]
+    #[msg("The DEX pool address for this migration is already in use")]
     PoolAlreadyExists,
-    #[msg("Raydium CPMM minted no LP for this deposit")]
+    #[msg("Meteora DLMM pool has not been created yet; call migrate_create_pool first")]
+    PoolNotCreated,
+    #[msg("Meteora DLMM minted / locked no position liquidity for this deposit")]
     NoLiquidityMinted,
 }

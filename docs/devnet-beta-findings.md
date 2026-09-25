@@ -46,7 +46,7 @@ pass as this plan.
 | B1-10 | OPEN→FIXED | Oracle graduation with `realBase == 0` | Graduated but migrate always reverts. | Require `realBase > 0` before marking graduated (both chains). |
 | B1-11 | ACCEPT | `StonkzRouter` permit value | No `value >= amountToken` check; wrong permit size reverts sell. | Require permit value ≥ sell size (defense in depth). |
 | B1-12 | OPEN→FIXED | Profile fetch uses `WALLET.net` | Viewing `0x` profile while on SOL hits wrong net. | Infer net from address shape. |
-| B1-13 | OPEN | Raydium config on Solana init | Migration fails if `set_raydium_config` never run. | Deployment checklist / smoke (ops). |
+| B1-13 | OPEN→FIXED (ops) | Meteora config on Solana init | Migration fails if `set_meteora_config` never run. | 2026-09-14: switched from Raydium CPMM to Meteora DLMM (`LBUZKhRx…` + PresetParameter2 index 1). Script: `programs/solana/scripts/set-meteora-config.ts`. |
 | B1-14 | OPEN→FIXED | EVM sell `permitTypedData.domain.name` | Used indexed ticker (`BASEDOG`) instead of on-chain ERC-20 `name()` (`Base Dog`) → `bad signature` on permit. | `/trade/prepare` eth_calls `name()` for EIP-712 domain. |
 | B1-14 | ACCEPT | `splitFee` float vs on-chain int | Preview pie can drift. | Prefer curve-sim bigint for authoritative paths over time. |
 | B1-15 | ACCEPT | `circ() = supply × 0.8` | Display / staker fraction vs chain. | Document for beta; wire reserve-derived circ later. |
@@ -73,8 +73,8 @@ pass as this plan.
 
 ## Beta invite gate
 
-Zero **OPEN** P0/P1 remaining in code (ops checklist item **B1-13** Raydium
-config remains for Solana graduation smoke). Base Sepolia contracts are
+Zero **OPEN** P0/P1 remaining in code (ops checklist item **B1-13** Meteora
+DLMM config is set on Global for Solana graduation). Base Sepolia contracts are
 **deployed** (`84532.json`); funded harness **PASS**ed Solana + RH + Base
 atomic round-trips (including EIP-2612 sells). Staging UI shows three nets
 (`DEVNET / RH TESTNET / BASE SEPOLIA`) and Connect lists all three.

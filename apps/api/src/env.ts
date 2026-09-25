@@ -4,7 +4,7 @@ import {
   BASE_SEPOLIA_EXPLORER_URL,
   BASE_SEPOLIA_RPC_URL,
 } from './chain/base.js';
-import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL, RH_TESTNET_CHAIN_ID } from './chain/evm.js';
+import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL, RH_TESTNET_CHAIN_ID, RH_TESTNET_PUBLIC_RPC_URL } from './chain/evm.js';
 
 /**
  * Every knob the API reads, resolved once at boot. Defaults target
@@ -289,11 +289,18 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
       if (cluster === 'localnet') return 'solana:localnet';
       return 'solana:mainnet';
     })(),
-    rhRpcUrl: str(src, 'RH_RPC_URL', RH_PUBLIC_RPC_URL),
+    // RPC and explorer defaults follow the configured chain id, which itself
+    // defaults to the testnet: a bare checkout must never pair a testnet id
+    // with the mainnet RPC (verifyChainId() would refuse to boot).
+    rhRpcUrl: str(
+      src,
+      'RH_RPC_URL',
+      int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === RH_TESTNET_CHAIN_ID ? RH_TESTNET_PUBLIC_RPC_URL : RH_PUBLIC_RPC_URL,
+    ),
     rhExplorerUrl: str(
       src,
       'RH_EXPLORER_URL',
-      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID) === 46630
+      int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === 46630
         ? 'https://explorer.testnet.chain.robinhood.com'
         : 'https://robinhoodchain.blockscout.com',
     ).replace(/\/$/, ''),

@@ -19,6 +19,8 @@ export const RH_TESTNET_CHAIN_ID = 46630;
  * provider endpoint for anything real.
  */
 export const RH_PUBLIC_RPC_URL = 'https://rpc.mainnet.chain.robinhood.com';
+/** Testnet (46630) public RPC — the default whenever the configured chain id is the testnet. */
+export const RH_TESTNET_PUBLIC_RPC_URL = 'https://rpc.testnet.chain.robinhood.com';
 
 /** `balanceOf(address)` selector — used to clamp max-sell amounts to the wallet. */
 const BALANCE_OF_SELECTOR = '70a08231';

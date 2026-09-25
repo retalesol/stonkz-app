@@ -5,7 +5,7 @@ import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { closeClaim, initClaim, isClaimOpen } from '../modals/claim.js';
 import { closeEdit, initEdit, isEditOpen } from '../modals/edit.js';
-import { closeLaunch, initLaunch, isLaunchOpen, openLaunch } from '../modals/launch.js';
+import { cancelCrop, closeLaunch, initLaunch, isCropOpen, isLaunchOpen, openLaunch } from '../modals/launch.js';
 import { dismissSplash } from './splash.js';
 import { closeLegal, initLegal, isLegalOpen } from '../modals/legal.js';
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
@@ -108,6 +108,7 @@ function onEscape(): void {
   else if (isClaimOpen()) closeClaim();
   else if (isEditOpen()) closeEdit();
   else if (isSetOpen()) openSet(false);
+  else if (isCropOpen()) cancelCrop();
   else if (isLaunchOpen()) leaveLaunch();
   else if (isNetOpen()) netOpen(false);
   else if (isWmenuOpen()) wmenu(false);

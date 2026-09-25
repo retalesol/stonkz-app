@@ -259,22 +259,22 @@ export function encodeLiquidityMigrated(f: {
   mint: string;
   baseMint: string;
   pool: string;
-  lpMint: string;
+  position: string;
   baseDeposited: bigint;
   tokenDeposited: bigint;
-  lpMinted: bigint;
-  lpBurned: bigint;
+  lockReleasePoint: bigint;
+  positionLocked: bigint;
   ts: bigint;
 }): Buffer {
   return new BorshWriter()
     .pubkey(f.mint)
     .pubkey(f.baseMint)
     .pubkey(f.pool)
-    .pubkey(f.lpMint)
+    .pubkey(f.position)
     .u64(f.baseDeposited)
     .u64(f.tokenDeposited)
-    .u64(f.lpMinted)
-    .u64(f.lpBurned)
+    .u64(f.lockReleasePoint)
+    .u64(f.positionLocked)
     .i64(f.ts)
     .done();
 }

@@ -1,6 +1,6 @@
-import { type Lane, ago, curve, laneOf, num, pct, usd } from '@stonkz/shared';
+import { type Lane, type Net, ago, curve, laneOf, num, pct, usd } from '@stonkz/shared';
 import { navigate } from '../app/route.js';
-import { pix } from '../canvas/pix.js';
+import { paintCoinArt } from '../canvas/pix.js';
 import { spark } from '../canvas/spark.js';
 import { burst } from '../fx/debris.js';
 import { punchIn } from '../fx/punch.js';
@@ -10,6 +10,7 @@ import { DOT, ud } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
 import { COINS, histOf, type SimCoin } from '../state/coins.js';
+import { WALLET } from '../state/wallet.js';
 import { currentView } from '../app/view.js';
 
 /**
@@ -51,7 +52,7 @@ function card(c: SimCoin): HTMLElement {
         ></div
       ><i class="cbar" data-f="bar" style="width:${attr(curve(c))}%"></i>`,
   );
-  pix(b.querySelector('canvas'), c.seed);
+  paintCoinArt(b.querySelector('canvas'), c.seed, c.image);
   b.addEventListener('click', (e) => {
     // The creator link is a nested control; let the board delegate handle it.
     if ((e.target as Element | null)?.closest('.addrlink')) return;
@@ -198,12 +199,42 @@ export function landIn(c: SimCoin, lane: Lane): void {
 /* ---------------------------- king of the hill ---------------------------- */
 
 let kothId: number | null = null;
+/** Net the crown was last painted for — reset on chain switch so a foreign king cannot stick. */
+let kothNet: Net | null = null;
+
+/** Only the selected / connected chain crowns the hill — never a cross-net guest board. */
+function kothCandidates(net: Net): SimCoin[] {
+  return COINS.filter((c) => (c.net ?? 'SOL') === net && c.lane !== 'grad');
+}
 
 export function king(): void {
+  const net = WALLET.net;
+  if (kothNet !== net) {
+    kothId = null;
+    kothNet = net;
+  }
+
   let best: SimCoin | null = null;
-  for (const c of COINS) if (c.lane !== 'grad' && (!best || c.mc > best.mc)) best = c;
-  if (!best) best = COINS[0] as SimCoin;
+  for (const c of kothCandidates(net)) if (!best || c.mc > best.mc) best = c;
+
   const koth = must('#koth');
+  koth.dataset['net'] = net;
+
+  if (!best) {
+    kothId = null;
+    delete koth.dataset['sym'];
+    delete koth.dataset['mint'];
+    render(
+      koth,
+      html`<span class="crown">KING OF THE HILL</span
+        ><div>
+          <div class="kn">NO KING YET</div>
+          <p>No live curve tokens on this chain.</p>
+        </div>`,
+    );
+    return;
+  }
+
   if (best.id !== kothId) {
     const first = kothId === null;
     kothId = best.id;
@@ -227,7 +258,7 @@ export function king(): void {
         </div
       ><canvas class="ksp" width="300" height="88"></canvas>`,
     );
-    pix($<HTMLCanvasElement>('#koth canvas'), best.seed);
+    paintCoinArt($<HTMLCanvasElement>('#koth canvas'), best.seed, best.image);
     spark($<HTMLCanvasElement>('#koth .ksp'), histOf(best, 48));
     if (!first && !reducedMotion()) {
       koth.classList.remove('crowned');

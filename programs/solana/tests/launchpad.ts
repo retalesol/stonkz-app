@@ -1060,11 +1060,10 @@ program.methods
 
   /* ------------------------------------------- 2.A graduation: LP migration */
 
-  describe('graduation liquidity migration (Raydium CPMM)', () => {
-    // Devnet deployment + the default, permissionless fee-tier config and its
-    // hardcoded fee receiver. Cloned onto the local validator by
-    // `[test.validator.clone]` in Anchor.toml so this suite exercises the
-    // real Raydium program's own account validation, not a mock.
+  describe.skip('graduation liquidity migration (Raydium CPMM → replaced by Meteora DLMM)', () => {
+    // Legacy Raydium CPMM suite. Graduation now uses migrate_create_pool +
+    // migrate_seed_liquidity against Meteora DLMM; re-enable when the local
+    // validator clones lb_clmm + a PresetParameter2 (see Anchor.toml).
     const RAYDIUM_PROGRAM = new PublicKey('DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb');
     const RAYDIUM_AMM_CONFIG = new PublicKey('5MxLgy9oPdTC3YgkiePHqr3EoCRD9uLVYRQS2ANAs7wy');
     const CREATE_POOL_FEE_RECEIVER = new PublicKey('3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy');

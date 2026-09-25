@@ -1,6 +1,9 @@
 //! Every number here is mirrored in `programs/curve.json` and in
 //! `packages/shared`. Changing one without the other two is a bug.
 
+use anchor_lang::prelude::Pubkey;
+use anchor_lang::pubkey;
+
 /// Basis-point denominator.
 pub const BPS_DEN: u64 = 10_000;
 
@@ -134,53 +137,71 @@ pub const SEED_PROTOCOL_VAULT: &[u8] = b"protocol_vault";
 pub const SEED_OPS_VAULT: &[u8] = b"ops_vault";
 
 /* -------------------------------------------------------------------------- */
-/* Graduation migration (Raydium CPMM) — see SPEC.md §5 and §7                */
+/* Graduation migration (Meteora DLMM) — see SPEC.md §5 and §6                */
 /* -------------------------------------------------------------------------- */
 
-/// Program-derived, unique per (this program, mint). Used as the CPI "creator"
-/// account for Raydium's `Initialize`: it signs via `invoke_signed`, holds the
-/// deposited reserves for the instant it takes to seed the pool, and receives
-/// (then immediately burns) 100% of the minted LP. No wallet — not even
-/// `migration_authority` — ever controls this key, which is what makes the
-/// burn irreversible rather than merely "nobody has done it yet".
+/// Program-derived escrow per mint. Signs as DLMM funder / position base /
+/// liquidity sender via `invoke_signed`. Holds temporary ATAs for the deposit.
+/// No wallet — not even `migration_authority` — controls this key.
+pub const SEED_METEORA_ESCROW: &[u8] = b"meteora_escrow";
+
+/// Legacy seed kept so existing PDA addresses from the Raydium path remain
+/// documented; new migrations use `SEED_METEORA_ESCROW` only.
 pub const SEED_RAYDIUM_ESCROW: &[u8] = b"raydium_escrow";
 
-/// Our own PDA, used as Raydium's non-canonical `pool_state`. Nothing but this
-/// program can ever produce a valid signature for this address, so nobody can
-/// occupy it ahead of a graduation the way they could Raydium's canonical
-/// `["pool", amm_config, token_0, token_1]` PDA — see `graduate.rs`'s
-/// `MigrateLiquidity` doc comment for the full argument.
-pub const SEED_RAYDIUM_POOL: &[u8] = b"raydium_pool";
+/// Meteora `lb_clmm` seeds (from the published IDL / commons crate). Copied
+/// here rather than depending on a foreign Anchor CPI crate — see `graduate.rs`.
+pub const METEORA_BIN_ARRAY_SEED: &[u8] = b"bin_array";
+pub const METEORA_ORACLE_SEED: &[u8] = b"oracle";
+pub const METEORA_BITMAP_SEED: &[u8] = b"bitmap";
+pub const METEORA_POSITION_SEED: &[u8] = b"position";
+pub const METEORA_EVENT_AUTHORITY_SEED: &[u8] = b"__event_authority";
 
-/// Raydium CPMM's own seed strings (`raydium-cp-swap/src/states/*`), needed to
-/// derive and validate its PDAs via Anchor's `seeds::program`. Copied here
-/// rather than pulled in as a crate dependency — see `graduate.rs` for why this
-/// integration is a hand-built CPI instead of `raydium_cp_swap::cpi::*`.
-pub const RAYDIUM_AUTH_SEED: &[u8] = b"vault_and_lp_mint_auth_seed";
-pub const RAYDIUM_POOL_LP_MINT_SEED: &[u8] = b"pool_lp_mint";
-pub const RAYDIUM_POOL_VAULT_SEED: &[u8] = b"pool_vault";
-pub const RAYDIUM_OBSERVATION_SEED: &[u8] = b"observation";
+/// ILM base key for customizable permissionless LB pair PDAs (reference).
+#[allow(dead_code)]
+pub const METEORA_ILM_BASE: Pubkey = pubkey!("MFGQxwAmB91SwuYX36okv2Qmdc9aMuHTwWGUrp4AtB1");
 
-/// Anchor instruction discriminator for `raydium_cp_swap::initialize`
-/// (`sha256("global:initialize")[..8]`). Verified against
-/// `raydium-io/raydium-cp-swap`'s published IDL; see `graduate.rs`.
-pub const RAYDIUM_INITIALIZE_DISCRIMINATOR: [u8; 8] = [175, 175, 109, 31, 13, 152, 155, 237];
+/// Dead owner for permanently locked DLMM positions. DLMM has no fungible LP
+/// mint; permanence is position ownership + `lock_release_point = u64::MAX`.
+pub const METEORA_DEAD_OWNER: Pubkey = pubkey!("1nc1nerator11111111111111111111111111111111");
 
-/// Rent buffer transferred from `migration_authority` into the escrow before
-/// the CPI, on top of `amm_config.create_pool_fee` (read live from the
-/// account, not hardcoded — see `graduate.rs`, it is 0.15 SOL on both of
-/// Raydium's published mainnet and devnet default configs, and the AmmConfig
-/// this network uses is itself admin-chosen via `set_raydium_config`, so it is
-/// not something this program should guess at). This buffer covers
-/// `lp_mint` + `pool_state` + `observation_state` + two vault accounts' rent.
-/// Any unspent lamports stay in the escrow permanently — a small, bounded,
-/// documented dust cost. Nobody can reclaim it because nobody but this
-/// program can ever sign for that PDA again.
-pub const RAYDIUM_MIGRATION_RENT_BUFFER_LAMPORTS: u64 = 50_000_000; // 0.05 SOL
+/// Bins per bin-array / default position width.
+pub const METEORA_MAX_BIN_PER_ARRAY: i32 = 70;
+pub const METEORA_DEFAULT_BIN_PER_POSITION: i32 = 70;
 
-/// Byte offset of `AmmConfig.create_pool_fee` within its account data,
-/// including the 8-byte Anchor discriminator:
-/// `8 (disc) + bump(1) + disable_create_pool(1) + index(2) + trade_fee_rate(8)
-/// + protocol_fee_rate(8) + fund_fee_rate(8)`. Confirmed against
-/// `raydium-io/raydium-cp-swap/programs/cp-swap/src/states/config.rs`.
-pub const RAYDIUM_AMM_CONFIG_CREATE_POOL_FEE_OFFSET: usize = 8 + 1 + 1 + 2 + 8 + 8 + 8;
+/// Q64.64 scale used by DLMM bin prices.
+pub const METEORA_SCALE_OFFSET: u8 = 64;
+pub const METEORA_ONE_Q64: u128 = 1u128 << 64;
+pub const METEORA_BASIS_POINT_MAX: i32 = 10_000;
+
+/// `initialize_lb_pair2` discriminator (`sha256("global:initialize_lb_pair2")[..8]`).
+pub const METEORA_INIT_LB_PAIR2_DISCRIMINATOR: [u8; 8] = [73, 59, 36, 120, 237, 83, 108, 198];
+/// `initialize_bin_array`
+pub const METEORA_INIT_BIN_ARRAY_DISCRIMINATOR: [u8; 8] = [35, 86, 19, 185, 78, 212, 75, 211];
+/// `initialize_position_by_operator`
+pub const METEORA_INIT_POSITION_BY_OPERATOR_DISCRIMINATOR: [u8; 8] =
+    [251, 189, 190, 244, 117, 254, 35, 148];
+/// `add_liquidity_by_strategy`
+pub const METEORA_ADD_LIQUIDITY_BY_STRATEGY_DISCRIMINATOR: [u8; 8] =
+    [7, 3, 150, 127, 148, 40, 61, 200];
+/// `update_position_operator`
+pub const METEORA_UPDATE_POSITION_OPERATOR_DISCRIMINATOR: [u8; 8] =
+    [202, 184, 103, 143, 180, 191, 116, 217];
+
+/// `StrategyType::SpotBalanced` Borsh discriminant.
+pub const METEORA_STRATEGY_SPOT_BALANCED: u8 = 3;
+
+/// Rent buffer for pool + bin array + position accounts (migration_authority → escrow).
+pub const METEORA_MIGRATION_RENT_BUFFER_LAMPORTS: u64 = 80_000_000; // 0.08 SOL
+
+/// Byte offset of `LbPair.active_id` (i32), including the 8-byte Anchor discriminator.
+pub const METEORA_LB_PAIR_ACTIVE_ID_OFFSET: usize = 76;
+/// Byte offset of `LbPair.bin_step` (u16).
+pub const METEORA_LB_PAIR_BIN_STEP_OFFSET: usize = 80;
+/// Byte offset of `PresetParameter2.bin_step` (u16) after the 8-byte discriminator.
+pub const METEORA_PRESET2_BIN_STEP_OFFSET: usize = 8;
+/// Byte offset of `PositionV2.owner` after discriminator (see IDL layout).
+pub const METEORA_POSITION_OWNER_OFFSET: usize = 8 + 32; // after lb_pair pubkey
+/// Byte offset of `PositionV2.lock_release_point` — verified in graduate tests.
+pub const METEORA_POSITION_LOCK_RELEASE_OFFSET: usize = 8 + 32 + 32 + 4 + 4 + 8;
+// disc + lb_pair + owner + liquidity_shares start… layout used only in verify clients.

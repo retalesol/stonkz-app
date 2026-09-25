@@ -304,7 +304,7 @@ describe('backfill argument parsing', () => {
 
   it('requires a chain it can actually index', () => {
     expect(() => parseBackfillArgs(['--from', '1', '--to', '2'])).toThrow(BackfillArgsError);
-    expect(() => parseBackfillArgs(['--net', 'ETH', '--from', '1', '--to', '2'])).toThrow(/SOL or RH/);
+    expect(() => parseBackfillArgs(['--net', 'ETH', '--from', '1', '--to', '2'])).toThrow(/SOL, RH, or BASE/);
   });
 
   it('requires both bounds', () => {

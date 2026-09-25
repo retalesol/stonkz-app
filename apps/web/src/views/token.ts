@@ -26,7 +26,7 @@ import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isPracticeSession, isRejection } from '../wallet/index.js';
 import { showView } from '../app/view.js';
 import { drawTokenChart } from '../canvas/chart.js';
-import { pix } from '../canvas/pix.js';
+import { paintCoinArt } from '../canvas/pix.js';
 import { burst } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, clear, must, reflow } from '../lib/dom.js';
@@ -763,11 +763,16 @@ function updateCurveNote(): void {
   const n = $('#cv-note');
   if (!n) return;
   if (c.lane === 'grad') {
-    n.textContent = 'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO THE DEX AND LP TOKENS WERE BURNED.';
+    const net = c.net ?? 'SOL';
+    n.textContent =
+      net === 'SOL'
+        ? 'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO METEORA DLMM AND THE POSITION IS PERMANENTLY LOCKED.'
+        : 'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO UNISWAP AND LP TOKENS WERE BURNED.';
   } else {
+    const net = c.net ?? 'SOL';
     render(
       n,
-      html`AT ${usd(GRAD)} MARKET CAP THE CURVE FILLS, LIQUIDITY MIGRATES AND THE LP BURNS.
+      html`AT ${usd(GRAD)} MARKET CAP THE CURVE FILLS, LIQUIDITY MIGRATES (${net === 'SOL' ? 'METEORA DLMM' : 'UNISWAP'}) AND THE LP LOCKS.
         <b class="am">${usd(Math.max(0, GRAD - c.mc))}</b> TO GO.`,
     );
   }
@@ -849,7 +854,7 @@ export function openToken(c: SimCoin): void {
   const v = must('#tokenView');
   render(v, tokenHTML(c));
   showView('token');
-  pix($<HTMLCanvasElement>('.tk-bar canvas'), c.seed);
+  paintCoinArt($<HTMLCanvasElement>('.tk-bar canvas'), c.seed, c.image);
   updateCurveNote();
   render(
     must('#t-quick'),

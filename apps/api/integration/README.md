@@ -62,7 +62,7 @@ this at a key that holds mainnet value, and never at a withdraw authority.
 |---|---|
 | `solana: buy then sell settles on chain` | Real broadcast, Solana; plus the indexer materialising a real event |
 | `robinhood: atomic buy and sell in one signature each` | `RH_ROUTER_ADDRESS` configured, and the atomicity claim — asserted by **nonce delta of exactly 1**, not by trusting `atomic: true` |
-| `solana: graduated LP mint supply is zero` | "Liquidity is burned forever", Solana (finding H1) |
+| `solana: graduated DLMM position is permanently locked` | "Liquidity is burned forever", Solana (Meteora DLMM lock) |
 | `robinhood: graduated LP sits at the dead address` | Same claim, RH |
 | `robinhood: oracle staleness bound is heartbeat-scale` | The 24h-heartbeat bug, asserted against the live deployment |
 | `robinhood: ERC-1271 smart account can sign in` | Smart-account support on an ERC-4337-heavy chain |

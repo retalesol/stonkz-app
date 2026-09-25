@@ -570,6 +570,25 @@ export class Ingestor {
   private async onGraduated(event: GraduatedEvent, report: IngestReport): Promise<void> {
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
+    const [existing] = await this.db
+      .select({ graduatedAt: tokens.graduatedAt, mc: tokens.mc })
+      .from(tokens)
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)))
+      .limit(1);
+
+    // Standalone `LiquidityMigrated` reuses the Graduated event shape to attach
+    // pool/position addresses after the curve flip. Do not re-run awards.
+    if (existing?.graduatedAt) {
+      await this.db
+        .update(tokens)
+        .set({
+          ...(event.mc > 0 ? { mc: event.mc } : {}),
+          updatedAt: new Date(this.now()),
+        })
+        .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
+      return;
+    }
+
     await this.db
       .update(tokens)
       .set({ lane: 'grad', graduatedAt: new Date(event.blockTimeMs), mc: event.mc, updatedAt: new Date(this.now()) })

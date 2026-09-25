@@ -10,7 +10,7 @@ import { HOLD, holdOf } from '../state/holdings.js';
 import { USER, unlock } from '../state/user.js';
 import { addCoin, counts, king, landIn, paint, renderBoard } from '../views/board.js';
 import { addChat } from '../views/chat.js';
-import { pushFill } from '../views/tape.js';
+import { pushFill, clearTape } from '../views/tape.js';
 import { TV, drawTChart, renderTab, syncToken } from '../views/token.js';
 import { syncProfile } from '../views/profile.js';
 import { isStakeOpen, syncStake } from '../modals/stake.js';
@@ -94,6 +94,7 @@ export function startLoop(): void {
   });
 
   on('fill', ({ fill, animate }) => pushFill(fill, animate));
+  on('tapeClear', () => clearTape());
 
   on('rank', () => renderRank(true));
   on('wallet', () => renderWallet());

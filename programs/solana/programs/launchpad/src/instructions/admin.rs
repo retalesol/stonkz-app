@@ -39,12 +39,10 @@ pub fn initialize(
     g.ops_withdraw_authority = ops_withdraw_authority;
     g.oracle_authority = oracle_authority;
     g.migration_authority = migration_authority;
-    // Set via `set_raydium_config` before any `migrate_liquidity` call — kept
-    // out of `initialize`'s argument list so this instruction's signature
-    // doesn't have to change again if Raydium ever publishes a new program id
-    // or this deploy needs a different fee-tier `AmmConfig`.
-    g.raydium_program = Pubkey::default();
-    g.raydium_amm_config = Pubkey::default();
+    // Set via `set_meteora_config` before migration — kept out of `initialize`
+    // so a new DLMM program id or PresetParameter2 does not change this ix.
+    g.dex_program = Pubkey::default();
+    g.dex_config = Pubkey::default();
     g.trading_paused = false;
     g.launch_paused = false;
     g.protocol_withdrawals_paused = false;
@@ -121,20 +119,28 @@ pub fn set_withdraw_authorities(
     Ok(())
 }
 
-/// Point `migrate_liquidity` at a Raydium CPMM deployment and fee tier.
+/// Point migration at a Meteora DLMM deployment and `PresetParameter2` tier.
 /// Admin-gated because a wrong program id here would make every subsequent
-/// graduation's CPI fail closed (Anchor's `address = …` constraint), not
-/// silently misbehave — this is a safety knob, not a money-moving one.
+/// graduation's CPI fail closed (Anchor's `address = …` constraint).
+pub fn set_meteora_config(
+    ctx: Context<AdminOnly>,
+    program: Pubkey,
+    preset: Pubkey,
+) -> Result<()> {
+    require!(program != Pubkey::default(), LaunchpadError::Unauthorized);
+    require!(preset != Pubkey::default(), LaunchpadError::Unauthorized);
+    ctx.accounts.global.dex_program = program;
+    ctx.accounts.global.dex_config = preset;
+    Ok(())
+}
+
+/// Deprecated alias for `set_meteora_config` (same handler, same Global slots).
 pub fn set_raydium_config(
     ctx: Context<AdminOnly>,
     program: Pubkey,
     amm_config: Pubkey,
 ) -> Result<()> {
-    require!(program != Pubkey::default(), LaunchpadError::Unauthorized);
-    require!(amm_config != Pubkey::default(), LaunchpadError::Unauthorized);
-    ctx.accounts.global.raydium_program = program;
-    ctx.accounts.global.raydium_amm_config = amm_config;
-    Ok(())
+    set_meteora_config(ctx, program, amm_config)
 }
 
 pub fn propose_admin(ctx: Context<AdminOnly>, new_admin: Pubkey) -> Result<()> {

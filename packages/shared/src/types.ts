@@ -247,7 +247,7 @@ export interface QuoteHop {
   feeAmount: number;
 }
 
-/** A priced route. `amountIn` is always the native unit. */
+/** A priced route. `amountIn` is the input the user typed: native on buys, tokens on sells. */
 export interface Quote {
   sym: string;
   /** Canonical mint when known — preferred over `sym` for duplicate tickers. */
@@ -256,7 +256,9 @@ export interface Quote {
   side: 'buy' | 'sell';
   /** Always SOL or ETH. */
   nativeUnit: NativeUnit;
+  /** Native spent (buy) or tokens sold (sell). */
   amountIn: number;
+  /** Tokens received (buy) or native received (sell). */
   amountOut: number;
   minOut: number;
   /** Ordered legs — one hop when the base mint is native, otherwise two. */
