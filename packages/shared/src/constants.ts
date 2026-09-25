@@ -236,7 +236,12 @@ export interface Achievement {
 /** The ten achievements. `index.html:2166-2177` */
 export const ACH = [
   { k: 'first', n: 'FIRST BLOOD', d: 'Make your first trade.', xp: 50 },
-  { k: 'whale', n: 'WHALE', d: 'Hit the chain-specific whale fill threshold (5 SOL or 2 ETH).', xp: 120 },
+  {
+    k: 'whale',
+    n: 'WHALE',
+    d: 'Hit the chain-specific whale fill threshold (5 SOL or 2 ETH).',
+    xp: 120,
+  },
   { k: 'deploy', n: 'DEPLOYER', d: 'Launch a coin.', xp: 100 },
   {
     k: 'cashback',

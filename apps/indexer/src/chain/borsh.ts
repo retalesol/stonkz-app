@@ -29,7 +29,9 @@ export class BorshReader {
 
   private take(n: number): Buffer {
     if (this.offset + n > this.buf.length) {
-      throw new BorshError(`out of bounds: need ${n} byte(s) at ${this.offset} of ${this.buf.length}`);
+      throw new BorshError(
+        `out of bounds: need ${n} byte(s) at ${this.offset} of ${this.buf.length}`,
+      );
     }
     const slice = this.buf.subarray(this.offset, this.offset + n);
     this.offset += n;

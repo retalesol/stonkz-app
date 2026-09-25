@@ -73,7 +73,13 @@ export class FixtureProducer {
     this.position += this.positionsPerStep;
   }
 
-  private base(logIndex = 0): { net: Net; txSig: string; logIndex: number; chainPosition: number; blockTimeMs: number } {
+  private base(logIndex = 0): {
+    net: Net;
+    txSig: string;
+    logIndex: number;
+    chainPosition: number;
+    blockTimeMs: number;
+  } {
     return {
       net: this.net,
       txSig: this.nextSig(),
@@ -102,7 +108,7 @@ export class FixtureProducer {
     this.tick();
     const base = this.base();
     const majors = MAJORS[this.net];
-    const baseSymbol = input.baseSymbol ?? (majors[0]?.[0] ?? nativeUnit(this.net));
+    const baseSymbol = input.baseSymbol ?? majors[0]?.[0] ?? nativeUnit(this.net);
 
     const created = this.push({
       ...base,
@@ -200,7 +206,12 @@ export class FixtureProducer {
     return this.push({ ...this.base(), kind: 'Graduated' as const, sym, mc });
   }
 
-  claimCreatorFees(input: { sym: string; creator: string; nativeAmount: number; tokenAmount?: number }): ChainEvent {
+  claimCreatorFees(input: {
+    sym: string;
+    creator: string;
+    nativeAmount: number;
+    tokenAmount?: number;
+  }): ChainEvent {
     this.tick();
     return this.push({
       ...this.base(),
@@ -240,7 +251,12 @@ export class FixtureProducer {
     return this.push({ ...this.base(), kind: 'Unstaked' as const, ...input });
   }
 
-  claimStake(input: { sym: string; wallet: string; rewardNative: number; rewardTokens?: number }): ChainEvent {
+  claimStake(input: {
+    sym: string;
+    wallet: string;
+    rewardNative: number;
+    rewardTokens?: number;
+  }): ChainEvent {
     this.tick();
     return this.push({
       ...this.base(),
@@ -265,7 +281,11 @@ export class FixtureProducer {
     });
   }
 
-  treasuryCredit(input: { vault: 'protocol' | 'stonkz_ops'; amount: number; sym?: string }): ChainEvent {
+  treasuryCredit(input: {
+    vault: 'protocol' | 'stonkz_ops';
+    amount: number;
+    sym?: string;
+  }): ChainEvent {
     this.tick();
     return this.push({
       ...this.base(),
@@ -324,20 +344,49 @@ export function canonicalScenario(seed = 0xc0ffee): ScenarioResult {
     rhCreator: 'creator-RHDOG',
   };
 
-  const sol = new FixtureProducer({ net: 'SOL', seed, startMs: Date.parse('2026-09-06T00:00:00.000Z') });
-  const rh = new FixtureProducer({ net: 'RH', seed: seed ^ 0x5eed, startMs: Date.parse('2026-09-06T00:00:00.000Z') });
+  const sol = new FixtureProducer({
+    net: 'SOL',
+    seed,
+    startMs: Date.parse('2026-09-06T00:00:00.000Z'),
+  });
+  const rh = new FixtureProducer({
+    net: 'RH',
+    seed: seed ^ 0x5eed,
+    startMs: Date.parse('2026-09-06T00:00:00.000Z'),
+  });
 
   // --- Solana -------------------------------------------------------------
   sol.launch({ sym: 'DOGGO', name: 'Doggo Coin', creator: actors.solCreator, feeBps: 250 });
-  sol.launch({ sym: 'CASHY', name: 'Cashy Coin', creator: actors.solCreator, feeBps: 300, cashback: true });
+  sol.launch({
+    sym: 'CASHY',
+    name: 'Cashy Coin',
+    creator: actors.solCreator,
+    feeBps: 300,
+    cashback: true,
+  });
 
   // 6 SOL is over the 5 SOL whale cut.
   sol.trade({ sym: 'DOGGO', trader: actors.solWhale, side: 'buy', nativeAmount: 6, mc: 12_000 });
   sol.trade({ sym: 'DOGGO', trader: actors.solTrader, side: 'buy', nativeAmount: 1.5, mc: 18_000 });
   // 0.004 SOL is under the 0.01 SOL dust floor: zero award, no achievement.
   sol.trade({ sym: 'DOGGO', trader: actors.solDust, side: 'buy', nativeAmount: 0.004, mc: 18_100 });
-  sol.trade({ sym: 'CASHY', trader: actors.solTrader, side: 'buy', nativeAmount: 2, mc: 30_000, cashback: true, feeBps: 300 });
-  sol.trade({ sym: 'DOGGO', trader: actors.solTrader, side: 'sell', nativeAmount: 0.75, mc: 17_000, tokenAmount: 4_000_000 });
+  sol.trade({
+    sym: 'CASHY',
+    trader: actors.solTrader,
+    side: 'buy',
+    nativeAmount: 2,
+    mc: 30_000,
+    cashback: true,
+    feeBps: 300,
+  });
+  sol.trade({
+    sym: 'DOGGO',
+    trader: actors.solTrader,
+    side: 'sell',
+    nativeAmount: 0.75,
+    mc: 17_000,
+    tokenAmount: 4_000_000,
+  });
 
   sol.claimCreatorFees({ sym: 'DOGGO', creator: actors.solCreator, nativeAmount: 0.42 });
   sol.stake({ sym: 'DOGGO', wallet: actors.solTrader, amount: 40_000_000, lockDays: 30, mult: 2 });
@@ -352,11 +401,32 @@ export function canonicalScenario(seed = 0xc0ffee): ScenarioResult {
   // --- Robinhood ----------------------------------------------------------
   rh.launch({ sym: 'RHDOG', name: 'RH Doggo', creator: actors.rhCreator, feeBps: 200 });
   // 2.5 ETH is over the 2 ETH cut documented in game/rules.ts.
-  rh.trade({ sym: 'RHDOG', trader: actors.rhWhale, side: 'buy', nativeAmount: 2.5, mc: 15_000, feeBps: 200 });
+  rh.trade({
+    sym: 'RHDOG',
+    trader: actors.rhWhale,
+    side: 'buy',
+    nativeAmount: 2.5,
+    mc: 15_000,
+    feeBps: 200,
+  });
   // Crosses 55% of the $69K cap, so RHDOG moves from the `new` lane to `soon`.
-  rh.trade({ sym: 'RHDOG', trader: actors.rhTrader, side: 'buy', nativeAmount: 0.2, mc: 40_000, feeBps: 200 });
+  rh.trade({
+    sym: 'RHDOG',
+    trader: actors.rhTrader,
+    side: 'buy',
+    nativeAmount: 0.2,
+    mc: 40_000,
+    feeBps: 200,
+  });
   // 0.0002 ETH is under the 0.0005 ETH dust floor.
-  rh.trade({ sym: 'RHDOG', trader: actors.rhTrader, side: 'buy', nativeAmount: 0.0002, mc: 40_100, feeBps: 200 });
+  rh.trade({
+    sym: 'RHDOG',
+    trader: actors.rhTrader,
+    side: 'buy',
+    nativeAmount: 0.0002,
+    mc: 40_100,
+    feeBps: 200,
+  });
   rh.claimCreatorFees({ sym: 'RHDOG', creator: actors.rhCreator, nativeAmount: 0.008 });
 
   return {

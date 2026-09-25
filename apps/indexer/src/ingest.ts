@@ -428,7 +428,12 @@ export class Ingestor {
 
   private async updateCandles(event: TradeEvent, mint: string): Promise<void> {
     const price = event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0;
-    for (const update of candleUpdatesFor(event.blockTimeMs, price, event.usdValue, event.nativeAmount)) {
+    for (const update of candleUpdatesFor(
+      event.blockTimeMs,
+      price,
+      event.usdValue,
+      event.nativeAmount,
+    )) {
       await this.db
         .insert(candles)
         .values({
@@ -591,11 +596,20 @@ export class Ingestor {
 
     await this.db
       .update(tokens)
-      .set({ lane: 'grad', graduatedAt: new Date(event.blockTimeMs), mc: event.mc, updatedAt: new Date(this.now()) })
+      .set({
+        lane: 'grad',
+        graduatedAt: new Date(event.blockTimeMs),
+        mc: event.mc,
+        updatedAt: new Date(this.now()),
+      })
       .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
 
     await this.opts.publisher.board({ type: 'graduated', net: event.net, sym: event.sym });
-    await this.opts.publisher.token(event.sym, { type: 'graduated', net: event.net, sym: event.sym });
+    await this.opts.publisher.token(event.sym, {
+      type: 'graduated',
+      net: event.net,
+      sym: event.sym,
+    });
 
     // Everyone still holding at the moment of graduation earns `grad` — except
     // dust positions. A wallet that sprayed 0.004 SOL across the board must not
@@ -733,7 +747,10 @@ export class Ingestor {
     await this.creditVault(event, event.vault, event.amount);
   }
 
-  private async onCreatorFeesClaimed(event: CreatorFeesClaimedEvent, report: IngestReport): Promise<void> {
+  private async onCreatorFeesClaimed(
+    event: CreatorFeesClaimedEvent,
+    report: IngestReport,
+  ): Promise<void> {
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
     await this.db
@@ -902,7 +919,11 @@ export class Ingestor {
         .select({ txSig: trades.txSig })
         .from(trades)
         .where(
-          and(eq(trades.net, net), eq(trades.mint, position.mint), eq(trades.trader, position.wallet)),
+          and(
+            eq(trades.net, net),
+            eq(trades.mint, position.mint),
+            eq(trades.trader, position.wallet),
+          ),
         )
         .orderBy(asc(trades.id))
         .limit(1);

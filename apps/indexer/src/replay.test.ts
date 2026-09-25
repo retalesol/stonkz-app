@@ -95,7 +95,7 @@ describe('fixture replay: read path', () => {
     const tradeRows = await rig.db.db.select().from(trades);
     const tradeEvents = scenario.events.filter((e) => e.kind === 'Trade');
     expect(tradeRows).toHaveLength(tradeEvents.length);
-    expect((await rig.db.db.select().from(tape))).toHaveLength(tradeEvents.length);
+    expect(await rig.db.db.select().from(tape)).toHaveLength(tradeEvents.length);
 
     const candleRows = await rig.db.db
       .select()
@@ -107,7 +107,9 @@ describe('fixture replay: read path', () => {
     // Every SOL:DOGGO fill lands in the same UTC day bucket.
     const daily = candleRows.filter((c) => c.tf === '1d');
     expect(daily).toHaveLength(1);
-    expect(daily[0]?.trades).toBe(tradeEvents.filter((e) => e.kind === 'Trade' && e.sym === 'DOGGO').length);
+    expect(daily[0]?.trades).toBe(
+      tradeEvents.filter((e) => e.kind === 'Trade' && e.sym === 'DOGGO').length,
+    );
     expect(daily[0]?.h).toBeGreaterThanOrEqual(daily[0]?.l ?? 0);
   });
 
@@ -171,7 +173,10 @@ describe('fixture replay: read path', () => {
       expect(event.stonkzOps / event.feeAmount).toBeCloseTo(0.1, 9);
       expect(event.creatorBucket / event.feeAmount).toBeCloseTo(0.7, 9);
       // The three legs account for the whole fee, with nothing unallocated.
-      expect(event.protocol + event.stonkzOps + event.creatorBucket).toBeCloseTo(event.feeAmount, 9);
+      expect(event.protocol + event.stonkzOps + event.creatorBucket).toBeCloseTo(
+        event.feeAmount,
+        9,
+      );
       // Staker share is peeled out of the creator bucket, never off the top.
       expect(event.stakerShare).toBeLessThanOrEqual(event.creatorBucket + 1e-9);
     }
@@ -194,7 +199,11 @@ describe('fixture replay: read path', () => {
       .limit(1);
     expect(stake?.amount).toBe(40_000_000);
     expect(stake?.lockDays).toBe(30);
-    expect(stake?.rewardNative).toBeCloseTo(0.05, 9);
+    // The scenario claims 0.05 SOL after staking. Since 7069975 `reward_native`
+    // is the *claimable* balance GET /stake shows, and a `StakeClaimed` zeros
+    // it rather than accumulating the claimed total.
+    expect(stake?.rewardNative).toBe(0);
+    expect(stake?.rewardTokens).toBe(0);
   });
 
   it('publishes board, token, tape and user events', async () => {
@@ -220,7 +229,13 @@ describe('fixture replay: game ledger', () => {
     const rows = await rig.db.db
       .select()
       .from(xpEvents)
-      .where(and(eq(xpEvents.net, 'SOL'), eq(xpEvents.wallet, scenario.actors.solWhale), eq(xpEvents.reason, 'trade')));
+      .where(
+        and(
+          eq(xpEvents.net, 'SOL'),
+          eq(xpEvents.wallet, scenario.actors.solWhale),
+          eq(xpEvents.reason, 'trade'),
+        ),
+      );
 
     const notionals = scenario.events
       .filter((e) => e.kind === 'Trade' && e.trader === scenario.actors.solWhale)

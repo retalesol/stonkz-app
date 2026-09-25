@@ -223,12 +223,7 @@ export function encodeTreasuryCredit(f: {
   opsDelta: bigint;
   ts: bigint;
 }): Buffer {
-  return new BorshWriter()
-    .pubkey(f.baseMint)
-    .u64(f.protocolDelta)
-    .u64(f.opsDelta)
-    .i64(f.ts)
-    .done();
+  return new BorshWriter().pubkey(f.baseMint).u64(f.protocolDelta).u64(f.opsDelta).i64(f.ts).done();
 }
 
 export function encodeGraduated(f: {

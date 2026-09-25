@@ -135,7 +135,9 @@ async function login(base: string, net: Net): Promise<Session> {
     throw new WalletError('not_connected', 'Connect a wallet before signing in.');
   }
   const address = wallet.address;
-  const nonceRes = await fetch(`${base}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`);
+  const nonceRes = await fetch(
+    `${base}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`,
+  );
   if (!nonceRes.ok) throw new Error('auth/nonce: ' + (await readError(nonceRes)));
   const challenge = (await nonceRes.json()) as NonceChallenge;
 
@@ -195,7 +197,10 @@ export async function ensureSession(base: string, net: Net): Promise<Session> {
 
   // Drop a session that belongs to a different net or a different address than
   // the currently connected wallet.
-  if (session && (session.net !== net || (wallet && !sameAddress(net, session.wallet, wallet.address)))) {
+  if (
+    session &&
+    (session.net !== net || (wallet && !sameAddress(net, session.wallet, wallet.address)))
+  ) {
     session = null;
   }
 

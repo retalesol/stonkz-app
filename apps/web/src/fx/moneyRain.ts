@@ -20,12 +20,21 @@ export function moneyRain(n: number): void {
     e.style.left = (r.left + 14 + Math.random() * (r.width - 28)).toFixed(0) + 'px';
     e.style.top = (r.top + 8).toFixed(0) + 'px';
     e.style.fontSize = (14 + Math.random() * 9).toFixed(0) + 'px';
-    e.style.setProperty('--dx', ((Math.random() * 2 - 1) * (90 + Math.random() * 270)).toFixed(0) + 'px');
+    e.style.setProperty(
+      '--dx',
+      ((Math.random() * 2 - 1) * (90 + Math.random() * 270)).toFixed(0) + 'px',
+    );
     e.style.setProperty('--up', (70 + Math.random() * 140).toFixed(0) + 'px');
-    e.style.setProperty('--fall', (240 + Math.random() * (window.innerHeight - r.top)).toFixed(0) + 'px');
+    e.style.setProperty(
+      '--fall',
+      (240 + Math.random() * (window.innerHeight - r.top)).toFixed(0) + 'px',
+    );
     e.style.setProperty('--rot', ((Math.random() * 2 - 1) * 30).toFixed(0) + 'deg');
     e.style.setProperty('--dur', (1.7 + Math.random() * 1.3).toFixed(2) + 's');
-    e.style.setProperty('--delay', (i < 14 ? i * 0.028 : 0.24 + Math.random() * 0.5).toFixed(2) + 's');
+    e.style.setProperty(
+      '--delay',
+      (i < 14 ? i * 0.028 : 0.24 + Math.random() * 0.5).toFixed(2) + 's',
+    );
     layer.appendChild(e);
   }
   setTimeout(() => {

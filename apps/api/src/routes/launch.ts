@@ -25,7 +25,11 @@ import { deriveCurveColumns, type CurveStateColumns } from '../router/curve-stat
 import { moderateLaunch } from '../router/moderation.js';
 import { toAtoms } from '../router/units.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
-import { asSolanaBlockhashSource, asSolanaTransactionSource, type JupiterHop } from '../router/solana-tx.js';
+import {
+  asSolanaBlockhashSource,
+  asSolanaTransactionSource,
+  type JupiterHop,
+} from '../router/solana-tx.js';
 import { composeSolanaLaunchTransaction } from '../router/solana-launch-tx.js';
 import { asEvmTransactionSource } from '../router/evm-tx.js';
 import { encodeCreateTokenCall, decodeTokenCreated } from '../router/evm-launch.js';
@@ -55,7 +59,11 @@ function isAllowedBaseSymbol(net: Net, symbol: string): boolean {
 }
 
 async function walletLaunchRateLimit(
-  deps: { redis: Parameters<typeof rateLimit>[0]; env: { launchRateLimitPerWallet: number; launchRateLimitWindowSeconds: number }; now: () => number },
+  deps: {
+    redis: Parameters<typeof rateLimit>[0];
+    env: { launchRateLimitPerWallet: number; launchRateLimitWindowSeconds: number };
+    now: () => number;
+  },
   net: string,
   wallet: string,
 ): Promise<{ ok: boolean; resetSeconds: number }> {
@@ -64,7 +72,12 @@ async function walletLaunchRateLimit(
     limit: deps.env.launchRateLimitPerWallet,
     windowSeconds: deps.env.launchRateLimitWindowSeconds,
   };
-  const verdict = await rateLimit(deps.redis, rule, `w:${net}:${wallet}`, Math.floor(deps.now() / 1000));
+  const verdict = await rateLimit(
+    deps.redis,
+    rule,
+    `w:${net}:${wallet}`,
+    Math.floor(deps.now() / 1000),
+  );
   return { ok: verdict.ok, resetSeconds: verdict.resetSeconds };
 }
 
@@ -116,41 +129,76 @@ export function launchRoutes(): Hono<AppEnv> {
     const feePct = typeof body.feePct === 'number' ? body.feePct : Number.NaN;
     const cashback = body.cashback === true;
     const baseSymbol = typeof body.baseSymbol === 'string' ? body.baseSymbol.toUpperCase() : '';
-    const devBuyNative = typeof body.devBuyNative === 'number' && Number.isFinite(body.devBuyNative) ? body.devBuyNative : 0;
+    const devBuyNative =
+      typeof body.devBuyNative === 'number' && Number.isFinite(body.devBuyNative)
+        ? body.devBuyNative
+        : 0;
 
     if (!isValidTicker(ticker) || !name) {
       return c.json({ error: 'bad_request', detail: 'ticker and name are required' }, 400);
     }
     if (!isValidSupply(supply)) {
-      return c.json({ error: 'invalid_supply', detail: 'supply must be one of 1e6, 5e8, 1e9, 1e12' }, 422);
+      return c.json(
+        { error: 'invalid_supply', detail: 'supply must be one of 1e6, 5e8, 1e9, 1e12' },
+        422,
+      );
     }
     if (!isValidCurveFee(feePct)) {
-      return c.json({ error: 'invalid_fee', detail: 'fee must be between 1.0 and 5.0 percent' }, 422);
+      return c.json(
+        { error: 'invalid_fee', detail: 'fee must be between 1.0 and 5.0 percent' },
+        422,
+      );
     }
     if (devBuyNative < 0 || !Number.isFinite(devBuyNative)) {
-      return c.json({ error: 'bad_request', detail: 'devBuyNative must be a non-negative number' }, 400);
+      return c.json(
+        { error: 'bad_request', detail: 'devBuyNative must be a non-negative number' },
+        400,
+      );
     }
     // Plan step 90: cashback only if the native-denominated dev buy is zero.
     if (cashback && devBuyNative > 0) {
       return c.json(
-        { error: 'cashback_dev_buy_conflict', detail: 'cashback launches cannot also carry a dev buy' },
+        {
+          error: 'cashback_dev_buy_conflict',
+          detail: 'cashback launches cannot also carry a dev buy',
+        },
         422,
       );
     }
 
     const moderation = moderateLaunch({ name, ticker, descr });
     if (!moderation.ok) {
-      deps.logger.warn('launch rejected by moderation stub', { net, wallet, ticker, matched: moderation.matched.length });
-      return c.json({ error: 'moderation_rejected', detail: 'name, ticker or description failed the content filter' }, 422);
+      deps.logger.warn('launch rejected by moderation stub', {
+        net,
+        wallet,
+        ticker,
+        matched: moderation.matched.length,
+      });
+      return c.json(
+        {
+          error: 'moderation_rejected',
+          detail: 'name, ticker or description failed the content filter',
+        },
+        422,
+      );
     }
 
     if (!isAllowedBaseSymbol(net, baseSymbol)) {
-      return c.json({ error: 'base_mint_not_allowed', detail: `${baseSymbol} is not a recognised base asset on this net` }, 400);
+      return c.json(
+        {
+          error: 'base_mint_not_allowed',
+          detail: `${baseSymbol} is not a recognised base asset on this net`,
+        },
+        400,
+      );
     }
     const baseMintAddress = deps.baseMints.mintFor(net, baseSymbol);
     if (!baseMintAddress) {
       return c.json(
-        { error: 'base_mint_not_allowed', detail: `${baseSymbol} has no configured mint address on this net yet` },
+        {
+          error: 'base_mint_not_allowed',
+          detail: `${baseSymbol} has no configured mint address on this net yet`,
+        },
         400,
       );
     }
@@ -185,7 +233,14 @@ export function launchRoutes(): Hono<AppEnv> {
     // leave a 409 "already in flight" until TTL). Another wallet still 409s.
     await deps.db
       .delete(launchIntents)
-      .where(and(eq(launchIntents.net, net), eq(launchIntents.ticker, ticker), isNull(launchIntents.consumedAt), lte(launchIntents.expiresAt, new Date(now))));
+      .where(
+        and(
+          eq(launchIntents.net, net),
+          eq(launchIntents.ticker, ticker),
+          isNull(launchIntents.consumedAt),
+          lte(launchIntents.expiresAt, new Date(now)),
+        ),
+      );
 
     const [inFlight] = await deps.db
       .select({ id: launchIntents.id, creator: launchIntents.creator })
@@ -203,16 +258,27 @@ export function launchRoutes(): Hono<AppEnv> {
       if (inFlight.creator.toLowerCase() === wallet.toLowerCase()) {
         await deps.db.delete(launchIntents).where(eq(launchIntents.id, inFlight.id));
       } else {
-        return c.json({ error: 'ticker_taken', detail: 'a prepare for this ticker is already in flight' }, 409);
+        return c.json(
+          { error: 'ticker_taken', detail: 'a prepare for this ticker is already in flight' },
+          409,
+        );
       }
     }
 
     const tokenDecimals = net === 'SOL' ? SOLANA_TOKEN_DECIMALS : EVM_TOKEN_DECIMALS;
     const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(tokenDecimals);
-    const derived = deriveCurveColumns(supplyAtoms, basePrice.price1e6, basePrice.baseDecimals, tokenDecimals);
+    const derived = deriveCurveColumns(
+      supplyAtoms,
+      basePrice.price1e6,
+      basePrice.baseDecimals,
+      tokenDecimals,
+    );
     if (!derived) {
       return c.json(
-        { error: 'invalid_curve_params', detail: 'this supply/price combination cannot be represented on-chain' },
+        {
+          error: 'invalid_curve_params',
+          detail: 'this supply/price combination cannot be represented on-chain',
+        },
         422,
       );
     }
@@ -245,7 +311,13 @@ export function launchRoutes(): Hono<AppEnv> {
       }
       const fill = buyQuote(freshState(derived.params), feeBps, baseAtoms);
       if (!fill) {
-        return c.json({ error: 'dev_buy_failed', detail: 'the dev buy amount could not be filled against a fresh curve' }, 422);
+        return c.json(
+          {
+            error: 'dev_buy_failed',
+            detail: 'the dev buy amount could not be filled against a fresh curve',
+          },
+          422,
+        );
       }
       devBuyAtoms = baseAtoms;
       devBuyMinOutAtoms = fill.tokensOut;
@@ -253,7 +325,8 @@ export function launchRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('launch/prepare: Solana RPC does not implement latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('launch/prepare: Solana RPC does not implement latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
 
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
@@ -262,7 +335,9 @@ export function launchRoutes(): Hono<AppEnv> {
 
       let jupiterHop: JupiterHop | undefined;
       if (devBuyJupiterQuoteRaw) {
-        jupiterHop = { response: await deps.jupiter.swapInstructions(devBuyJupiterQuoteRaw, wallet) };
+        jupiterHop = {
+          response: await deps.jupiter.swapInstructions(devBuyJupiterQuoteRaw, wallet),
+        };
       }
 
       const mintSalt = BigInt(now);
@@ -282,7 +357,13 @@ export function launchRoutes(): Hono<AppEnv> {
           baseMint,
           createArgs,
           ...(devBuyAtoms !== null && devBuyMinOutAtoms !== null
-            ? { devBuy: { curveAmountIn: devBuyAtoms, curveMinOut: devBuyMinOutAtoms, ...(jupiterHop ? { jupiter: jupiterHop } : {}) } }
+            ? {
+                devBuy: {
+                  curveAmountIn: devBuyAtoms,
+                  curveMinOut: devBuyMinOutAtoms,
+                  ...(jupiterHop ? { jupiter: jupiterHop } : {}),
+                },
+              }
             : {}),
         },
         blockhash,
@@ -383,22 +464,33 @@ export function launchRoutes(): Hono<AppEnv> {
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = (await c.req.json().catch(() => ({}))) as { intentId?: unknown; signature?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      intentId?: unknown;
+      signature?: unknown;
+    };
     const intentId = typeof body.intentId === 'string' ? body.intentId : '';
     const signature = typeof body.signature === 'string' ? body.signature : '';
     if (!intentId || !signature) {
       return c.json({ error: 'bad_request', detail: 'intentId and signature are required' }, 400);
     }
 
-    const [intent] = await deps.db.select().from(launchIntents).where(eq(launchIntents.id, intentId)).limit(1);
-    if (!intent || intent.net !== net || intent.creator !== wallet) return c.json({ error: 'not_found' }, 404);
+    const [intent] = await deps.db
+      .select()
+      .from(launchIntents)
+      .where(eq(launchIntents.id, intentId))
+      .limit(1);
+    if (!intent || intent.net !== net || intent.creator !== wallet)
+      return c.json({ error: 'not_found' }, 404);
     if (intent.consumedAt) return c.json({ error: 'already_confirmed' }, 409);
     const now = deps.now();
     if (intent.expiresAt.getTime() < now) return c.json({ error: 'intent_expired' }, 410);
 
     const basePrice = await basePriceFor(net, intent.baseSymbol, deps.oracle);
     if (!basePrice) {
-      return c.json({ error: 'base_price_unavailable', detail: 'base price source no longer available' }, 422);
+      return c.json(
+        { error: 'base_price_unavailable', detail: 'base price source no longer available' },
+        422,
+      );
     }
 
     let mint: string;
@@ -407,11 +499,20 @@ export function launchRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const txSource = asSolanaTransactionSource(deps.rpcs.SOL);
-      if (!txSource) throw new Error('launch/confirm: Solana RPC does not implement getTransactionMessageBase64()');
+      if (!txSource)
+        throw new Error(
+          'launch/confirm: Solana RPC does not implement getTransactionMessageBase64()',
+        );
       const onChainMessage = await txSource.getTransactionMessageBase64(signature);
       if (!onChainMessage) return c.json({ error: 'transaction_not_found' }, 404);
       if (onChainMessage !== intent.unsignedPayload) {
-        return c.json({ error: 'signature_mismatch', detail: 'the confirmed transaction does not match what was prepared' }, 409);
+        return c.json(
+          {
+            error: 'signature_mismatch',
+            detail: 'the confirmed transaction does not match what was prepared',
+          },
+          409,
+        );
       }
 
       mint = intent.predictedMint!;
@@ -423,7 +524,12 @@ export function launchRoutes(): Hono<AppEnv> {
       // the oracle moved between prepare and confirm, this DB curve is a
       // close approximation of the real one, not a byte-exact mirror of it,
       // until the (out-of-scope) indexer corrects it from chain state.
-      const derived = deriveCurveColumns(supplyAtoms, basePrice.price1e6, basePrice.baseDecimals, SOLANA_TOKEN_DECIMALS);
+      const derived = deriveCurveColumns(
+        supplyAtoms,
+        basePrice.price1e6,
+        basePrice.baseDecimals,
+        SOLANA_TOKEN_DECIMALS,
+      );
       if (!derived) return c.json({ error: 'invalid_curve_params' }, 422);
       curveColumns = derived.columns;
       const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
@@ -432,7 +538,8 @@ export function launchRoutes(): Hono<AppEnv> {
       if (!isEvm(net)) return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
       const launchpadAddr = evmLaunchpadAddress(deps.env, net);
       const txSource = asEvmTransactionSource(deps.rpcs[net]);
-      if (!txSource) throw new Error('launch/confirm: EVM RPC does not implement getTransactionReceipt()');
+      if (!txSource)
+        throw new Error('launch/confirm: EVM RPC does not implement getTransactionReceipt()');
       const receipt = await txSource.getTransactionReceipt(signature);
       if (!receipt) return c.json({ error: 'transaction_not_found' }, 404);
       if (receipt.status !== 'success') return c.json({ error: 'transaction_reverted' }, 422);
@@ -441,7 +548,13 @@ export function launchRoutes(): Hono<AppEnv> {
         receipt.to.toLowerCase() !== launchpadAddr.toLowerCase() ||
         receipt.input.toLowerCase() !== intent.unsignedPayload.toLowerCase()
       ) {
-        return c.json({ error: 'signature_mismatch', detail: 'the confirmed transaction does not match what was prepared' }, 409);
+        return c.json(
+          {
+            error: 'signature_mismatch',
+            detail: 'the confirmed transaction does not match what was prepared',
+          },
+          409,
+        );
       }
       const decoded = decodeTokenCreated(receipt.logs, launchpadAddr as Address);
       if (!decoded) return c.json({ error: 'token_created_event_missing' }, 422);
@@ -460,7 +573,9 @@ export function launchRoutes(): Hono<AppEnv> {
         curveGradMcapBase: decoded.gradMcapBase.toString(),
       };
       const mcapBaseAtoms = (decoded.virtualBase * decoded.supply) / decoded.virtualToken;
-      mcValue = Number((mcapBaseAtoms * decoded.basePrice1e6) / 10n ** BigInt(basePrice.baseDecimals)) / 1e6;
+      mcValue =
+        Number((mcapBaseAtoms * decoded.basePrice1e6) / 10n ** BigInt(basePrice.baseDecimals)) /
+        1e6;
     }
 
     await deps.db.transaction(async (tx) => {

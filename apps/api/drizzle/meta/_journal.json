@@ -99,6 +99,13 @@
       "when": 1789570800000,
       "tag": "0013_base_cursor",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789657200000,
+      "tag": "0014_base_treasuries",
+      "breakpoints": true
     }
   ]
 }

@@ -99,7 +99,11 @@ export class EvmChainSource implements EventSource {
     const from = fromExclusive + 1;
     const to = Math.min(toInclusive, from + this.logWindow - 1);
 
-    const raw = await this.opts.rpc.getLogs({ fromBlock: from, toBlock: to, addresses: this.addresses });
+    const raw = await this.opts.rpc.getLogs({
+      fromBlock: from,
+      toBlock: to,
+      addresses: this.addresses,
+    });
     const groups = groupByTransaction(raw, this.opts.logger);
     if (groups.length === 0) return { events: [], coveredTo: to };
 
@@ -151,10 +155,13 @@ export class EvmChainSource implements EventSource {
     } catch (err) {
       // See `solana-source.ts`: only non-native-base fills need this, and 0
       // records an honest zero rather than a figure from a stale price.
-      this.opts.logger.warn('native price unavailable; non-native-base fills will record 0 native', {
-        net: 'RH',
-        err: err instanceof Error ? err.message : String(err),
-      });
+      this.opts.logger.warn(
+        'native price unavailable; non-native-base fills will record 0 native',
+        {
+          net: 'RH',
+          err: err instanceof Error ? err.message : String(err),
+        },
+      );
       return 0;
     }
   }

@@ -51,7 +51,11 @@ describe('derivePdas', () => {
   });
 
   it('scopes protocol/ops vaults to the base mint, not the launched mint', () => {
-    const other = derivePdas(programId, new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'), baseMint);
+    const other = derivePdas(
+      programId,
+      new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+      baseMint,
+    );
     const first = derivePdas(programId, mint, baseMint);
     // Two different coins on the same base mint share a treasury, by design.
     expect(other.protocolVault.toBase58()).toBe(first.protocolVault.toBase58());

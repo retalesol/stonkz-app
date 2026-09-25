@@ -182,7 +182,9 @@ function feeLog(
   );
 }
 
-function treasuryLog(placement: { blockNumber?: number; txHash?: string; logIndex?: number } = {}): RawEvmLog {
+function treasuryLog(
+  placement: { blockNumber?: number; txHash?: string; logIndex?: number } = {},
+): RawEvmLog {
   const blockNumber = placement.blockNumber ?? 1_001;
   return encodeLog(
     'TreasuryCredit',
@@ -202,7 +204,7 @@ function transferLog(): RawEvmLog {
   return {
     address: LAUNCHPAD.toLowerCase(),
     topics: [hash32('ddf252ad'), hash32('01'), hash32('02')],
-    data: `0x${(1n).toString(16).padStart(64, '0')}`,
+    data: `0x${1n.toString(16).padStart(64, '0')}`,
     blockNumber: '0x3e9',
     blockHash: hash32('b1001'),
     transactionHash: TX_FILL,
@@ -212,7 +214,13 @@ function transferLog(): RawEvmLog {
 
 function makeSource(
   logs: RawEvmLog[],
-  opts: { head?: number; confirmations?: number; logWindow?: number; nativeUsd?: number | Error; router?: string } = {},
+  opts: {
+    head?: number;
+    confirmations?: number;
+    logWindow?: number;
+    nativeUsd?: number | Error;
+    router?: string;
+  } = {},
 ) {
   const rpc = new FakeEvmRpc(opts.head ?? 1_020, logs, blockMap(BLOCKS));
   const registry = new TokenRegistry(db.db);
@@ -287,7 +295,13 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
   });
 
   it('maps a fill to Trade + FeeAccrued and drops the redundant TreasuryCredit', async () => {
-    const { source } = makeSource([launchLog(), tradeLog(), feeLog(), treasuryLog(), transferLog()]);
+    const { source } = makeSource([
+      launchLog(),
+      tradeLog(),
+      feeLog(),
+      treasuryLog(),
+      transferLog(),
+    ]);
     const { events } = await source.pollRange(999, 1_001);
 
     expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
@@ -483,15 +497,23 @@ describe('EvmChainSource — the getLogs window', () => {
   it('queries the launchpad and the router together', async () => {
     const { source, rpc } = makeSource([]);
     await source.pollRange(1_000, 1_001);
-    const filter = rpc.calls.find((c) => c.method === 'eth_getLogs')?.params as { addresses: string[] };
-    expect(filter.addresses).toEqual([LAUNCHPAD, ROUTER]);
+    const filter = rpc.calls.find((c) => c.method === 'eth_getLogs')?.params as {
+      addresses: string[];
+    };
+    // The RPC filter is lowercased on purpose (eth_getLogs is case-insensitive
+    // and this is not a join key); the fixtures are EIP-55 like the decoder's output.
+    expect(filter.addresses).toEqual([LAUNCHPAD, ROUTER].map((a) => a.toLowerCase()));
   });
 
   it('omits an unset router instead of filtering on the zero address', async () => {
-    const { source, rpc } = makeSource([], { router: '0x0000000000000000000000000000000000000000' });
+    const { source, rpc } = makeSource([], {
+      router: '0x0000000000000000000000000000000000000000',
+    });
     await source.pollRange(1_000, 1_001);
-    const filter = rpc.calls.find((c) => c.method === 'eth_getLogs')?.params as { addresses: string[] };
-    expect(filter.addresses).toEqual([LAUNCHPAD]);
+    const filter = rpc.calls.find((c) => c.method === 'eth_getLogs')?.params as {
+      addresses: string[];
+    };
+    expect(filter.addresses).toEqual([LAUNCHPAD.toLowerCase()]);
   });
 
   it('spends no RPC calls at all on a zero-width range', async () => {
@@ -522,11 +544,15 @@ describe('EvmChainSource — the getLogs window', () => {
 });
 
 describe('groupByTransaction', () => {
-  it('groups a fill\'s three logs together and orders them by log index', () => {
+  it("groups a fill's three logs together and orders them by log index", () => {
     const groups = groupByTransaction([treasuryLog(), feeLog(), tradeLog()], logger);
     expect(groups).toHaveLength(1);
     expect(groups[0]?.logs.map((l) => l.logIndex)).toEqual([4, 5, 6]);
-    expect(groups[0]?.logs.map((l) => l.event.name)).toEqual(['Trade', 'FeeAccrued', 'TreasuryCredit']);
+    expect(groups[0]?.logs.map((l) => l.event.name)).toEqual([
+      'Trade',
+      'FeeAccrued',
+      'TreasuryCredit',
+    ]);
   });
 
   it('orders transactions by block, then by first log index', () => {

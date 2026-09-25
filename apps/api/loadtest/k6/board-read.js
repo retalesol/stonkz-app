@@ -73,13 +73,19 @@ export function boardPoll() {
 
   // A user who opened a token from the board: /tokens/:sym, candles, trades.
   const sym = pick(board.allSymbols);
-  const tokenRes = http.get(`${BASE_URL}/tokens/${sym}?net=${NET}`, { headers, tags: { name: 'GET /tokens/:sym' } });
+  const tokenRes = http.get(`${BASE_URL}/tokens/${sym}?net=${NET}`, {
+    headers,
+    tags: { name: 'GET /tokens/:sym' },
+  });
   check(tokenRes, { 'GET /tokens/:sym 200': (r) => r.status === 200 });
 
-  const candlesRes = http.get(`${BASE_URL}/tokens/${sym}/candles?net=${NET}&tf=${pick(TIMEFRAMES)}&limit=200`, {
-    headers,
-    tags: { name: 'GET /tokens/:sym/candles' },
-  });
+  const candlesRes = http.get(
+    `${BASE_URL}/tokens/${sym}/candles?net=${NET}&tf=${pick(TIMEFRAMES)}&limit=200`,
+    {
+      headers,
+      tags: { name: 'GET /tokens/:sym/candles' },
+    },
+  );
   check(candlesRes, { 'GET /tokens/:sym/candles 200': (r) => r.status === 200 });
 
   const tradesRes = http.get(`${BASE_URL}/tokens/${sym}/trades?net=${NET}&limit=50`, {

@@ -44,7 +44,10 @@ export interface TestApp {
    * to isolate themselves; everything else gets it from `beforeEach`.
    */
   clearRateLimits(): Promise<void>;
-  login(net: Net, wallet?: TestWallet): Promise<{ token: string; address: string; refreshToken: string }>;
+  login(
+    net: Net,
+    wallet?: TestWallet,
+  ): Promise<{ token: string; address: string; refreshToken: string }>;
   close(): Promise<void>;
 }
 
@@ -112,7 +115,11 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
       }),
     });
     if (res.status !== 200) throw new Error(`login failed: ${res.status} ${await res.text()}`);
-    const body = (await res.json()) as { accessToken: string; refreshToken: string; wallet: string };
+    const body = (await res.json()) as {
+      accessToken: string;
+      refreshToken: string;
+      wallet: string;
+    };
     return { token: body.accessToken, address: body.wallet, refreshToken: body.refreshToken };
   };
 

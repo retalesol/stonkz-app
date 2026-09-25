@@ -191,7 +191,10 @@ function matches(haystack: string, needles: readonly string[]): boolean {
  * `WalletError`. Already-mapped errors pass straight through so a caller can
  * wrap without flattening a precise kind into `unknown`.
  */
-export function mapWalletError(err: unknown, fallbackMessage = 'The wallet could not complete this request.'): WalletError {
+export function mapWalletError(
+  err: unknown,
+  fallbackMessage = 'The wallet could not complete this request.',
+): WalletError {
   if (err instanceof WalletError) return err;
 
   const text = errorText(err);
@@ -201,20 +204,40 @@ export function mapWalletError(err: unknown, fallbackMessage = 'The wallet could
   // EIP-1193 / EIP-1474 codes first: they are unambiguous where present.
   switch (code) {
     case 4001:
-      return new WalletError('rejected', trim(text, 'You declined the request in your wallet.'), { cause: err });
+      return new WalletError('rejected', trim(text, 'You declined the request in your wallet.'), {
+        cause: err,
+      });
     case 4100:
-      return new WalletError('not_connected', trim(text, 'The wallet has not authorised this site yet.'), { cause: err });
+      return new WalletError(
+        'not_connected',
+        trim(text, 'The wallet has not authorised this site yet.'),
+        { cause: err },
+      );
     case 4200:
-      return new WalletError('unsupported_method', trim(text, 'This wallet does not support that request.'), { cause: err });
+      return new WalletError(
+        'unsupported_method',
+        trim(text, 'This wallet does not support that request.'),
+        { cause: err },
+      );
     case 4900:
       return new WalletError('network', trim(text, 'The wallet is disconnected.'), { cause: err });
     case 4901:
-      return new WalletError('wrong_chain', trim(text, 'The wallet is not connected to this chain.'), { cause: err });
+      return new WalletError(
+        'wrong_chain',
+        trim(text, 'The wallet is not connected to this chain.'),
+        { cause: err },
+      );
     case 4902:
-      return new WalletError('chain_unsupported', trim(text, 'The wallet does not know this chain yet.'), { cause: err });
+      return new WalletError(
+        'chain_unsupported',
+        trim(text, 'The wallet does not know this chain yet.'),
+        { cause: err },
+      );
     case 5000:
       // WalletConnect/CAIP-25: the wallet refused the request outright.
-      return new WalletError('rejected', trim(text, 'Your wallet rejected the request.'), { cause: err });
+      return new WalletError('rejected', trim(text, 'Your wallet rejected the request.'), {
+        cause: err,
+      });
     default:
       break;
   }
@@ -222,34 +245,64 @@ export function mapWalletError(err: unknown, fallbackMessage = 'The wallet could
   // Order matters: a rejection often also mentions "transaction", and a
   // slippage revert always also mentions "reverted".
   if (matches(lower, REJECT_PATTERNS)) {
-    return new WalletError('rejected', trim(text, 'You declined the request in your wallet.'), { cause: err });
+    return new WalletError('rejected', trim(text, 'You declined the request in your wallet.'), {
+      cause: err,
+    });
   }
   if (matches(lower, INSUFFICIENT_PATTERNS)) {
-    return new WalletError('insufficient_funds', trim(text, 'Not enough balance to cover this transaction and its gas.'), {
-      cause: err,
-    });
+    return new WalletError(
+      'insufficient_funds',
+      trim(text, 'Not enough balance to cover this transaction and its gas.'),
+      {
+        cause: err,
+      },
+    );
   }
   if (matches(lower, SLIPPAGE_PATTERNS)) {
-    return new WalletError('slippage', trim(text, 'The price moved past your slippage limit before this landed.'), {
+    return new WalletError(
+      'slippage',
+      trim(text, 'The price moved past your slippage limit before this landed.'),
+      {
+        cause: err,
+      },
+    );
+  }
+  if (
+    lower.includes('unrecognized chain') ||
+    lower.includes('unrecognised chain') ||
+    lower.includes('add this network')
+  ) {
+    return new WalletError(
+      'chain_unsupported',
+      trim(text, 'The wallet does not know this chain yet.'),
+      { cause: err },
+    );
+  }
+  if (
+    lower.includes('chain mismatch') ||
+    lower.includes('wrong chain') ||
+    lower.includes('chain id')
+  ) {
+    return new WalletError('wrong_chain', trim(text, 'The wallet is on the wrong chain.'), {
       cause: err,
     });
   }
-  if (lower.includes('unrecognized chain') || lower.includes('unrecognised chain') || lower.includes('add this network')) {
-    return new WalletError('chain_unsupported', trim(text, 'The wallet does not know this chain yet.'), { cause: err });
-  }
-  if (lower.includes('chain mismatch') || lower.includes('wrong chain') || lower.includes('chain id')) {
-    return new WalletError('wrong_chain', trim(text, 'The wallet is on the wrong chain.'), { cause: err });
-  }
   if (matches(lower, REVERT_PATTERNS)) {
-    return new WalletError('reverted', trim(text, 'The transaction reverted on chain.'), { cause: err });
+    return new WalletError('reverted', trim(text, 'The transaction reverted on chain.'), {
+      cause: err,
+    });
   }
   if (matches(lower, NETWORK_PATTERNS)) {
     return new WalletError('network', trim(text, 'Could not reach the network.'), { cause: err });
   }
   if (code === -32002) {
-    return new WalletError('rejected', 'A request is already waiting in your wallet. Open it and finish that one first.', {
-      cause: err,
-    });
+    return new WalletError(
+      'rejected',
+      'A request is already waiting in your wallet. Open it and finish that one first.',
+      {
+        cause: err,
+      },
+    );
   }
   return new WalletError('unknown', trim(text, fallbackMessage), { cause: err });
 }

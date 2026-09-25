@@ -9,7 +9,12 @@ import {
 } from '@solana/web3.js';
 import type { Net } from '@stonkz/shared';
 import { isAddress, parseEther } from 'viem';
-import { SOLANA_RPC_URL, activeWallet, describeWalletError, mapWalletError } from '../wallet/index.js';
+import {
+  SOLANA_RPC_URL,
+  activeWallet,
+  describeWalletError,
+  mapWalletError,
+} from '../wallet/index.js';
 import { practiceSolanaSecretKey } from './keys.js';
 import { signAndConfirm } from './signer.js';
 
@@ -42,7 +47,9 @@ function describe(err: unknown): string {
 async function tipFromPracticeKey(to: PublicKey, lamports: number): Promise<string> {
   const from = Keypair.fromSecretKey(practiceSolanaSecretKey());
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-  const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: from.publicKey, toPubkey: to, lamports }));
+  const tx = new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: from.publicKey, toPubkey: to, lamports }),
+  );
   try {
     return await sendAndConfirmTransaction(connection, tx, [from], { commitment: 'confirmed' });
   } catch (err) {
@@ -81,7 +88,11 @@ async function buildSolTransfer(from: string, to: PublicKey, lamports: number): 
  * Rejects with `TipBroadcastError` carrying a message safe to show the user
  * directly.
  */
-export async function attemptTip(net: Net, toAddress: string, amountNative: number): Promise<string> {
+export async function attemptTip(
+  net: Net,
+  toAddress: string,
+  amountNative: number,
+): Promise<string> {
   if (amountNative <= 0) throw new TipBroadcastError('Tip amount must be greater than zero.');
   const wallet = activeWallet();
   if (!wallet || wallet.net !== net) {

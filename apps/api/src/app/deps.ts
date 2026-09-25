@@ -20,7 +20,11 @@ import { createRedis } from '../redis/ioredis.js';
 import { QuoteCache } from '../redis/quote-cache.js';
 import type { RedisLike } from '../redis/types.js';
 import { Publisher } from '../ws/publisher.js';
-import { createBaseMintRegistry, parseBaseMintOverrides, type BaseMintRegistry } from '../router/base-mints.js';
+import {
+  createBaseMintRegistry,
+  parseBaseMintOverrides,
+  type BaseMintRegistry,
+} from '../router/base-mints.js';
 import { HttpJupiterClient, type JupiterClient } from '../router/jupiter.js';
 import { OracleHopClient } from '../router/oracle-hop.js';
 import { ResilientUniswapClient } from '../router/resilient-uniswap.js';
@@ -158,7 +162,14 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
   const awards = new GameAwards({ ledger, socialCaps, dust: env.dust, whaleCut: env.whaleCut });
   const spLevels = new SpLevelService({ db, now });
   const referrals = new ReferralService({ db, ledger, now });
-  const crates = new CrateService({ db, ledger, publisher, spLevels, secret: env.crateHmacSecret, now });
+  const crates = new CrateService({
+    db,
+    ledger,
+    publisher,
+    spLevels,
+    secret: env.crateHmacSecret,
+    now,
+  });
   ledger.setAfterSpCredit(async (net, wallet, totalSp) => {
     await spLevels.sync(net, wallet, totalSp);
   });
@@ -215,8 +226,15 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
 
   const xProvider: XProvider =
     overrides.xProvider ??
-    (env.xBearerToken ? new HttpXProvider({ bearerToken: env.xBearerToken }) : new PlaceholderXProvider());
-  const xCache = new XProfileCacheService({ db, provider: xProvider, ttlSeconds: env.xCacheTtlSeconds, now });
+    (env.xBearerToken
+      ? new HttpXProvider({ bearerToken: env.xBearerToken })
+      : new PlaceholderXProvider());
+  const xCache = new XProfileCacheService({
+    db,
+    provider: xProvider,
+    ttlSeconds: env.xCacheTtlSeconds,
+    now,
+  });
   const chat = new ChatService({ db, redis, now });
 
   const deps: AppDeps = {

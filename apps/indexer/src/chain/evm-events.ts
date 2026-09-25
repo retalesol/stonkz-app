@@ -194,8 +194,7 @@ export const ROUTER_EVENTS_ABI = [
 export const STONKZ_EVENTS_ABI = [...LAUNCHPAD_EVENTS_ABI, ...ROUTER_EVENTS_ABI] as const;
 
 export type EvmEventName =
-  | (typeof LAUNCHPAD_EVENTS_ABI)[number]['name']
-  | (typeof ROUTER_EVENTS_ABI)[number]['name'];
+  (typeof LAUNCHPAD_EVENTS_ABI)[number]['name'] | (typeof ROUTER_EVENTS_ABI)[number]['name'];
 
 export interface RawEvmLog {
   address: string;
@@ -226,7 +225,10 @@ export function decodeStonkzLog(log: { topics: string[]; data: string }): Decode
       topics: log.topics as [`0x${string}`, ...`0x${string}`[]],
       data: log.data as `0x${string}`,
     });
-    return { name: decoded.eventName as EvmEventName, args: decoded.args as Record<string, unknown> };
+    return {
+      name: decoded.eventName as EvmEventName,
+      args: decoded.args as Record<string, unknown>,
+    };
   } catch {
     return null;
   }

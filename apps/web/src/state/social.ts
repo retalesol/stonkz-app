@@ -15,8 +15,36 @@ import { WALLET, nativeUnit } from './wallet.js';
 
 export const SOCIAL = { followers: 1284, following: 312 };
 
-const MNAME = ['TRENCH', 'FLOOR', 'CURVE', 'JEET', 'WHALE', 'COPE', 'BAG', 'MOON', 'SNIPE', 'EXIT', 'GAS', 'DEGEN', 'CANDLE', 'ANON'];
-const MTAIL = ['RAT', 'LORD', 'GOBLIN', 'MAXI', 'WATCH', 'HANDS', 'SEEKER', 'JANITOR', 'PILOT', 'SZN', 'CHAD', 'MONK'];
+const MNAME = [
+  'TRENCH',
+  'FLOOR',
+  'CURVE',
+  'JEET',
+  'WHALE',
+  'COPE',
+  'BAG',
+  'MOON',
+  'SNIPE',
+  'EXIT',
+  'GAS',
+  'DEGEN',
+  'CANDLE',
+  'ANON',
+];
+const MTAIL = [
+  'RAT',
+  'LORD',
+  'GOBLIN',
+  'MAXI',
+  'WATCH',
+  'HANDS',
+  'SEEKER',
+  'JANITOR',
+  'PILOT',
+  'SZN',
+  'CHAD',
+  'MONK',
+];
 
 const MBIOS = [
   'professional bag holder since the first candle. not selling, ever, probably.',
@@ -55,7 +83,10 @@ export function memberOf(addr: string): SimMember {
   const m: SimMember = {
     addr,
     seed: (r() * 1e6) | 0,
-    name: (MNAME[(r() * MNAME.length) | 0] as string) + '_' + (MTAIL[(r() * MTAIL.length) | 0] as string),
+    name:
+      (MNAME[(r() * MNAME.length) | 0] as string) +
+      '_' +
+      (MTAIL[(r() * MTAIL.length) | 0] as string),
     bio: MBIOS[(r() * MBIOS.length) | 0] as string,
     followers: (40 + r() * 5200) | 0,
     following: (8 + r() * 700) | 0,
@@ -134,7 +165,10 @@ export function memProfit(addr: string, win: string): number {
   return (r() * 1.9 - 0.45) * scale;
 }
 
-export function memHold(m: SimMember, priceOf: (c: SimCoin) => number): Array<{ sym: string; tok: number; cost: number }> {
+export function memHold(
+  m: SimMember,
+  priceOf: (c: SimCoin) => number,
+): Array<{ sym: string; tok: number; cost: number }> {
   if (m._h) return m._h;
   const r = rng(m.seed + 11);
   const out: Array<{ sym: string; tok: number; cost: number }> = [];
@@ -149,7 +183,9 @@ export function memHold(m: SimMember, priceOf: (c: SimCoin) => number): Array<{ 
   return out;
 }
 
-export function memTrades(m: SimMember): Array<{ t: Date; sym: string; buy: boolean; sol: number }> {
+export function memTrades(
+  m: SimMember,
+): Array<{ t: Date; sym: string; buy: boolean; sol: number }> {
   if (m._t) return m._t;
   const r = rng(m.seed + 29);
   const out: Array<{ t: Date; sym: string; buy: boolean; sol: number }> = [];
@@ -157,7 +193,12 @@ export function memTrades(m: SimMember): Array<{ t: Date; sym: string; buy: bool
   for (let i = 0; i < 6; i++) {
     const c = COINS[(r() * COINS.length) | 0];
     if (!c) continue;
-    out.push({ t: new Date(now - (i * 2400 + 600) * 1000), sym: c.sym, buy: r() > 0.42, sol: 0.2 + r() * 4 });
+    out.push({
+      t: new Date(now - (i * 2400 + 600) * 1000),
+      sym: c.sym,
+      buy: r() > 0.42,
+      sol: 0.2 + r() * 4,
+    });
   }
   m._t = out;
   return out;

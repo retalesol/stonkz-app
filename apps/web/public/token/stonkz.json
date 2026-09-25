@@ -1,1 +1,8 @@
-{"name":"Stonkz","symbol":"STONKZ","description":"Stonkz protocol token. Orange Mememan head is the canonical logo.","image":"ipfs://bafkreicgpwrjtfdfy2dh7m7hrzidvkv5xqzlgvwnhv7an2obb47g2j4may","image_url":"ipfs://bafkreicgpwrjtfdfy2dh7m7hrzidvkv5xqzlgvwnhv7an2obb47g2j4may","external_url":"https://ston.kz"}
+{
+  "name": "Stonkz",
+  "symbol": "STONKZ",
+  "description": "Stonkz protocol token. Orange Mememan head is the canonical logo.",
+  "image": "ipfs://bafkreicgpwrjtfdfy2dh7m7hrzidvkv5xqzlgvwnhv7an2obb47g2j4may",
+  "image_url": "ipfs://bafkreicgpwrjtfdfy2dh7m7hrzidvkv5xqzlgvwnhv7an2obb47g2j4may",
+  "external_url": "https://ston.kz"
+}

@@ -87,7 +87,13 @@ async function main(): Promise<void> {
   const logger = deps.logger.child({ svc: 'backfill', net: args.net });
 
   try {
-    const { sources, registry } = buildChainSources({ config, env, db: deps.db, oracle: deps.oracle, logger });
+    const { sources, registry } = buildChainSources({
+      config,
+      env,
+      db: deps.db,
+      oracle: deps.oracle,
+      logger,
+    });
     const source = sources[args.net];
     const cursors = new ReplayCursors(deps.db, deps.now);
     const deadLetters = new DeadLetters({ db: deps.db, logger, now: deps.now });
@@ -118,7 +124,9 @@ async function main(): Promise<void> {
       }
     }
     if (to <= args.from) {
-      console.error(`backfill: nothing to do — the range (${args.from}, ${to}] is empty after clamping.`);
+      console.error(
+        `backfill: nothing to do — the range (${args.from}, ${to}] is empty after clamping.`,
+      );
       return;
     }
 
@@ -160,12 +168,11 @@ async function main(): Promise<void> {
 
       if (args.dryRun) {
         const byKind = new Map<string, number>();
-        for (const event of polled.events) byKind.set(event.kind, (byKind.get(event.kind) ?? 0) + 1);
+        for (const event of polled.events)
+          byKind.set(event.kind, (byKind.get(event.kind) ?? 0) + 1);
         console.error(
           `  (${cursor}, ${covered}]  ${polled.events.length} events` +
-            (byKind.size > 0
-              ? `  ${[...byKind].map(([k, n]) => `${k}=${n}`).join(' ')}`
-              : ''),
+            (byKind.size > 0 ? `  ${[...byKind].map(([k, n]) => `${k}=${n}`).join(' ')}` : ''),
         );
       } else {
         const report = await ingestor.apply(polled.events);
@@ -173,7 +180,8 @@ async function main(): Promise<void> {
         totals.duplicates += report.duplicates;
         totals.rejected += report.rejected.length;
         totals.xp += report.xpAwarded;
-        for (const { event, reason } of report.rejected) await deadLetters.recordEvent(event, reason);
+        for (const { event, reason } of report.rejected)
+          await deadLetters.recordEvent(event, reason);
         console.error(
           `  (${cursor}, ${covered}]  accepted=${report.accepted} duplicates=${report.duplicates} ` +
             `rejected=${report.rejected.length} xp=${report.xpAwarded}`,
@@ -183,7 +191,9 @@ async function main(): Promise<void> {
       // A source that covered less than it was asked for has not seen the
       // rest; advancing to `target` would silently skip it.
       if (covered <= cursor) {
-        console.error(`backfill: source made no progress past ${cursor}; stopping rather than looping.`);
+        console.error(
+          `backfill: source made no progress past ${cursor}; stopping rather than looping.`,
+        );
         break;
       }
       cursor = covered;

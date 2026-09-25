@@ -37,7 +37,7 @@ production, and confirm the destination host (`api.ston.kz`) matches whatever
 `apps/api/src/social/tips.ts`'s `verifyTip` only ever accepts a real,
 confirmed on-chain transfer — it re-derives the sender, recipient and amount
 from `ChainRpc.getNativeTransfer`, never from the request body. That means a
-client can never *fake* a tip regardless of what the frontend does.
+client can never _fake_ a tip regardless of what the frontend does.
 
 The frontend (`apps/web/src/app/tip.ts`) makes an honest choice given that:
 it uses `@solana/web3.js` to build, sign (with the practice keypair) and
@@ -45,7 +45,7 @@ actually broadcast a native SOL transfer to a real RPC, then calls
 `POST /wall/:net/:addr` with whatever signature comes back. This will always
 fail — the practice key (`app/keys.ts`) is never funded, matching the
 existing `app/signer.ts` honesty tradeoff for trade/launch/claim — but it
-fails for the *real* reason (a real RPC refusing a real, unfunded transfer),
+fails for the _real_ reason (a real RPC refusing a real, unfunded transfer),
 surfaced as a clear toast, rather than a fabricated signature that would just
 bounce off `verifyTip` as "not found" for an unrelated reason. Robinhood
 Chain has no wallet-adapter or RPC-signing path in this build at all, so its
@@ -62,9 +62,9 @@ same transfer for the same underlying reason, just slower).
 
 `views/profile.ts` still renders another member's profile (bio, avatar,
 holdings, wall backscroll, friends) from `state/social.ts`'s deterministic sim
-generators in *every* mode — `GET /users/:net/:addr` and `GET /wall/:net/:addr`
+generators in _every_ mode — `GET /users/:net/:addr` and `GET /wall/:net/:addr`
 exist and are tested (`routes/social.test.ts`) but nothing in the frontend
-calls them yet. Only the *write* actions are live-gated on `api.mode ===
+calls them yet. Only the _write_ actions are live-gated on `api.mode ===
 'live'`: follow/unfollow (`POST`/`DELETE /follow/:net/:addr`), the wall's
 tip-and-post (`POST /wall/:net/:addr`), and `PATCH /me` from the edit modal.
 

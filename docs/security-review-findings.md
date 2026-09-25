@@ -82,13 +82,14 @@ sniper, and emits `liquidityBurned`. A user can verify all of it from a block
 explorer, per that contract's own header comment.
 
 **On Solana, none of this exists.** `MigrateLiquidity` is the entire seam:
+
 - It hands `real_base` and `lp_reserve` to `destination_base`/
   `destination_token` — two token accounts supplied by the caller at call
   time, constrained only by `token::mint`, **not** to any program-owned PDA,
   a specific Raydium/Meteora pool, or a burn address.
 - The only gate is `migration_authority`'s signature
   (`global.migration_authority`, an admin-set key — `admin.rs::
-  set_withdraw_authorities`/`initialize`).
+set_withdraw_authorities`/`initialize`).
 - Nothing forces that authority to ever create a pool, and nothing forces it
   to burn the resulting LP tokens. `programs/README.md` and `SPEC.md` §5 both
   say "the Raydium/Meteora pool CPI itself is **not** implemented here" —
@@ -101,18 +102,19 @@ explorer, per that contract's own header comment.
 every Solana graduation, redirect the entire graduated base+token reserve
 anywhere — there is no on-chain constraint that it goes into a pool at all,
 let alone that any LP position is burned. Even absent malice, there is
-currently no code in this repo that *would* do the right thing if invoked
+currently no code in this repo that _would_ do the right thing if invoked
 today; `migrate_liquidity` on its own leaves funds sitting in whatever
 accounts the authority named.
 
 **Suggested fix:** Before this claim is made to users on Solana:
+
 1. Either implement the Raydium/Meteora CPI + LP-burn inside
    `migrate_liquidity` itself (mirroring `UniswapV2Migrator`'s pattern: create
    pool if needed, price-manipulation guard, mint LP to a burn destination,
    all inside one instruction so it's atomic and auditable), or
 2. If an off-chain crank is kept, constrain `destination_base`/
    `destination_token` to program-derived, single-purpose accounts (e.g. a
-   PDA the *next* instruction in the same flow is required to consume before
+   PDA the _next_ instruction in the same flow is required to consume before
    anyone can withdraw from it) so the money can't silently stop at "sent to
    the authority" — and make the LP-burn step provable on-chain (a follow-up
    instruction that reads the pool's LP mint balance at the burn address and
@@ -173,14 +175,14 @@ every request — defeating the per-IP limiter on every unauthenticated route:
 **Impact:** Medium rather than high because every route that actually moves
 money or credits a reward is also gated on server-side facts that don't trust
 the client at all (chain-verified events, cooldown upserts, tip RPC
-verification) — this is a rate-limit *bypass*, not a way to forge a result.
+verification) — this is a rate-limit _bypass_, not a way to forge a result.
 But it does mean the auth-nonce/login endpoints, the quote cache, and the
 launch-attempt-per-IP ceiling can all be trivially hammered by spoofing a
 different `X-Forwarded-For` value per request, which is exactly the kind of
 brute-force/DoS surface rate limiting exists to close.
 
 **Suggested fix:** Make the trusted-hop count explicit config (Railway's edge
-is one hop) and take the entry at that fixed depth from the *right*, never
+is one hop) and take the entry at that fixed depth from the _right_, never
 the client-controllable left end; or prefer a header the edge is known to set
 itself and that a client cannot inject (confirm with the hosting provider
 which header that is — Railway's own docs should say). Until then, treat
@@ -194,7 +196,7 @@ comment lines 70–98).
 **Description:** The crate roll is `HMAC-SHA256(CRATE_HMAC_SECRET,
 net|wallet|tier|nonce)`, with the nonce generated server-side
 (`randomBytes(16)`) and never supplied by the client. This is genuinely
-server-authoritative and not manipulable *by a client* — there's no path for
+server-authoritative and not manipulable _by a client_ — there's no path for
 a client to bias, predict, or pre-see a roll, and the cooldown upsert
 (`crateState`'s conditional `onConflictDoUpdate` with `setWhere: readyAt <=
 now`) closes the double-open race correctly (verified: two concurrent opens
@@ -203,7 +205,7 @@ clause matches nothing once the first has advanced `readyAt`).
 
 What HMAC does **not** give is public verifiability: only the party holding
 `CRATE_HMAC_SECRET` can confirm a historical roll was computed honestly,
-which means a dishonest *operator* (not a client) could in principle try
+which means a dishonest _operator_ (not a client) could in principle try
 several nonces before committing one — the code as written doesn't do this
 (one nonce, one roll, persisted immediately), but nothing forces that
 discipline the way a commit-then-reveal scheme would. The code's own header
@@ -322,7 +324,7 @@ them from scratch — each was checked against the specific attack class in
 the brief.
 
 - **Fee-split math (Solana + EVM), both chains:** `protocol + stonkz_ops +
-  creator_bucket == fee` is asserted **on every fill**, not just in tests
+creator_bucket == fee` is asserted **on every fill**, not just in tests
   (`trade.rs` buy/sell, `StonkzLaunchpad.sol` buy/sell) — `require!`/
   `require` on the identity, so a future edit that breaks it fails the
   transaction rather than silently mis-paying. The creator bucket is defined
@@ -345,7 +347,7 @@ the brief.
   balance worth reentering for even absent the guard.
 - **Access control / signer checks (Solana):** every privileged instruction
   constrains its signer via `has_one` or `address = global.<field> @
-  Unauthorized` (withdraw authorities, migration authority, oracle
+Unauthorized` (withdraw authorities, migration authority, oracle
   authority, admin) rather than trusting an unconstrained `Signer<'info>`;
   `WithdrawTreasury` additionally re-derives the expected vault PDA from
   seeds and asserts the passed account matches, closing the "point the
@@ -382,7 +384,7 @@ the brief.
   increments `nonces[owner]` inside the struct hash itself, so a signature is
   single-use by construction; the domain separator rebuilds itself if
   `block.chainid` ever changes (fork replay protection); `StonkzRouter.
-  sellViaAggregator`'s permit branch (`permitData.deadline != 0`) calls
+sellViaAggregator`'s permit branch (`permitData.deadline != 0`) calls
   `permit` and the pull inside the same transaction, so there's no window
   where an approval exists without an accompanying trade. The
   standing-allowance branch (`deadline == 0`) is the `_noPermit()` shape
@@ -390,17 +392,17 @@ the brief.
 - **Game ledger server authority:** every reward path was traced from its
   route handler down to the DB write. No route accepts a client-supplied
   XP/SP/Optionz amount, crate tier outcome, or RNG seed; `CHAIN_VERIFIED_
-  REASONS` refuses trade/launch/fee-claim/stake/most-achievement awards
+REASONS` refuses trade/launch/fee-claim/stake/most-achievement awards
   without a matching `chain_events` row, and `xp_events`' unique constraint
   on `(wallet, tx_sig, reason)` makes replaying a signature a no-op rather
   than a second payout (confirmed: the catch path on a unique-violation
   returns `awarded: false` and pays nothing).
 - **Double-claim / race conditions in crates and achievements:** the crate
   cooldown is one conditional `INSERT … ON CONFLICT DO UPDATE … WHERE
-  readyAt <= now`, so two concurrent opens for the same wallet/tier/net
+readyAt <= now`, so two concurrent opens for the same wallet/tier/net
   cannot both succeed — the loser's `WHERE` matches nothing and it falls
   into the `cooling_down` branch. Achievement unlocks use `onConflictDoNothing`
-  on the primary key as the "claimed" gate, checked *before* the XP award
+  on the primary key as the "claimed" gate, checked _before_ the XP award
   runs, with an explicit rollback (`DELETE` the claim row) if the award
   itself throws — so a failed award can't leave an achievement marked
   unlocked-but-unpaid, and a retry after a genuine failure can still succeed
@@ -427,7 +429,7 @@ the brief.
   session cannot be replayed as if it were an RH session or vice versa.
 - **ERC-1271 smart-account fallback:** only attempted after a plain ECDSA
   recovery has already failed (so an EOA login never pays an RPC round
-  trip), calls `isValidSignature` on the *claimed* address specifically (an
+  trip), calls `isValidSignature` on the _claimed_ address specifically (an
   impostor's valid signature over the same message, from a different
   address, cannot be substituted in — confirmed there is no code path that
   calls `ethCall` against anything other than `address` from the login
@@ -488,7 +490,7 @@ addition.
 - **M4** — `programs/evm/src/SafeErc20.sol`, applied at every foreign-token
   call site (launchpad `_pull`/`_send`, router base approve/transfer, migrator
   pool deposits). Investigating the finding changed its shape: the return
-  values were *already* checked with `require`, so the exposure was not an
+  values were _already_ checked with `require`, so the exposure was not an
   unchecked `false` but the opposite — a token returning **no data** made the
   declared `bool` decode revert, meaning a no-return token (the mainnet-USDT
   shape) could be configured as a base asset and then fail every trade
@@ -514,16 +516,16 @@ so). Tracked alongside the rest of the pre-production gaps in
 
 ## Summary table
 
-| # | Severity | Area | One-line summary |
-|---|----------|------|-------------------|
-| H1 | High (fixed) | Solana graduation | LP burn/migration was an unconstrained, unverifiable trusted hand-off; now a real Raydium CPMM CPI + SPL burn, tested against the real devnet program |
-| M1 | Medium (fixed) | apps/api rate limiting | Per-IP identity trusted a client-controllable `X-Forwarded-For`; now bound to a fixed `TRUSTED_PROXY_DEPTH` read from the right, failing closed |
-| M2 | Medium | Crate RNG | HMAC RNG is auditable, not publicly verifiable — already documented in-repo as pre-marketing-odds blocker |
-| M3 | Medium (fixed) | apps/api | `GET /me` and `GET /native-price` had no rate limit — added |
-| M4 | Medium (fixed) | EVM contracts | Foreign-token calls decoded a declared `bool`, so a no-return token was unusable as a base asset; now via `SafeErc20` |
-| L1 | Low (fixed) | Tips | `blockTimeMs === null` skipped the recency check; now rejected as `unknown_age` |
-| L2 | Low (fixed) | apps/api logging | `sessions.ip` inherited M1's spoofable input; now records the same trusted-depth resolution |
-| L3 | Low (fixed) | apps/api | Whale-cut/dust constants moved to `packages/shared` so the sim and server cannot drift |
+| #   | Severity       | Area                   | One-line summary                                                                                                                                      |
+| --- | -------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1  | High (fixed)   | Solana graduation      | LP burn/migration was an unconstrained, unverifiable trusted hand-off; now a real Raydium CPMM CPI + SPL burn, tested against the real devnet program |
+| M1  | Medium (fixed) | apps/api rate limiting | Per-IP identity trusted a client-controllable `X-Forwarded-For`; now bound to a fixed `TRUSTED_PROXY_DEPTH` read from the right, failing closed       |
+| M2  | Medium         | Crate RNG              | HMAC RNG is auditable, not publicly verifiable — already documented in-repo as pre-marketing-odds blocker                                             |
+| M3  | Medium (fixed) | apps/api               | `GET /me` and `GET /native-price` had no rate limit — added                                                                                           |
+| M4  | Medium (fixed) | EVM contracts          | Foreign-token calls decoded a declared `bool`, so a no-return token was unusable as a base asset; now via `SafeErc20`                                 |
+| L1  | Low (fixed)    | Tips                   | `blockTimeMs === null` skipped the recency check; now rejected as `unknown_age`                                                                       |
+| L2  | Low (fixed)    | apps/api logging       | `sessions.ip` inherited M1's spoofable input; now records the same trusted-depth resolution                                                           |
+| L3  | Low (fixed)    | apps/api               | Whale-cut/dust constants moved to `packages/shared` so the sim and server cannot drift                                                                |
 
 No critical findings. Everything else checked — fee-split math on both
 chains, overflow/underflow handling, EVM reentrancy guards, Solana signer/PDA

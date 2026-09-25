@@ -121,7 +121,12 @@ function chainHealthOf(
 
 /* -------------------------------------------------------------- Prometheus */
 
-function metricLines(name: string, help: string, type: string, samples: [string, number][]): string[] {
+function metricLines(
+  name: string,
+  help: string,
+  type: string,
+  samples: [string, number][],
+): string[] {
   if (samples.length === 0) return [];
   return [
     `# HELP ${name} ${help}`,
@@ -136,12 +141,9 @@ export function renderPrometheus(health: IndexerHealth): string {
     health.chains.map((c) => [`{net="${c.net}"}`, pick(c)]);
 
   const lines = [
-    ...metricLines(
-      'stonkz_indexer_up',
-      '1 when every chain is inside its lag budget.',
-      'gauge',
-      [['', health.ok ? 1 : 0]],
-    ),
+    ...metricLines('stonkz_indexer_up', '1 when every chain is inside its lag budget.', 'gauge', [
+      ['', health.ok ? 1 : 0],
+    ]),
     ...metricLines(
       'stonkz_indexer_leader',
       '1 when this replica holds the single-writer advisory lock.',
@@ -269,7 +271,11 @@ export function startIndexerHttp(opts: IndexerHttpOptions): Server | null {
           }
           case '/dead-letters': {
             const rows = await opts.deadLetters.open(undefined, 200);
-            send(200, `${JSON.stringify({ count: rows.length, rows }, null, 2)}\n`, 'application/json');
+            send(
+              200,
+              `${JSON.stringify({ count: rows.length, rows }, null, 2)}\n`,
+              'application/json',
+            );
             return;
           }
           default:

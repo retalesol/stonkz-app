@@ -7,7 +7,14 @@
  * `docs/robinhood-chain.md` §6.3) does not reach into call sites.
  */
 
-export { RH_CHAIN_ID, RH_EXPLORER_URL, RH_RPC_URL, SOLANA_CLUSTER, SOLANA_RPC_URL, chainLabel } from './chain.js';
+export {
+  RH_CHAIN_ID,
+  RH_EXPLORER_URL,
+  RH_RPC_URL,
+  SOLANA_CLUSTER,
+  SOLANA_RPC_URL,
+  chainLabel,
+} from './chain.js';
 export {
   WalletError,
   describeWalletError,
@@ -36,4 +43,10 @@ export {
 export { clearLastWallet, loadLastWallet, rememberLastWallet } from './persist.js';
 export { PRACTICE_WALLET_ID, practiceWalletChoice, practiceWalletEnabled } from './practice.js';
 export { WALLETCONNECT_PROJECT_ID, walletConnectUnavailableReason } from './walletconnect.js';
-export type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice, WalletKind } from './types.js';
+export type {
+  BroadcastResult,
+  ConnectedWallet,
+  SignPayload,
+  WalletChoice,
+  WalletKind,
+} from './types.js';

@@ -49,7 +49,9 @@ export function parse(path: string, search = ''): Route {
   const t = /^\/t\/([^/]+)$/.exec(p);
   if (t) {
     const sym = decodeURIComponent(t[1] as string).toUpperCase();
-    const mint = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search).get('mint') || undefined;
+    const mint =
+      new URLSearchParams(search.startsWith('?') ? search.slice(1) : search).get('mint') ||
+      undefined;
     return mint ? { view: 'token', sym, mint } : { view: 'token', sym };
   }
   const u = /^\/u\/([^/]+)$/.exec(p);

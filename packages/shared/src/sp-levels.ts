@@ -71,7 +71,10 @@ export function spLevelOf(totalSp: number): SpLevelInfo {
     sp: totalSp,
     cur: row.sp,
     next,
-    pct: next === null ? 100 : Math.max(0, Math.min(100, ((totalSp - row.sp) / (next - row.sp)) * 100)),
+    pct:
+      next === null
+        ? 100
+        : Math.max(0, Math.min(100, ((totalSp - row.sp) / (next - row.sp)) * 100)),
     toNext: next === null ? 0 : Math.max(0, next - totalSp),
     grants: { ...row.grants },
   };

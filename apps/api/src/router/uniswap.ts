@@ -1,5 +1,10 @@
 import { AggregatorFeeDetectedError, NoRouteError } from './errors.js';
-import type { AggregatorClient, AggregatorQuote, AggregatorQuoteRequest, FetchLike } from './aggregator.js';
+import type {
+  AggregatorClient,
+  AggregatorQuote,
+  AggregatorQuoteRequest,
+  FetchLike,
+} from './aggregator.js';
 
 /**
  * Uniswap Trading API shapes, trimmed to the fields this router reads.

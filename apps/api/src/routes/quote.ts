@@ -23,9 +23,10 @@ function asEthCaller(rpc: unknown): EthCaller | undefined {
 function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
   if (rpc instanceof SolanaRpc) return rpc;
   const candidate = rpc as Partial<SolanaAccountSource>;
-  return typeof candidate.getAccountDataBase64 === 'function' ? (candidate as SolanaAccountSource) : undefined;
+  return typeof candidate.getAccountDataBase64 === 'function'
+    ? (candidate as SolanaAccountSource)
+    : undefined;
 }
-
 
 /**
  * `GET /tokens/:sym/quote?side=&amount=` — plan step 82.
@@ -45,7 +46,10 @@ export function quoteRoutes(): Hono<AppEnv> {
     const amount = Number.parseFloat(c.req.query('amount') ?? '');
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      return c.json({ error: 'bad_request', detail: 'amount must be a positive native amount' }, 400);
+      return c.json(
+        { error: 'bad_request', detail: 'amount must be a positive native amount' },
+        400,
+      );
     }
 
     const mintQ = c.req.query('mint')?.trim() || undefined;
@@ -56,7 +60,10 @@ export function quoteRoutes(): Hono<AppEnv> {
       db: deps.db,
       row: row as TokenRow,
       rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
-      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+      sol: {
+        rpc: asSolanaAccountSource(deps.rpcs.SOL),
+        programId: deps.env.solanaLaunchpadProgramId,
+      },
     });
 
     try {
@@ -74,7 +81,12 @@ export function quoteRoutes(): Hono<AppEnv> {
           const native = nativeUnit(net);
           const usdPrice = await deps.oracle.nativeUsd(native).catch(() => null);
           const aggregatorVenue = aggregatorFor(net, synced.baseSymbol);
-          const aggregator = aggregatorVenue === 'JUPITER' ? deps.jupiter : aggregatorVenue === 'UNISWAP' ? deps.uniswap : null;
+          const aggregator =
+            aggregatorVenue === 'JUPITER'
+              ? deps.jupiter
+              : aggregatorVenue === 'UNISWAP'
+                ? deps.uniswap
+                : null;
 
           return composeQuote({
             net,

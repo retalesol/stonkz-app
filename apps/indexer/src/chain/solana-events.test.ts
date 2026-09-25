@@ -119,7 +119,12 @@ describe('launchpad event decoding', () => {
       ],
       [
         'TreasuryCredit',
-        encodeTreasuryCredit({ baseMint: WSOL_MINT, protocolDelta: 7_500_000n, opsDelta: 3_750_000n, ts: 2n }),
+        encodeTreasuryCredit({
+          baseMint: WSOL_MINT,
+          protocolDelta: 7_500_000n,
+          opsDelta: 3_750_000n,
+          ts: 2n,
+        }),
       ],
       [
         'Graduated',
@@ -196,7 +201,13 @@ describe('launchpad event decoding', () => {
       ],
       [
         'TreasuryWithdrawn',
-        encodeTreasuryWithdrawn({ baseMint: WSOL_MINT, which: 0, amount: 1n, destination: CREATOR, ts: 9n }),
+        encodeTreasuryWithdrawn({
+          baseMint: WSOL_MINT,
+          which: 0,
+          amount: 1n,
+          destination: CREATOR,
+          ts: 9n,
+        }),
       ],
     ];
 
@@ -226,9 +237,10 @@ describe('launchpad event decoding', () => {
   it('reads a u128 above 2^64, which a u64 field would silently truncate', () => {
     const big = (1n << 90n) + 12_345n;
     const decoded = launchpadEventCoder.decode(
-      emitPayload('TokenCreated', encodeTokenCreated({ ...TOKEN_CREATED, virtualBase: big })).toString(
-        'base64',
-      ),
+      emitPayload(
+        'TokenCreated',
+        encodeTokenCreated({ ...TOKEN_CREATED, virtualBase: big }),
+      ).toString('base64'),
     );
     expect(decoded?.data.kind === 'TokenCreated' && decoded.data.virtualBase).toBe(big);
   });
@@ -279,11 +291,16 @@ describe('launchpad event decoding', () => {
     ];
     const payloads = programDataPayloads(logs);
     expect(payloads).toHaveLength(2);
-    expect(payloads.map((p) => launchpadEventCoder.decode(p)?.name)).toEqual(['Trade', 'FeeAccrued']);
+    expect(payloads.map((p) => launchpadEventCoder.decode(p)?.name)).toEqual([
+      'Trade',
+      'FeeAccrued',
+    ]);
   });
 
   it('is not fooled by a log line that merely contains the words', () => {
-    expect(programDataPayloads(['Program log: writing Program data: to disk'])).toEqual(['to disk']);
+    expect(programDataPayloads(['Program log: writing Program data: to disk'])).toEqual([
+      'to disk',
+    ]);
     // …which then fails the discriminator check rather than decoding.
     expect(launchpadEventCoder.decode('to disk')).toBeNull();
   });

@@ -46,7 +46,9 @@ describe('referrals', () => {
   it('kicks back 5% SP to the direct referrer (SP-only, no XP)', async () => {
     const referrer = await h.login('SOL', solanaWallet('ref-sp-a'));
     const referee = await h.login('SOL', solanaWallet('ref-sp-b'));
-    const { code } = (await (await h.app.request('/referrals', { headers: authed(referrer.token) })).json()) as {
+    const { code } = (await (
+      await h.app.request('/referrals', { headers: authed(referrer.token) })
+    ).json()) as {
       code: string;
     };
     await h.app.request('/referrals/attach', {
@@ -72,7 +74,9 @@ describe('referrals', () => {
   it('claims pending referral fees as Optionz', async () => {
     const referrer = await h.login('SOL', solanaWallet('ref-claim-a'));
     const trader = await h.login('SOL', solanaWallet('ref-claim-b'));
-    const { code } = (await (await h.app.request('/referrals', { headers: authed(referrer.token) })).json()) as {
+    const { code } = (await (
+      await h.app.request('/referrals', { headers: authed(referrer.token) })
+    ).json()) as {
       code: string;
     };
     await h.app.request('/referrals/attach', {
@@ -104,7 +108,9 @@ describe('referrals', () => {
   it('credits T1 fee share from a fill', async () => {
     const referrer = await h.login('SOL', solanaWallet('ref-fee-a'));
     const trader = await h.login('SOL', solanaWallet('ref-fee-b'));
-    const { code } = (await (await h.app.request('/referrals', { headers: authed(referrer.token) })).json()) as {
+    const { code } = (await (
+      await h.app.request('/referrals', { headers: authed(referrer.token) })
+    ).json()) as {
       code: string;
     };
     await h.app.request('/referrals/attach', {

@@ -172,7 +172,14 @@ export async function fetchSolHoldersFromRpc(
     });
     if (!res.ok) throw new Error(`sol holders HTTP ${res.status}`);
     const body = (await res.json()) as {
-      result?: { value?: Array<{ address: string; amount: string; decimals?: number; uiAmount?: number | null }> };
+      result?: {
+        value?: Array<{
+          address: string;
+          amount: string;
+          decimals?: number;
+          uiAmount?: number | null;
+        }>;
+      };
       error?: { message?: string };
     };
     if (body.error) throw new Error(body.error.message ?? 'sol holders rpc error');

@@ -47,7 +47,8 @@ function argNum(flag: string, fallback: number): number {
 
 const TOKENS_PER_NET = argNum('tokens-per-net', 400);
 const WALLETS_PER_NET = argNum('wallets-per-net', 150);
-const DATABASE_URL = process.env['DATABASE_URL'] ?? 'postgres://stonkz:stonkz@localhost:5432/stonkz';
+const DATABASE_URL =
+  process.env['DATABASE_URL'] ?? 'postgres://stonkz:stonkz@localhost:5432/stonkz';
 
 const NATIVE_USD: Record<Net, number> = {
   SOL: Number(process.env['STUB_SOL_USD'] ?? 214.08),
@@ -100,7 +101,11 @@ function baseAssetPool(net: Net): BaseAsset[] {
     symbol: sym,
     mint: fakeMint(net),
     decimals: 6,
-    priceUsd: sym.endsWith('x') ? randInt(20, 900) : sym === 'USDC' || sym === 'USDT' ? 1 : randInt(1, 250),
+    priceUsd: sym.endsWith('x')
+      ? randInt(20, 900)
+      : sym === 'USDC' || sym === 'USDT'
+        ? 1
+        : randInt(1, 250),
   }));
 }
 
@@ -127,7 +132,9 @@ async function batchInsert<T extends Record<string, unknown>>(
 }
 
 async function main(): Promise<void> {
-  console.log(`seeding ${TOKENS_PER_NET} tokens/net, ${WALLETS_PER_NET} wallets/net -> ${DATABASE_URL}`);
+  console.log(
+    `seeding ${TOKENS_PER_NET} tokens/net, ${WALLETS_PER_NET} wallets/net -> ${DATABASE_URL}`,
+  );
   const { db, close } = createDb({ url: DATABASE_URL, poolMax: 8 });
 
   const manifest: {
@@ -145,9 +152,12 @@ async function main(): Promise<void> {
     // The canonical wrapped-native mint (`router/base-mints.ts`), not a
     // one-off per token — matching production, where every native-paired
     // token shares the same base mint.
-    const nativeMint = net === 'SOL' ? 'So11111111111111111111111111111111111111112' : ZERO_EVM_ADDRESS;
+    const nativeMint =
+      net === 'SOL' ? 'So11111111111111111111111111111111111111112' : ZERO_EVM_ADDRESS;
     const otherBases = baseAssetPool(net);
-    const wallets = Array.from({ length: WALLETS_PER_NET }, () => (net === 'SOL' ? solanaWallet() : evmWallet()));
+    const wallets = Array.from({ length: WALLETS_PER_NET }, () =>
+      net === 'SOL' ? solanaWallet() : evmWallet(),
+    );
 
     const tokenRows: (typeof tokens.$inferInsert)[] = [];
     const tradeRows: (typeof trades.$inferInsert)[] = [];
@@ -168,7 +178,12 @@ async function main(): Promise<void> {
       // Jupiter/Uniswap hop); 15% a major/stock base, for board realism only.
       const useNative = rand() < 0.85 || otherBases.length === 0;
       const base: BaseAsset = useNative
-        ? { symbol: native, mint: nativeMint, decimals: NATIVE_DECIMALS[net], priceUsd: NATIVE_USD[net] }
+        ? {
+            symbol: native,
+            mint: nativeMint,
+            decimals: NATIVE_DECIMALS[net],
+            priceUsd: NATIVE_USD[net],
+          }
         : pick(otherBases);
       const basePrice1e6 = useNative ? nativePriceUsd1e6 : BigInt(Math.round(base.priceUsd * 1e6));
 
@@ -187,7 +202,10 @@ async function main(): Promise<void> {
       const virtualBase = virtualToken > 0n ? params.k / virtualToken : params.virtualBase;
       const realToken = params.tokensForSale - sold;
       const realBase = virtualBase > params.virtualBase ? virtualBase - params.virtualBase : 0n;
-      const mcBaseAtoms = virtualToken > 0n ? mcapBase({ ...fresh, virtualBase, virtualToken, realBase, realToken }, supplyAtoms) : 0n;
+      const mcBaseAtoms =
+        virtualToken > 0n
+          ? mcapBase({ ...fresh, virtualBase, virtualToken, realBase, realToken }, supplyAtoms)
+          : 0n;
       const mcUsd1e6 = mcapUsd1e6(mcBaseAtoms, basePrice1e6, base.decimals);
       const mcUsd = Number(mcUsd1e6) / 1e6;
 
@@ -244,7 +262,9 @@ async function main(): Promise<void> {
         const nativeAmount = Number((0.01 + rand() * (rand() < 0.05 ? 8 : 1.2)).toFixed(4));
         const usdValue = nativeAmount * NATIVE_USD[net];
         const tokenAmount = Math.max(1, usdValue / Math.max(0.000001, walkMc / supply));
-        const blockTime = new Date(launchedAt.getTime() + Math.floor(((t + 1) / nTrades) * (nowMs - launchedAt.getTime())));
+        const blockTime = new Date(
+          launchedAt.getTime() + Math.floor(((t + 1) / nTrades) * (nowMs - launchedAt.getTime())),
+        );
         const txSig = nextSig();
         const price = tokenAmount > 0 ? usdValue / tokenAmount : 0;
 
@@ -281,7 +301,14 @@ async function main(): Promise<void> {
         });
 
         for (const tf of ['1m', '5m', '15m', '1h', '4h', '1d'] as const) {
-          const size = { '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 }[tf];
+          const size = {
+            '1m': 60_000,
+            '5m': 300_000,
+            '15m': 900_000,
+            '1h': 3_600_000,
+            '4h': 14_400_000,
+            '1d': 86_400_000,
+          }[tf];
           const bucket = Math.floor(blockTime.getTime() / size) * size;
           const key = `${net}:${sym}:${tf}:${bucket}`;
           const existing = candleAgg.get(key);
@@ -344,7 +371,9 @@ async function main(): Promise<void> {
       row.holders = holderCounts.get(`${row.net}:${row.sym}`) ?? 0;
     }
 
-    console.log(`[${net}] inserting ${tokenRows.length} tokens, ${tradeRows.length} trades, ${candleAgg.size} candles...`);
+    console.log(
+      `[${net}] inserting ${tokenRows.length} tokens, ${tradeRows.length} trades, ${candleAgg.size} candles...`,
+    );
     await batchInsert(db, tokens, tokenRows);
     await batchInsert(db, trades, tradeRows);
     await batchInsert(db, tape, tapeRows);
@@ -358,7 +387,17 @@ async function main(): Promise<void> {
     await batchInsert(
       db,
       settings,
-      traderWallets.map((wallet) => ({ net, wallet, slip: 2, prio: 0.0005, mev: 'OFF' as const, mevTip: 0, cap: 50, defBuy: 0.5, confirm: true })),
+      traderWallets.map((wallet) => ({
+        net,
+        wallet,
+        slip: 2,
+        prio: 0.0005,
+        mev: 'OFF' as const,
+        mevTip: 0,
+        cap: 50,
+        defBuy: 0.5,
+        confirm: true,
+      })),
     );
 
     const tradeable = seedTokens.filter((t) => t.isTradeable && t.baseSymbol === native);
@@ -369,7 +408,9 @@ async function main(): Promise<void> {
       hotSymbols: tradeable.slice(0, 8).map((t) => t.sym),
     };
 
-    console.log(`[${net}] wallet pool: ${wallets.length}, tradeable native-paired tokens: ${tradeable.length}`);
+    console.log(
+      `[${net}] wallet pool: ${wallets.length}, tradeable native-paired tokens: ${tradeable.length}`,
+    );
     manifestWallets[net] = wallets;
   }
 

@@ -70,7 +70,12 @@ function clientIdentity(c: Parameters<MiddlewareHandler<AppEnv>>[0], deps: AppDe
 export function limit(rule: RateLimitRule): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const deps = c.get('deps');
-    const verdict = await rateLimit(deps.redis, rule, clientIdentity(c, deps), Math.floor(deps.now() / 1000));
+    const verdict = await rateLimit(
+      deps.redis,
+      rule,
+      clientIdentity(c, deps),
+      Math.floor(deps.now() / 1000),
+    );
     c.header('X-RateLimit-Limit', String(verdict.limit));
     c.header('X-RateLimit-Remaining', String(verdict.remaining));
     if (!verdict.ok) {

@@ -35,7 +35,9 @@ type EnvLike = Record<string, unknown>;
  * The single gate. Pure over its env so the "cannot activate with the flag
  * off" property is a unit test rather than a claim.
  */
-export function practiceWalletEnabled(env: EnvLike = import.meta.env as unknown as EnvLike): boolean {
+export function practiceWalletEnabled(
+  env: EnvLike = import.meta.env as unknown as EnvLike,
+): boolean {
   return String(env['VITE_PRACTICE_WALLET'] ?? '') === '1';
 }
 
@@ -69,7 +71,10 @@ class PracticeWallet implements ConnectedWallet {
 
   async signAndSend(payload: SignPayload): Promise<BroadcastResult> {
     if (payload.net !== this.net) {
-      throw new WalletError('unsupported_method', 'The practice wallet is bound to one chain at a time.');
+      throw new WalletError(
+        'unsupported_method',
+        'The practice wallet is bound to one chain at a time.',
+      );
     }
     // Deliberately not broadcast. The key holds nothing, so a real send would
     // fail for lack of funds every time; pretending otherwise is what the

@@ -72,7 +72,10 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 function sendJson(res: ServerResponse, body: unknown, status = 200): void {
   const payload = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) });
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(payload),
+  });
   res.end(payload);
 }
 
@@ -92,17 +95,28 @@ async function handleSolanaRpc(req: IncomingMessage, res: ServerResponse): Promi
       sendJson(res, { jsonrpc: '2.0', id, result: solSlot });
       return;
     case 'getBalance':
-      sendJson(res, { jsonrpc: '2.0', id, result: { context: { slot: solSlot }, value: FAKE_BALANCE_LAMPORTS } });
+      sendJson(res, {
+        jsonrpc: '2.0',
+        id,
+        result: { context: { slot: solSlot }, value: FAKE_BALANCE_LAMPORTS },
+      });
       return;
     case 'getLatestBlockhash':
       sendJson(res, {
         jsonrpc: '2.0',
         id,
-        result: { context: { slot: solSlot }, value: { blockhash: FAKE_BLOCKHASH, lastValidBlockHeight: solSlot + 150 } },
+        result: {
+          context: { slot: solSlot },
+          value: { blockhash: FAKE_BLOCKHASH, lastValidBlockHeight: solSlot + 150 },
+        },
       });
       return;
     default:
-      sendJson(res, { jsonrpc: '2.0', id, error: { code: -32601, message: `stub: unhandled method ${String(method)}` } });
+      sendJson(res, {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32601, message: `stub: unhandled method ${String(method)}` },
+      });
   }
 }
 
@@ -113,7 +127,11 @@ async function handleEvmRpc(req: IncomingMessage, res: ServerResponse): Promise<
   const id = body['id'] ?? null;
   switch (method) {
     case 'eth_chainId':
-      sendJson(res, { jsonrpc: '2.0', id, result: `0x${Number(process.env['STUB_RH_CHAIN_ID'] ?? 4663).toString(16)}` });
+      sendJson(res, {
+        jsonrpc: '2.0',
+        id,
+        result: `0x${Number(process.env['STUB_RH_CHAIN_ID'] ?? 4663).toString(16)}`,
+      });
       return;
     case 'eth_blockNumber':
       sendJson(res, { jsonrpc: '2.0', id, result: `0x${evmBlock.toString(16)}` });
@@ -128,13 +146,25 @@ async function handleEvmRpc(req: IncomingMessage, res: ServerResponse): Promise<
       sendJson(res, { jsonrpc: '2.0', id, result: '0x' });
       return;
     default:
-      sendJson(res, { jsonrpc: '2.0', id, error: { code: -32601, message: `stub: unhandled method ${String(method)}` } });
+      sendJson(res, {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32601, message: `stub: unhandled method ${String(method)}` },
+      });
   }
 }
 
-async function handleOracle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
+async function handleOracle(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+): Promise<void> {
   await delay();
-  const amount = pathname.startsWith('/SOL-USD/') ? SOL_USD : pathname.startsWith('/ETH-USD/') ? ETH_USD : null;
+  const amount = pathname.startsWith('/SOL-USD/')
+    ? SOL_USD
+    : pathname.startsWith('/ETH-USD/')
+      ? ETH_USD
+      : null;
   if (amount === null) {
     sendJson(res, { error: `stub: unknown product ${pathname}` }, 404);
     return;

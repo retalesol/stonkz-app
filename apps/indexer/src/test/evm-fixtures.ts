@@ -1,4 +1,4 @@
-import { encodeEventTopics, encodeAbiParameters, type AbiEvent } from 'viem';
+import { encodeEventTopics, encodeAbiParameters, getAddress, type AbiEvent } from 'viem';
 import type { RawEvmLog } from '../chain/evm-events.js';
 import { STONKZ_EVENTS_ABI, type EvmEventName } from '../chain/evm-events.js';
 import type { EvmBlockRef, EvmIndexRpc, EvmLogFilter } from '../chain/evm-rpc.js';
@@ -20,15 +20,24 @@ import type { EvmBlockRef, EvmIndexRpc, EvmLogFilter } from '../chain/evm-rpc.js
  * the fixtures agree with the ABI, and the ABI was checked against
  * `programs/evm/src/*.sol` by eye.
  */
-/** A readable 20-byte address, right-padded so the suffix is the identity. */
+/**
+ * A readable 20-byte address, right-padded so the suffix is the identity.
+ *
+ * EIP-55 checksummed, because that is the casing `evm-map.ts` canonicalises
+ * to (auth sessions store checksummed wallets, so the indexer must too).
+ */
 function address(suffix: string): string {
-  return `0x${suffix.toLowerCase().padStart(40, '0')}`;
+  return getAddress(`0x${suffix.toLowerCase().padStart(40, '0')}`);
 }
 
 export const LAUNCHPAD = address('dec0');
 export const ROUTER = address('d0e5');
-/** aeWETH, the configured RH native wrapper — `router/base-mints.ts`. */
-export const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
+/**
+ * Robinhood testnet (46630) WETH — the `WETH` entry in `router/base-mints.ts`
+ * and a native wrapper in `chain/market.ts`, so a launch against it resolves
+ * to the `WETH` symbol and its fills take the exact ETH leg.
+ */
+export const WETH = getAddress('0x7943e237c7F95DA44E0301572D358911207852Fa');
 export const USDC_RH = address('05dc');
 export const CREATOR = address('c4ea7');
 export const TRADER = address('f4ade');
@@ -52,7 +61,13 @@ function eventAbi(name: EvmEventName): AbiEvent {
 export function encodeLog(
   name: EvmEventName,
   args: Record<string, unknown>,
-  placement: { address: string; blockNumber: number; blockHash: string; txHash: string; logIndex: number },
+  placement: {
+    address: string;
+    blockNumber: number;
+    blockHash: string;
+    txHash: string;
+    logIndex: number;
+  },
 ): RawEvmLog {
   const abi = eventAbi(name);
   const topics = encodeEventTopics({
@@ -66,10 +81,7 @@ export function encodeLog(
   const data =
     unindexed.length === 0
       ? '0x'
-      : encodeAbiParameters(
-          unindexed,
-          unindexed.map((i) => args[i.name as string]) as never,
-        );
+      : encodeAbiParameters(unindexed, unindexed.map((i) => args[i.name as string]) as never);
 
   return {
     address: placement.address.toLowerCase(),

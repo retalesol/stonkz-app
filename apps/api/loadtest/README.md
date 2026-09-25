@@ -31,7 +31,7 @@ loadtest/
 `HttpPriceOracle` clients — there's no env toggle to swap in the in-memory
 fakes the unit tests use. Load-testing `/trade/prepare` (calls
 `getLatestBlockhash` + `getBalance` on every request) or a cold `/quote`
-against the *real* public Solana RPC or a public Robinhood RPC would measure
+against the _real_ public Solana RPC or a public Robinhood RPC would measure
 those providers' rate limits, not this API, and risks this machine's IP
 getting throttled or banned mid-run. `stubs/chain-stub.ts` answers exactly the
 handful of JSON-RPC methods and HTTP routes those two RPC clients and the

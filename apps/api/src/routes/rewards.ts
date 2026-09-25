@@ -30,7 +30,9 @@ export function rewardsRoutes(): Hono<AppEnv> {
     const [snapshot, states, spSnap] = await Promise.all([
       deps.ledger.snapshot(user.net, user.wallet),
       deps.crates.states(user.net, user.wallet),
-      deps.ledger.readBalance(user.net, user.wallet).then((b) => deps.spLevels.snapshot(user.net, user.wallet, b.sp)),
+      deps.ledger
+        .readBalance(user.net, user.wallet)
+        .then((b) => deps.spLevels.snapshot(user.net, user.wallet, b.sp)),
     ]);
 
     const globalReadyAt = states[0]?.readyAt ?? Date.now();

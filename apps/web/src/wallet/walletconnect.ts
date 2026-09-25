@@ -33,7 +33,9 @@ export const WALLETCONNECT_PROJECT_ID: string = (
 ).trim();
 
 /** Null when WalletConnect can be used; otherwise the reason it cannot. */
-export function walletConnectUnavailableReason(projectId: string = WALLETCONNECT_PROJECT_ID): string | null {
+export function walletConnectUnavailableReason(
+  projectId: string = WALLETCONNECT_PROJECT_ID,
+): string | null {
   if (projectId === '') {
     return 'VITE_WALLETCONNECT_PROJECT_ID is not set for this deployment, so WalletConnect cannot open a relay session. Robinhood Wallet is mobile-only and needs it.';
   }
@@ -133,7 +135,9 @@ async function providerInstance(): Promise<WcProvider> {
  * fact, which is why `wallet/evm.ts` skips `wallet_switchEthereumChain` for
  * this transport: a wallet that agreed to the session agreed to the chain.
  */
-export async function connectWalletConnect(opts: ConnectOpts & { net?: Net } = {}): Promise<WalletConnectSession> {
+export async function connectWalletConnect(
+  opts: ConnectOpts & { net?: Net } = {},
+): Promise<WalletConnectSession> {
   const net = opts.net ?? 'RH';
   const chainId = evmChainIdForNet(net);
   const caip = caipForNet(net);
@@ -193,7 +197,10 @@ export async function connectWalletConnect(opts: ConnectOpts & { net?: Net } = {
     .filter((a) => a !== '');
   const address = accounts[0];
   if (!address) {
-    throw new WalletError('rejected', 'The wallet approved a session with no Ethereum-family account in it.');
+    throw new WalletError(
+      'rejected',
+      'The wallet approved a session with no Ethereum-family account in it.',
+    );
   }
 
   provider.setDefaultChain(caip, rpcUrl);

@@ -14,7 +14,11 @@ describe('SP_LEVELS', () => {
   });
 
   it('puts Rhodium at 250k SP', () => {
-    expect(SP_LEVELS[19]).toMatchObject({ level: 20, sp: 250_000, grants: { RHODIUM: 1, GOLD: 2 } });
+    expect(SP_LEVELS[19]).toMatchObject({
+      level: 20,
+      sp: 250_000,
+      grants: { RHODIUM: 1, GOLD: 2 },
+    });
   });
 
   it('resolves spLevelOf at thresholds', () => {

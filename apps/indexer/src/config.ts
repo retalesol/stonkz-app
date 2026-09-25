@@ -85,7 +85,8 @@ function int(src: ConfigSource, key: string, fallback: number): number {
   const raw = src[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
+  if (!Number.isFinite(n))
+    throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
   return n;
 }
 
@@ -123,7 +124,9 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     .split(',')
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
-  const chainNets = [...new Set(chainNetsRaw)].filter((n): n is Net => n === 'SOL' || n === 'RH' || n === 'BASE');
+  const chainNets = [...new Set(chainNetsRaw)].filter(
+    (n): n is Net => n === 'SOL' || n === 'RH' || n === 'BASE',
+  );
   if (mode === 'chain' && chainNets.length === 0) {
     throw new Error('INDEXER_CHAIN_NETS must list SOL, RH, and/or BASE when INDEXER_SOURCE=chain');
   }
@@ -153,7 +156,10 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
 
     solanaProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', env.solanaLaunchpadProgramId),
     solanaStartSlot: int(src, 'INDEXER_SOL_START_SLOT', 0),
-    solanaSignaturePageSize: Math.min(1_000, Math.max(1, int(src, 'INDEXER_SOL_SIGNATURE_PAGE', 1_000))),
+    solanaSignaturePageSize: Math.min(
+      1_000,
+      Math.max(1, int(src, 'INDEXER_SOL_SIGNATURE_PAGE', 1_000)),
+    ),
     solanaMaxTxPerPass: int(src, 'INDEXER_SOL_MAX_TX_PER_PASS', 200),
     solanaTrackBlockhash: bool(src, 'INDEXER_SOL_TRACK_BLOCKHASH', false),
 
@@ -206,8 +212,10 @@ export function assertChainModeConfigured(config: IndexerConfig): void {
     }
   }
   for (const net of config.chainNets) {
-    if (config.confirmations[net] < 0) throw new Error(`INDEXER_${net}_CONFIRMATIONS must not be negative`);
-    if (config.reorgDepth[net] < 1) throw new Error(`INDEXER_${net}_REORG_DEPTH must be at least 1`);
+    if (config.confirmations[net] < 0)
+      throw new Error(`INDEXER_${net}_CONFIRMATIONS must not be negative`);
+    if (config.reorgDepth[net] < 1)
+      throw new Error(`INDEXER_${net}_REORG_DEPTH must be at least 1`);
   }
   if (config.maxBatchAttempts < 1) throw new Error('INDEXER_MAX_BATCH_ATTEMPTS must be at least 1');
 }

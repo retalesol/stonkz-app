@@ -38,19 +38,25 @@ function card(c: SimCoin): HTMLElement {
   b.tabIndex = 0;
   render(
     b,
-    html`<canvas width="96" height="96" aria-hidden="true"></canvas
-      ><div>
-        <div class="cn"><b>${c.sym}</b><span class="nm">${c.name}</span
-          ><span class="chg ${ud(c.chg)}" data-f="chg">${pct(c.chg)}</span></div
-        ><div class="cmeta">by <i class="addrlink" data-addr="${attr(c.dev)}">${c.dev}</i> ${DOT} ${ago(c.age)}</div
-        ><p class="cdesc">${c.desc}</p
-        ><div class="cstats"
-          ><span class="cv" data-f="cv">${curve(c) >= 100 ? 'GRADUATED' : curve(c).toFixed(0) + '%'}</span
+    html`<canvas width="96" height="96" aria-hidden="true"></canvas>
+      <div>
+        <div class="cn">
+          <b>${c.sym}</b><span class="nm">${c.name}</span
+          ><span class="chg ${ud(c.chg)}" data-f="chg">${pct(c.chg)}</span>
+        </div>
+        <div class="cmeta">
+          by <i class="addrlink" data-addr="${attr(c.dev)}">${c.dev}</i> ${DOT} ${ago(c.age)}
+        </div>
+        <p class="cdesc">${c.desc}</p>
+        <div class="cstats">
+          <span class="cv" data-f="cv"
+            >${curve(c) >= 100 ? 'GRADUATED' : curve(c).toFixed(0) + '%'}</span
           ><span data-f="hold">HOLDERS ${num(c.hold)}</span
           ><span data-f="rep">REPLIES ${num(c.reps)}</span
-          ><span class="mc" data-f="mc">${usd(c.mc)}</span></div
-        ></div
-      ><i class="cbar" data-f="bar" style="width:${attr(curve(c))}%"></i>`,
+          ><span class="mc" data-f="mc">${usd(c.mc)}</span>
+        </div>
+      </div>
+      <i class="cbar" data-f="bar" style="width:${attr(curve(c))}%"></i>`,
   );
   paintCoinArt(b.querySelector('canvas'), c.seed, c.image);
   b.addEventListener('click', (e) => {
@@ -122,7 +128,11 @@ export function filterBoard(query: string): void {
   const v = query.trim().toUpperCase();
   let n = 0;
   for (const c of COINS) {
-    const hit = !v || c.sym.indexOf(v) > -1 || c.name.toUpperCase().indexOf(v) > -1 || c.dev.toUpperCase().indexOf(v) > -1;
+    const hit =
+      !v ||
+      c.sym.indexOf(v) > -1 ||
+      c.name.toUpperCase().indexOf(v) > -1 ||
+      c.dev.toUpperCase().indexOf(v) > -1;
     if (c.el) c.el.style.display = hit ? '' : 'none';
     if (hit) n++;
   }
@@ -226,8 +236,8 @@ export function king(): void {
     delete koth.dataset['mint'];
     render(
       koth,
-      html`<span class="crown">KING OF THE HILL</span
-        ><div>
+      html`<span class="crown">KING OF THE HILL</span>
+        <div>
           <div class="kn">NO KING YET</div>
           <p>No live curve tokens on this chain.</p>
         </div>`,
@@ -244,19 +254,22 @@ export function king(): void {
     render(
       koth,
       html`<span class="crown">KING OF THE HILL</span
-        ><canvas width="128" height="128" style="width:74px;height:74px"></canvas
-        ><div>
+        ><canvas width="128" height="128" style="width:74px;height:74px"></canvas>
+        <div>
           <div class="kn">${best.sym}<small>${best.name}</small></div>
           <p>${best.desc}</p>
           <div class="kstats">
-            <span><span class="lbl">MARKET CAP</span><b class="am" id="k-mc">${usd(best.mc)}</b></span
-            ><span><span class="lbl">24H</span><b class="${ud(best.chg)}" id="k-chg">${pct(best.chg)}</b></span
+            <span
+              ><span class="lbl">MARKET CAP</span><b class="am" id="k-mc">${usd(best.mc)}</b></span
+            ><span
+              ><span class="lbl">24H</span
+              ><b class="${ud(best.chg)}" id="k-chg">${pct(best.chg)}</b></span
             ><span><span class="lbl">CURVE</span><b id="k-cv">${curve(best).toFixed(1)}%</b></span
             ><span><span class="lbl">HOLDERS</span><b>${num(best.hold)}</b></span
             ><span><span class="lbl">CREATED</span><b>${ago(best.age)}</b></span>
           </div>
-        </div
-      ><canvas class="ksp" width="300" height="88"></canvas>`,
+        </div>
+        <canvas class="ksp" width="300" height="88"></canvas>`,
     );
     paintCoinArt($<HTMLCanvasElement>('#koth canvas'), best.seed, best.image);
     spark($<HTMLCanvasElement>('#koth .ksp'), histOf(best, 48));

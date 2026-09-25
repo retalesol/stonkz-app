@@ -72,26 +72,45 @@ function claimHTML(rows: ClaimRow[]): Html {
   const tot = rows.reduce((t, r) => t + r.native, 0);
   const unit = nativeUnit();
   if (!rows.length) {
-    return html`<p class="empty">NO FEES TO CLAIM YET ${DOT} FEES ACCRUE ON EVERY TRADE OF A COIN YOU LAUNCHED.</p
-      ><button class="big" id="claim-go" disabled style="opacity:.5">NOTHING TO CLAIM</button>`;
+    return html`<p class="empty">
+        NO FEES TO CLAIM YET ${DOT} FEES ACCRUE ON EVERY TRADE OF A COIN YOU LAUNCHED.
+      </p>
+      <button class="big" id="claim-go" disabled style="opacity:.5">NOTHING TO CLAIM</button>`;
   }
   const signingNote =
     api.mode === 'live'
       ? 'SIGNING USES A LOCAL PRACTICE KEY, NOT A BROADCAST TO A LIVE CHAIN.'
       : 'SIMULATED \u2014 NOTHING IS SIGNED.';
-  return html`<div>${rows.map((r) => {
-      return html`<div class="claim-row"><canvas width="64" height="64" data-seed="${attr(r.seed)}" aria-hidden="true"></canvas
-        ><div><div class="sy">${r.sym}</div><div class="mt">${r.name} ${DOT} VOL 24H ${usd(r.vol)}${
-          r.cashback ? html` ${DOT} <span class="tag cb">CASHBACK</span>` : ''
-        }</div></div
-        ><div class="amt"><b>${r.native.toFixed(3)} ${unit}</b><span>${
-          r.tokens > 0 ? num(r.tokens) + ' ' + r.sym : usd(r.native * NATIVE_PRICE.usd)
-        }</span></div></div>`;
-    })}</div
-    ><div class="claim-tot"><span class="lbl">TOTAL CLAIMABLE</span><b>${tot.toFixed(3)} ${unit}</b></div
-    ><p class="hint">FEES SETTLE TO ${WALLET.addr} ${DOT} CLAIMED LIFETIME ${(USER.feesClaimed ?? 0).toFixed(3)} ${unit} ${DOT}
-      TOKEN ALLOCATION FROM CASHBACK LANDS IN YOUR PORTFOLIO ${DOT} ${signingNote}</p
-    ><button class="big" id="claim-go">CONFIRM CLAIM ${DOT} ${tot.toFixed(3)} ${unit}</button>`;
+  return html`<div>
+      ${rows.map((r) => {
+        return html`<div class="claim-row">
+          <canvas width="64" height="64" data-seed="${attr(r.seed)}" aria-hidden="true"></canvas>
+          <div>
+            <div class="sy">${r.sym}</div>
+            <div class="mt">
+              ${r.name} ${DOT} VOL 24H
+              ${usd(r.vol)}${r.cashback ? html` ${DOT} <span class="tag cb">CASHBACK</span>` : ''}
+            </div>
+          </div>
+          <div class="amt">
+            <b>${r.native.toFixed(3)} ${unit}</b
+            ><span
+              >${
+                r.tokens > 0 ? num(r.tokens) + ' ' + r.sym : usd(r.native * NATIVE_PRICE.usd)
+              }</span
+            >
+          </div>
+        </div>`;
+      })}
+    </div>
+    <div class="claim-tot">
+      <span class="lbl">TOTAL CLAIMABLE</span><b>${tot.toFixed(3)} ${unit}</b>
+    </div>
+    <p class="hint">
+      FEES SETTLE TO ${WALLET.addr} ${DOT} CLAIMED LIFETIME ${(USER.feesClaimed ?? 0).toFixed(3)}
+      ${unit} ${DOT} TOKEN ALLOCATION FROM CASHBACK LANDS IN YOUR PORTFOLIO ${DOT} ${signingNote}
+    </p>
+    <button class="big" id="claim-go">CONFIRM CLAIM ${DOT} ${tot.toFixed(3)} ${unit}</button>`;
 }
 
 function paintClaimBody(rows: ClaimRow[]): void {
@@ -111,13 +130,16 @@ async function refreshClaimBody(): Promise<void> {
   } catch (err) {
     render(
       must('#claimBody'),
-      html`<p class="empty">COULD NOT LOAD YOUR FEES ${DOT} ${String(err instanceof Error ? err.message : err).toUpperCase()}</p>`,
+      html`<p class="empty">
+        COULD NOT LOAD YOUR FEES ${DOT}
+        ${String(err instanceof Error ? err.message : err).toUpperCase()}
+      </p>`,
     );
   }
 }
 
 export function openClaim(opener?: Element | null): void {
-  render(must('#claimBody'), html`<p class="empty">LOADING\u2026</p>`);
+  render(must('#claimBody'), html`<p class="empty">LOADING…</p>`);
   openScrim('#claimScrim', opener);
   void refreshClaimBody();
 }
@@ -169,7 +191,15 @@ async function doClaim(): Promise<void> {
       (toks.length ? ' + ' + toks.join(' + ') : '') +
       (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
   );
-  addChat('GLOBAL', { sys: true, who: '', text: 'CREATOR FEES CLAIMED ' + DOT + ' ' + res.native.toFixed(3) + ' ' + unit }, true);
+  addChat(
+    'GLOBAL',
+    {
+      sys: true,
+      who: '',
+      text: 'CREATOR FEES CLAIMED ' + DOT + ' ' + res.native.toFixed(3) + ' ' + unit,
+    },
+    true,
+  );
   afterClaim();
 }
 

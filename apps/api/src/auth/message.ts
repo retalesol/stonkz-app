@@ -20,7 +20,8 @@ export interface SignInMessageParams {
   chainId: string;
 }
 
-export const SIWS_STATEMENT = 'Sign in to Stonkz. This request will not trigger a blockchain transaction or cost any gas.';
+export const SIWS_STATEMENT =
+  'Sign in to Stonkz. This request will not trigger a blockchain transaction or cost any gas.';
 
 /**
  * CAIP-2 chain id written into the SIWS/SIWE message.

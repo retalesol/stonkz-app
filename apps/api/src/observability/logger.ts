@@ -46,5 +46,7 @@ export function createLogger(
 /** Never log a bearer token, a refresh token or a raw signature. */
 export function redact(value: string | null | undefined, keep = 4): string {
   if (!value) return '';
-  return value.length <= keep * 2 ? '*'.repeat(value.length) : `${value.slice(0, keep)}…${value.slice(-keep)}`;
+  return value.length <= keep * 2
+    ? '*'.repeat(value.length)
+    : `${value.slice(0, keep)}…${value.slice(-keep)}`;
 }

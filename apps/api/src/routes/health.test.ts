@@ -43,19 +43,33 @@ describe('GET /health', () => {
     expect(body.chains.RH.alerting).toBe(true);
   });
 
-  it('is green once both cursors are caught up', async () => {
+  it('is green once all three cursors are caught up', async () => {
+    // BASE joined ALL_NETS in 284ae9a, so /health is only `ok` once it is level too.
     h.rpcs.SOL.setHead(1000);
     h.rpcs.RH.setHead(500);
-    await h.deps.db.update(indexerCursors).set({ position: 1000 }).where(eq(indexerCursors.net, 'SOL'));
-    await h.deps.db.update(indexerCursors).set({ position: 500 }).where(eq(indexerCursors.net, 'RH'));
+    h.rpcs.BASE.setHead(300);
+    await h.deps.db
+      .update(indexerCursors)
+      .set({ position: 1000 })
+      .where(eq(indexerCursors.net, 'SOL'));
+    await h.deps.db
+      .update(indexerCursors)
+      .set({ position: 500 })
+      .where(eq(indexerCursors.net, 'RH'));
+    await h.deps.db
+      .update(indexerCursors)
+      .set({ position: 300 })
+      .where(eq(indexerCursors.net, 'BASE'));
 
     const { status, body } = await health();
     expect(status).toBe(200);
     expect(body.status).toBe('ok');
     expect(body.chains.SOL.lagSeconds).toBe(0);
     expect(body.chains.RH.lagSeconds).toBe(0);
+    expect(body.chains.BASE.lagSeconds).toBe(0);
     expect(body.chains.SOL.alerting).toBe(false);
     expect(body.chains.RH.alerting).toBe(false);
+    expect(body.chains.BASE.alerting).toBe(false);
   });
 
   it('alerts past the 30s threshold on each chain independently', async () => {
@@ -93,7 +107,8 @@ describe('GET /health', () => {
   it('exposes the WS gauge and per-chain lag in the metrics block', async () => {
     const { body } = await health();
     expect(body.metrics.ws).toMatchObject({ connections: 0, peakConnections: 0 });
-    expect(Object.keys(body.metrics.chainLag).sort()).toEqual(['RH', 'SOL']);
+    // One lag gauge per net in ALL_NETS — BASE included since 284ae9a.
+    expect(Object.keys(body.metrics.chainLag).sort()).toEqual(['BASE', 'RH', 'SOL']);
     expect(body.metrics.rpc.SOL.calls).toBeGreaterThan(0);
     expect(body.metrics.requests.total).toBeGreaterThan(0);
   });
@@ -115,10 +130,14 @@ describe('security headers and CORS', () => {
     const ok = await h.app.request('/health/live', { headers: { origin: TEST_ORIGIN } });
     expect(ok.headers.get('Access-Control-Allow-Origin')).toBe(TEST_ORIGIN);
 
-    const local = await h.app.request('/health/live', { headers: { origin: 'http://localhost:5173' } });
+    const local = await h.app.request('/health/live', {
+      headers: { origin: 'http://localhost:5173' },
+    });
     expect(local.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
 
-    const evil = await h.app.request('/health/live', { headers: { origin: 'https://evil.example' } });
+    const evil = await h.app.request('/health/live', {
+      headers: { origin: 'https://evil.example' },
+    });
     expect(evil.status).toBe(403);
     expect(evil.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
@@ -128,7 +147,10 @@ describe('security headers and CORS', () => {
     expect(ok.status).toBe(204);
     expect(ok.headers.get('Access-Control-Allow-Methods')).toContain('POST');
 
-    const evil = await h.app.request('/me', { method: 'OPTIONS', headers: { origin: 'https://evil.example' } });
+    const evil = await h.app.request('/me', {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.example' },
+    });
     expect(evil.status).toBe(403);
   });
 });

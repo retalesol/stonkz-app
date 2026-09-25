@@ -115,7 +115,12 @@ export async function readPermitNonce(token: string, owner: string, chainId = 0)
 export function buildPermitPayload(
   td: ServerPermitTypedData,
   nonce: bigint,
-): { domain: unknown; types: Record<string, { name: string; type: string }[]>; primaryType: string; message: Record<string, unknown> } {
+): {
+  domain: unknown;
+  types: Record<string, { name: string; type: string }[]>;
+  primaryType: string;
+  message: Record<string, unknown>;
+} {
   return {
     domain: td.domain,
     types: { EIP712Domain: EIP712_DOMAIN, ...td.types },
@@ -133,7 +138,10 @@ export function splitSignature(signature: string): { v: number; r: string; s: st
   // Some wallets return 0/1 where the contract's `ecrecover` wants 27/28.
   if (v === 0 || v === 1) v += 27;
   if (v !== 27 && v !== 28) {
-    throw new WalletError('unknown', `The wallet returned an unusable permit recovery id (v=${v}).`);
+    throw new WalletError(
+      'unknown',
+      `The wallet returned an unusable permit recovery id (v=${v}).`,
+    );
   }
   return { v, r: '0x' + hex.slice(0, 64), s: '0x' + hex.slice(64, 128) };
 }

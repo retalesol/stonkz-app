@@ -72,7 +72,11 @@ export function startLoop(): void {
       const h = holdOf(c.sym);
       if (h && h.live && h.tok > 0) unlock('grad');
       toast(c.sym + ' GRADUATED ' + DOT + ' LIQUIDITY MIGRATED ' + DOT + ' LP BURNED', 'gold');
-      addChat('GLOBAL', { sys: true, who: '', text: '$' + c.sym + ' GRADUATED ' + DOT + ' LP BURNED' }, true);
+      addChat(
+        'GLOBAL',
+        { sys: true, who: '', text: '$' + c.sym + ' GRADUATED ' + DOT + ' LP BURNED' },
+        true,
+      );
     }
     counts();
   });

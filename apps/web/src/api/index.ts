@@ -14,7 +14,8 @@ import type { StonkzApi } from './types.js';
 
 export type ApiMode = 'sim' | 'live';
 
-export const API_MODE: ApiMode = (import.meta.env['VITE_API_MODE'] as ApiMode) === 'live' ? 'live' : 'sim';
+export const API_MODE: ApiMode =
+  (import.meta.env['VITE_API_MODE'] as ApiMode) === 'live' ? 'live' : 'sim';
 
 export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
 

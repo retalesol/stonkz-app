@@ -32,7 +32,13 @@ export interface ChatState {
   open: boolean;
 }
 
-export const CHAT: ChatState = { room: 'GLOBAL', token: null, logs: { GLOBAL: [] }, unread: 0, open: false };
+export const CHAT: ChatState = {
+  room: 'GLOBAL',
+  token: null,
+  logs: { GLOBAL: [] },
+  unread: 0,
+  open: false,
+};
 
 export const HANDLES: Array<[string, string]> = [
   ['0xSCHIZO', '#ffd23f'],

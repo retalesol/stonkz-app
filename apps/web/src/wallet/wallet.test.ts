@@ -1,11 +1,37 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Wallet } from '@wallet-standard/base';
 import { RH_CHAIN_ID, RH_CHAIN_ID_HEX, chainLabel, solanaWalletStandardChain } from './chain.js';
-import { WalletError, describeWalletError, isRejection, mapWalletError, walletErrorHeadline } from './errors.js';
-import { enforceRhChain, announceEvmProviderForTests, listEvmWallets, resetEvmDiscoveryForTests, toHexWei, type ChainRequest, type Eip1193Provider } from './evm.js';
+import {
+  WalletError,
+  describeWalletError,
+  isRejection,
+  mapWalletError,
+  walletErrorHeadline,
+} from './errors.js';
+import {
+  enforceRhChain,
+  announceEvmProviderForTests,
+  listEvmWallets,
+  resetEvmDiscoveryForTests,
+  toHexWei,
+  type ChainRequest,
+  type Eip1193Provider,
+} from './evm.js';
 import { WALLETCONNECT_PROJECT_ID, walletConnectUnavailableReason } from './walletconnect.js';
-import { availableWallets, connectWalletFor, disconnectActive, preferRealWallet, requireWallet, sortChoices } from './manager.js';
-import { PRACTICE_WALLET_ID, connectPracticeWallet, practiceWalletChoice, practiceWalletEnabled } from './practice.js';
+import {
+  availableWallets,
+  connectWalletFor,
+  disconnectActive,
+  preferRealWallet,
+  requireWallet,
+  sortChoices,
+} from './manager.js';
+import {
+  PRACTICE_WALLET_ID,
+  connectPracticeWallet,
+  practiceWalletChoice,
+  practiceWalletEnabled,
+} from './practice.js';
 import { openSolanaWallet, solanaWalletChoice } from './solana.js';
 import type { WalletChoice } from './types.js';
 
@@ -82,7 +108,10 @@ describe('mapWalletError: EIP-1193 codes', () => {
   });
 
   it('turns -32002 into advice rather than a retry loop', () => {
-    const err = mapWalletError({ code: -32002, message: 'Already processing eth_requestAccounts.' });
+    const err = mapWalletError({
+      code: -32002,
+      message: 'Already processing eth_requestAccounts.',
+    });
     expect(err.kind).toBe('rejected');
     expect(err.message).toContain('already waiting');
   });
@@ -103,19 +132,27 @@ describe('mapWalletError: text patterns', () => {
   });
 
   it('separates a gas shortfall from a generic failure', () => {
-    expect(mapWalletError(new Error('insufficient funds for gas * price + value')).kind).toBe('insufficient_funds');
+    expect(mapWalletError(new Error('insufficient funds for gas * price + value')).kind).toBe(
+      'insufficient_funds',
+    );
     // The Solana runtime's phrasing for an account that never held anything —
     // exactly what the unfunded practice key produces.
     expect(
-      mapWalletError(new Error('Attempt to debit an account but found no record of a prior credit.')).kind,
+      mapWalletError(
+        new Error('Attempt to debit an account but found no record of a prior credit.'),
+      ).kind,
     ).toBe('insufficient_funds');
   });
 
   it('reports a missed min-out as slippage, not as a bare revert', () => {
     // Both of these also contain "reverted"; slippage has to win, because
     // "REVERTED ON CHAIN" tells a trader nothing they can act on.
-    expect(mapWalletError(new Error('execution reverted: Too little received')).kind).toBe('slippage');
-    expect(mapWalletError(new Error('execution reverted: INSUFFICIENT_OUTPUT_AMOUNT')).kind).toBe('slippage');
+    expect(mapWalletError(new Error('execution reverted: Too little received')).kind).toBe(
+      'slippage',
+    );
+    expect(mapWalletError(new Error('execution reverted: INSUFFICIENT_OUTPUT_AMOUNT')).kind).toBe(
+      'slippage',
+    );
     expect(mapWalletError(new Error('custom program error: 0x1771')).kind).toBe('slippage');
   });
 
@@ -152,8 +189,12 @@ describe('mapWalletError: nested shapes', () => {
   });
 
   it('walks viem\u2019s cause chain, for both text and code', () => {
-    expect(mapWalletError(new Error('outer', { cause: new Error('User rejected the request') })).kind).toBe('rejected');
-    expect(mapWalletError({ message: 'outer', cause: { code: 4902 } }).kind).toBe('chain_unsupported');
+    expect(
+      mapWalletError(new Error('outer', { cause: new Error('User rejected the request') })).kind,
+    ).toBe('rejected');
+    expect(mapWalletError({ message: 'outer', cause: { code: 4902 } }).kind).toBe(
+      'chain_unsupported',
+    );
   });
 
   it('survives a self-referential cause instead of recursing forever', () => {
@@ -171,7 +212,9 @@ describe('mapWalletError: nested shapes', () => {
 describe('user-facing copy', () => {
   it('gives each kind its own headline', () => {
     expect(walletErrorHeadline(new WalletError('slippage', 'x'))).toBe('SLIPPAGE EXCEEDED');
-    expect(walletErrorHeadline(new WalletError('insufficient_funds', 'x'))).toBe('INSUFFICIENT FUNDS');
+    expect(walletErrorHeadline(new WalletError('insufficient_funds', 'x'))).toBe(
+      'INSUFFICIENT FUNDS',
+    );
     expect(walletErrorHeadline(new WalletError('rejected', 'x'))).toBe('REJECTED IN WALLET');
     expect(walletErrorHeadline(new WalletError('wrong_chain', 'x'))).toBe('WRONG CHAIN');
   });
@@ -214,7 +257,8 @@ function scriptedChain(script: Record<string, unknown | (() => unknown)>): {
     const entry = script[method];
     if (entry === undefined) throw { code: 4200, message: 'Unsupported method: ' + method };
     const value = typeof entry === 'function' ? (entry as () => unknown)() : entry;
-    if (value instanceof Error || (value && typeof value === 'object' && 'code' in value)) throw value;
+    if (value instanceof Error || (value && typeof value === 'object' && 'code' in value))
+      throw value;
     return value;
   };
   return { request, calls };
@@ -432,7 +476,9 @@ describe('practice-mode gating', () => {
 
   it('will not sign for the other chain', async () => {
     const wallet = connectPracticeWallet('SOL', { VITE_PRACTICE_WALLET: '1' });
-    await expect(wallet.signAndSend({ net: 'RH', to: '0x0', data: '0x', value: '0' })).rejects.toMatchObject({
+    await expect(
+      wallet.signAndSend({ net: 'RH', to: '0x0', data: '0x', value: '0' }),
+    ).rejects.toMatchObject({
       kind: 'unsupported_method',
     });
   });
@@ -457,7 +503,9 @@ describe('selection order: a real wallet always wins', () => {
   });
 
   it('is stable among equals, so the picker does not reshuffle on re-render', () => {
-    const ids = sortChoices([choice({ id: 'a' }), choice({ id: 'b' }), choice({ id: 'c' })]).map((c) => c.id);
+    const ids = sortChoices([choice({ id: 'a' }), choice({ id: 'b' }), choice({ id: 'c' })]).map(
+      (c) => c.id,
+    );
     expect(ids).toEqual(['a', 'b', 'c']);
   });
 
@@ -518,7 +566,9 @@ describe('injected EVM discovery', () => {
   it('finds a legacy window.ethereum with no EIP-6963 announcement', () => {
     (globalThis as { ethereum?: unknown }).ethereum = { request: async () => [], isMetaMask: true };
     expect(listEvmWallets().map((c) => c.id)).toContain('injected:window.ethereum');
-    expect(listEvmWallets().find((c) => c.id === 'injected:window.ethereum')?.name).toBe('MetaMask');
+    expect(listEvmWallets().find((c) => c.id === 'injected:window.ethereum')?.name).toBe(
+      'MetaMask',
+    );
   });
 
   it('lists only MetaMask + WalletConnect on Robinhood (no Phantom / multi-chain noise)', () => {
@@ -550,7 +600,6 @@ describe('injected EVM discovery', () => {
     (globalThis as { ethereum?: unknown }).ethereum = { notAProvider: true };
     expect(listEvmWallets().map((c) => c.id)).not.toContain('injected:window.ethereum');
   });
-
 
   it('connects it, checksums the account, and reports it as real', async () => {
     const provider: Eip1193Provider & { isMetaMask: boolean } = {
@@ -588,7 +637,9 @@ describe('injected EVM discovery', () => {
 
   it('refuses to connect WalletConnect when the project id is missing', async () => {
     if (WALLETCONNECT_PROJECT_ID) return;
-    await expect(connectWalletFor('RH', { id: 'walletconnect' })).rejects.toMatchObject({ kind: 'unconfigured' });
+    await expect(connectWalletFor('RH', { id: 'walletconnect' })).rejects.toMatchObject({
+      kind: 'unconfigured',
+    });
   });
 });
 
@@ -645,17 +696,35 @@ function standardWallet(over: {
   signTransaction?: boolean;
   account?: { address: string };
 }): Wallet {
-  const account = { address: over.account?.address ?? 'So11111111111111111111111111111111111111112', publicKey: new Uint8Array(32), chains: [], features: [] };
+  const account = {
+    address: over.account?.address ?? 'So11111111111111111111111111111111111111112',
+    publicKey: new Uint8Array(32),
+    chains: [],
+    features: [],
+  };
   const features: Record<string, unknown> = {};
-  if (over.connect !== false) features['standard:connect'] = { version: '1.0.0', connect: async () => ({ accounts: [account] }) };
+  if (over.connect !== false)
+    features['standard:connect'] = {
+      version: '1.0.0',
+      connect: async () => ({ accounts: [account] }),
+    };
   if (over.signMessage !== false) {
-    features['solana:signMessage'] = { version: '1.0.0', signMessage: async () => [{ signedMessage: new Uint8Array(), signature: new Uint8Array(64) }] };
+    features['solana:signMessage'] = {
+      version: '1.0.0',
+      signMessage: async () => [{ signedMessage: new Uint8Array(), signature: new Uint8Array(64) }],
+    };
   }
   if (over.signAndSend) {
-    features['solana:signAndSendTransaction'] = { version: '1.0.0', signAndSendTransaction: async () => [{ signature: new Uint8Array(64) }] };
+    features['solana:signAndSendTransaction'] = {
+      version: '1.0.0',
+      signAndSendTransaction: async () => [{ signature: new Uint8Array(64) }],
+    };
   }
   if (over.signTransaction) {
-    features['solana:signTransaction'] = { version: '1.0.0', signTransaction: async () => [{ signedTransaction: new Uint8Array() }] };
+    features['solana:signTransaction'] = {
+      version: '1.0.0',
+      signTransaction: async () => [{ signedTransaction: new Uint8Array() }],
+    };
   }
   return {
     version: '1.0.0',
@@ -681,11 +750,15 @@ describe('solanaWalletChoice', () => {
   });
 
   it('hides a wallet on the wrong cluster rather than failing on click', () => {
-    expect(solanaWalletChoice(standardWallet({ signAndSend: true, chains: ['solana:mainnet'] }))).toBeNull();
+    expect(
+      solanaWalletChoice(standardWallet({ signAndSend: true, chains: ['solana:mainnet'] })),
+    ).toBeNull();
   });
 
   it('hides a wallet that cannot sign a message, since SIWS would be impossible', () => {
-    expect(solanaWalletChoice(standardWallet({ signAndSend: true, signMessage: false }))).toBeNull();
+    expect(
+      solanaWalletChoice(standardWallet({ signAndSend: true, signMessage: false })),
+    ).toBeNull();
   });
 
   it('hides a wallet that can neither send nor sign a transaction', () => {
@@ -709,14 +782,16 @@ describe('openSolanaWallet', () => {
   });
 
   it('refuses a wallet whose cluster does not match ours', async () => {
-    await expect(openSolanaWallet(standardWallet({ signAndSend: true, chains: ['solana:mainnet'] }))).rejects.toMatchObject(
-      { kind: 'unsupported_method' },
-    );
+    await expect(
+      openSolanaWallet(standardWallet({ signAndSend: true, chains: ['solana:mainnet'] })),
+    ).rejects.toMatchObject({ kind: 'unsupported_method' });
   });
 
   it('will not sign a Robinhood transaction', async () => {
     const wallet = await openSolanaWallet(standardWallet({ signAndSend: true }));
-    await expect(wallet.signAndSend({ net: 'RH', to: '0x0', data: '0x', value: '0' })).rejects.toMatchObject({
+    await expect(
+      wallet.signAndSend({ net: 'RH', to: '0x0', data: '0x', value: '0' }),
+    ).rejects.toMatchObject({
       kind: 'unsupported_method',
     });
   });

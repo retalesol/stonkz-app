@@ -1,7 +1,13 @@
 import { Transaction } from '@solana/web3.js';
 import type { NativeUnit, Net } from '@stonkz/shared';
 import { jsonRpc } from './jsonrpc.js';
-import { RpcError, type ChainRpc, type FetchLike, type NativeTransferSource, type NativeTransferVerification } from './types.js';
+import {
+  RpcError,
+  type ChainRpc,
+  type FetchLike,
+  type NativeTransferSource,
+  type NativeTransferVerification,
+} from './types.js';
 
 export const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -86,10 +92,7 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
       const mint = info?.mint;
       if (!mint) continue;
       const amt = info?.tokenAmount?.uiAmount;
-      const n =
-        typeof amt === 'number'
-          ? amt
-          : Number(info?.tokenAmount?.uiAmountString ?? 0);
+      const n = typeof amt === 'number' ? amt : Number(info?.tokenAmount?.uiAmountString ?? 0);
       if (!Number.isFinite(n) || n <= 0) continue;
       out.set(mint, (out.get(mint) ?? 0) + n);
     }
@@ -159,18 +162,29 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
     ]);
 
     if (!res || !res.meta) {
-      return { found: false, status: 'failed', from: null, to: null, amountNative: null, blockTimeMs: null };
+      return {
+        found: false,
+        status: 'failed',
+        from: null,
+        to: null,
+        amountNative: null,
+        blockTimeMs: null,
+      };
     }
 
-    const keys = res.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey));
+    const keys = res.transaction.message.accountKeys.map((k) =>
+      typeof k === 'string' ? k : k.pubkey,
+    );
     const { preBalances, postBalances, err } = res.meta;
 
     let bestTo: { addr: string; delta: number } | null = null;
     let bestFrom: { addr: string; delta: number } | null = null;
     for (let i = 0; i < keys.length; i++) {
       const delta = (postBalances[i] ?? 0) - (preBalances[i] ?? 0);
-      if (delta > 0 && (!bestTo || delta > bestTo.delta)) bestTo = { addr: keys[i] as string, delta };
-      if (delta < 0 && (!bestFrom || delta < bestFrom.delta)) bestFrom = { addr: keys[i] as string, delta };
+      if (delta > 0 && (!bestTo || delta > bestTo.delta))
+        bestTo = { addr: keys[i] as string, delta };
+      if (delta < 0 && (!bestFrom || delta < bestFrom.delta))
+        bestFrom = { addr: keys[i] as string, delta };
     }
 
     return {

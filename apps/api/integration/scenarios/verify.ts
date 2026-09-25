@@ -18,7 +18,8 @@ const POSITION_LOCK_OFFSET = 7992;
 
 export const solanaGraduationBurn: Scenario = {
   name: 'solana: graduated DLMM position is permanently locked',
-  proves: 'launch-checklist "liquidity is burned forever", Solana side (finding H1 → Meteora DLMM lock)',
+  proves:
+    'launch-checklist "liquidity is burned forever", Solana side (finding H1 → Meteora DLMM lock)',
   requires: ['apiBaseUrl', 'solRpcUrl', 'solLaunchpadProgramId'],
   async run({ cfg, log, expect }) {
     interface Row {
@@ -49,7 +50,9 @@ export const solanaGraduationBurn: Scenario = {
       if (!info?.data) continue;
 
       const data = Buffer.from(info.data);
-      const owner = new PublicKey(data.subarray(POSITION_OWNER_OFFSET, POSITION_OWNER_OFFSET + 32)).toBase58();
+      const owner = new PublicKey(
+        data.subarray(POSITION_OWNER_OFFSET, POSITION_OWNER_OFFSET + 32),
+      ).toBase58();
       const operator = new PublicKey(
         data.subarray(POSITION_OPERATOR_OFFSET, POSITION_OPERATOR_OFFSET + 32),
       ).toBase58();
@@ -77,7 +80,9 @@ export const solanaGraduationBurn: Scenario = {
       checked += 1;
     }
 
-    expect(checked > 0, 'at least one graduated token had a locked DLMM position to verify', { checked });
+    expect(checked > 0, 'at least one graduated token had a locked DLMM position to verify', {
+      checked,
+    });
   },
 };
 
@@ -121,8 +126,17 @@ export const rhGraduationBurn: Scenario = {
     for (const row of graduated) {
       const pool = row.poolAddress as `0x${string}`;
       const [total, dead] = await Promise.all([
-        signer.publicClient.readContract({ address: pool, abi: erc20, functionName: 'totalSupply' }),
-        signer.publicClient.readContract({ address: pool, abi: erc20, functionName: 'balanceOf', args: [DEAD] }),
+        signer.publicClient.readContract({
+          address: pool,
+          abi: erc20,
+          functionName: 'totalSupply',
+        }),
+        signer.publicClient.readContract({
+          address: pool,
+          abi: erc20,
+          functionName: 'balanceOf',
+          args: [DEAD],
+        }),
       ]);
       log('lp accounting', { sym: row.sym, pool, total: total.toString(), dead: dead.toString() });
 
@@ -187,9 +201,13 @@ export const rhOracleStalenessGuard: Scenario = {
       const updatedAt = Number(round[3]) * 1000;
       const ageSecs = Math.round((Date.now() - updatedAt) / 1000);
       log('ETH/USD feed', { answer: round[1].toString(), ageSecs });
-      expect(ageSecs < Number(staleness), 'the live ETH/USD feed is inside the configured window', { ageSecs });
+      expect(ageSecs < Number(staleness), 'the live ETH/USD feed is inside the configured window', {
+        ageSecs,
+      });
     } catch (err) {
-      log('could not read the mainnet ETH/USD feed (expected on a testnet)', { error: String(err) });
+      log('could not read the mainnet ETH/USD feed (expected on a testnet)', {
+        error: String(err),
+      });
     }
   },
 };
@@ -242,7 +260,10 @@ export const tipVerification: Scenario = {
       tipNative?: number;
       body?: string;
     }
-    const wall = await api<WallPost[] | { posts: WallPost[] }>(cfg, `/wall/SOL/${recipient.address}?limit=10`);
+    const wall = await api<WallPost[] | { posts: WallPost[] }>(
+      cfg,
+      `/wall/SOL/${recipient.address}?limit=10`,
+    );
     const posts = Array.isArray(wall) ? wall : wall.posts;
     const post = (posts ?? []).find((p) => p.body === 'integration harness tip');
     expect(!!post, 'the tipped post landed on the wall', post);

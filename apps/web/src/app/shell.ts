@@ -5,7 +5,14 @@ import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { closeClaim, initClaim, isClaimOpen } from '../modals/claim.js';
 import { closeEdit, initEdit, isEditOpen } from '../modals/edit.js';
-import { cancelCrop, closeLaunch, initLaunch, isCropOpen, isLaunchOpen, openLaunch } from '../modals/launch.js';
+import {
+  cancelCrop,
+  closeLaunch,
+  initLaunch,
+  isCropOpen,
+  isLaunchOpen,
+  openLaunch,
+} from '../modals/launch.js';
 import { dismissSplash } from './splash.js';
 import { closeLegal, initLegal, isLegalOpen } from '../modals/legal.js';
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
@@ -39,7 +46,6 @@ import {
   restoreWalletSession,
   wmenu,
 } from './wallet.js';
-
 
 /**
  * The app shell: header, search, escape stack, footer and boot.

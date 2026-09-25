@@ -34,14 +34,21 @@ const JWT_ISSUER = process.env['JWT_ISSUER'] ?? 'https://api.ston.kz';
 const ACCESS_TTL_SECONDS = Number(process.env['ACCESS_TOKEN_TTL_SECONDS'] ?? 900);
 
 async function main(): Promise<void> {
-  const wallets = JSON.parse(readFileSync(join(HERE, 'fixtures', 'wallets.json'), 'utf8')) as Record<Net, string[]>;
+  const wallets = JSON.parse(
+    readFileSync(join(HERE, 'fixtures', 'wallets.json'), 'utf8'),
+  ) as Record<Net, string[]>;
   const key = new TextEncoder().encode(JWT_SECRET);
   const iat = Math.floor(Date.now() / 1000);
 
   const out: Record<Net, { wallet: string; token: string }[]> = { SOL: [], RH: [], BASE: [] };
   for (const net of ['SOL', 'RH', 'BASE'] as const) {
     for (const wallet of wallets[net] ?? []) {
-      const token = await new SignJWT({ sub: wallet, net, typ: 'access', jti: randomBytes(16).toString('hex') })
+      const token = await new SignJWT({
+        sub: wallet,
+        net,
+        typ: 'access',
+        jti: randomBytes(16).toString('hex'),
+      })
         .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
         .setIssuer(JWT_ISSUER)
         .setIssuedAt(iat)
@@ -52,9 +59,13 @@ async function main(): Promise<void> {
   }
 
   writeFileSync(join(HERE, 'fixtures', 'auth.json'), JSON.stringify(out, null, 2));
-  console.log(`minted ${out.SOL.length} SOL + ${out.RH.length} RH access tokens -> loadtest/fixtures/auth.json`);
+  console.log(
+    `minted ${out.SOL.length} SOL + ${out.RH.length} RH access tokens -> loadtest/fixtures/auth.json`,
+  );
   if (JWT_SECRET === DEV_JWT_SECRET) {
-    console.log('using the dev default JWT_SECRET — fine for a local stack, never for anything reachable from the internet.');
+    console.log(
+      'using the dev default JWT_SECRET — fine for a local stack, never for anything reachable from the internet.',
+    );
   }
 }
 

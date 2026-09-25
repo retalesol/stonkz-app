@@ -1,4 +1,9 @@
-import { gradMcapBaseAtoms, mcapBase, mcapUsd1e6, splitFee as splitFeeAtoms } from '@stonkz/curve-sim';
+import {
+  gradMcapBaseAtoms,
+  mcapBase,
+  mcapUsd1e6,
+  splitFee as splitFeeAtoms,
+} from '@stonkz/curve-sim';
 import { splitFee, type Net } from '@stonkz/shared';
 import type { FeeAccruedEvent } from '../events.js';
 
@@ -117,7 +122,11 @@ export function assertOnChainFeeSplit(
   creatorBucket: bigint,
 ): void {
   const expected = splitFeeAtoms(feeTotal);
-  if (protocol !== expected.protocol || ops !== expected.stonkzOps || creatorBucket !== expected.creatorBucket) {
+  if (
+    protocol !== expected.protocol ||
+    ops !== expected.stonkzOps ||
+    creatorBucket !== expected.creatorBucket
+  ) {
     throw new FeeSplitMismatchError(
       `${context}: on-chain legs (${protocol}/${creatorBucket}/${ops}) do not match the integer 20/70/10 split of ${feeTotal} (${expected.protocol}/${expected.creatorBucket}/${expected.stonkzOps})`,
     );

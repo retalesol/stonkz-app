@@ -1,5 +1,14 @@
 /** The 8x8 crate sprite. `index.html:2221` */
-const CSPR = ['........', '.======.', '.======.', '.######.', '.##oo##.', '.##oo##.', '.######.', '........'];
+const CSPR = [
+  '........',
+  '.======.',
+  '.======.',
+  '.######.',
+  '.##oo##.',
+  '.##oo##.',
+  '.######.',
+  '........',
+];
 
 /** Lighten (`amt > 0`) or darken a hex colour. `index.html:2222` */
 export function shade(hex: string, amt: number): string {

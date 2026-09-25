@@ -34,5 +34,8 @@ export function syntheticIp(vuId) {
 }
 
 export function jsonHeaders(vuId, extra) {
-  return Object.assign({ 'Content-Type': 'application/json', 'X-Forwarded-For': syntheticIp(vuId) }, extra || {});
+  return Object.assign(
+    { 'Content-Type': 'application/json', 'X-Forwarded-For': syntheticIp(vuId) },
+    extra || {},
+  );
 }

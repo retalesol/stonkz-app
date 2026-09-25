@@ -22,7 +22,9 @@ import { BASE_URL, NET, netManifest, netAuth, jsonHeaders } from './lib/config.j
 const board = netManifest(NET);
 const identities = netAuth(NET);
 if (identities.length === 0) {
-  throw new Error('trade-launch-prepare needs loadtest/fixtures/auth.json; run loadtest/mint-tokens.ts first');
+  throw new Error(
+    'trade-launch-prepare needs loadtest/fixtures/auth.json; run loadtest/mint-tokens.ts first',
+  );
 }
 const TRADEABLE = board.tradeableSymbols;
 if (TRADEABLE.length === 0) {
@@ -77,7 +79,10 @@ export function tradePrepare() {
   const headers = jsonHeaders(__VU, { Authorization: `Bearer ${identity.token}` });
   const sym = pick(TRADEABLE);
   const side = Math.random() < 0.65 ? 'buy' : 'sell';
-  const amount = side === 'buy' ? Number((0.02 + Math.random() * 0.8).toFixed(3)) : Number((50 + Math.random() * 5000).toFixed(0));
+  const amount =
+    side === 'buy'
+      ? Number((0.02 + Math.random() * 0.8).toFixed(3))
+      : Number((50 + Math.random() * 5000).toFixed(0));
 
   const res = http.post(`${BASE_URL}/trade/prepare`, JSON.stringify({ sym, side, amount }), {
     headers,

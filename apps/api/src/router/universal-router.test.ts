@@ -15,9 +15,21 @@ const WETH = getAddress(`0x${'dead'.padStart(40, '0')}`);
 const BASE = getAddress(`0x${'beef1234'.padStart(40, '0')}`);
 const FEE_TIER = 3000;
 
-function decodeV3SwapInput(input: Hex): { recipient: string; amountIn: bigint; amountOutMinimum: bigint; path: Hex; payerIsUser: boolean } {
+function decodeV3SwapInput(input: Hex): {
+  recipient: string;
+  amountIn: bigint;
+  amountOutMinimum: bigint;
+  path: Hex;
+  payerIsUser: boolean;
+} {
   const [recipient, amountIn, amountOutMinimum, path, payerIsUser] = decodeAbiParameters(
-    [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'bytes' }, { type: 'bool' }],
+    [
+      { type: 'address' },
+      { type: 'uint256' },
+      { type: 'uint256' },
+      { type: 'bytes' },
+      { type: 'bool' },
+    ],
     input,
   );
   return {
@@ -30,7 +42,10 @@ function decodeV3SwapInput(input: Hex): { recipient: string; amountIn: bigint; a
 }
 
 function decodeWrapUnwrapInput(input: Hex): { recipient: string; amount: bigint } {
-  const [recipient, amount] = decodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], input);
+  const [recipient, amount] = decodeAbiParameters(
+    [{ type: 'address' }, { type: 'uint256' }],
+    input,
+  );
   return { recipient: recipient as string, amount: amount as bigint };
 }
 

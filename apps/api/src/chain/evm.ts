@@ -1,7 +1,13 @@
 import type { EvmNet, NativeUnit, Net } from '@stonkz/shared';
 import { nativeUnit as unitForNet } from '@stonkz/shared';
 import { jsonRpc } from './jsonrpc.js';
-import { RpcError, type ChainRpc, type FetchLike, type NativeTransferSource, type NativeTransferVerification } from './types.js';
+import {
+  RpcError,
+  type ChainRpc,
+  type FetchLike,
+  type NativeTransferSource,
+  type NativeTransferVerification,
+} from './types.js';
 
 export const WEI_PER_ETH = 1e18;
 
@@ -142,11 +148,23 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
    */
   async getNativeTransfer(hash: string): Promise<NativeTransferVerification> {
     const [receipt, tx] = await Promise.all([
-      this.call<{ status: string; blockNumber: string } | null>('eth_getTransactionReceipt', [hash]),
-      this.call<{ from?: string; to?: string | null; value?: string } | null>('eth_getTransactionByHash', [hash]),
+      this.call<{ status: string; blockNumber: string } | null>('eth_getTransactionReceipt', [
+        hash,
+      ]),
+      this.call<{ from?: string; to?: string | null; value?: string } | null>(
+        'eth_getTransactionByHash',
+        [hash],
+      ),
     ]);
     if (!receipt || !tx) {
-      return { found: false, status: 'failed', from: null, to: null, amountNative: null, blockTimeMs: null };
+      return {
+        found: false,
+        status: 'failed',
+        from: null,
+        to: null,
+        amountNative: null,
+        blockTimeMs: null,
+      };
     }
 
     let blockTimeMs: number | null = null;
@@ -179,7 +197,11 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
   async verifyChainId(): Promise<void> {
     const actual = Number.parseInt(await this.call<string>('eth_chainId', []), 16);
     if (actual !== this.chainId) {
-      throw new RpcError(this.net, 'eth_chainId', `expected ${this.chainId}, endpoint reports ${actual}`);
+      throw new RpcError(
+        this.net,
+        'eth_chainId',
+        `expected ${this.chainId}, endpoint reports ${actual}`,
+      );
     }
   }
 

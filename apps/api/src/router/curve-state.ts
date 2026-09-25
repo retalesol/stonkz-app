@@ -1,9 +1,4 @@
-import {
-  deriveCurve,
-  freshState,
-  type CurveParams,
-  type CurveState,
-} from '@stonkz/curve-sim';
+import { deriveCurve, freshState, type CurveParams, type CurveState } from '@stonkz/curve-sim';
 
 /**
  * The slice of a `tokens` row the curve math reads. A structural subset
@@ -129,6 +124,8 @@ export function deriveCurveColumns(
 }
 
 /** Columns to persist after a fill mutates the real reserves. */
-export function nextStateColumns(next: CurveState): Pick<CurveStateColumns, 'curveRealBase' | 'curveRealToken'> {
+export function nextStateColumns(
+  next: CurveState,
+): Pick<CurveStateColumns, 'curveRealBase' | 'curveRealToken'> {
   return { curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
 }

@@ -8,7 +8,6 @@ import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
 import { resolveTokenRow } from './token-resolve.js';
 
-
 /** `GET /koth`, `GET /tape`, `GET /base-tokens`, `GET /treasuries`. */
 export function marketRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -97,10 +96,14 @@ export function marketRoutes(): Hono<AppEnv> {
   app.get('/base-tokens', (c) => {
     const net = parseNet(c.req.query('network')) ?? parseNet(c.req.query('net')) ?? 'SOL';
     const majors = MAJORS[net].map(([symbol, name]) => ({ symbol, name, kind: 'major' as const }));
+    // Base has no stock bases (see MAJORS.BASE): advertising RH_STOCKS there
+    // would offer symbols /launch/prepare then refuses with base_mint_not_allowed.
     const stocks =
       net === 'SOL'
         ? STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }))
-        : RH_STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }));
+        : net === 'RH'
+          ? RH_STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }))
+          : [];
 
     return c.json({
       net,

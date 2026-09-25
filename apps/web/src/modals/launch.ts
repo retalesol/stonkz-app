@@ -82,14 +82,12 @@ function newDefaults(): Draft {
 function baseList(): ReadonlyArray<readonly [string, string]> {
   const net = WALLET.net;
   const list =
-    NEW.tab === 'majors' || net === 'BASE'
-      ? MAJORS[net]
-      : net === 'RH'
-        ? RH_STOCKS
-        : STOCKS;
+    NEW.tab === 'majors' || net === 'BASE' ? MAJORS[net] : net === 'RH' ? RH_STOCKS : STOCKS;
   const q = NEW.q.trim().toUpperCase();
   if (!q) return list;
-  return list.filter((t) => t[0].toUpperCase().indexOf(q) > -1 || t[1].toUpperCase().indexOf(q) > -1);
+  return list.filter(
+    (t) => t[0].toUpperCase().indexOf(q) > -1 || t[1].toUpperCase().indexOf(q) > -1,
+  );
 }
 
 function paintLaunchAvatar(): void {
@@ -103,83 +101,217 @@ function paintLaunchAvatar(): void {
 
 function ncStep1(): Html {
   return html`<div class="det">
-      <div class="nc-av-col"><canvas class="av${NEW.uri ? ' has-img' : ''}" id="nc-av" width="128" height="128"></canvas
-        ><div class="nc-av-actions"
-          ><button type="button" class="chip" id="nc-upload">UPLOAD</button
-          >${NEW.uri ? html`<button type="button" class="chip" id="nc-clear">CLEAR</button>` : ''}</div
-        ><input type="file" id="nc-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></div
-      ><div class="rowf" style="align-content:start">
-        <div class="nc-field"><span class="lbl">NAME</span
-          ><input class="fld" id="f-name" maxlength="28" value="${attr(NEW.name)}" placeholder="Token name" autocomplete="off"></div
-        ><div class="nc-field"><span class="lbl">TICKER</span
-          ><input class="fld" id="f-tick" maxlength="10" value="${attr(NEW.tick)}" placeholder="TICKER" autocomplete="off"></div
-        ><div class="nc-field" style="grid-column:1/-1"><span class="lbl">DESCRIPTION</span
-          ><textarea class="fld" id="f-desc" maxlength="140" placeholder="Short description">${NEW.desc}</textarea></div>
-      </div></div>
-    <div class="nc-grid">
-      <div class="nc-field"><span class="lbl">WEBSITE</span
-        ><input class="fld" id="f-web" maxlength="60" value="${attr(NEW.web)}" placeholder="https://" autocomplete="off"></div
-      ><div class="nc-field"><span class="lbl">X ACCOUNT</span
-        ><input class="fld" id="f-x" maxlength="24" value="${attr(NEW.x)}" placeholder="@handle" autocomplete="off"></div
-      ><div class="nc-field"><span class="lbl">TELEGRAM</span
-        ><input class="fld" id="f-tg" maxlength="40" value="${attr(NEW.tg)}" placeholder="t.me/…" autocomplete="off"></div>
+      <div class="nc-av-col">
+        <canvas class="av${NEW.uri ? ' has-img' : ''}" id="nc-av" width="128" height="128"></canvas>
+        <div class="nc-av-actions">
+          <button type="button" class="chip" id="nc-upload">UPLOAD</button
+          >${NEW.uri ? html`<button type="button" class="chip" id="nc-clear">CLEAR</button>` : ''}
+        </div>
+        <input type="file" id="nc-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+      </div>
+      <div class="rowf" style="align-content:start">
+        <div class="nc-field">
+          <span class="lbl">NAME</span
+          ><input
+            class="fld"
+            id="f-name"
+            maxlength="28"
+            value="${attr(NEW.name)}"
+            placeholder="Token name"
+            autocomplete="off"
+          />
+        </div>
+        <div class="nc-field">
+          <span class="lbl">TICKER</span
+          ><input
+            class="fld"
+            id="f-tick"
+            maxlength="10"
+            value="${attr(NEW.tick)}"
+            placeholder="TICKER"
+            autocomplete="off"
+          />
+        </div>
+        <div class="nc-field" style="grid-column:1/-1">
+          <span class="lbl">DESCRIPTION</span
+          ><textarea class="fld" id="f-desc" maxlength="140" placeholder="Short description">
+${NEW.desc}</textarea>
+        </div>
+      </div>
     </div>
-    <p class="hint">DEFAULT ART IS MEMEMAN ON AMBER ${DOT} UPLOAD A SQUARE (OR CROP) TO REPLACE IT ON IPFS ${DOT}
-      FIXED SUPPLY ${DOT} MINT AND FREEZE AUTHORITY REVOKED AT DEPLOY ${DOT} LP BURNS WHEN THE CURVE HITS ${usd(GRAD)}.</p>`;
+    <div class="nc-grid">
+      <div class="nc-field">
+        <span class="lbl">WEBSITE</span
+        ><input
+          class="fld"
+          id="f-web"
+          maxlength="60"
+          value="${attr(NEW.web)}"
+          placeholder="https://"
+          autocomplete="off"
+        />
+      </div>
+      <div class="nc-field">
+        <span class="lbl">X ACCOUNT</span
+        ><input
+          class="fld"
+          id="f-x"
+          maxlength="24"
+          value="${attr(NEW.x)}"
+          placeholder="@handle"
+          autocomplete="off"
+        />
+      </div>
+      <div class="nc-field">
+        <span class="lbl">TELEGRAM</span
+        ><input
+          class="fld"
+          id="f-tg"
+          maxlength="40"
+          value="${attr(NEW.tg)}"
+          placeholder="t.me/…"
+          autocomplete="off"
+        />
+      </div>
+    </div>
+    <p class="hint">
+      DEFAULT ART IS MEMEMAN ON AMBER ${DOT} UPLOAD A SQUARE (OR CROP) TO REPLACE IT ON IPFS ${DOT}
+      FIXED SUPPLY ${DOT} MINT AND FREEZE AUTHORITY REVOKED AT DEPLOY ${DOT} LP BURNS WHEN THE CURVE
+      HITS ${usd(GRAD)}.
+    </p>`;
 }
 
 function ncStep2(): Html {
   const n = netOf();
   const list = baseList();
   return html`<div>
-      <div class="base-hd"><span class="lbl" style="margin:0">BASE TOKEN</span
-        ><span class="netbadge"><i class="netdot" style="background:${attr(n.col)}"></i>${n.name}</span
-        ><span class="base-tabs"><button type="button" class="tab${NEW.tab === 'majors' ? ' on' : ''}" data-btab="majors">TOP 10</button>${
+      <div class="base-hd">
+        <span class="lbl" style="margin:0">BASE TOKEN</span
+        ><span class="netbadge"
+          ><i class="netdot" style="background:${attr(n.col)}"></i>${n.name}</span
+        ><span class="base-tabs"
+          ><button type="button" class="tab${NEW.tab === 'majors' ? ' on' : ''}" data-btab="majors">
+            TOP 10</button
+          >${
+            WALLET.net === 'BASE'
+              ? ''
+              : html`<button
+                  type="button"
+                  class="tab${NEW.tab === 'stocks' ? ' on' : ''}"
+                  data-btab="stocks"
+                >
+                  STOCK TOKENS
+                </button>`
+          }</span
+        ><input
+          class="base-search"
+          id="f-bq"
+          placeholder="FILTER"
+          value="${attr(NEW.q)}"
+          aria-label="Filter base tokens"
+        />
+      </div>
+      <div class="base-list" id="baseList">
+        ${
+          list.length
+            ? list.map(
+                (t) =>
+                  html`<button
+                    type="button"
+                    class="base-opt${NEW.base === t[0] ? ' on' : ''}"
+                    data-base="${attr(t[0])}"
+                  >
+                    <span class="bs">${t[0]}</span><span class="bn">${t[1]}</span>
+                  </button>`,
+              )
+            : html`<div class="base-empty">NO MATCH ${DOT} CLEAR THE FILTER</div>`
+        }
+      </div>
+      <p class="hint" style="margin-top:4px">
+        PAIRS AGAINST ${NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'} ON
+        ${n.name}${
           WALLET.net === 'BASE'
-            ? ''
-            : html`<button type="button" class="tab${NEW.tab === 'stocks' ? ' on' : ''}" data-btab="stocks">STOCK TOKENS</button>`
-        }</span
-        ><input class="base-search" id="f-bq" placeholder="FILTER" value="${attr(NEW.q)}" aria-label="Filter base tokens"></div>
-      <div class="base-list" id="baseList">${
-        list.length
-          ? list.map(
-              (t) => html`<button type="button" class="base-opt${NEW.base === t[0] ? ' on' : ''}" data-base="${attr(t[0])}"
-                ><span class="bs">${t[0]}</span><span class="bn">${t[1]}</span></button>`,
-            )
-          : html`<div class="base-empty">NO MATCH ${DOT} CLEAR THE FILTER</div>`
-      }</div>
-      <p class="hint" style="margin-top:4px">PAIRS AGAINST ${
-        NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'
-      } ON ${n.name}${
-        WALLET.net === 'BASE' ? '.' : html` ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.`
-      }</p></div>
-    <div><span class="lbl">TOTAL SUPPLY</span><div class="supply-row">${SUPPLIES.map(
-      (sp) => html`<button type="button" class="chipm${NEW.supply === sp[0] ? ' on' : ''}" data-sup="${attr(String(sp[0]))}">${sp[1]}</button>`,
-    )}</div></div>
-    <div><span class="lbl">TRADING FEE</span><div class="fee-row"
-      ><input type="range" id="f-fee" min="1" max="5" step="0.1" value="${attr(NEW.fee)}" aria-label="Trading fee"
-      ><span class="fee-val" id="feeVal">${Number(NEW.fee).toFixed(1)}%</span></div>
-      <p class="hint">CHARGED ON EVERY TRADE ${DOT} ${(FEE_SPLIT.protocol * 100).toFixed(0)}% TO THE PROTOCOL,
-        ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% TO YOU AS CREATOR FEES (SHARED WITH YOUR STAKERS) AND
-        ${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}% TO $STONKZ OPS.</p></div>`;
+            ? '.'
+            : html` ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.`
+        }
+      </p>
+    </div>
+    <div>
+      <span class="lbl">TOTAL SUPPLY</span>
+      <div class="supply-row">
+        ${SUPPLIES.map(
+          (sp) =>
+            html`<button
+              type="button"
+              class="chipm${NEW.supply === sp[0] ? ' on' : ''}"
+              data-sup="${attr(String(sp[0]))}"
+            >
+              ${sp[1]}
+            </button>`,
+        )}
+      </div>
+    </div>
+    <div>
+      <span class="lbl">TRADING FEE</span>
+      <div class="fee-row">
+        <input
+          type="range"
+          id="f-fee"
+          min="1"
+          max="5"
+          step="0.1"
+          value="${attr(NEW.fee)}"
+          aria-label="Trading fee"
+        /><span class="fee-val" id="feeVal">${Number(NEW.fee).toFixed(1)}%</span>
+      </div>
+      <p class="hint">
+        CHARGED ON EVERY TRADE ${DOT} ${(FEE_SPLIT.protocol * 100).toFixed(0)}% TO THE PROTOCOL,
+        ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% TO YOU AS CREATOR FEES (SHARED WITH YOUR
+        STAKERS) AND ${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}% TO $STONKZ OPS.
+      </p>
+    </div>`;
 }
 
 function ncStep3(): Html {
   const buyVal = NEW.buy > 0 ? Number(NEW.buy).toFixed(2) : '';
   return html`<div><canvas class="nc-chart" id="nc-chart"></canvas></div>
-    <div class="fee-row"><span class="lbl" style="margin:0;flex:0 0 88px">DEV BUY (${NEW.base})</span
-      ><input class="fld r" id="f-buy" style="max-width:120px" value="${attr(buyVal)}" placeholder="0" inputmode="decimal"
-      ><span class="amt-row" style="flex:1">${[0, 0.5, 1, 2, 5].map(
-        (v) => html`<button type="button" class="qa" data-buy="${attr(v)}">${v ? v : 'NONE'}</button>`,
-      )}</span></div>
+    <div class="fee-row">
+      <span class="lbl" style="margin:0;flex:0 0 88px">DEV BUY (${NEW.base})</span
+      ><input
+        class="fld r"
+        id="f-buy"
+        style="max-width:120px"
+        value="${attr(buyVal)}"
+        placeholder="0"
+        inputmode="decimal"
+      /><span class="amt-row" style="flex:1"
+        >${[0, 0.5, 1, 2, 5].map(
+          (v) =>
+            html`<button type="button" class="qa" data-buy="${attr(v)}">${v ? v : 'NONE'}</button>`,
+        )}</span
+      >
+    </div>
     <div class="nc-stats" id="ncStats"></div>
-    <button type="button" class="cb-opt${NEW.cashback ? ' on' : ''}${NEW.buy > 0 ? ' off' : ''}" id="cbOpt"
-      ><span class="cb-box"></span><span><span class="cbt">CASHBACK LAUNCH ${DOT} NO DEV BUY</span
-      ><span class="cbs">FOR THE FIRST 5 MINUTES THE TRADING FEE STARTS AT 50% AND DECAYS TO ${Number(NEW.fee).toFixed(1)}%.
-        EVERY FEE IN THAT WINDOW IS SPENT BUYING ${NEW.tick || 'YOUR TOKEN'} ON THE CHART AND THE ALLOCATION GOES TO YOU.
-        AFTER 5 MINUTES FEES ACCRUE IN ${nativeUnit()}.</span></span></button>
+    <button
+      type="button"
+      class="cb-opt${NEW.cashback ? ' on' : ''}${NEW.buy > 0 ? ' off' : ''}"
+      id="cbOpt"
+    >
+      <span class="cb-box"></span
+      ><span
+        ><span class="cbt">CASHBACK LAUNCH ${DOT} NO DEV BUY</span
+        ><span class="cbs"
+          >FOR THE FIRST 5 MINUTES THE TRADING FEE STARTS AT 50% AND DECAYS TO
+          ${Number(NEW.fee).toFixed(1)}%. EVERY FEE IN THAT WINDOW IS SPENT BUYING
+          ${NEW.tick || 'YOUR TOKEN'} ON THE CHART AND THE ALLOCATION GOES TO YOU. AFTER 5 MINUTES
+          FEES ACCRUE IN ${nativeUnit()}.</span
+        ></span
+      >
+    </button>
     <div class="nc-sum" id="ncSum"></div>
-    <p class="hint">YOUR BUY IS THE FIRST TRADE ON THE CURVE. IT SETS THE OPENING PRICE FOR EVERYONE ELSE.</p>`;
+    <p class="hint">
+      YOUR BUY IS THE FIRST TRADE ON THE CURVE. IT SETS THE OPENING PRICE FOR EVERYONE ELSE.
+    </p>`;
 }
 
 /* --------------------------- image upload / crop -------------------------- */
@@ -296,10 +428,18 @@ function renderNew(): void {
   const body = i === 0 ? ncStep1() : i === 1 ? ncStep2() : ncStep3();
   render(
     must('#createBody'),
-    html`${body}<div class="wiz-foot"><span class="wiz-dots">${[0, 1, 2].map(
-      (n) => html`<i class="wiz-dot${n === i ? ' on' : n < i ? ' done' : ''}"></i>`,
-    )}</span><span class="grow"></span><button type="button" class="wiz-btn" id="nc-back"${i ? '' : ' disabled'}>BACK</button
-      ><button type="button" class="wiz-btn go" id="nc-next">${i === 2 ? 'LAUNCH' : 'NEXT'}</button></div>`,
+    html`${body}
+      <div class="wiz-foot">
+        <span class="wiz-dots"
+          >${[0, 1, 2].map(
+            (n) => html`<i class="wiz-dot${n === i ? ' on' : n < i ? ' done' : ''}"></i>`,
+          )}</span
+        ><span class="grow"></span
+        ><button type="button" class="wiz-btn" id="nc-back" ${i ? '' : ' disabled'}>BACK</button
+        ><button type="button" class="wiz-btn go" id="nc-next">
+          ${i === 2 ? 'LAUNCH' : 'NEXT'}
+        </button>
+      </div>`,
   );
   refreshScrim('#newScrim');
 
@@ -407,7 +547,9 @@ function bind(id: string, key: keyof Draft, numeric = false): void {
   const el = $<HTMLInputElement>('#' + id);
   if (!el) return;
   el.addEventListener('input', () => {
-    (NEW as unknown as Record<string, unknown>)[key] = numeric ? parseFloat(el.value) || 0 : el.value;
+    (NEW as unknown as Record<string, unknown>)[key] = numeric
+      ? parseFloat(el.value) || 0
+      : el.value;
   });
 }
 
@@ -424,10 +566,22 @@ function previewBuy(): void {
   const jump = (mc1 / mc0 - 1) * 100;
   render(
     must('#ncStats'),
-    html`<div><div class="lbl">YOU RECEIVE</div><div class="v gd">${num(tok)}</div></div
-      ><div><div class="lbl">OF SUPPLY</div><div class="v">${pctSup.toFixed(2)}%</div></div
-      ><div><div class="lbl">OPENING MCAP</div><div class="v am">${usd(mc1)}</div></div
-      ><div><div class="lbl">PRICE MOVE</div><div class="v ${jump > 0 ? 'up' : 'dm'}">${jump > 0 ? '+' : ''}${jump.toFixed(0)}%</div></div>`,
+    html`<div>
+        <div class="lbl">YOU RECEIVE</div>
+        <div class="v gd">${num(tok)}</div>
+      </div>
+      <div>
+        <div class="lbl">OF SUPPLY</div>
+        <div class="v">${pctSup.toFixed(2)}%</div>
+      </div>
+      <div>
+        <div class="lbl">OPENING MCAP</div>
+        <div class="v am">${usd(mc1)}</div>
+      </div>
+      <div>
+        <div class="lbl">PRICE MOVE</div>
+        <div class="v ${jump > 0 ? 'up' : 'dm'}">${jump > 0 ? '+' : ''}${jump.toFixed(0)}%</div>
+      </div>`,
   );
   const cbEl = $('#cbOpt');
   if (cbEl) {
@@ -524,7 +678,15 @@ async function doLaunch(): Promise<void> {
           (buy > 0 ? ' ' + DOT + ' DEV BUY ' + buy.toFixed(2) : '') +
           (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
   );
-  addChat('GLOBAL', { sys: true, who: '', text: 'NEW MINT ' + DOT + ' $' + sym + ' / ' + NEW.base + ' ' + DOT + ' DEPLOYED BY YOU' }, true);
+  addChat(
+    'GLOBAL',
+    {
+      sys: true,
+      who: '',
+      text: 'NEW MINT ' + DOT + ' $' + sym + ' / ' + NEW.base + ' ' + DOT + ' DEPLOYED BY YOU',
+    },
+    true,
+  );
   navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
 }
 

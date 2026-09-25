@@ -47,7 +47,9 @@ export function fromAtoms(atoms: bigint, decimals: number): number {
 /** Applies a slippage tolerance (percent, e.g. `1` = 1%) as a floor on an expected output. */
 export function applySlippageFloor(expectedOutAtoms: bigint, slippagePct: number): bigint {
   if (!Number.isFinite(slippagePct) || slippagePct < 0) {
-    throw new Error(`applySlippageFloor: slippagePct must be a non-negative finite number, got ${slippagePct}`);
+    throw new Error(
+      `applySlippageFloor: slippagePct must be a non-negative finite number, got ${slippagePct}`,
+    );
   }
   // bps at 1/100 pct resolution, applied in bigint math so a huge atom count
   // (fully-staked curves reach ~1e31) never round-trips through a float.

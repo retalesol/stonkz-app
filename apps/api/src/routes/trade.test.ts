@@ -52,7 +52,12 @@ async function seedTradeableToken(opts: SeedOpts): Promise<void> {
   const supply = opts.supply ?? 1e9;
   const feeBps = opts.feeBps ?? 250;
   const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(opts.tokenDecimals);
-  const derived = deriveCurveColumns(supplyAtoms, opts.basePrice1e6, opts.baseDecimals, opts.tokenDecimals);
+  const derived = deriveCurveColumns(
+    supplyAtoms,
+    opts.basePrice1e6,
+    opts.baseDecimals,
+    opts.tokenDecimals,
+  );
   if (!derived) throw new Error('seedTradeableToken: curve derivation failed — bad fixture inputs');
   const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
   const mc = Number(mcapUsd1e6(mcapBaseAtoms, opts.basePrice1e6, opts.baseDecimals)) / 1e6;
@@ -60,9 +65,16 @@ async function seedTradeableToken(opts: SeedOpts): Promise<void> {
   let columns = derived.columns;
   if (opts.preFillBaseAtoms) {
     const fill = buyQuote(derived.state, feeBps, opts.preFillBaseAtoms);
-    if (!fill) throw new Error('seedTradeableToken: preFillBaseAtoms could not be filled against a fresh curve');
+    if (!fill)
+      throw new Error(
+        'seedTradeableToken: preFillBaseAtoms could not be filled against a fresh curve',
+      );
     const next = applyBuy(derived.state, fill);
-    columns = { ...columns, curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
+    columns = {
+      ...columns,
+      curveRealBase: next.realBase.toString(),
+      curveRealToken: next.realToken.toString(),
+    };
   }
 
   await h.deps.db.insert(tokens).values({
@@ -116,7 +128,10 @@ interface TradePrepareResponse {
   value?: string;
 }
 
-async function tradePrepare(token: string, body: TradeBody): Promise<{ status: number; body: TradePrepareResponse }> {
+async function tradePrepare(
+  token: string,
+  body: TradeBody,
+): Promise<{ status: number; body: TradePrepareResponse }> {
   const res = await h.app.request('/trade/prepare', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authed(token) },
@@ -305,7 +320,11 @@ describe('POST /trade/prepare', () => {
     const { token, address } = await h.login('SOL');
     h.rpcs.SOL.setBalance(address, 10);
 
-    const { status, body } = await tradePrepare(token, { sym: 'SELLIT', side: 'sell', amount: 1000 });
+    const { status, body } = await tradePrepare(token, {
+      sym: 'SELLIT',
+      side: 'sell',
+      amount: 1000,
+    });
     expect(status).toBe(200);
     expect(body.atomic).toBe(true);
     const quote = body.quote as { side: string; hops: { venue: string }[] };
@@ -375,7 +394,11 @@ describe('POST /trade/prepare', () => {
       hr.uniswap.reset();
     });
 
-    async function tradePrepareOn(app: TestApp, token: string, body: TradeBody & { permit?: unknown }) {
+    async function tradePrepareOn(
+      app: TestApp,
+      token: string,
+      body: TradeBody & { permit?: unknown },
+    ) {
       const res = await app.app.request('/trade/prepare', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...authed(token) },
@@ -383,7 +406,10 @@ describe('POST /trade/prepare', () => {
       });
       return {
         status: res.status,
-        body: (await res.json()) as TradePrepareResponse & { permitTypedData?: unknown; note?: string },
+        body: (await res.json()) as TradePrepareResponse & {
+          permitTypedData?: unknown;
+          note?: string;
+        },
       };
     }
 
@@ -391,14 +417,23 @@ describe('POST /trade/prepare', () => {
       const supply = opts.supply ?? 1e9;
       const feeBps = opts.feeBps ?? 250;
       const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(opts.tokenDecimals);
-      const derived = deriveCurveColumns(supplyAtoms, opts.basePrice1e6, opts.baseDecimals, opts.tokenDecimals);
+      const derived = deriveCurveColumns(
+        supplyAtoms,
+        opts.basePrice1e6,
+        opts.baseDecimals,
+        opts.tokenDecimals,
+      );
       if (!derived) throw new Error('seedOn: curve derivation failed');
       let columns = derived.columns;
       if (opts.preFillBaseAtoms) {
         const fill = buyQuote(derived.state, feeBps, opts.preFillBaseAtoms);
         if (!fill) throw new Error('seedOn: preFillBaseAtoms could not be filled');
         const next = applyBuy(derived.state, fill);
-        columns = { ...columns, curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
+        columns = {
+          ...columns,
+          curveRealBase: next.realBase.toString(),
+          curveRealToken: next.realToken.toString(),
+        };
       }
       const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
       const mc = Number(mcapUsd1e6(mcapBaseAtoms, opts.basePrice1e6, opts.baseDecimals)) / 1e6;
@@ -437,7 +472,11 @@ describe('POST /trade/prepare', () => {
       const { token, address } = await hr.login('RH');
       hr.rpcs.RH.setBalance(address, 5);
 
-      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHDIRECT', side: 'buy', amount: 0.5 });
+      const { status, body } = await tradePrepareOn(hr, token, {
+        sym: 'RHDIRECT',
+        side: 'buy',
+        amount: 0.5,
+      });
       expect(status).toBe(200);
       expect(body.atomic).toBe(true);
       expect(body.steps).toBeUndefined();
@@ -458,11 +497,17 @@ describe('POST /trade/prepare', () => {
         tokenDecimals: 18,
         basePrice1e6: 1_000_000n,
       });
-      hr.uniswap.setRoute('0x0000000000000000000000000000000000000000', RH_USDC_MINT, { rate: 4_200 });
+      hr.uniswap.setRoute('0x0000000000000000000000000000000000000000', RH_USDC_MINT, {
+        rate: 4_200,
+      });
       const { token, address } = await hr.login('RH');
       hr.rpcs.RH.setBalance(address, 5);
 
-      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHAGG', side: 'buy', amount: 0.5 });
+      const { status, body } = await tradePrepareOn(hr, token, {
+        sym: 'RHAGG',
+        side: 'buy',
+        amount: 0.5,
+      });
       expect(status).toBe(200);
       expect(body.atomic).toBe(true);
       expect(body.to).toBe(ROUTER_ADDRESS);
@@ -483,12 +528,19 @@ describe('POST /trade/prepare', () => {
       const { token, address } = await hr.login('RH');
       hr.rpcs.RH.setBalance(address, 5);
 
-      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHSELL', side: 'sell', amount: 1_000_000 });
+      const { status, body } = await tradePrepareOn(hr, token, {
+        sym: 'RHSELL',
+        side: 'sell',
+        amount: 1_000_000,
+      });
       expect(status).toBe(200);
       expect(body.atomic).toBe(true);
       expect(body.value).toBe('0');
       expect(body.permitTypedData).toBeTruthy();
-      const permitTypedData = body.permitTypedData as { domain: { name: string }; primaryType: string };
+      const permitTypedData = body.permitTypedData as {
+        domain: { name: string };
+        primaryType: string;
+      };
       expect(permitTypedData.primaryType).toBe('Permit');
       expect(permitTypedData.domain.name).toBe('RHSELL');
       expect(typeof body.note).toBe('string');
@@ -514,7 +566,13 @@ describe('POST /trade/prepare', () => {
         sym: 'RHSELLP',
         side: 'sell',
         amount: 1_000_000,
-        permit: { value: '1000000', deadline: 2_000_000_000, v: 27, r: `0x${'11'.repeat(32)}`, s: `0x${'22'.repeat(32)}` },
+        permit: {
+          value: '1000000',
+          deadline: 2_000_000_000,
+          v: 27,
+          r: `0x${'11'.repeat(32)}`,
+          s: `0x${'22'.repeat(32)}`,
+        },
       });
       expect(status).toBe(200);
       expect(body.atomic).toBe(true);
@@ -534,11 +592,17 @@ describe('POST /trade/prepare', () => {
         tokenDecimals: 18,
         basePrice1e6: 4_200_000_000n,
       });
-      hr.uniswap.setRoute('0x0000000000000000000000000000000000000000', UNPINNED_MINT, { rate: 3_000 });
+      hr.uniswap.setRoute('0x0000000000000000000000000000000000000000', UNPINNED_MINT, {
+        rate: 3_000,
+      });
       const { token, address } = await hr.login('RH');
       hr.rpcs.RH.setBalance(address, 5);
 
-      const { status, body } = await tradePrepareOn(hr, token, { sym: 'RHNOPIN', side: 'buy', amount: 0.5 });
+      const { status, body } = await tradePrepareOn(hr, token, {
+        sym: 'RHNOPIN',
+        side: 'buy',
+        amount: 0.5,
+      });
       expect(status).toBe(422);
       expect(body.error).toBe('rh_router_required');
       expect(body.steps).toBeUndefined();

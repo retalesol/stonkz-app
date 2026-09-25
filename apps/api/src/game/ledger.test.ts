@@ -39,7 +39,13 @@ async function verifyEvent(txSig: string, net: 'SOL' | 'RH' = 'SOL'): Promise<vo
 describe('no XP without a verified event', () => {
   it('refuses a chain reason with no chain_events row', async () => {
     await expect(
-      h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'trade', baseXp: 100, txSig: 'never-seen' }),
+      h.deps.ledger.award({
+        net: 'SOL',
+        wallet: W,
+        reason: 'trade',
+        baseXp: 100,
+        txSig: 'never-seen',
+      }),
     ).rejects.toThrow(UnverifiedEventError);
 
     expect(await h.deps.ledger.readBalance('SOL', W)).toMatchObject({ xp: 0, sp: 0 });
@@ -54,7 +60,13 @@ describe('no XP without a verified event', () => {
   it('will not accept an event verified on the other chain', async () => {
     await verifyEvent('sig-sol-only', 'SOL');
     await expect(
-      h.deps.ledger.award({ net: 'RH', wallet: W, reason: 'trade', baseXp: 100, txSig: 'sig-sol-only' }),
+      h.deps.ledger.award({
+        net: 'RH',
+        wallet: W,
+        reason: 'trade',
+        baseXp: 100,
+        txSig: 'sig-sol-only',
+      }),
     ).rejects.toThrow(UnverifiedEventError);
   });
 
@@ -73,7 +85,12 @@ describe('no XP without a verified event', () => {
 
   it('allows server-authored reasons without a signature', async () => {
     // Crate XP is rolled by this process, so there is nothing to verify.
-    const result = await h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'crate', baseXp: 20 });
+    const result = await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'crate',
+      baseXp: 20,
+    });
     expect(result.awarded).toBe(true);
     expect(result.xp).toBe(20);
   });
@@ -82,7 +99,13 @@ describe('no XP without a verified event', () => {
 describe('replay safety', () => {
   it('pays a (signature, reason) pair exactly once', async () => {
     await verifyEvent('sig-replay');
-    const input = { net: 'SOL' as const, wallet: W, reason: 'trade', baseXp: 40, txSig: 'sig-replay' };
+    const input = {
+      net: 'SOL' as const,
+      wallet: W,
+      reason: 'trade',
+      baseXp: 40,
+      txSig: 'sig-replay',
+    };
 
     const first = await h.deps.ledger.award(input);
     expect(first).toMatchObject({ awarded: true, xp: 40 });
@@ -95,7 +118,13 @@ describe('replay safety', () => {
 
   it('still pays a different reason on the same signature', async () => {
     await verifyEvent('sig-two-reasons');
-    await h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'trade', baseXp: 40, txSig: 'sig-two-reasons' });
+    await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'trade',
+      baseXp: 40,
+      txSig: 'sig-two-reasons',
+    });
     const unlock = await h.deps.ledger.unlock('SOL', W, 'first', 'sig-two-reasons');
     expect(unlock.unlocked).toBe(true);
     expect((await h.deps.ledger.readBalance('SOL', W)).xp).toBe(40 + (achOf('first')?.xp ?? 0));
@@ -103,7 +132,13 @@ describe('replay safety', () => {
 
   it('keeps balances as an exact fold of the append-only tables', async () => {
     await verifyEvent('sig-fold');
-    await h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'trade', baseXp: 90, txSig: 'sig-fold' });
+    await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'trade',
+      baseXp: 90,
+      txSig: 'sig-fold',
+    });
     await h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'crate', baseXp: 35 });
 
     const events = await h.deps.db
@@ -152,7 +187,13 @@ describe('daily caps', () => {
   it('awards zero once the cap is spent, but still records the event', async () => {
     await verifyEvent('sig-full');
     await verifyEvent('sig-over');
-    await h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'trade', baseXp: 500, txSig: 'sig-full' });
+    await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'trade',
+      baseXp: 500,
+      txSig: 'sig-full',
+    });
 
     const over = await h.deps.ledger.award({
       net: 'SOL',
@@ -170,7 +211,13 @@ describe('daily caps', () => {
 
   it('resets at the UTC day boundary, not the client’s', async () => {
     await verifyEvent('sig-day1');
-    await h.deps.ledger.award({ net: 'SOL', wallet: W, reason: 'trade', baseXp: 500, txSig: 'sig-day1' });
+    await h.deps.ledger.award({
+      net: 'SOL',
+      wallet: W,
+      reason: 'trade',
+      baseXp: 500,
+      txSig: 'sig-day1',
+    });
 
     h.setNow(Date.parse('2026-09-07T00:00:01.000Z'));
     await verifyEvent('sig-day2');

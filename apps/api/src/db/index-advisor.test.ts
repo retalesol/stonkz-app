@@ -24,12 +24,18 @@ async function explain(query: string): Promise<string> {
     .join('\n');
 }
 
-/** The planner only picks an index once it believes the table is big. */
+/**
+ * The planner only picks an index once it believes the table is big.
+ *
+ * Migration 0009 moved token identity to (net, mint) and made `mint` NOT NULL
+ * on candles / holders_snapshot, so every seed row carries a synthetic mint.
+ */
 async function seed(): Promise<void> {
   await h.db.execute(sql`
-    INSERT INTO tokens (net, sym, name, creator, base_symbol, base_mint, supply, fee_bps, mc, lane, seed, launched_at)
+    INSERT INTO tokens (net, mint, sym, name, creator, base_symbol, base_mint, supply, fee_bps, mc, lane, seed, launched_at)
     SELECT
       CASE WHEN i % 2 = 0 THEN 'SOL' ELSE 'RH' END,
+      'mint' || i,
       'T' || i,
       'Token ' || i,
       'creator' || (i % 97),
@@ -66,15 +72,15 @@ async function seed(): Promise<void> {
   `);
 
   await h.db.execute(sql`
-    INSERT INTO candles (net, sym, tf, bucket_start, o, h, l, c, v, native_volume, trades)
-    SELECT 'SOL', 'T' || (i % 50), '1m', date_trunc('minute', now()) - (i || ' minutes')::interval,
+    INSERT INTO candles (net, mint, sym, tf, bucket_start, o, h, l, c, v, native_volume, trades)
+    SELECT 'SOL', 'mint' || (i % 50), 'T' || (i % 50), '1m', date_trunc('minute', now()) - (i || ' minutes')::interval,
            1, 2, 0.5, 1.5, 100, 1, 3
     FROM generate_series(1, ${ROWS}) AS s(i)
   `);
 
   await h.db.execute(sql`
-    INSERT INTO holders_snapshot (net, sym, wallet, token_amount, cost_native)
-    SELECT 'SOL', 'T' || (i % 200), 'holder' || i,
+    INSERT INTO holders_snapshot (net, mint, sym, wallet, token_amount, cost_native)
+    SELECT 'SOL', 'mint' || (i % 200), 'T' || (i % 200), 'holder' || i,
            CASE WHEN i % 5 = 0 THEN 0 ELSE (i % 1000)::float8 END,
            1.25
     FROM generate_series(1, ${ROWS}) AS s(i)

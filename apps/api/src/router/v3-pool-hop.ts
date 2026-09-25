@@ -138,7 +138,9 @@ export class V3PoolHopClient implements AggregatorClient {
       throw new NoRouteError(
         req.inMint,
         req.outMint,
-        new Error(pinned === null ? `no liquid v3 pool for ${baseSide.symbol}` : `no v3 pool fee=${pinned}`),
+        new Error(
+          pinned === null ? `no liquid v3 pool for ${baseSide.symbol}` : `no v3 pool fee=${pinned}`,
+        ),
       );
     }
 
@@ -167,10 +169,7 @@ export class V3PoolHopClient implements AggregatorClient {
     return mint as Address;
   }
 
-  private baseSide(
-    tokenIn: Address,
-    tokenOut: Address,
-  ): { mint: string; symbol: string } | null {
+  private baseSide(tokenIn: Address, tokenOut: Address): { mint: string; symbol: string } | null {
     const inIsWeth = tokenIn.toLowerCase() === this.wethMint;
     const outIsWeth = tokenOut.toLowerCase() === this.wethMint;
     if (inIsWeth === outIsWeth) return null;
@@ -196,7 +195,12 @@ export class V3PoolHopClient implements AggregatorClient {
     return BigInt(raw);
   }
 
-  private async quoteExact(tokenIn: Address, tokenOut: Address, fee: number, amountIn: bigint): Promise<bigint> {
+  private async quoteExact(
+    tokenIn: Address,
+    tokenOut: Address,
+    fee: number,
+    amountIn: bigint,
+  ): Promise<bigint> {
     const data = encodeFunctionData({
       abi: QUOTER_ABI,
       functionName: 'quoteExactInputSingle',
@@ -206,7 +210,11 @@ export class V3PoolHopClient implements AggregatorClient {
       const raw = await this.eth.ethCall(this.quoter, data);
       return BigInt(raw);
     } catch (err) {
-      throw new NoRouteError(tokenIn, tokenOut, err instanceof Error ? err : new Error(String(err)));
+      throw new NoRouteError(
+        tokenIn,
+        tokenOut,
+        err instanceof Error ? err : new Error(String(err)),
+      );
     }
   }
 }

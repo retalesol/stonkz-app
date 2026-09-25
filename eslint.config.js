@@ -14,6 +14,12 @@ export default tseslint.config(
       'test-results/**',
       // The visual oracle stays untouched.
       'legacy/**',
+      // Foundry / Anchor trees carry vendored submodules (OpenZeppelin, forge-std)
+      // and generated artifacts; they are linted by their own toolchains.
+      'programs/**',
+      // Agent / editor scratch.
+      '.codex/**',
+      '.cursor/**',
     ],
   },
   js.configs.recommended,

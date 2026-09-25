@@ -135,7 +135,12 @@ export async function connectWallet(netKey: Net): Promise<void> {
       l.removeEventListener('animationend', done);
     });
   }
-  const suffix = api.mode !== 'live' ? ' ' + DOT + ' SIMULATED' : isPracticeSession() ? ' ' + DOT + ' PRACTICE KEY' : '';
+  const suffix =
+    api.mode !== 'live'
+      ? ' ' + DOT + ' SIMULATED'
+      : isPracticeSession()
+        ? ' ' + DOT + ' PRACTICE KEY'
+        : '';
   toast(n.name + ' CONNECTED ' + DOT + ' ' + WALLET.addr + suffix);
 }
 

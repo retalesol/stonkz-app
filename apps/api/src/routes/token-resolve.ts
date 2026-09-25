@@ -77,8 +77,7 @@ export async function findLaunchCooldown(
   const launchedAt = row.launchedAt instanceof Date ? row.launchedAt : new Date(row.launchedAt);
   const elapsed = nowMs - launchedAt.getTime();
   if (elapsed >= LAUNCH_NAME_TICKER_COOLDOWN_MS) return null;
-  const kind: 'ticker' | 'name' =
-    sym && row.sym.toUpperCase() === sym ? 'ticker' : 'name';
+  const kind: 'ticker' | 'name' = sym && row.sym.toUpperCase() === sym ? 'ticker' : 'name';
   return {
     kind,
     launchedAt,

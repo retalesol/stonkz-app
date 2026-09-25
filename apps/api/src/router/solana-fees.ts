@@ -1,4 +1,9 @@
-import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import {
+  ComputeBudgetProgram,
+  PublicKey,
+  SystemProgram,
+  type TransactionInstruction,
+} from '@solana/web3.js';
 
 /**
  * Priority fee + optional Jito tip for Solana trade (and similar) txs.

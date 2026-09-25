@@ -139,7 +139,11 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   }
 }
 
-export function createFakeRpcs(): ChainRpcs & { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc } {
+export function createFakeRpcs(): ChainRpcs & {
+  SOL: FakeChainRpc;
+  RH: FakeChainRpc;
+  BASE: FakeChainRpc;
+} {
   return {
     SOL: new FakeChainRpc('SOL', 'SOL', 250_000_000),
     RH: new FakeChainRpc('RH', 'ETH', 21_000_000),

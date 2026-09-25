@@ -3,12 +3,24 @@
   "rewrites": [
     {
       "source": "/t/:sym",
-      "has": [{ "type": "header", "key": "user-agent", "value": ".*(bot|crawl|spider|facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|Pinterest|Applebot).*" }],
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(bot|crawl|spider|facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|Pinterest|Applebot).*"
+        }
+      ],
       "destination": "https://api.ston.kz/og/t/:sym"
     },
     {
       "source": "/u/:addr",
-      "has": [{ "type": "header", "key": "user-agent", "value": ".*(bot|crawl|spider|facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|Pinterest|Applebot).*" }],
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(bot|crawl|spider|facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|Pinterest|Applebot).*"
+        }
+      ],
       "destination": "https://api.ston.kz/og/u/:addr"
     }
   ]

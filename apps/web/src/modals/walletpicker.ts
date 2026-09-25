@@ -54,21 +54,20 @@ export class WalletPickerCancelledError extends Error {
 function choiceRow(c: WalletChoice): ReturnType<typeof html> {
   const disabled = !!c.unavailable;
   return html`<button
-    type="button"
-    class="wp-item${disabled ? ' off' : ''}"
-    data-wallet="${attr(c.id)}"
-    ${disabled ? html`disabled aria-describedby="wp-why-${attr(c.id)}"` : ''}
-  >
-    ${c.icon ? html`<img class="wp-ic" src="${attr(c.icon)}" alt="" width="26" height="26">` : html`<i class="wp-ic"></i>`}
-    <span class="wp-nm"
-      >${c.name}${c.kind === 'practice' ? html`<em class="wp-tag">PRACTICE</em>` : ''}${c.kind ===
-    'evm-walletconnect'
-      ? html`<em class="wp-tag wc">QR</em>`
-      : ''}</span
+      type="button"
+      class="wp-item${disabled ? ' off' : ''}"
+      data-wallet="${attr(c.id)}"
+      ${disabled ? html`disabled aria-describedby="wp-why-${attr(c.id)}"` : ''}
     >
-    <span class="wp-go">&#8250;</span>
-  </button>
-  ${disabled ? html`<p class="hint wp-why" id="wp-why-${attr(c.id)}">${c.unavailable}</p>` : ''}`;
+      ${c.icon ? html`<img class="wp-ic" src="${attr(c.icon)}" alt="" width="26" height="26" />` : html`<i class="wp-ic"></i>`}
+      <span class="wp-nm"
+        >${c.name}${c.kind === 'practice' ? html`<em class="wp-tag">PRACTICE</em>` : ''}${
+          c.kind === 'evm-walletconnect' ? html`<em class="wp-tag wc">QR</em>` : ''
+        }</span
+      >
+      <span class="wp-go">&#8250;</span>
+    </button>
+    ${disabled ? html`<p class="hint wp-why" id="wp-why-${attr(c.id)}">${c.unavailable}</p>` : ''}`;
 }
 
 function drawQr(uri: string): void {
@@ -103,7 +102,9 @@ function renderPicker(): void {
       html`<p class="hint" style="margin-bottom:10px">${chainLabel(net)}</p>
         <p class="wp-wait">WAITING FOR ${phase.choice.name.toUpperCase()}&hellip;</p>
         <p class="hint" style="margin-top:8px">APPROVE THE CONNECTION IN YOUR WALLET.</p>
-        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:12px">CANCEL</button>`,
+        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:12px">
+          CANCEL
+        </button>`,
     );
   } else if (phase.t === 'pairing') {
     render(
@@ -111,10 +112,18 @@ function renderPicker(): void {
       html`<p class="hint" style="margin-bottom:10px">
           SCAN WITH ROBINHOOD WALLET (OR ANY WALLETCONNECT WALLET) &#183; ${chainLabel(net)}
         </p>
-        <div class="wp-qrwrap"><canvas id="wp-qr" aria-label="WalletConnect pairing QR code"></canvas></div>
-        <a class="wp-deep" id="wp-deep" href="${attr(phase.uri)}">OPEN IN A WALLET ON THIS DEVICE</a>
-        <button type="button" class="back" id="wp-copy" style="width:100%;margin-top:8px">COPY PAIRING LINK</button>
-        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:6px">CANCEL</button>`,
+        <div class="wp-qrwrap">
+          <canvas id="wp-qr" aria-label="WalletConnect pairing QR code"></canvas>
+        </div>
+        <a class="wp-deep" id="wp-deep" href="${attr(phase.uri)}"
+          >OPEN IN A WALLET ON THIS DEVICE</a
+        >
+        <button type="button" class="back" id="wp-copy" style="width:100%;margin-top:8px">
+          COPY PAIRING LINK
+        </button>
+        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:6px">
+          CANCEL
+        </button>`,
     );
     drawQr(phase.uri);
   } else if (phase.t === 'error') {
@@ -122,23 +131,31 @@ function renderPicker(): void {
       body,
       html`<p class="wp-err">${phase.message}</p>
         <button type="button" class="big" id="wp-retry">BACK TO WALLETS</button>
-        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:8px">CANCEL</button>`,
+        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:8px">
+          CANCEL
+        </button>`,
     );
   } else {
     const choices = availableWallets(net);
     render(
       body,
       html`<p class="hint" style="margin-bottom:10px">${chainLabel(net)}</p>
-        ${choices.length === 0
-          ? html`<p class="wp-err">
-              ${net === 'SOL'
-                ? 'NO SOLANA WALLET DETECTED. INSTALL PHANTOM, SOLFLARE OR BACKPACK AND RELOAD.'
-                : net === 'BASE'
-                  ? 'NO BASE WALLET DETECTED. INSTALL COINBASE WALLET OR METAMASK, OR USE WALLETCONNECT.'
-                  : 'NO ROBINHOOD CHAIN WALLET AVAILABLE.'}
-            </p>`
-          : html`<div class="wp-list">${choices.map(choiceRow)}</div>`}
-        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:10px">CANCEL</button>`,
+        ${
+          choices.length === 0
+            ? html`<p class="wp-err">
+                ${
+                  net === 'SOL'
+                    ? 'NO SOLANA WALLET DETECTED. INSTALL PHANTOM, SOLFLARE OR BACKPACK AND RELOAD.'
+                    : net === 'BASE'
+                      ? 'NO BASE WALLET DETECTED. INSTALL COINBASE WALLET OR METAMASK, OR USE WALLETCONNECT.'
+                      : 'NO ROBINHOOD CHAIN WALLET AVAILABLE.'
+                }
+              </p>`
+            : html`<div class="wp-list">${choices.map(choiceRow)}</div>`
+        }
+        <button type="button" class="back" id="wp-cancel" style="width:100%;margin-top:10px">
+          CANCEL
+        </button>`,
     );
   }
 

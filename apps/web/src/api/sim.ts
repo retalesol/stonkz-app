@@ -32,14 +32,30 @@ import {
   circ,
 } from '@stonkz/shared';
 import { emit } from '../lib/bus.js';
-import { COINS, type SimCoin, bySym, pushTrade, seedSeries, seedTrades, toFill } from '../state/coins.js';
+import {
+  COINS,
+  type SimCoin,
+  bySym,
+  pushTrade,
+  seedSeries,
+  seedTrades,
+  toFill,
+} from '../state/coins.js';
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
 import { USER, addXP, pushDrop, saveUser, syncSpLevelGrants, unlock } from '../state/user.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, selectNet } from '../state/wallet.js';
 import { clock, fakeAddr } from '../lib/fmt.js';
-import type { ClaimResult, CrateResult, FeeVault, QuoteInput, StakeClaim, StakeInput, StonkzApi } from './types.js';
+import type {
+  ClaimResult,
+  CrateResult,
+  FeeVault,
+  QuoteInput,
+  StakeClaim,
+  StakeInput,
+  StonkzApi,
+} from './types.js';
 
 /**
  * The simulation adapter — everything the single-file build did, behind the
@@ -160,7 +176,8 @@ function accrueFees(c: SimCoin, now: number): void {
   const share = poolFrac(c);
   if (c.mine) {
     c.fee = (c.fee ?? 0) + bucket * (1 - share);
-    if (inCashback(c, now)) c.feeTokens = (c.feeTokens ?? 0) + (bucket * (1 - share) * NATIVE_PRICE.usd) / price(c);
+    if (inCashback(c, now))
+      c.feeTokens = (c.feeTokens ?? 0) + (bucket * (1 - share) * NATIVE_PRICE.usd) / price(c);
   }
   accrueStake(c, now);
 }
@@ -320,7 +337,12 @@ export const simApi: StonkzApi = {
   async search(query) {
     const v = query.trim().toUpperCase();
     if (!v) return [];
-    return COINS.filter((c) => c.sym.indexOf(v) > -1 || c.name.toUpperCase().indexOf(v) > -1 || c.dev.toUpperCase().indexOf(v) > -1);
+    return COINS.filter(
+      (c) =>
+        c.sym.indexOf(v) > -1 ||
+        c.name.toUpperCase().indexOf(v) > -1 ||
+        c.dev.toUpperCase().indexOf(v) > -1,
+    );
   },
 
   async quote(input) {
@@ -424,7 +446,9 @@ export const simApi: StonkzApi = {
 
   /** TODO(Phase 2.F): `claim_creator_fees` against the coin's fee vault. */
   async claimCreatorFees(sym) {
-    const list = sym ? [bySym(sym)].filter(Boolean as unknown as (c: SimCoin | null) => c is SimCoin) : COINS.filter((c) => c.mine);
+    const list = sym
+      ? [bySym(sym)].filter(Boolean as unknown as (c: SimCoin | null) => c is SimCoin)
+      : COINS.filter((c) => c.mine);
     const res: ClaimResult = { native: 0, tokens: {} };
     for (const c of list) {
       res.native += c.fee ?? 0;
@@ -528,7 +552,15 @@ export const simApi: StonkzApi = {
         ? (() => {
             const amount = rollCrateAmount(drop);
             USER.optionz = (USER.optionz ?? 0) + amount;
-            return { tier, kind: 'S' as const, amount, item: '', label: num(amount) + ' OPTIONZ', dropIndex: i, xp };
+            return {
+              tier,
+              kind: 'S' as const,
+              amount,
+              item: '',
+              label: num(amount) + ' OPTIONZ',
+              dropIndex: i,
+              xp,
+            };
           })()
         : { tier, kind: 'I' as const, amount: 0, item: drop[2], label: drop[2], dropIndex: i, xp };
 

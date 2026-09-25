@@ -3,11 +3,13 @@ import {
   CRATES,
   inCashback,
   liq,
+  type AchievementKey,
   type CrateTier,
   type Fill,
   type Lane,
   type Net,
   type Quote,
+  type Settings,
   type Wallet,
   crateBy,
   RAR,
@@ -24,7 +26,17 @@ import { signAndConfirm, signPermit, type SellPermit, type SignPayload } from '.
 import { emit } from '../lib/bus.js';
 import { clock, shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
-import { COINS, byMint, bySym, pushTrade, toFill as fillFromTrade, type Holder, type SimCoin, type Trade, type TradeHop } from '../state/coins.js';
+import {
+  COINS,
+  byMint,
+  bySym,
+  pushTrade,
+  toFill as fillFromTrade,
+  type Holder,
+  type SimCoin,
+  type Trade,
+  type TradeHop,
+} from '../state/coins.js';
 import { creditTokens, holdOf, noteTrade, HOLD } from '../state/holdings.js';
 import { syncHoldingFromChain } from './live-holding.js';
 import { ensureStake, stakeOf } from '../state/stake.js';
@@ -391,7 +403,12 @@ interface ApiMeResponse {
   username?: string | null;
   bio?: string | null;
   avatarUrl?: string | null;
-  native: { unit: string; balance: number | null; usdPrice: number | null; usdValue: number | null };
+  native: {
+    unit: string;
+    balance: number | null;
+    usdPrice: number | null;
+    usdValue: number | null;
+  };
   settings?: {
     slip: number;
     prio: number;
@@ -569,7 +586,11 @@ function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
 }
 
 function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Holder[] {
-  const curveAddr = (curveWallet || import.meta.env['VITE_RH_LAUNCHPAD_ADDRESS'] || '').toLowerCase();
+  const curveAddr = (
+    curveWallet ||
+    import.meta.env['VITE_RH_LAUNCHPAD_ADDRESS'] ||
+    ''
+  ).toLowerCase();
   let covered = 0;
   let sawCurve = false;
 
@@ -581,9 +602,7 @@ function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Hol
     const isDev =
       !isCurve &&
       !!c.dev &&
-      (r.wallet === c.dev ||
-        (!!c.mint && r.wallet === c.mint) ||
-        addr === c.dev.toLowerCase());
+      (r.wallet === c.dev || (!!c.mint && r.wallet === c.mint) || addr === c.dev.toLowerCase());
     return {
       w: isCurve ? 'BONDING CURVE' : shortAddr(r.wallet),
       ...(isCurve ? {} : { addr: r.wallet }),
@@ -771,7 +790,11 @@ function onChatFrame(channel: string, data: Record<string, unknown>): void {
 }
 
 /** Subscribes to a chat room's live messages over the shared WS. Returns an unsubscribe. */
-export function subscribeChatRoom(net: Net, room: string, onMessage: (msg: LiveChatFrame) => void): () => void {
+export function subscribeChatRoom(
+  net: Net,
+  room: string,
+  onMessage: (msg: LiveChatFrame) => void,
+): () => void {
   const channel = `chat:${net}:${room}`;
   let set = chatHandlers.get(channel);
   if (!set) {
@@ -1011,7 +1034,11 @@ function evmPayload(
 }
 
 function solPayload(prep: { transaction: string; lastValidBlockHeight: number }): SignPayload {
-  return { net: 'SOL', transaction: prep.transaction, lastValidBlockHeight: prep.lastValidBlockHeight };
+  return {
+    net: 'SOL',
+    transaction: prep.transaction,
+    lastValidBlockHeight: prep.lastValidBlockHeight,
+  };
 }
 
 /**
@@ -1092,7 +1119,10 @@ async function signTradePlan(
     );
     return { quote: confirmed.quote, signature: last.signature };
   }
-  const { signature } = await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
+  const { signature } = await signAndConfirm(
+    net,
+    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+  );
   return { quote: prep.quote, signature };
 }
 
@@ -1195,7 +1225,14 @@ async function liveTrade(quote: Quote): Promise<Fill> {
       net,
     ).catch(() => undefined);
   }
-  return applyConfirmedTrade(c, quote.side, quote.amountIn, confirmedQuote, net, signature ?? undefined);
+  return applyConfirmedTrade(
+    c,
+    quote.side,
+    quote.amountIn,
+    confirmedQuote,
+    net,
+    signature ?? undefined,
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1348,7 +1385,9 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
       { sym: v.sym, ...(v.mint ? { mint: v.mint } : {}) },
       net,
     );
-    return prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH');
+    return prep.net === 'SOL'
+      ? solPayload(prep)
+      : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH');
   };
 
   if (targets.length === 1) {
@@ -1419,7 +1458,7 @@ function applyRewardsSnap(snap: LiveRewardsSnapshot): void {
       : {}),
     dropLog: snap.dropLog.map((d) => ({ at: d.at, tier: d.tier, label: d.label })),
     achievements: snap.achievements.map((a) => ({
-      key: a.key as import('@stonkz/shared').AchievementKey,
+      key: a.key as AchievementKey,
       unlockedAt: a.unlockedAt,
     })),
   });
@@ -1500,7 +1539,12 @@ async function liveStake(input: StakeInput): Promise<void> {
   const coin = bySym(input.sym);
   const prep = await postJson<ApiStakePrepare>(
     '/stake/prepare',
-    { sym: input.sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: input.amount, days: input.days },
+    {
+      sym: input.sym,
+      ...(coin?.mint ? { mint: coin.mint } : {}),
+      amount: input.amount,
+      days: input.days,
+    },
     net,
   );
   if (prep.net === 'SOL') {
@@ -1542,7 +1586,11 @@ async function liveUnstake(sym: string): Promise<number> {
   const st = stakeOf(sym);
   if (!st || st.amt <= 0) return 0;
   if (st.until && Date.now() < st.until) {
-    throw new LiveApiError('still_locked', 'LOCKED UNTIL ' + new Date(st.until).toLocaleDateString(), 422);
+    throw new LiveApiError(
+      'still_locked',
+      'LOCKED UNTIL ' + new Date(st.until).toLocaleDateString(),
+      422,
+    );
   }
   const amt = st.amt;
   const net = WALLET.net;
@@ -1552,7 +1600,10 @@ async function liveUnstake(sym: string): Promise<number> {
     { sym, ...(coin?.mint ? { mint: coin.mint } : {}), amount: amt },
     net,
   );
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
+  await signAndConfirm(
+    net,
+    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+  );
   st.amt = 0;
   st.mult = 1;
   st.days = 0;
@@ -1574,7 +1625,10 @@ async function liveClaimStake(sym: string): Promise<StakeClaim> {
     { sym, ...(bySym(sym)?.mint ? { mint: bySym(sym)!.mint } : {}) },
     net,
   );
-  await signAndConfirm(net, prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
+  await signAndConfirm(
+    net,
+    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+  );
   const out: StakeClaim = { tokens: st?.rewTok ?? 0, native: st?.rewSol ?? 0 };
   if (out.tokens > 0) creditTokens(sym, out.tokens);
   if (out.native > 0) WALLET.sol += out.native;
@@ -1617,7 +1671,7 @@ async function hydrateLiveStake(sym: string): Promise<void> {
   }
 }
 
-async function pushLiveSettings(settings: import('@stonkz/shared').Settings): Promise<void> {
+async function pushLiveSettings(settings: Settings): Promise<void> {
   applySettings(settings);
   saveSettings();
   await ensureSession(BASE, WALLET.net);

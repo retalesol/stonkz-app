@@ -27,7 +27,9 @@ describe('chain-mode configuration', () => {
   const env = readEnv(base);
 
   it('defaults to chain mode (fixtures are opt-in for tests only)', () => {
-    expect(() => readIndexerConfig(env, {})).toThrow(/INDEXER_SOL_START_SLOT|INDEXER_RH_START_BLOCK|RH_LAUNCHPAD/);
+    expect(() => readIndexerConfig(env, {})).toThrow(
+      /INDEXER_SOL_START_SLOT|INDEXER_RH_START_BLOCK|RH_LAUNCHPAD/,
+    );
     const config = readIndexerConfig(env, {
       INDEXER_SOURCE: 'fixtures',
       INDEXER_ALLOW_FIXTURES: '1',
@@ -42,17 +44,25 @@ describe('chain-mode configuration', () => {
   });
 
   it('refuses fixtures in production without INDEXER_ALLOW_FIXTURES', () => {
-    const prod = readEnv({ ...base, NODE_ENV: 'production', ...{
-      JWT_SECRET: 'production-jwt-secret-at-least-32-chars!!',
-      CRATE_HMAC_SECRET: 'production-crate-secret-not-the-dev-one',
-      STONKZ_STAGING: '1',
-      RH_ROUTER_ADDRESS: '0x00000000000000000000000000000000000000aa',
-    }});
-    expect(() => readIndexerConfig(prod, { INDEXER_SOURCE: 'fixtures' })).toThrow(/INDEXER_ALLOW_FIXTURES/);
+    const prod = readEnv({
+      ...base,
+      NODE_ENV: 'production',
+      ...{
+        JWT_SECRET: 'production-jwt-secret-at-least-32-chars!!',
+        CRATE_HMAC_SECRET: 'production-crate-secret-not-the-dev-one',
+        STONKZ_STAGING: '1',
+        RH_ROUTER_ADDRESS: '0x00000000000000000000000000000000000000aa',
+      },
+    });
+    expect(() => readIndexerConfig(prod, { INDEXER_SOURCE: 'fixtures' })).toThrow(
+      /INDEXER_ALLOW_FIXTURES/,
+    );
   });
 
   it('rejects a source mode it does not implement', () => {
-    expect(() => readIndexerConfig(env, { INDEXER_SOURCE: 'helius' })).toThrow(/must be "fixtures" or "chain"/);
+    expect(() => readIndexerConfig(env, { INDEXER_SOURCE: 'helius' })).toThrow(
+      /must be "fixtures" or "chain"/,
+    );
   });
 
   it('refuses chain mode without a Robinhood launchpad address', () => {
@@ -112,8 +122,12 @@ describe('chain-mode configuration', () => {
       INDEXER_SOL_START_SLOT: '250000000',
       INDEXER_RH_START_BLOCK: '21000000',
     };
-    expect(() => readIndexerConfig(env, { ...chain, INDEXER_RH_CONFIRMATIONS: '-1' })).toThrow(/must not be negative/);
-    expect(() => readIndexerConfig(env, { ...chain, INDEXER_SOL_REORG_DEPTH: '0' })).toThrow(/at least 1/);
+    expect(() => readIndexerConfig(env, { ...chain, INDEXER_RH_CONFIRMATIONS: '-1' })).toThrow(
+      /must not be negative/,
+    );
+    expect(() => readIndexerConfig(env, { ...chain, INDEXER_SOL_REORG_DEPTH: '0' })).toThrow(
+      /at least 1/,
+    );
   });
 });
 
@@ -132,7 +146,13 @@ describe('the health and metrics surface', () => {
       startPosition: 988,
       startMs: Date.parse('2026-09-06T00:00:00.000Z'),
     });
-    sol.launch({ sym: 'DOGGO', name: 'Doggo Coin', creator: 'creator-DOGGO', feeBps: 250, mc: 4_200 });
+    sol.launch({
+      sym: 'DOGGO',
+      name: 'Doggo Coin',
+      creator: 'creator-DOGGO',
+      feeBps: 250,
+      mc: 4_200,
+    });
     sol.trade({
       sym: 'DOGGO',
       trader: 'SoLtrader1111111111111111111111111111111111',
@@ -151,7 +171,7 @@ describe('the health and metrics surface', () => {
       confirmations,
     });
     const idle = new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
-    rig = await createIndexerRig([], { sources: { SOL: source, RH: idle , BASE: idle  } });
+    rig = await createIndexerRig([], { sources: { SOL: source, RH: idle, BASE: idle } });
     await rig.runner.drain();
 
     const opts = {
@@ -160,7 +180,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000 , BASE: 2_000  },
+      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000 },
       maxLagSeconds,
       mode: 'chain',
       isLeader: () => true,
@@ -199,9 +219,14 @@ describe('the health and metrics surface', () => {
   });
 
   it('fails health when a chain is outside its lag budget', async () => {
-    const sol = new ScriptedSource({ net: 'SOL', head: 1_000_000, startPosition: 1, confirmations: 0 });
+    const sol = new ScriptedSource({
+      net: 'SOL',
+      head: 1_000_000,
+      startPosition: 1,
+      confirmations: 0,
+    });
     const idle = new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
-    rig = await createIndexerRig([], { sources: { SOL: sol, RH: idle , BASE: idle  } });
+    rig = await createIndexerRig([], { sources: { SOL: sol, RH: idle, BASE: idle } });
     // Nothing was ingested, but the head is a million slots away.
     await rig.cursors.observeHead('SOL', 1_000_000, 1_000_000);
 
@@ -211,7 +236,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000 , BASE: 2_000  },
+      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000 },
       maxLagSeconds: 30,
       mode: 'chain',
       isLeader: () => true,
@@ -261,7 +286,7 @@ describe('the health and metrics surface', () => {
       logger: createLogger('silent'),
       host: '127.0.0.1',
       port: 0,
-      tickMs: { SOL: 400, RH: 2_000 , BASE: 2_000  },
+      tickMs: { SOL: 400, RH: 2_000, BASE: 2_000 },
       maxLagSeconds: 30,
       mode: 'chain',
       isLeader: () => true,
@@ -304,7 +329,9 @@ describe('backfill argument parsing', () => {
 
   it('requires a chain it can actually index', () => {
     expect(() => parseBackfillArgs(['--from', '1', '--to', '2'])).toThrow(BackfillArgsError);
-    expect(() => parseBackfillArgs(['--net', 'ETH', '--from', '1', '--to', '2'])).toThrow(/SOL, RH, or BASE/);
+    expect(() => parseBackfillArgs(['--net', 'ETH', '--from', '1', '--to', '2'])).toThrow(
+      /SOL, RH, or BASE/,
+    );
   });
 
   it('requires both bounds', () => {
@@ -322,14 +349,22 @@ describe('backfill argument parsing', () => {
   });
 
   it('rejects a bound that is not a whole non-negative number', () => {
-    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '-5', '--to', '10'])).toThrow(/non-negative/);
-    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '1e6', '--to', '10'])).toThrow(/non-negative/);
-    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', 'tip', '--to', '10'])).toThrow(/non-negative/);
+    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '-5', '--to', '10'])).toThrow(
+      /non-negative/,
+    );
+    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '1e6', '--to', '10'])).toThrow(
+      /non-negative/,
+    );
+    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', 'tip', '--to', '10'])).toThrow(
+      /non-negative/,
+    );
   });
 
   it('treats a missing value as absent rather than eating the next flag', () => {
     // `--from --to 10` must not parse `--to` as the value of `--from`.
-    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '--to', '10'])).toThrow(/--from is required/);
+    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '--to', '10'])).toThrow(
+      /--from is required/,
+    );
   });
 
   it('carries every destructive flag explicitly, never by default', () => {
@@ -365,8 +400,8 @@ describe('backfill argument parsing', () => {
   });
 
   it('rejects a zero window, which would never make progress', () => {
-    expect(() => parseBackfillArgs(['--net', 'SOL', '--from', '1', '--to', '2', '--window', '0'])).toThrow(
-      /at least 1/,
-    );
+    expect(() =>
+      parseBackfillArgs(['--net', 'SOL', '--from', '1', '--to', '2', '--window', '0']),
+    ).toThrow(/at least 1/);
   });
 });

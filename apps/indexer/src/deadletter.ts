@@ -99,7 +99,14 @@ export class DeadLetters {
         },
       });
 
-    this.opts.logger.error('event dead-lettered', { net, kind, txSig, logIndex, chainPosition, error });
+    this.opts.logger.error('event dead-lettered', {
+      net,
+      kind,
+      txSig,
+      logIndex,
+      chainPosition,
+      error,
+    });
   }
 
   /**

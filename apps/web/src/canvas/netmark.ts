@@ -51,5 +51,7 @@ export function netMark(cv: HTMLCanvasElement | null, k: Net | string | undefine
 
 /** Repaint every `[data-mark]` canvas — the picker only paints when it opens. */
 export function paintNetMarks(root: ParentNode = document): void {
-  root.querySelectorAll<HTMLCanvasElement>('[data-mark]').forEach((cv) => netMark(cv, cv.dataset['mark']));
+  root
+    .querySelectorAll<HTMLCanvasElement>('[data-mark]')
+    .forEach((cv) => netMark(cv, cv.dataset['mark']));
 }

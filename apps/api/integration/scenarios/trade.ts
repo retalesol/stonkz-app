@@ -61,11 +61,19 @@ type EvmPermitTyped = {
 };
 
 /** Prefer a WETH/ETH-paired live curve token so atomic StonkzRouter path works. */
-async function pickTradeableSymbol(cfg: Parameters<typeof api>[0], net: 'SOL' | 'RH' | 'BASE'): Promise<string> {
-  const board = await api<TokenRow[] | { tokens: TokenRow[] }>(cfg, `/tokens?net=${net}&sort=mc&limit=20`);
+async function pickTradeableSymbol(
+  cfg: Parameters<typeof api>[0],
+  net: 'SOL' | 'RH' | 'BASE',
+): Promise<string> {
+  const board = await api<TokenRow[] | { tokens: TokenRow[] }>(
+    cfg,
+    `/tokens?net=${net}&sort=mc&limit=20`,
+  );
   const rows = Array.isArray(board) ? board : board.tokens;
   if (!rows || rows.length === 0) {
-    throw new Error(`no tokens on the ${net} board — launch one first, or the indexer is not ingesting`);
+    throw new Error(
+      `no tokens on the ${net} board — launch one first, or the indexer is not ingesting`,
+    );
   }
   const preferred = rows.find((r) => {
     const base = (r.baseSymbol ?? r.base)?.toUpperCase();
@@ -166,7 +174,11 @@ export const solanaRoundTrip: Scenario = {
     );
 
     const session = await login(cfg, 'SOL', signer.address, signer.signMessage);
-    expect(session.wallet === signer.address, 'SIWS session is bound to the signing wallet', session.wallet);
+    expect(
+      session.wallet === signer.address,
+      'SIWS session is bound to the signing wallet',
+      session.wallet,
+    );
 
     const sym = await pickTradeableSymbol(cfg, 'SOL');
     log('trading', { sym, amount: cfg.tradeAmountNative });
@@ -176,7 +188,11 @@ export const solanaRoundTrip: Scenario = {
       cfg,
       `/tokens/${sym}/quote?net=SOL&side=buy&amount=${cfg.tradeAmountNative}`,
     );
-    expect(Array.isArray(quote.hops) && quote.hops.length >= 1, 'quote returns hops', quote.hops?.length);
+    expect(
+      Array.isArray(quote.hops) && quote.hops.length >= 1,
+      'quote returns hops',
+      quote.hops?.length,
+    );
     const aggregatorHops = quote.hops.filter((h) => h.kind !== 'curve');
     expect(
       aggregatorHops.every((h) => !h.feeNative),
@@ -238,7 +254,10 @@ export const rhAtomicRoundTrip: Scenario = {
     log('signer', { address: signer.address });
 
     const session = await login(cfg, 'RH', signer.address, signer.signMessage);
-    expect(session.wallet.toLowerCase() === signer.address.toLowerCase(), 'SIWE session bound to signer');
+    expect(
+      session.wallet.toLowerCase() === signer.address.toLowerCase(),
+      'SIWE session bound to signer',
+    );
 
     const sym = await pickTradeableSymbol(cfg, 'RH');
 
@@ -295,9 +314,17 @@ export const rhAtomicRoundTrip: Scenario = {
       });
     }
 
-    const nonceBeforeSell = await signer.publicClient.getTransactionCount({ address: signer.address });
-    const sellHash = await signer.sendAndWait({ to: sellCall.to, data: sellCall.data, value: sellCall.value });
-    const nonceAfterSell = await signer.publicClient.getTransactionCount({ address: signer.address });
+    const nonceBeforeSell = await signer.publicClient.getTransactionCount({
+      address: signer.address,
+    });
+    const sellHash = await signer.sendAndWait({
+      to: sellCall.to,
+      data: sellCall.data,
+      value: sellCall.value,
+    });
+    const nonceAfterSell = await signer.publicClient.getTransactionCount({
+      address: signer.address,
+    });
     expect(
       nonceAfterSell - nonceBeforeSell === 1,
       'the sell settled in one transaction, with no separate approve',
@@ -314,7 +341,13 @@ export const rhAtomicRoundTrip: Scenario = {
 export const baseAtomicRoundTrip: Scenario = {
   name: 'base: atomic buy and sell in one signature each',
   proves: 'launch-checklist "real broadcast" for Coinbase Base Sepolia',
-  requires: ['apiBaseUrl', 'baseRpcUrl', 'basePrivateKey', 'baseLaunchpadAddress', 'baseRouterAddress'],
+  requires: [
+    'apiBaseUrl',
+    'baseRpcUrl',
+    'basePrivateKey',
+    'baseLaunchpadAddress',
+    'baseRouterAddress',
+  ],
   async run({ cfg, log, expect }) {
     const signer = await baseSigner(cfg);
     log('signer', { address: signer.address });
@@ -325,7 +358,10 @@ export const baseAtomicRoundTrip: Scenario = {
     expect(eth > cfg.tradeAmountNative * 2, 'signer holds enough ETH', { eth });
 
     const session = await login(cfg, 'BASE', signer.address, signer.signMessage);
-    expect(session.wallet.toLowerCase() === signer.address.toLowerCase(), 'SIWE session bound to signer');
+    expect(
+      session.wallet.toLowerCase() === signer.address.toLowerCase(),
+      'SIWE session bound to signer',
+    );
 
     const sym = await pickTradeableSymbol(cfg, 'BASE');
 
@@ -334,7 +370,11 @@ export const baseAtomicRoundTrip: Scenario = {
       token: session.accessToken,
       body: JSON.stringify({ net: 'BASE', sym, side: 'buy', amount: cfg.tradeAmountNative }),
     });
-    expect(buy.atomic === true, 'BASE buy took the atomic StonkzRouter path', buy.atomic === false ? buy.warning : undefined);
+    expect(
+      buy.atomic === true,
+      'BASE buy took the atomic StonkzRouter path',
+      buy.atomic === false ? buy.warning : undefined,
+    );
     if (buy.atomic !== true) return;
 
     const nonceBefore = await signer.publicClient.getTransactionCount({
@@ -384,7 +424,11 @@ export const baseAtomicRoundTrip: Scenario = {
       address: signer.address,
       blockTag: 'pending',
     });
-    const sellHash = await signer.sendAndWait({ to: sellCall.to, data: sellCall.data, value: sellCall.value });
+    const sellHash = await signer.sendAndWait({
+      to: sellCall.to,
+      data: sellCall.data,
+      value: sellCall.value,
+    });
     const nonceAfterSell = await signer.publicClient.getTransactionCount({
       address: signer.address,
       blockTag: 'pending',

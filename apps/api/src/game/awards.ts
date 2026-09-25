@@ -75,7 +75,8 @@ export class GameAwards {
     if (!dust) {
       if ((await this.ledger.unlock(net, wallet, 'first', txSig)).unlocked) unlocked.push('first');
       if (side === 'buy' && nativeNotional >= this.whaleCut[net]) {
-        if ((await this.ledger.unlock(net, wallet, 'whale', txSig)).unlocked) unlocked.push('whale');
+        if ((await this.ledger.unlock(net, wallet, 'whale', txSig)).unlocked)
+          unlocked.push('whale');
       }
     }
 
@@ -185,7 +186,12 @@ export class GameAwards {
     return { xp: award.xp, unlocked };
   }
 
-  async stakeClaim(input: { net: Net; wallet: string; sym: string; txSig: string }): Promise<AwardResult> {
+  async stakeClaim(input: {
+    net: Net;
+    wallet: string;
+    sym: string;
+    txSig: string;
+  }): Promise<AwardResult> {
     await this.ledger.touchStreak(input.net, input.wallet);
     return this.ledger.award({
       net: input.net,
@@ -247,7 +253,10 @@ export class GameAwards {
   }
 
   /** Daily check-in — 10 SP once per UTC day. */
-  async dailyCheckin(input: { net: Net; wallet: string }): Promise<{ claimed: boolean; sp: number }> {
+  async dailyCheckin(input: {
+    net: Net;
+    wallet: string;
+  }): Promise<{ claimed: boolean; sp: number }> {
     await this.ledger.touchStreak(input.net, input.wallet);
     return this.socialCaps.tryCheckin(input.net, input.wallet);
   }

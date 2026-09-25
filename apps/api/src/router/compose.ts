@@ -1,5 +1,13 @@
 import { buyQuote, effFeeBps, sellQuote, type BuyFill, type SellFill } from '@stonkz/curve-sim';
-import { effFee, nativeUnit, type NativeUnit, type Net, type Quote, type QuoteHop, type Venue } from '@stonkz/shared';
+import {
+  effFee,
+  nativeUnit,
+  type NativeUnit,
+  type Net,
+  type Quote,
+  type QuoteHop,
+  type Venue,
+} from '@stonkz/shared';
 import type { TokenRow } from '../routes/serialise.js';
 import type { AggregatorClient, AggregatorQuote } from './aggregator.js';
 import { hasCurveState, liveCurveState } from './curve-state.js';
@@ -85,7 +93,10 @@ export interface ComposedQuote extends Quote {
  */
 
 function effFeePctForRow(row: TokenRow, now: number): number {
-  return effFee({ tfee: row.feeBps / 100, cashback: row.cashback, cbStart: row.cbStartMs ?? undefined }, now);
+  return effFee(
+    { tfee: row.feeBps / 100, cashback: row.cashback, cbStart: row.cbStartMs ?? undefined },
+    now,
+  );
 }
 
 function effFeeBpsForRow(row: TokenRow, now: number): number {
@@ -120,9 +131,14 @@ export async function composeQuote(input: ComposeQuoteInput): Promise<ComposedQu
   return (await composeCurveQuote(input, native, aggregatorVenue)).quote;
 }
 
-async function requireAggregator(input: ComposeQuoteInput, venue: Venue): Promise<AggregatorClient> {
+async function requireAggregator(
+  input: ComposeQuoteInput,
+  venue: Venue,
+): Promise<AggregatorClient> {
   if (!input.aggregator) {
-    throw new Error(`composeQuote: aggregatorFor selected ${venue} but no aggregator client was provided`);
+    throw new Error(
+      `composeQuote: aggregatorFor selected ${venue} but no aggregator client was provided`,
+    );
   }
   return input.aggregator;
 }
@@ -188,10 +204,18 @@ export async function composeCurveTrade(input: ComposeQuoteInput): Promise<Curve
   const { net, row } = input;
   const native = nativeUnit(net);
   if (row.graduatedAt !== null) {
-    throw new NoRouteError(row.sym, nativeUnit(net), new Error('token has graduated off the curve'));
+    throw new NoRouteError(
+      row.sym,
+      nativeUnit(net),
+      new Error('token has graduated off the curve'),
+    );
   }
   if (!hasCurveState(row)) {
-    throw new NoRouteError(row.sym, nativeUnit(net), new Error('token has no on-chain curve state yet'));
+    throw new NoRouteError(
+      row.sym,
+      nativeUnit(net),
+      new Error('token has no on-chain curve state yet'),
+    );
   }
   const aggregatorVenue = aggregatorFor(net, row.baseSymbol);
   return composeCurveQuote(input, native, aggregatorVenue);
@@ -348,7 +372,10 @@ async function composeCurveQuote(
     net,
     side,
     nativeUnit: native,
-    amountIn: side === 'sell' && input.amountAtoms !== undefined ? fromAtoms(input.amountAtoms, row.tokenDecimals) : amount,
+    amountIn:
+      side === 'sell' && input.amountAtoms !== undefined
+        ? fromAtoms(input.amountAtoms, row.tokenDecimals)
+        : amount,
     amountOut,
     minOut,
     hops,
@@ -359,7 +386,15 @@ async function composeCurveQuote(
     indicative: false,
     nativeUsd: usdPrice,
   };
-  return { quote, curveAmountInAtoms, curveMinOutAtoms, aggregatorQuote, curveNetBaseOutAtoms, curveMinBaseOutAtoms, nativeInAtoms };
+  return {
+    quote,
+    curveAmountInAtoms,
+    curveMinOutAtoms,
+    aggregatorQuote,
+    curveNetBaseOutAtoms,
+    curveMinBaseOutAtoms,
+    nativeInAtoms,
+  };
 }
 
 /**
@@ -369,7 +404,11 @@ async function composeCurveQuote(
  * keeps several significant digits — plenty for a display-only percentage
  * that is never used to size `minOut` (the fill's own exact atoms are).
  */
-function buyImpactPct(virtualBaseBefore: bigint, virtualTokenBefore: bigint, fill: BuyFill): number {
+function buyImpactPct(
+  virtualBaseBefore: bigint,
+  virtualTokenBefore: bigint,
+  fill: BuyFill,
+): number {
   if (fill.tokensOut <= 0n || fill.grossBase <= 0n) return 0;
   const midTokensPerBase = Number(virtualTokenBefore) / Number(virtualBaseBefore);
   const avgTokensPerBase = Number(fill.tokensOut) / Number(fill.grossBase);

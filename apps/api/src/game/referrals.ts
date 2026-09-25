@@ -74,7 +74,11 @@ export class ReferralService {
   }
 
   /** Bind referee → referrer once. Returns false if already bound / invalid. */
-  async attach(net: Net, referee: string, code: string): Promise<{ ok: true; referrer: string } | { ok: false; error: string }> {
+  async attach(
+    net: Net,
+    referee: string,
+    code: string,
+  ): Promise<{ ok: true; referrer: string } | { ok: false; error: string }> {
     const normalised = code.trim().toUpperCase();
     if (!normalised) return { ok: false, error: 'invalid_code' };
 
@@ -210,7 +214,12 @@ export class ReferralService {
   }
 
   /** Look up trader for a FeeAccrued tx and credit referral fee shares. */
-  async creditFeesForTx(net: Net, txSig: string, feeAmount: number, protocolLeg: number): Promise<number> {
+  async creditFeesForTx(
+    net: Net,
+    txSig: string,
+    feeAmount: number,
+    protocolLeg: number,
+  ): Promise<number> {
     const [trade] = await this.db
       .select({ trader: trades.trader })
       .from(trades)
@@ -254,7 +263,10 @@ export class ReferralService {
    * Claim all pending referral fee native as Stonk Optionz.
    * Returns 0 optionz when nothing is pending.
    */
-  async claimFees(net: Net, wallet: string): Promise<{ claimedNative: number; optionz: number; optionzTotal: number }> {
+  async claimFees(
+    net: Net,
+    wallet: string,
+  ): Promise<{ claimedNative: number; optionz: number; optionzTotal: number }> {
     const [row] = await this.db
       .select()
       .from(referralFeeBalances)
@@ -287,7 +299,13 @@ export class ReferralService {
 
     const optionz = Math.max(1, Math.floor(pending * REFERRAL_OPTIONZ_PER_NATIVE));
     const refId = `refclaim:${net}:${wallet}:${Math.floor(pending * 1e9)}:${nowDate.getTime()}`;
-    const optionzTotal = await this.ledger.creditOptionz(net, wallet, optionz, 'referral_fee_claim', refId);
+    const optionzTotal = await this.ledger.creditOptionz(
+      net,
+      wallet,
+      optionz,
+      'referral_fee_claim',
+      refId,
+    );
     return { claimedNative: pending, optionz, optionzTotal };
   }
 }

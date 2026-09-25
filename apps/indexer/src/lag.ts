@@ -29,7 +29,12 @@ export class LagMonitor {
       const head = await this.opts.rpcs[net].head();
       await this.opts.cursors.observeHead(net, head);
       const cursor = await this.opts.cursors.read(net);
-      const lag = this.opts.metrics.observeChainLag(net, cursor.position, head, this.opts.tickMs[net]);
+      const lag = this.opts.metrics.observeChainLag(
+        net,
+        cursor.position,
+        head,
+        this.opts.tickMs[net],
+      );
       this.opts.logger.debug('chain lag', {
         net,
         head,
@@ -40,13 +45,20 @@ export class LagMonitor {
       return lag;
     } catch (err) {
       this.opts.metrics.rpcCall(net, false);
-      this.opts.logger.error('lag probe failed', { net, err: err instanceof Error ? err.message : String(err) });
+      this.opts.logger.error('lag probe failed', {
+        net,
+        err: err instanceof Error ? err.message : String(err),
+      });
       return null;
     }
   }
 
   async checkAll(): Promise<Record<Net, ChainLag | null>> {
-    const [sol, rh, base] = await Promise.all([this.check('SOL'), this.check('RH'), this.check('BASE')]);
+    const [sol, rh, base] = await Promise.all([
+      this.check('SOL'),
+      this.check('RH'),
+      this.check('BASE'),
+    ]);
     return { SOL: sol, RH: rh, BASE: base };
   }
 }

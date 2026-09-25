@@ -108,7 +108,10 @@ async function connect(path = url): Promise<{
   };
 }
 
-async function subscribe(client: Awaited<ReturnType<typeof connect>>, channel: string): Promise<Frame> {
+async function subscribe(
+  client: Awaited<ReturnType<typeof connect>>,
+  channel: string,
+): Promise<Frame> {
   client.send({ type: 'subscribe', channel });
   return client.next();
 }
@@ -155,7 +158,10 @@ describe('public channels', () => {
   it('delivers board events published by the indexer', async () => {
     const client = await connect();
     await client.next();
-    expect(await subscribe(client, 'board')).toMatchObject({ type: 'subscribed', channel: 'board' });
+    expect(await subscribe(client, 'board')).toMatchObject({
+      type: 'subscribed',
+      channel: 'board',
+    });
 
     await h.deps.publisher.board({ type: 'koth', net: 'SOL', sym: 'MOONER', mc: 45_000 });
     const frame = await client.next();
@@ -260,8 +266,15 @@ describe('user channel', () => {
     await client.next();
 
     client.send({ type: 'auth', token });
-    expect(await client.next()).toMatchObject({ type: 'auth', ok: true, net: 'SOL', wallet: address });
-    expect(await subscribe(client, CHANNELS.user('SOL', address))).toMatchObject({ type: 'subscribed' });
+    expect(await client.next()).toMatchObject({
+      type: 'auth',
+      ok: true,
+      net: 'SOL',
+      wallet: address,
+    });
+    expect(await subscribe(client, CHANNELS.user('SOL', address))).toMatchObject({
+      type: 'subscribed',
+    });
   });
 
   it('will not let an authenticated wallet watch another wallet’s rewards', async () => {
@@ -317,8 +330,21 @@ describe('user channel', () => {
     await subscribe(client, CHANNELS.user('SOL', address));
 
     const events = [
-      { type: 'xp' as const, net: 'SOL' as const, wallet: address, amount: 10, total: 10, reason: 'trade' },
-      { type: 'rank_up' as const, net: 'SOL' as const, wallet: address, rankIndex: 1, name: 'BAG HOLDER' },
+      {
+        type: 'xp' as const,
+        net: 'SOL' as const,
+        wallet: address,
+        amount: 10,
+        total: 10,
+        reason: 'trade',
+      },
+      {
+        type: 'rank_up' as const,
+        net: 'SOL' as const,
+        wallet: address,
+        rankIndex: 1,
+        name: 'BAG HOLDER',
+      },
       { type: 'sp' as const, net: 'SOL' as const, wallet: address, delta: 5, total: 5 },
       { type: 'optionz' as const, net: 'SOL' as const, wallet: address, delta: 250, total: 250 },
       { type: 'achievement' as const, net: 'SOL' as const, wallet: address, key: 'first', xp: 100 },

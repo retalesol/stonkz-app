@@ -24,14 +24,14 @@ Two things this runbook takes seriously:
 Five distinct roles. Do not collapse them, and do not put any of them in the
 API process's environment.
 
-| Role | Purpose | Must be |
-|---|---|---|
-| Deployer | Signs the deployment transactions only | Hot is acceptable; holds nothing afterwards |
-| Admin | Pause switches, oracle config, migrator wiring. **Cannot move money.** | Multisig or cold key |
-| Protocol withdraw authority | Withdraws the 20% protocol revenue | Multisig or cold key |
-| Ops withdraw authority | Withdraws the 10% `$STONKZ` ops vault | Multisig or cold key, **distinct from protocol** |
-| Migration authority | Runs graduation migration (Solana: pays pool rent; EVM: triggers migrate) | Warm operational key, funded |
-| Oracle authority (Solana only) | Pushes base-mint USD prices | Warm operational key, funded |
+| Role                           | Purpose                                                                   | Must be                                          |
+| ------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------ |
+| Deployer                       | Signs the deployment transactions only                                    | Hot is acceptable; holds nothing afterwards      |
+| Admin                          | Pause switches, oracle config, migrator wiring. **Cannot move money.**    | Multisig or cold key                             |
+| Protocol withdraw authority    | Withdraws the 20% protocol revenue                                        | Multisig or cold key                             |
+| Ops withdraw authority         | Withdraws the 10% `$STONKZ` ops vault                                     | Multisig or cold key, **distinct from protocol** |
+| Migration authority            | Runs graduation migration (Solana: pays pool rent; EVM: triggers migrate) | Warm operational key, funded                     |
+| Oracle authority (Solana only) | Pushes base-mint USD prices                                               | Warm operational key, funded                     |
 
 Both deploy scripts **refuse** a deployment where the protocol and ops
 authorities are the same key, or where the admin equals either withdraw
@@ -120,8 +120,8 @@ devnet). Override with `STONKZ_METEORA_PRESET` / `STONKZ_METEORA_PRESET_INDEX`.
 convenience) the script sends it; otherwise it prints the call for the admin
 signer. One-shot helper: `pnpm exec ts-node scripts/set-meteora-config.ts`.
 
-| Cluster | Meteora DLMM (`lb_clmm`) |
-|---|---|
+| Cluster               | Meteora DLMM (`lb_clmm`)                      |
+| --------------------- | --------------------------------------------- |
 | mainnet-beta / devnet | `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo` |
 
 **Until this lands, `migrate_create_pool` fails closed** (Anchor's `address = …`

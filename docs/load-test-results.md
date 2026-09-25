@@ -38,6 +38,7 @@ see "Caveats" below for what that does and doesn't invalidate.
 
 For a "launch-day" memecoin site with no historical traffic data to
 calibrate against, I assumed:
+
 - **Board pollers + WS subscribers**: 100–150 concurrent users actively
   viewing the board/token pages at once during a launch spike — reasonable
   for a new, not-yet-massive launchpad's peak, generous for its steady
@@ -67,15 +68,15 @@ Iteration = `GET /tokens` → `GET /tokens/:sym` → `GET /tokens/:sym/candles`
 → `GET /tokens/:sym/trades`, ~1–3s think time. WS VUs connect, subscribe to
 `board` + one `token:{sym}` channel, hold 30s.
 
-| Metric | Result |
-|---|---|
-| Total HTTP requests | 22,852 (161 req/s sustained) |
-| `http_req_duration` avg / p90 / p95 / p99 | 5.1ms / 8.5ms / **10.5ms** / **16.3ms** |
-| `http_req_failed` | **0.00%** (0 of 22,852) |
-| Checks passed | 100% (23,252 of 23,252) |
-| WS sessions | 400 connect/hold/close cycles, 0 failed connects |
-| WS connect time p95 | 2ms |
-| WS messages received | 1,200 total (3 per session — see note) |
+| Metric                                    | Result                                           |
+| ----------------------------------------- | ------------------------------------------------ |
+| Total HTTP requests                       | 22,852 (161 req/s sustained)                     |
+| `http_req_duration` avg / p90 / p95 / p99 | 5.1ms / 8.5ms / **10.5ms** / **16.3ms**          |
+| `http_req_failed`                         | **0.00%** (0 of 22,852)                          |
+| Checks passed                             | 100% (23,252 of 23,252)                          |
+| WS sessions                               | 400 connect/hold/close cycles, 0 failed connects |
+| WS connect time p95                       | 2ms                                              |
+| WS messages received                      | 1,200 total (3 per session — see note)           |
 
 **Note on WS message count**: 1,200 messages ÷ 400 sessions = exactly 3 per
 session — a `hello` frame plus two `subscribed` acks (one for `board`, one
@@ -93,7 +94,7 @@ endpoint is an order of magnitude under a reasonable 400ms/800ms target for
 these queries, at 0% errors. The existing Drizzle migrations already carry
 purpose-built covering indexes for every query pattern hit here (e.g.
 `tokens_lane_mc_idx`, `trades_token_recent_idx`, `candles_range_idx` — see
-"Bottlenecks" below) — this is very likely *why* latency is this low even
+"Bottlenecks" below) — this is very likely _why_ latency is this low even
 at 800 tokens seeded, not an artifact of small data volume relative to a
 production board.
 
@@ -104,12 +105,12 @@ production board.
 land in the 8s quote cache, ~60% varying amount/side to force a fresh
 curve-math computation.
 
-| Metric | Result |
-|---|---|
-| Total HTTP requests | 6,562 (62 req/s avg across both scenarios) |
-| `http_req_duration` avg / p90 / p95 / p99 | 8.7ms / 11.0ms / **13.4ms** / **71.4ms** |
-| Cache-hit-likely subset p95 | 13.5ms |
-| `http_req_failed` | **7.45%** (489 of 6,562) — see analysis below |
+| Metric                                    | Result                                        |
+| ----------------------------------------- | --------------------------------------------- |
+| Total HTTP requests                       | 6,562 (62 req/s avg across both scenarios)    |
+| `http_req_duration` avg / p90 / p95 / p99 | 8.7ms / 11.0ms / **13.4ms** / **71.4ms**      |
+| Cache-hit-likely subset p95               | 13.5ms                                        |
+| `http_req_failed`                         | **7.45%** (489 of 6,562) — see analysis below |
 
 **Root-cause of the 7.45% failure rate: this is the quote endpoint's
 per-identity rate limiter (120 req/min, `RATE_LIMITS.quote` in
@@ -122,8 +123,8 @@ API is answering instantly — it's just correctly refusing). The k6
 max VUs) to hit 120 iterations/sec; because each VU carries one fixed
 synthetic identity for its lifetime, a VU that happens to get several
 iterations assigned in quick succession by k6's scheduler can exceed 120
-requests/minute *for that one synthetic identity* well before the run's
-*aggregate* rate does — this is a load-test-harness identity-distribution
+requests/minute _for that one synthetic identity_ well before the run's
+_aggregate_ rate does — this is a load-test-harness identity-distribution
 artifact, not evidence that a real launch-day crowd (where 120 req/s means
 ~120 distinct real IPs, not a few dozen reused ones) would see this error
 rate.
@@ -144,13 +145,13 @@ relax.
 limiters across the run's wallet/IP pool), authenticated with real JWTs for
 150 distinct synthetic wallets.
 
-| Metric | Result |
-|---|---|
-| Total requests | 2,167 (18/s combined) |
-| `POST /trade/prepare` avg / p90 / p95 / p99 | 120ms / 145ms / **150ms** / **201ms** |
-| `POST /trade/prepare` error rate | 0.37% (8 of 2,149) |
-| `POST /launch/prepare` avg / p90 / p95 | 100ms / 139ms / **210ms** |
-| Overall checks | 100% passed (`answered` = any non-5xx; the 0.37% "errors" above are k6's stricter `http_req_failed`, which flags 4xx too) |
+| Metric                                      | Result                                                                                                                    |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Total requests                              | 2,167 (18/s combined)                                                                                                     |
+| `POST /trade/prepare` avg / p90 / p95 / p99 | 120ms / 145ms / **150ms** / **201ms**                                                                                     |
+| `POST /trade/prepare` error rate            | 0.37% (8 of 2,149)                                                                                                        |
+| `POST /launch/prepare` avg / p90 / p95      | 100ms / 139ms / **210ms**                                                                                                 |
+| Overall checks                              | 100% passed (`answered` = any non-5xx; the 0.37% "errors" above are k6's stricter `http_req_failed`, which flags 4xx too) |
 
 The 8 failed `trade/prepare` calls are expected, not bugs: the script
 deliberately mixes buy/sell across a shared pool of tokens that other VUs
@@ -190,7 +191,7 @@ application bottleneck — see §2 above; no code change was made for it.
 - **Single machine, not isolated infra.** The API, Postgres, Redis, and k6
   itself all ran on one laptop competing for the same CPU/memory/disk — a
   production deployment with the API and DB on separate, dedicated
-  infrastructure would very likely show *better* p95/p99 than recorded here,
+  infrastructure would very likely show _better_ p95/p99 than recorded here,
   not worse, so these numbers are a conservative (if anything) estimate of
   API-side latency.
 - **RPCs and the price oracle are stubbed**, not real Solana/EVM RPCs — by

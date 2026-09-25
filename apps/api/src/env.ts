@@ -4,7 +4,12 @@ import {
   BASE_SEPOLIA_EXPLORER_URL,
   BASE_SEPOLIA_RPC_URL,
 } from './chain/base.js';
-import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL, RH_TESTNET_CHAIN_ID, RH_TESTNET_PUBLIC_RPC_URL } from './chain/evm.js';
+import {
+  RH_CHAIN_ID,
+  RH_PUBLIC_RPC_URL,
+  RH_TESTNET_CHAIN_ID,
+  RH_TESTNET_PUBLIC_RPC_URL,
+} from './chain/evm.js';
 
 /**
  * Every knob the API reads, resolved once at boot. Defaults target
@@ -187,7 +192,8 @@ function int(src: EnvSource, key: string, fallback: number): number {
   const raw = src[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
+  if (!Number.isFinite(n))
+    throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
   return n;
 }
 
@@ -195,7 +201,8 @@ function float(src: EnvSource, key: string, fallback: number): number {
   const raw = src[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number.parseFloat(raw);
-  if (!Number.isFinite(n)) throw new Error(`env ${key} must be a number, got ${JSON.stringify(raw)}`);
+  if (!Number.isFinite(n))
+    throw new Error(`env ${key} must be a number, got ${JSON.stringify(raw)}`);
   return n;
 }
 
@@ -218,7 +225,9 @@ function ints(src: EnvSource, key: string, fallback: readonly number[]): number[
     .map((s) => {
       const n = Number.parseInt(s, 10);
       if (!Number.isInteger(n)) {
-        throw new Error(`env ${key} must be a comma-separated integer list, got ${JSON.stringify(raw)}`);
+        throw new Error(
+          `env ${key} must be a comma-separated integer list, got ${JSON.stringify(raw)}`,
+        );
       }
       return n;
     });
@@ -238,7 +247,12 @@ function intMap(src: EnvSource, key: string): Record<string, number> {
   return out;
 }
 
-function oneOf<T extends string>(src: EnvSource, key: string, allowed: readonly T[], fallback: T): T {
+function oneOf<T extends string>(
+  src: EnvSource,
+  key: string,
+  allowed: readonly T[],
+  fallback: T,
+): T {
   const v = str(src, key, fallback);
   if (!(allowed as readonly string[]).includes(v)) {
     throw new Error(`env ${key} must be one of ${allowed.join(' | ')}, got ${JSON.stringify(v)}`);
@@ -247,12 +261,22 @@ function oneOf<T extends string>(src: EnvSource, key: string, allowed: readonly 
 }
 
 export function readEnv(src: EnvSource = process.env): ApiEnv {
-  const nodeEnv = oneOf(src, 'NODE_ENV', ['development', 'test', 'production'] as const, 'development');
+  const nodeEnv = oneOf(
+    src,
+    'NODE_ENV',
+    ['development', 'test', 'production'] as const,
+    'development',
+  );
 
   const env: ApiEnv = {
     nodeEnv,
     port: int(src, 'PORT', 8787),
-    logLevel: oneOf(src, 'LOG_LEVEL', ['debug', 'info', 'warn', 'error', 'silent'] as const, nodeEnv === 'test' ? 'silent' : 'info'),
+    logLevel: oneOf(
+      src,
+      'LOG_LEVEL',
+      ['debug', 'info', 'warn', 'error', 'silent'] as const,
+      nodeEnv === 'test' ? 'silent' : 'info',
+    ),
 
     databaseUrl: str(src, 'DATABASE_URL', 'postgres://stonkz:stonkz@localhost:5432/stonkz'),
     databasePoolMax: int(src, 'DATABASE_POOL_MAX', 10),
@@ -295,7 +319,9 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     rhRpcUrl: str(
       src,
       'RH_RPC_URL',
-      int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === RH_TESTNET_CHAIN_ID ? RH_TESTNET_PUBLIC_RPC_URL : RH_PUBLIC_RPC_URL,
+      int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === RH_TESTNET_CHAIN_ID
+        ? RH_TESTNET_PUBLIC_RPC_URL
+        : RH_PUBLIC_RPC_URL,
     ),
     rhExplorerUrl: str(
       src,
@@ -358,7 +384,11 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     uniswapApiBaseUrl: str(src, 'UNISWAP_API_BASE_URL', 'https://trade-api.gateway.uniswap.org/v1'),
     uniswapApiKey: src['UNISWAP_API_KEY']?.trim() || undefined,
 
-    solanaLaunchpadProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', 'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg'),
+    solanaLaunchpadProgramId: str(
+      src,
+      'SOLANA_LAUNCHPAD_PROGRAM_ID',
+      'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg',
+    ),
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
     rhV3FeeTierOverrides: (() => {
@@ -405,7 +435,8 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
 
   if (env.nodeEnv === 'production') {
     if (env.jwtSecret === DEV_JWT_SECRET) throw new Error('JWT_SECRET must be set in production');
-    if (env.crateHmacSecret === DEV_CRATE_SECRET) throw new Error('CRATE_HMAC_SECRET must be set in production');
+    if (env.crateHmacSecret === DEV_CRATE_SECRET)
+      throw new Error('CRATE_HMAC_SECRET must be set in production');
     if (env.jwtSecret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
     // Atomic RH path is mandatory even on STONKZ_STAGING — never boot a
     // production image that would fall through to multi-signature EvmStep[].
@@ -423,7 +454,9 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
         );
       }
       if (env.rhLaunchpadAddress === ZERO_EVM_ADDRESS) {
-        throw new Error('RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in');
+        throw new Error(
+          'RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in',
+        );
       }
     }
   }

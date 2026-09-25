@@ -83,7 +83,9 @@ export function solSigner(cfg: Config, which: 'primary' | 'secondary' = 'primary
         'confirmed',
       );
       if (confirmation.value.err) {
-        throw new Error(`transaction ${signature} failed on chain: ${JSON.stringify(confirmation.value.err)}`);
+        throw new Error(
+          `transaction ${signature} failed on chain: ${JSON.stringify(confirmation.value.err)}`,
+        );
       }
       return signature;
     },
@@ -98,7 +100,10 @@ export function solSigner(cfg: Config, which: 'primary' | 'secondary' = 'primary
       );
       const signature = await connection.sendTransaction(tx, [keypair]);
       const latest = await connection.getLatestBlockhash();
-      const confirmation = await connection.confirmTransaction({ signature, ...latest }, 'confirmed');
+      const confirmation = await connection.confirmTransaction(
+        { signature, ...latest },
+        'confirmed',
+      );
       if (confirmation.value.err) {
         throw new Error(`transfer ${signature} failed: ${JSON.stringify(confirmation.value.err)}`);
       }
@@ -132,7 +137,11 @@ export interface RhSigner {
   /** EIP-712, for the ERC-2612 permit on a first-time sell. */
   signTypedData: (typedData: unknown) => Promise<Hex>;
   /** Send a prepared call and wait for the receipt; throws on a reverted tx. */
-  sendAndWait: (call: { to: `0x${string}`; data: Hex; value?: string | bigint | undefined }) => Promise<Hex>;
+  sendAndWait: (call: {
+    to: `0x${string}`;
+    data: Hex;
+    value?: string | bigint | undefined;
+  }) => Promise<Hex>;
 }
 
 export async function rhSigner(cfg: Config): Promise<RhSigner> {
@@ -230,7 +239,9 @@ export async function login(
   address: string,
   sign: (message: string) => string | Promise<string>,
 ): Promise<Session> {
-  const nonceRes = await fetch(`${cfg.apiBaseUrl}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`);
+  const nonceRes = await fetch(
+    `${cfg.apiBaseUrl}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`,
+  );
   if (!nonceRes.ok) throw new Error(`GET /auth/nonce -> ${nonceRes.status}`);
   const challenge = (await nonceRes.json()) as { message: string };
 
@@ -242,7 +253,9 @@ export async function login(
     body: JSON.stringify({ address, message: challenge.message, signature }),
   });
   if (!loginRes.ok) {
-    throw new Error(`POST ${route} -> ${loginRes.status}: ${(await loginRes.text()).slice(0, 300)}`);
+    throw new Error(
+      `POST ${route} -> ${loginRes.status}: ${(await loginRes.text()).slice(0, 300)}`,
+    );
   }
   const session = (await loginRes.json()) as { wallet: string; accessToken: string };
   return { wallet: session.wallet, accessToken: session.accessToken };

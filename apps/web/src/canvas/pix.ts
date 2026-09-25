@@ -2,7 +2,16 @@ import { MEMEMAN_SRC, paintAvatar } from '../lib/avatar.js';
 import { rng } from '@stonkz/shared';
 
 /** Avatar palette. `index.html:1145` */
-export const PAL = ['#ffa22b', '#00d26a', '#4d9bff', '#a273ff', '#ffd23f', '#ff4c3b', '#26d0c4', '#ff7ac0'];
+export const PAL = [
+  '#ffa22b',
+  '#00d26a',
+  '#4d9bff',
+  '#a273ff',
+  '#ffd23f',
+  '#ff4c3b',
+  '#26d0c4',
+  '#ff7ac0',
+];
 
 /** Amber square used when a coin has no custom upload. */
 export const COIN_DEFAULT_BG = '#ffa22b';
@@ -77,7 +86,13 @@ export function paintCoinArt(
 }
 
 /** The same avatar drawn into an existing context, for the wizard art. `index.html:2816` */
-export function miniAv(g: CanvasRenderingContext2D, x: number, y: number, size: number, seed: number): void {
+export function miniAv(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  seed: number,
+): void {
   const r = rng(seed);
   const n = 8;
   const c = size / n;

@@ -23,7 +23,10 @@ export const BASE_CHAIN_ID: number = Number(envStr('VITE_BASE_CHAIN_ID', '84532'
 export const BASE_CHAIN_ID_HEX = '0x' + BASE_CHAIN_ID.toString(16);
 
 export const BASE_RPC_URL: string = envStr('VITE_BASE_RPC', 'https://sepolia.base.org');
-export const BASE_EXPLORER_URL: string = envStr('VITE_BASE_EXPLORER', 'https://sepolia.basescan.org');
+export const BASE_EXPLORER_URL: string = envStr(
+  'VITE_BASE_EXPLORER',
+  'https://sepolia.basescan.org',
+);
 
 export const BASE_ADD_CHAIN_PARAMS = {
   chainId: BASE_CHAIN_ID_HEX,
@@ -104,6 +107,8 @@ export function evmChainIdForNet(net: Net): number {
   return net === 'BASE' ? BASE_CHAIN_ID : RH_CHAIN_ID;
 }
 
-export function evmAddChainParams(net: Net): typeof RH_ADD_CHAIN_PARAMS | typeof BASE_ADD_CHAIN_PARAMS {
+export function evmAddChainParams(
+  net: Net,
+): typeof RH_ADD_CHAIN_PARAMS | typeof BASE_ADD_CHAIN_PARAMS {
   return net === 'BASE' ? BASE_ADD_CHAIN_PARAMS : RH_ADD_CHAIN_PARAMS;
 }

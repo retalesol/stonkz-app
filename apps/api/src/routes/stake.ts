@@ -138,7 +138,8 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('stake/prepare: Solana RPC does not implement latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('stake/prepare: Solana RPC does not implement latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
       const mint = new PublicKey(row.mint);
@@ -156,7 +157,9 @@ export function stakeRoutes(): Hono<AppEnv> {
         action: 'stake',
         amount,
         days,
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }
@@ -223,7 +226,11 @@ export function stakeRoutes(): Hono<AppEnv> {
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; mint?: unknown; amount?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      sym?: unknown;
+      mint?: unknown;
+      amount?: unknown;
+    };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
     const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     const amount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
@@ -237,7 +244,8 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('stake/unstake/prepare: Solana RPC missing latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('stake/unstake/prepare: Solana RPC missing latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
       const mint = new PublicKey(row.mint);
@@ -254,7 +262,9 @@ export function stakeRoutes(): Hono<AppEnv> {
         sym,
         action: 'unstake',
         amount,
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }
@@ -302,7 +312,8 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('stake/claim/prepare: Solana RPC missing latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('stake/claim/prepare: Solana RPC missing latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
       const mint = new PublicKey(row.mint);
@@ -318,7 +329,9 @@ export function stakeRoutes(): Hono<AppEnv> {
         net,
         sym,
         action: 'claim',
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }

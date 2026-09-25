@@ -10,7 +10,7 @@ import {
   toWhole,
   TOKEN_DECIMALS,
 } from './market.js';
-import type { TokenRegistry} from './registry.js';
+import type { TokenRegistry } from './registry.js';
 import { UnknownMintError, type TokenMeta } from './registry.js';
 import type { SolanaLaunchpadEvent } from './solana-events.js';
 
@@ -72,12 +72,20 @@ export async function mapSolanaTransaction(
 ): Promise<ChainEvent[]> {
   const out: ChainEvent[] = [];
   const hasFeeAccrued = records.some((r) => r.kind === 'FeeAccrued');
-  const trade = records.find((r): r is Extract<SolanaLaunchpadEvent, { kind: 'Trade' }> => r.kind === 'Trade');
+  const trade = records.find(
+    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'Trade' }> => r.kind === 'Trade',
+  );
   const migrated = records.find(
-    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'LiquidityMigrated' }> => r.kind === 'LiquidityMigrated',
+    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'LiquidityMigrated' }> =>
+      r.kind === 'LiquidityMigrated',
   );
 
-  const base = { net: 'SOL' as const, txSig: ctx.txSig, chainPosition: ctx.slot, blockTimeMs: ctx.blockTimeMs };
+  const base = {
+    net: 'SOL' as const,
+    txSig: ctx.txSig,
+    chainPosition: ctx.slot,
+    blockTimeMs: ctx.blockTimeMs,
+  };
   let logIndex = 0;
 
   const need = async (mint: string): Promise<TokenMeta> => {
@@ -255,9 +263,7 @@ export async function mapSolanaTransaction(
           mint: record.mint,
           sym: meta.sym,
           mc: Number(record.mcapUsd1e6) / 1e6,
-          ...(migrated
-            ? { poolAddress: migrated.pool, positionAddress: migrated.position }
-            : {}),
+          ...(migrated ? { poolAddress: migrated.pool, positionAddress: migrated.position } : {}),
         });
         break;
       }

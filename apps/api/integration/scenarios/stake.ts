@@ -44,7 +44,10 @@ async function pickTradeable(
   cfg: Parameters<typeof api>[0],
   net: 'SOL' | 'RH' | 'BASE',
 ): Promise<TokenRow> {
-  const board = await api<TokenRow[] | { tokens: TokenRow[] }>(cfg, `/tokens?net=${net}&sort=mc&limit=20`);
+  const board = await api<TokenRow[] | { tokens: TokenRow[] }>(
+    cfg,
+    `/tokens?net=${net}&sort=mc&limit=20`,
+  );
   const rows = Array.isArray(board) ? board : board.tokens;
   if (!rows?.length) throw new ScenarioSkip(`no tokens on ${net} board`);
   const preferred = rows.find((r) => {
@@ -75,7 +78,8 @@ async function buyNative(
     if (!tx || !opts.signSol) throw new Error('sol buy prepare missing tx');
     await opts.signSol(tx);
   } else {
-    if (prep.atomic === false) throw new Error(`${opts.net} buy fell back to non-atomic: ${prep.warning}`);
+    if (prep.atomic === false)
+      throw new Error(`${opts.net} buy fell back to non-atomic: ${prep.warning}`);
     if (!opts.signEvm) throw new Error('evm signer missing');
     await opts.signEvm({
       to: prep.to,
@@ -122,15 +126,10 @@ export const solanaStakeRoundTrip: Scenario = {
     const stakeSig = await signer.signAndSend(stakeTx!);
     log('stake settled', { stakeSig });
 
-    const pos = await waitFor(
-      'indexer stake position',
-      cfg.indexerTimeoutMs,
-      3_000,
-      async () => {
-        const row = await api<StakeView>(cfg, `/stake/${sym}`, { token: session.accessToken });
-        return row.amt > 0 ? row : null;
-      },
-    );
+    const pos = await waitFor('indexer stake position', cfg.indexerTimeoutMs, 3_000, async () => {
+      const row = await api<StakeView>(cfg, `/stake/${sym}`, { token: session.accessToken });
+      return row.amt > 0 ? row : null;
+    });
     expect(pos.amt > 0, 'stake position amount > 0', pos);
 
     const unstakeAmt = Math.min(pos.amt, stakeAmt);
@@ -209,15 +208,10 @@ function evmStakeScenario(net: 'RH' | 'BASE', name: string): Scenario {
         log('stake step settled', { label: step.label, stakeHash });
       }
 
-      const pos = await waitFor(
-        'indexer stake position',
-        cfg.indexerTimeoutMs,
-        3_000,
-        async () => {
-          const row = await api<StakeView>(cfg, `/stake/${sym}`, { token: session.accessToken });
-          return row.amt > 0 ? row : null;
-        },
-      );
+      const pos = await waitFor('indexer stake position', cfg.indexerTimeoutMs, 3_000, async () => {
+        const row = await api<StakeView>(cfg, `/stake/${sym}`, { token: session.accessToken });
+        return row.amt > 0 ? row : null;
+      });
       expect(pos.amt > 0, 'stake position amount > 0', pos);
 
       const unstakePrep = await api<EvmPrepare>(cfg, '/stake/unstake/prepare', {
@@ -235,7 +229,10 @@ function evmStakeScenario(net: 'RH' | 'BASE', name: string): Scenario {
   };
 }
 
-export const rhStakeRoundTrip = evmStakeScenario('RH', 'robinhood: stake flex then unstake settles');
+export const rhStakeRoundTrip = evmStakeScenario(
+  'RH',
+  'robinhood: stake flex then unstake settles',
+);
 export const baseStakeRoundTrip = evmStakeScenario('BASE', 'base: stake flex then unstake settles');
 
 export const creatorFeesAndReferrals: Scenario = {
@@ -273,11 +270,15 @@ export const creatorFeesAndReferrals: Scenario = {
     });
 
     if (refs.pendingNative > 0) {
-      const claimed = await api<{ optionz: number; optionzTotal: number }>(cfg, '/referrals/claim', {
-        method: 'POST',
-        token: session.accessToken,
-        body: '{}',
-      });
+      const claimed = await api<{ optionz: number; optionzTotal: number }>(
+        cfg,
+        '/referrals/claim',
+        {
+          method: 'POST',
+          token: session.accessToken,
+          body: '{}',
+        },
+      );
       expect(claimed.optionz > 0, 'referral claim minted Optionz', claimed);
     } else {
       log('no pending referral fees — code + zero-pending path verified');

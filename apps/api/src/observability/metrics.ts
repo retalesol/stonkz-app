@@ -118,12 +118,18 @@ export class Metrics {
     const calls = this.rpcCalls[net];
     const rate = calls === 0 ? 0 : this.rpcErrors[net] / calls;
     // Only meaningful once there is a sample worth believing.
-    this.edge(`rpc-errors:${net}`, calls >= 20 && rate > 0.25, 'warn', `${net} RPC error rate is high`, {
-      net,
-      calls,
-      errors: this.rpcErrors[net],
-      errorRate: Number(rate.toFixed(3)),
-    });
+    this.edge(
+      `rpc-errors:${net}`,
+      calls >= 20 && rate > 0.25,
+      'warn',
+      `${net} RPC error rate is high`,
+      {
+        net,
+        calls,
+        errors: this.rpcErrors[net],
+        errorRate: Number(rate.toFixed(3)),
+      },
+    );
   }
 
   /**

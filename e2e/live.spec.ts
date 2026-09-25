@@ -118,7 +118,7 @@ test('opening a shareable /t/:sym URL cold loads real candles, trades and holder
   // A fresh navigation, not a client-side route change: this is what a
   // pasted link actually does.
   await page.goto(`/t/${sym}`);
-    await waitBooted(page);
+  await waitBooted(page);
   await expect(page.locator('#tokenView')).toBeVisible();
   await expect(page.locator('.tk-id h1')).toContainText(sym);
   await expect(page.locator('#tabbody')).toBeVisible();
@@ -311,11 +311,21 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
   }
 
   /** Intercepts `GET .../quote` for one symbol+side with a fabricated response — only the base-hop case needs this; every other test lets the real fixture curve answer. */
-  async function mockQuote(page: Page, sym: string, side: 'buy' | 'sell', quote: MockQuote): Promise<void> {
+  async function mockQuote(
+    page: Page,
+    sym: string,
+    side: 'buy' | 'sell',
+    quote: MockQuote,
+  ): Promise<void> {
     await page.route(`**/tokens/${sym}/quote*`, async (route) => {
       const url = new URL(route.request().url());
-      if (route.request().method() !== 'GET' || url.searchParams.get('side') !== side) return route.fallback();
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(quote) });
+      if (route.request().method() !== 'GET' || url.searchParams.get('side') !== side)
+        return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(quote),
+      });
     });
   }
 
@@ -368,7 +378,11 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
 
     await page.click('#t-go');
     await expect(page.locator('#txScrim')).toBeHidden({ timeout: 5_000 });
-    await expect(page.locator('.mm-bubble', { hasText: /ATOMIC ROUTER REQUIRED|NON-ATOMIC|RH_ROUTER|FEE TIER/i })).toBeVisible({
+    await expect(
+      page.locator('.mm-bubble', {
+        hasText: /ATOMIC ROUTER REQUIRED|NON-ATOMIC|RH_ROUTER|FEE TIER/i,
+      }),
+    ).toBeVisible({
       timeout: 15_000,
     });
   });
@@ -394,11 +408,15 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     const go = page.locator('#t-go');
     await go.click();
     await expect(go).toBeDisabled();
-    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(go).toBeEnabled();
   });
 
-  test('SOL buy — a base-hop quote shows the aggregator leg and still fills atomically', async ({ page }) => {
+  test('SOL buy — a base-hop quote shows the aggregator leg and still fills atomically', async ({
+    page,
+  }) => {
     const sym = 'DEVCOIN';
     const amount = 0.5;
     const quote = baseHopBuyQuote(sym, amount);
@@ -414,7 +432,9 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('#t-quote')).toContainText('JUP');
 
     await page.click('#t-go');
-    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('SOL sell fills after the signed prepare response resolves', async ({ page }) => {
@@ -431,7 +451,9 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('#t-quote')).toContainText('YOU SELL');
 
     await page.click('#t-go');
-    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   /** The `StonkzRouter` path — `docs/rh-trade-atomicity-gap.md`'s "closed" case: one `to`/`data`/`value` call, no `EvmStep[]`. */
@@ -511,10 +533,10 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
                 },
                 note: 'Sign the EIP-712 permit, then resend with `permit` set.',
               },
-            ),
-          });
-        });
-      }
+        ),
+      });
+    });
+  }
 
   test('Robinhood atomic buy — one StonkzRouter call, no step walker, fills like an atomic Solana trade', async ({
     page,
@@ -538,7 +560,9 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     // Atomic on RH means exactly what it means on SOL: no step modal, one
     // wallet-adapter signature.
     await expect(page.locator('#txScrim')).toBeHidden();
-    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(go).toBeEnabled();
   });
 
@@ -628,7 +652,9 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await page.fill('#f-buy', '0.50');
     await page.click('#nc-next'); // launch
 
-    await expect(page.locator('.mm-bubble', { hasText: 'DEPLOYED ' + sym })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: 'DEPLOYED ' + sym })).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page).toHaveURL(new RegExp(`/t/${sym}$`));
     await expect(page.locator('.tk-id h1')).toContainText(sym);
   });
@@ -662,7 +688,12 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ net: 'SOL', sym: 'DEVCOIN', transaction: FAKE_SOL_TX, lastValidBlockHeight: 999_999 }),
+        body: JSON.stringify({
+          net: 'SOL',
+          sym: 'DEVCOIN',
+          transaction: FAKE_SOL_TX,
+          lastValidBlockHeight: 999_999,
+        }),
       });
     });
 
@@ -680,7 +711,9 @@ test.describe('trade box, launch and claim — live adapter wiring', () => {
     await expect(page.locator('#claimBody')).toContainText('0.420 SOL');
 
     await page.click('#claim-go');
-    await expect(page.locator('.mm-bubble', { hasText: 'CLAIMED 0.420 SOL' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.mm-bubble', { hasText: 'CLAIMED 0.420 SOL' })).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.locator('#claimScrim')).toBeHidden();
   });
 });
@@ -767,7 +800,9 @@ test.describe('Phase 5 — social layer', () => {
     expect(await walletRecord<number | undefined>(page, '__sentSolBytes')).toBeGreaterThan(0);
   });
 
-  test('sending a chat message posts over REST and echoes back over the live WS channel', async ({ page }) => {
+  test('sending a chat message posts over REST and echoes back over the live WS channel', async ({
+    page,
+  }) => {
     await page.click('#chatTab');
     await expect(page.locator('#drawer')).toHaveClass(/open/);
 
@@ -781,6 +816,8 @@ test.describe('Phase 5 — social layer', () => {
 
     // Round-tripped through the real server and the real WS `chat:` channel,
     // not appended locally — see `views/chat.ts`'s submit handler.
-    await expect(page.locator('#chatLog .cm.mine', { hasText: text })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#chatLog .cm.mine', { hasText: text })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

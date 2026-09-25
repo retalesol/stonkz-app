@@ -39,7 +39,8 @@ export class HttpPriceOracle implements PriceOracle {
       if (!res.ok) throw new Error(`price oracle HTTP ${res.status}`);
       const body = (await res.json()) as { data?: { amount?: string } };
       const amount = Number.parseFloat(body.data?.amount ?? '');
-      if (!Number.isFinite(amount) || amount <= 0) throw new Error('price oracle returned no amount');
+      if (!Number.isFinite(amount) || amount <= 0)
+        throw new Error('price oracle returned no amount');
       return amount;
     } finally {
       clearTimeout(timer);

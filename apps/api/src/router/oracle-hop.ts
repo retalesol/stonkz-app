@@ -101,7 +101,13 @@ export class OracleHopClient implements AggregatorClient {
     const outUsd = await this.usd1e6(outSide);
     if (inUsd <= 0n || outUsd <= 0n) throw new NoRouteError(inSide.symbol, outSide.symbol);
 
-    const outAmountAtoms = convertByUsd(req.inAmountAtoms, inSide.decimals, inUsd, outSide.decimals, outUsd);
+    const outAmountAtoms = convertByUsd(
+      req.inAmountAtoms,
+      inSide.decimals,
+      inUsd,
+      outSide.decimals,
+      outUsd,
+    );
     if (outAmountAtoms <= 0n) throw new NoRouteError(inSide.symbol, outSide.symbol);
 
     const raw: OracleHopRaw = {
@@ -123,7 +129,9 @@ export class OracleHopClient implements AggregatorClient {
     };
   }
 
-  private resolveSide(mint: string): { kind: 'native' | 'base'; symbol: string; decimals: number } | null {
+  private resolveSide(
+    mint: string,
+  ): { kind: 'native' | 'base'; symbol: string; decimals: number } | null {
     const lower = mint.toLowerCase();
     if (lower === NATIVE_ETH_MINT.toLowerCase() || lower === this.wethMint) {
       return { kind: 'native', symbol: 'ETH', decimals: 18 };
@@ -159,5 +167,7 @@ export function convertByUsd(
   outUsd1e6: bigint,
 ): bigint {
   if (inAtoms <= 0n || inUsd1e6 <= 0n || outUsd1e6 <= 0n) return 0n;
-  return (inAtoms * inUsd1e6 * 10n ** BigInt(outDecimals)) / (outUsd1e6 * 10n ** BigInt(inDecimals));
+  return (
+    (inAtoms * inUsd1e6 * 10n ** BigInt(outDecimals)) / (outUsd1e6 * 10n ** BigInt(inDecimals))
+  );
 }

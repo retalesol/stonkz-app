@@ -213,7 +213,10 @@ export function hydrateRewards(snap: RewardsHydration): void {
   emit('rank');
   const after = rankOf(USER.xp).i;
   if (after > before) {
-    toast('RANK UP to LV ' + (after + 1) + ' ' + (RANKS[after] as (typeof RANKS)[number])[0], 'gold');
+    toast(
+      'RANK UP to LV ' + (after + 1) + ' ' + (RANKS[after] as (typeof RANKS)[number])[0],
+      'gold',
+    );
     rankUp(after);
   }
 }
@@ -253,7 +256,10 @@ export function addXP(base: number, why?: string): void {
   emit('rank');
   const after = rankOf(USER.xp).i;
   if (after > before) {
-    toast('RANK UP to LV ' + (after + 1) + ' ' + (RANKS[after] as (typeof RANKS)[number])[0], 'gold');
+    toast(
+      'RANK UP to LV ' + (after + 1) + ' ' + (RANKS[after] as (typeof RANKS)[number])[0],
+      'gold',
+    );
     rankUp(after);
   } else if (why) {
     const mult = xpMult() > 1 ? ' (x' + xpMult().toFixed(2) + ')' : '';
@@ -301,7 +307,8 @@ export function touchStreak(): void {
   USER.streak = USER.lastDay === dayKey(y) ? (USER.streak || 0) + 1 : 1;
   USER.lastDay = today;
   saveUser();
-  if (USER.streak > 1) toast('STREAK ' + USER.streak + ' DAYS ' + DOT + ' XP x' + xpMult().toFixed(2), 'gold');
+  if (USER.streak > 1)
+    toast('STREAK ' + USER.streak + ' DAYS ' + DOT + ' XP x' + xpMult().toFixed(2), 'gold');
   if (USER.streak >= 7) unlock('streak7');
 }
 

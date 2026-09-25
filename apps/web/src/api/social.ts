@@ -28,10 +28,18 @@ export class SocialApiError extends Error {
 }
 
 async function readError(res: Response): Promise<{ code: string; detail: string }> {
-  const body = (await res.json().catch(() => ({}))) as { error?: unknown; reason?: unknown; detail?: unknown };
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: unknown;
+    reason?: unknown;
+    detail?: unknown;
+  };
   const code = typeof body.error === 'string' ? body.error : 'request_failed';
   const detail =
-    typeof body.detail === 'string' ? body.detail : typeof body.reason === 'string' ? body.reason : code;
+    typeof body.detail === 'string'
+      ? body.detail
+      : typeof body.reason === 'string'
+        ? body.reason
+        : code;
   return { code, detail };
 }
 
@@ -126,7 +134,14 @@ export function fetchMember(net: Net, addr: string): Promise<LiveMember> {
 
 export function patchMyProfile(
   net: Net,
-  patch: Partial<{ username: string; bio: string; avatarUrl: string; xHandle: string; website: string; telegram: string }>,
+  patch: Partial<{
+    username: string;
+    bio: string;
+    avatarUrl: string;
+    xHandle: string;
+    website: string;
+    telegram: string;
+  }>,
 ): Promise<{ profile: LiveProfile }> {
   return authedJson(`/me`, net, { method: 'PATCH', body: JSON.stringify(patch) });
 }
@@ -139,7 +154,10 @@ export function unfollow(net: Net, addr: string): Promise<{ following: boolean }
   return authedJson(`/follow/${net}/${addr}`, net, { method: 'DELETE' });
 }
 
-export function fetchWall(net: Net, addr: string): Promise<{ minTip: number; posts: LiveWallPost[] }> {
+export function fetchWall(
+  net: Net,
+  addr: string,
+): Promise<{ minTip: number; posts: LiveWallPost[] }> {
   return getJson(`/wall/${net}/${addr}`);
 }
 
@@ -155,7 +173,10 @@ export function postWallTip(
   text: string,
   tipTxSig: string,
 ): Promise<{ post: LiveWallPost; xpAwarded: number }> {
-  return authedJson(`/wall/${net}/${addr}`, net, { method: 'POST', body: JSON.stringify({ text, tipTxSig }) });
+  return authedJson(`/wall/${net}/${addr}`, net, {
+    method: 'POST',
+    body: JSON.stringify({ text, tipTxSig }),
+  });
 }
 
 export function fetchXProfile(handle: string): Promise<LiveXProfile> {
@@ -173,7 +194,10 @@ export function sendChatMessage(
   net: Net,
   room: string,
   text: string,
-): Promise<{ ok: true; message: { id: number; room: string; text: string; flagged: boolean; createdAtMs: number } | null }> {
+): Promise<{
+  ok: true;
+  message: { id: number; room: string; text: string; flagged: boolean; createdAtMs: number } | null;
+}> {
   return authedJson(`/chat/${net}/${encodeURIComponent(room)}`, net, {
     method: 'POST',
     body: JSON.stringify({ text }),
@@ -215,7 +239,11 @@ export async function uploadAvatar(net: Net, file: File): Promise<{ avatarUrl: s
 }
 
 /** Multipart upload to `POST /uploads/image` → Pinata gateway URL (launch art). */
-export async function uploadImage(net: Net, file: Blob, filename = 'token.png'): Promise<{ url: string; cid: string }> {
+export async function uploadImage(
+  net: Net,
+  file: Blob,
+  filename = 'token.png',
+): Promise<{ url: string; cid: string }> {
   await ensureSession(BASE, net);
   const body = new FormData();
   body.append('file', file, filename);
@@ -262,7 +290,14 @@ export interface LiveRewardsSnapshot {
     openable: boolean;
     cooldownHours: number;
   }[];
-  dropLog: { at: number; tier: string; rarity: string; label: string; optionz: number; item: string | null }[];
+  dropLog: {
+    at: number;
+    tier: string;
+    rarity: string;
+    label: string;
+    optionz: number;
+    item: string | null;
+  }[];
   achievements: { key: string; unlockedAt: number }[];
 }
 
@@ -285,7 +320,10 @@ export function fetchRewards(net: Net): Promise<LiveRewardsSnapshot> {
 }
 
 export function openCrateLive(net: Net, tier: string): Promise<LiveCrateOpenResult> {
-  return authedJson(`/rewards/crates/${encodeURIComponent(tier)}/open`, net, { method: 'POST', body: '{}' });
+  return authedJson(`/rewards/crates/${encodeURIComponent(tier)}/open`, net, {
+    method: 'POST',
+    body: '{}',
+  });
 }
 
 /* -------------------------------------------------------------------------- */

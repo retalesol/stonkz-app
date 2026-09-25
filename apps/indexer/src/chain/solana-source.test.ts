@@ -12,7 +12,11 @@ import {
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type TradeEvent } from '../events.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
-import { SolanaChainSource, SolanaRangeTooBusyError, boundToSlotBoundary } from './solana-source.js';
+import {
+  SolanaChainSource,
+  SolanaRangeTooBusyError,
+  boundToSlotBoundary,
+} from './solana-source.js';
 import {
   CREATOR,
   DOGGO_MINT,
@@ -328,7 +332,9 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
       { signature: 'sigLaunch', slot: 1_100, blockTimeSecs: 1_757_000_000, logs: [launchLog()] },
       { signature: 'sigBent', slot: 1_150, blockTimeSecs: 1_757_000_100, logs: bent },
     ]);
-    await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(/do not match the integer 20\/70\/10/);
+    await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(
+      /do not match the integer 20\/70\/10/,
+    );
   });
 
   it('prices a non-native base leg through the oracle instead of pretending it is native', async () => {

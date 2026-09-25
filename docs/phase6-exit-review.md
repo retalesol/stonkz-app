@@ -42,7 +42,7 @@ vs `SOL` units, the non-atomic warning, the permit note) all landed in Phase
   standing allowance (same), and atomic sell with no standing allowance (two
   off-chain signatures, walked through `modals/steps.ts`, with copy that
   correctly does not read like the non-atomic warning — `docs/rh-trade-
-  atomicity-gap.md`'s "still one on-chain transaction" framing is preserved
+atomicity-gap.md`'s "still one on-chain transaction" framing is preserved
   verbatim in the UI, not just the docs).
 - **The non-atomic fallback is real and distinguishable.** When
   `stonkzRouterDecision` has no route (no `RH_ROUTER_ADDRESS`, or no pinned
@@ -55,7 +55,7 @@ vs `SOL` units, the non-atomic warning, the permit note) all landed in Phase
   that file's own comment), and `auth/service.ts` validates `Chain ID` against
   an environment allow-list rather than trusting the client. `verifySiweFull`
   falls back to ERC-1271 for smart accounts, exactly as `docs/robinhood-
-  chain.md` §6.3 specifies, and `auth/siwe.test.ts` covers both the recovery
+chain.md` §6.3 specifies, and `auth/siwe.test.ts` covers both the recovery
   path and the contract-account path (including "refuses when no caller is
   configured" and "an impostor's signature does not admit a different
   account").
@@ -179,13 +179,13 @@ One found, worth a decision rather than a silent fix:
   transaction; Solana sells never need more than one signature, period.**
   This is disclosed in the UI (the permit-sign modal's note text, this
   review's new e2e test asserts it says so) and in `docs/rh-trade-
-  atomicity-gap.md`, so it is not *undisclosed* — but it is a real UX
+atomicity-gap.md`, so it is not _undisclosed_ — but it is a real UX
   asymmetry between the two nets that nothing in `docs/robinhood-chain.md`'s
   "Confirmed as planned — no change needed" section (§9.2) calls out. Every
   other net-conditional UI difference this review found (gas-token unit,
   `ROBINHOOD CHAIN` trade-box suffix, the non-atomic warning) is explicitly
   net-branched and intentional; this one is too, it's just not centrally
-  documented as a *product* difference the way the others are. Recommend
+  documented as a _product_ difference the way the others are. Recommend
   adding one line to `docs/robinhood-chain.md`'s planned-vs-actual table
   next time it's touched, not a code change.
 - Everything else that differs — 18 vs 6 decimals, `ACC_PRECISION`, oracle
@@ -223,7 +223,7 @@ The brief named three explicitly. Status on each:
   real wallet connection lands.
 - **WalletConnect desktop flow** — no coverage anywhere, because there is no
   WalletConnect integration to cover (finding §1). `docs/robinhood-
-  chain.md` §6.2 already flags this as needing "one manual device test...
+chain.md` §6.2 already flags this as needing "one manual device test...
   before SIWE ships to prod," which is correct and remains the right gate;
   an automated test cannot substitute for it since Robinhood Wallet is
   mobile-only with no automatable desktop surface today.
@@ -233,7 +233,7 @@ One more gap this review noticed but wasn't named in the brief: **the atomic
 Uniswap-shaped mock beyond `Router.t.sol`'s Foundry mocks** — `docs/rh-trade-
 atomicity-gap.md` §"one nuance `Router.t.sol`'s own mock does not exercise"
 already says this about the contract test, and this review's new e2e tests
-add UI-level coverage of the response *shape* but, like every other test in
+add UI-level coverage of the response _shape_ but, like every other test in
 `live.spec.ts`, mock `POST /trade/prepare` itself rather than a real
 `StonkzRouter` deployment. The re-verification checklist in both
 `docs/robinhood-chain.md` §12 and `ASSUMPTIONS.md` §4 already covers this

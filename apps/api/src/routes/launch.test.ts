@@ -47,8 +47,12 @@ interface LaunchConfirmResponse {
   error?: string;
 }
 
-async function prepare(token: string, body: Record<string, unknown>): Promise<{ status: number; body: LaunchPrepareResponse }> {
-  const res = await h.app.request('/launch/prepare', {
+async function prepare(
+  token: string,
+  body: Record<string, unknown>,
+  app: TestApp = h,
+): Promise<{ status: number; body: LaunchPrepareResponse }> {
+  const res = await app.app.request('/launch/prepare', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authed(token) },
     body: JSON.stringify(body),
@@ -56,7 +60,11 @@ async function prepare(token: string, body: Record<string, unknown>): Promise<{ 
   return { status: res.status, body: (await res.json()) as LaunchPrepareResponse };
 }
 
-async function confirm(token: string, intentId: string, signature: string): Promise<{ status: number; body: LaunchConfirmResponse }> {
+async function confirm(
+  token: string,
+  intentId: string,
+  signature: string,
+): Promise<{ status: number; body: LaunchConfirmResponse }> {
   const res = await h.app.request('/launch/confirm', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authed(token) },
@@ -66,7 +74,11 @@ async function confirm(token: string, intentId: string, signature: string): Prom
 }
 
 async function loadIntent(intentId: string) {
-  const [intent] = await h.deps.db.select().from(launchIntents).where(eq(launchIntents.id, intentId)).limit(1);
+  const [intent] = await h.deps.db
+    .select()
+    .from(launchIntents)
+    .where(eq(launchIntents.id, intentId))
+    .limit(1);
   return intent!;
 }
 
@@ -163,19 +175,43 @@ describe('POST /launch/prepare + /launch/confirm', () => {
   });
 
   it('runs an atomic dev buy through Jupiter when the base is a priced non-native major (USDC)', async () => {
+    // 284ae9a: SOLANA_CLUSTER defaults to devnet, where only SOL/WSOL carry a
+    // base mint. The mainnet USDC mint (and its Jupiter route) needs mainnet-beta.
+    const mainnet = await createTestApp({ env: { SOLANA_CLUSTER: 'mainnet-beta' } });
+    try {
+      const { token } = await mainnet.login('SOL');
+      mainnet.jupiter.setRoute(
+        'So11111111111111111111111111111111111111112',
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        {
+          rate: 200, // Purely a fixture rate — only the atomicity/shape of the response matters here.
+        },
+      );
+      const { status, body } = await prepare(
+        token,
+        { ...SOL_TICKER_BODY, ticker: 'usdcbuy', baseSymbol: 'USDC', devBuyNative: 0.05 },
+        mainnet,
+      );
+      expect(status).toBe(200);
+      expect(body.devBuy).toMatchObject({ native: 0.05, atomic: true });
+      expect(body.transaction).toBeTruthy();
+    } finally {
+      await mainnet.close();
+    }
+  });
+
+  it('refuses a mainnet-only major on devnet, where it has no base mint', async () => {
+    // Same 284ae9a rule from the other side: the default (devnet) app knows
+    // USDC as a major but has no mint address for it, so prepare fails closed.
     const { token } = await h.login('SOL');
-    h.jupiter.setRoute('So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', {
-      rate: 200, // Purely a fixture rate — only the atomicity/shape of the response matters here.
-    });
     const { status, body } = await prepare(token, {
       ...SOL_TICKER_BODY,
-      ticker: 'usdcbuy',
+      ticker: 'devusdc',
       baseSymbol: 'USDC',
-      devBuyNative: 0.05,
     });
-    expect(status).toBe(200);
-    expect(body.devBuy).toMatchObject({ native: 0.05, atomic: true });
-    expect(body.transaction).toBeTruthy();
+    expect(status).toBe(400);
+    expect(body.error).toBe('base_mint_not_allowed');
+    expect(body.detail).toMatch(/no configured mint address/);
   });
 
   it('rejects an in-flight prepare for the same ticker from another wallet', async () => {
@@ -197,7 +233,11 @@ describe('POST /launch/prepare + /launch/confirm', () => {
     h.rpcs.SOL.setSolanaTransactionMessage(sig, intent.unsignedPayload);
     await confirm(token, p.body.intentId, sig);
 
-    const again = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'taken', name: 'Different Name' });
+    const again = await prepare(token, {
+      ...SOL_TICKER_BODY,
+      ticker: 'taken',
+      name: 'Different Name',
+    });
     expect(again.status).toBe(409);
     expect(again.body.error).toBe('name_or_ticker_cooldown');
     expect(typeof again.body.retryAfterMs).toBe('number');
@@ -211,7 +251,11 @@ describe('POST /launch/prepare + /launch/confirm', () => {
     h.rpcs.SOL.setSolanaTransactionMessage(sig, intent.unsignedPayload);
     await confirm(token, p.body.intentId, sig);
 
-    const again = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'nmtwo', name: 'shared name' });
+    const again = await prepare(token, {
+      ...SOL_TICKER_BODY,
+      ticker: 'nmtwo',
+      name: 'shared name',
+    });
     expect(again.status).toBe(409);
     expect(again.body.error).toBe('name_or_ticker_cooldown');
   });
@@ -245,35 +289,63 @@ describe('POST /launch/prepare + /launch/confirm', () => {
 
   it('rejects an out-of-range supply', async () => {
     const { token } = await h.login('SOL');
-    const { status, body } = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'badsup', supply: 42 });
+    const { status, body } = await prepare(token, {
+      ...SOL_TICKER_BODY,
+      ticker: 'badsup',
+      supply: 42,
+    });
     expect(status).toBe(422);
     expect(body.error).toBe('invalid_supply');
   });
 
   it('rejects an out-of-range fee', async () => {
     const { token } = await h.login('SOL');
-    const { status, body } = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'badfee', feePct: 9 });
+    const { status, body } = await prepare(token, {
+      ...SOL_TICKER_BODY,
+      ticker: 'badfee',
+      feePct: 9,
+    });
     expect(status).toBe(422);
     expect(body.error).toBe('invalid_fee');
   });
 
   it('rejects a base symbol with no priced source on this net yet', async () => {
-    const { token } = await h.login('SOL');
-    const { status, body } = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'badbase', baseSymbol: 'BONK' });
-    expect(status).toBe(422);
-    expect(body.error).toBe('base_price_unavailable');
+    // BONK only has a mint on mainnet-beta (284ae9a devnet table is SOL/WSOL),
+    // and the mint check runs before the price check — so go through mainnet
+    // to reach the price gate this test is about.
+    const mainnet = await createTestApp({ env: { SOLANA_CLUSTER: 'mainnet-beta' } });
+    try {
+      const { token } = await mainnet.login('SOL');
+      const { status, body } = await prepare(
+        token,
+        { ...SOL_TICKER_BODY, ticker: 'badbase', baseSymbol: 'BONK' },
+        mainnet,
+      );
+      expect(status).toBe(422);
+      expect(body.error).toBe('base_price_unavailable');
+    } finally {
+      await mainnet.close();
+    }
   });
 
   it('rejects a base symbol entirely outside the major/stock allow-list', async () => {
     const { token } = await h.login('SOL');
-    const { status, body } = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'badbase2', baseSymbol: 'DOGE' });
+    const { status, body } = await prepare(token, {
+      ...SOL_TICKER_BODY,
+      ticker: 'badbase2',
+      baseSymbol: 'DOGE',
+    });
     expect(status).toBe(400);
     expect(body.error).toBe('base_mint_not_allowed');
   });
 
   it('rejects a name/ticker/description that trips the moderation stub', async () => {
     const { token } = await h.login('SOL');
-    const { status, body } = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'mod1', name: 'fuck coin' });
+    const { status, body } = await prepare(token, {
+      ...SOL_TICKER_BODY,
+      ticker: 'mod1',
+      name: 'fuck coin',
+    });
     expect(status).toBe(422);
     expect(body.error).toBe('moderation_rejected');
   });
@@ -316,7 +388,9 @@ describe('POST /launch/prepare + /launch/confirm', () => {
       status: 'success',
       to: h.deps.env.rhLaunchpadAddress,
       input: body.data!,
-      logs: [{ address: h.deps.env.rhLaunchpadAddress, topics: log.topics as string[], data: log.data }],
+      logs: [
+        { address: h.deps.env.rhLaunchpadAddress, topics: log.topics as string[], data: log.data },
+      ],
     });
 
     const confirmed = await confirm(token, body.intentId, sig);

@@ -243,7 +243,9 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
   // Sign-in must not require a chain switch: `personal_sign` is
   // chain-agnostic and mobile wallets often cannot switch at all
   // (`docs/robinhood-chain.md` §6.1).
-  expect(await walletRecord<string[]>(page, '__rpcCalls')).not.toContain('wallet_switchEthereumChain');
+  expect(await walletRecord<string[]>(page, '__rpcCalls')).not.toContain(
+    'wallet_switchEthereumChain',
+  );
   expect(await walletRecord<string>(page, '__signedSiwe')).toBeTruthy();
 
   const card = page.locator('.coin[data-sym="COPIUM"]').first();
@@ -251,7 +253,9 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
   await card.click();
   await expect(page.locator('#tokenView')).toBeVisible();
   await page.click('#t-go');
-  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+    timeout: 20_000,
+  });
 
   const calls = await walletRecord<string[]>(page, '__rpcCalls');
   expect(calls).toContain('wallet_switchEthereumChain');
@@ -269,7 +273,9 @@ test('a Robinhood wallet on the wrong chain is switched to 4663 before anything 
   expect(sent.value).toBe('0x2c68af0bb140000');
 });
 
-test('a slippage revert is reported as slippage, before the wallet is ever prompted', async ({ page }) => {
+test('a slippage revert is reported as slippage, before the wallet is ever prompted', async ({
+  page,
+}) => {
   // `wallet/evm.ts` pre-simulates with `eth_call`; a revert found there
   // costs the trader nothing and still carries its reason string, which is
   // the only way "SLIPPAGE EXCEEDED" can be distinguished from a bare
@@ -331,7 +337,9 @@ test('a slippage revert is reported as slippage, before the wallet is ever promp
   await expect(page.locator('#tokenView')).toBeVisible();
   await page.click('#t-go');
 
-  await expect(page.locator('.mm-bubble', { hasText: 'SLIPPAGE EXCEEDED' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: 'SLIPPAGE EXCEEDED' })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeHidden();
   // Nothing was signed, which is the point of simulating first.
   expect(await walletRecord<string[]>(page, '__rpcCalls')).not.toContain('eth_sendTransaction');
@@ -359,7 +367,9 @@ test('the wallet menu disconnect ends the wallet session, not just the chip', as
   await expect(page.locator('#wchip')).toContainText(MOCK_SOL_ADDRESS.slice(0, 4));
 });
 
-test('a Solana trade broadcasts through the wallet and reports the real signature', async ({ page }) => {
+test('a Solana trade broadcasts through the wallet and reports the real signature', async ({
+  page,
+}) => {
   acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
@@ -372,7 +382,8 @@ test('a Solana trade broadcasts through the wallet and reports the real signatur
       body: JSON.stringify({
         net: 'SOL',
         atomic: true,
-        transaction: 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        transaction:
+          'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         lastValidBlockHeight: 999_999,
         quote: {
           sym: 'DEVCOIN',
@@ -415,13 +426,17 @@ test('a Solana trade broadcasts through the wallet and reports the real signatur
   await card.click();
   await expect(page.locator('#tokenView')).toBeVisible();
   await page.click('#t-go');
-  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+    timeout: 20_000,
+  });
 
   // The wallet really received the API's serialised transaction bytes.
   expect(await walletRecord<number>(page, '__sentSolBytes')).toBeGreaterThan(0);
 });
 
-test('an EIP-712 permit is signed with a nonce read from the chain, not from the API', async ({ page }) => {
+test('an EIP-712 permit is signed with a nonce read from the chain, not from the API', async ({
+  page,
+}) => {
   acceptConfirmDialogs(page);
   await installMockWallets(page);
   await stubChainRpc(page);
@@ -434,7 +449,11 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' + (7).toString(16).padStart(64, '0') }),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: '0x' + (7).toString(16).padStart(64, '0'),
+        }),
       });
       return;
     }
@@ -530,7 +549,9 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
   await page.click('#steps-go');
   await expect(page.locator('#steps-go')).toHaveText('SIGN STEP 2 OF 2');
   await page.click('#steps-go');
-  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.mm-bubble', { hasText: /FILLED|was successful/ })).toBeVisible({
+    timeout: 20_000,
+  });
 
   const typed = JSON.parse(await walletRecord<string>(page, '__signedTypedData')) as {
     types: Record<string, unknown>;
@@ -541,5 +562,11 @@ test('an EIP-712 permit is signed with a nonce read from the chain, not from the
   // `EIP712Domain` added, and the API's `note` sibling dropped — a wallet
   // rejects typed data carrying members that are not in `types`.
   expect(typed.types['EIP712Domain']).toBeDefined();
-  expect(Object.keys(typed.message).sort()).toEqual(['deadline', 'nonce', 'owner', 'spender', 'value']);
+  expect(Object.keys(typed.message).sort()).toEqual([
+    'deadline',
+    'nonce',
+    'owner',
+    'spender',
+    'value',
+  ]);
 });

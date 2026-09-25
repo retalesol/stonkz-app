@@ -20,7 +20,12 @@ beforeEach(async () => {
 interface MeBody {
   net: string;
   wallet: string;
-  native: { unit: string; balance: number | null; usdPrice: number | null; usdValue: number | null };
+  native: {
+    unit: string;
+    balance: number | null;
+    usdPrice: number | null;
+    usdValue: number | null;
+  };
   xp: number;
   rank: { i: number; name: string; next: number | null };
   sp: number;
@@ -69,7 +74,9 @@ describe('GET /me rewards payload', () => {
     expect(first.streakMult).toBe(1);
 
     // Same UTC day: visiting again is not a second day.
-    const second = (await (await h.app.request('/me', { headers: authed(token) })).json()) as MeBody;
+    const second = (await (
+      await h.app.request('/me', { headers: authed(token) })
+    ).json()) as MeBody;
     expect(second.streak).toBe(1);
   });
 
@@ -84,7 +91,9 @@ describe('GET /me rewards payload', () => {
     await h.clearRateLimits();
     const second = await h.login('SOL', wallet);
 
-    const next = (await (await h.app.request('/me', { headers: authed(second.token) })).json()) as MeBody;
+    const next = (await (
+      await h.app.request('/me', { headers: authed(second.token) })
+    ).json()) as MeBody;
     expect(next.streak).toBe(2);
     expect(next.streakMult).toBeGreaterThan(1);
   });
@@ -130,7 +139,13 @@ describe('GET /rewards', () => {
       achievementCount: number;
       crates: {
         tier: string;
-        drops: { rarity: string; odds: number; kind: string; min: number | null; item: string | null }[];
+        drops: {
+          rarity: string;
+          odds: number;
+          kind: string;
+          min: number | null;
+          item: string | null;
+        }[];
       }[];
     };
 

@@ -90,9 +90,7 @@ async function migratedSnapshot(): Promise<Buffer | null> {
 
 export async function createTestDb(): Promise<TestDb> {
   const snapshot = await migratedSnapshot();
-  const pg = snapshot
-    ? new PGlite({ loadDataDir: new Blob([snapshot]) })
-    : new PGlite();
+  const pg = snapshot ? new PGlite({ loadDataDir: new Blob([snapshot]) }) : new PGlite();
   // The cast is the same one documented on `Db`: PGlite and postgres-js expose
   // the same drizzle query surface, and only the driver HKT differs.
   const db = drizzle(pg, { schema }) as unknown as Db;
@@ -109,11 +107,13 @@ export async function createTestDb(): Promise<TestDb> {
       );
       const names = rows.map((r) => `"${r.tablename}"`).join(', ');
       if (names) await pg.exec(`TRUNCATE ${names} RESTART IDENTITY CASCADE`);
-      // The seed rows in 0001 are part of the schema contract, not test data.
-      await pg.exec(`INSERT INTO "indexer_cursors" ("net") VALUES ('SOL'), ('RH')`);
+      // The seed rows in 0001 (SOL, RH), 0013 (BASE cursor) and 0014 (BASE
+      // vaults) are part of the schema contract, not test data.
+      await pg.exec(`INSERT INTO "indexer_cursors" ("net") VALUES ('SOL'), ('RH'), ('BASE')`);
       await pg.exec(
         `INSERT INTO "treasuries" ("net", "kind") VALUES
-           ('SOL','protocol'), ('SOL','stonkz_ops'), ('RH','protocol'), ('RH','stonkz_ops')`,
+           ('SOL','protocol'), ('SOL','stonkz_ops'), ('RH','protocol'), ('RH','stonkz_ops'),
+           ('BASE','protocol'), ('BASE','stonkz_ops')`,
       );
     },
   };

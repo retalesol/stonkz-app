@@ -74,7 +74,13 @@ export function feesRoutes(): Hono<AppEnv> {
     const [vault] = await deps.db
       .select()
       .from(creatorVaults)
-      .where(and(eq(creatorVaults.net, net), eq(creatorVaults.mint, row.mint), eq(creatorVaults.creator, wallet)))
+      .where(
+        and(
+          eq(creatorVaults.net, net),
+          eq(creatorVaults.mint, row.mint),
+          eq(creatorVaults.creator, wallet),
+        ),
+      )
       .limit(1);
     if (!vault || (vault.unclaimedNative <= 0 && vault.unclaimedTokens <= 0)) {
       return c.json({ error: 'nothing_to_claim' }, 422);
@@ -82,7 +88,8 @@ export function feesRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('fees/claim/prepare: Solana RPC does not implement latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('fees/claim/prepare: Solana RPC does not implement latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
 
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
@@ -101,7 +108,9 @@ export function feesRoutes(): Hono<AppEnv> {
         net,
         sym,
         mint: row.mint,
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }

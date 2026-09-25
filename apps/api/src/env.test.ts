@@ -9,7 +9,9 @@ const secrets = {
 
 describe('readEnv production gates', () => {
   it('refuses the dev secrets', () => {
-    expect(() => readEnv({ NODE_ENV: 'production', JWT_SECRET: DEV_JWT_SECRET })).toThrow(/JWT_SECRET/);
+    expect(() => readEnv({ NODE_ENV: 'production', JWT_SECRET: DEV_JWT_SECRET })).toThrow(
+      /JWT_SECRET/,
+    );
     expect(() =>
       readEnv({ NODE_ENV: 'production', ...secrets, CRATE_HMAC_SECRET: DEV_CRATE_SECRET }),
     ).toThrow(/CRATE_HMAC_SECRET/);

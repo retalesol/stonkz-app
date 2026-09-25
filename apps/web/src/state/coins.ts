@@ -82,24 +82,168 @@ export interface SimCoin extends Coin {
 
 /** Seed rows: sym, name, desc, mcap, 24h %, replies, holders, age in minutes. */
 const RAW: Array<[string, string, string, number, number, number, number, number]> = [
-  ['GIGA', 'Gigachad Labs', 'jawline forged in a squat rack. the only coin with a chin.', 3020000, 18.7, 4102, 19204, 1440],
-  ['TRENCH', 'Trenchcoat Capital', 'three interns in a long coat pretending to be a hedge fund.', 1240000, 64.9, 2870, 8140, 212],
-  ['WOJAK', 'Wojak Finance', 'he bought the top again. this time it is your top too.', 482000, 142.4, 1204, 3412, 41],
-  ['CULT', 'Cult Capital', 'we do not have a roadmap, we have scripture.', 214000, 55.1, 3110, 9740, 760],
-  ['MOONR', 'Moonrunner', 'strapped a chart to a rocket and forgot the parachute.', 128000, 29.8, 1640, 5122, 340],
-  ['PEPE2', 'Pepe Two Point Oh', 'the sequel nobody asked for and everybody bought.', 96400, 11.9, 1420, 6210, 980],
-  ['HOPIUM', 'Hopium Industries', 'industrial grade cope, refined onchain, sold by the barrel.', 67900, 87.3, 910, 2604, 88],
-  ['BONKD', 'Bonked Ventures', 'got bonked, stayed bonked, now runs a venture fund.', 64100, 204.7, 508, 1602, 22],
-  ['SER', 'Ser Please Ser', 'ser. ser. the chart ser. please ser look at it ser.', 58800, 7.2, 322, 1902, 120],
-  ['BAGZ', 'Heavy Bagz', 'holding since the first candle and it shows in the posture.', 52300, -11.4, 412, 1440, 64],
-  ['DELUSN', 'Delusional Capital', 'our thesis is vibes and our vibes are immaculate.', 47900, 33.4, 286, 1188, 52],
-  ['FLOOR', 'Floor Seeker', 'every floor is a ceiling if you are patient enough.', 41200, 19.6, 244, 988, 36],
-  ['JEETZ', 'Jeetz Protocol', 'sells the news, the rumor, and sometimes his own coin.', 31400, -68.8, 198, 780, 18],
-  ['NGMI', 'NGMI Holdings', 'a diversified portfolio of bad decisions.', 22100, -42.1, 164, 702, 14],
+  [
+    'GIGA',
+    'Gigachad Labs',
+    'jawline forged in a squat rack. the only coin with a chin.',
+    3020000,
+    18.7,
+    4102,
+    19204,
+    1440,
+  ],
+  [
+    'TRENCH',
+    'Trenchcoat Capital',
+    'three interns in a long coat pretending to be a hedge fund.',
+    1240000,
+    64.9,
+    2870,
+    8140,
+    212,
+  ],
+  [
+    'WOJAK',
+    'Wojak Finance',
+    'he bought the top again. this time it is your top too.',
+    482000,
+    142.4,
+    1204,
+    3412,
+    41,
+  ],
+  [
+    'CULT',
+    'Cult Capital',
+    'we do not have a roadmap, we have scripture.',
+    214000,
+    55.1,
+    3110,
+    9740,
+    760,
+  ],
+  [
+    'MOONR',
+    'Moonrunner',
+    'strapped a chart to a rocket and forgot the parachute.',
+    128000,
+    29.8,
+    1640,
+    5122,
+    340,
+  ],
+  [
+    'PEPE2',
+    'Pepe Two Point Oh',
+    'the sequel nobody asked for and everybody bought.',
+    96400,
+    11.9,
+    1420,
+    6210,
+    980,
+  ],
+  [
+    'HOPIUM',
+    'Hopium Industries',
+    'industrial grade cope, refined onchain, sold by the barrel.',
+    67900,
+    87.3,
+    910,
+    2604,
+    88,
+  ],
+  [
+    'BONKD',
+    'Bonked Ventures',
+    'got bonked, stayed bonked, now runs a venture fund.',
+    64100,
+    204.7,
+    508,
+    1602,
+    22,
+  ],
+  [
+    'SER',
+    'Ser Please Ser',
+    'ser. ser. the chart ser. please ser look at it ser.',
+    58800,
+    7.2,
+    322,
+    1902,
+    120,
+  ],
+  [
+    'BAGZ',
+    'Heavy Bagz',
+    'holding since the first candle and it shows in the posture.',
+    52300,
+    -11.4,
+    412,
+    1440,
+    64,
+  ],
+  [
+    'DELUSN',
+    'Delusional Capital',
+    'our thesis is vibes and our vibes are immaculate.',
+    47900,
+    33.4,
+    286,
+    1188,
+    52,
+  ],
+  [
+    'FLOOR',
+    'Floor Seeker',
+    'every floor is a ceiling if you are patient enough.',
+    41200,
+    19.6,
+    244,
+    988,
+    36,
+  ],
+  [
+    'JEETZ',
+    'Jeetz Protocol',
+    'sells the news, the rumor, and sometimes his own coin.',
+    31400,
+    -68.8,
+    198,
+    780,
+    18,
+  ],
+  [
+    'NGMI',
+    'NGMI Holdings',
+    'a diversified portfolio of bad decisions.',
+    22100,
+    -42.1,
+    164,
+    702,
+    14,
+  ],
   ['FUMBL', 'Fumbled Bag', 'had a hundred x in hand. had.', 17600, -23.6, 132, 544, 11],
   ['TENDIE', 'Tendie Town', 'fried, golden, and dangerously overbought.', 12400, 88.2, 96, 388, 7],
-  ['LARP', 'Larp Industries', 'claims to be a whale. is four minnows in a trench coat.', 9800, 312.6, 74, 244, 4],
-  ['RUGZ', 'Rugz Asset Mgmt', 'fully transparent about being exactly what it says.', 4200, -14.2, 38, 122, 2],
+  [
+    'LARP',
+    'Larp Industries',
+    'claims to be a whale. is four minnows in a trench coat.',
+    9800,
+    312.6,
+    74,
+    244,
+    4,
+  ],
+  [
+    'RUGZ',
+    'Rugz Asset Mgmt',
+    'fully transparent about being exactly what it says.',
+    4200,
+    -14.2,
+    38,
+    122,
+    2,
+  ],
 ];
 
 /** Coins the sim wallet launched, with unclaimed creator fees in the native unit. */
@@ -232,7 +376,14 @@ export function holdersOf(c: SimCoin): Holder[] {
     out.push({
       w: i === 0 ? c.dev : fakeAddr(c.seed + i * 137),
       p,
-      tag: i === 0 ? (HOLDER_TAGS[0] as readonly [string, string]) : i < 3 && r() > 0.5 ? (HOLDER_TAGS[1] as readonly [string, string]) : p > 3 ? (HOLDER_TAGS[2] as readonly [string, string]) : null,
+      tag:
+        i === 0
+          ? (HOLDER_TAGS[0] as readonly [string, string])
+          : i < 3 && r() > 0.5
+            ? (HOLDER_TAGS[1] as readonly [string, string])
+            : p > 3
+              ? (HOLDER_TAGS[2] as readonly [string, string])
+              : null,
     });
   }
   out.push({ w: 'BONDING CURVE', p: Math.max(0.5, left), tag: ['CURVE', 'bc'], curve: true });
@@ -287,8 +438,13 @@ export function pushTrade(
     const preferPrevHops = !!(prev.hops && prev.hops.length > 1 && !(o.hops && o.hops.length > 1));
     // Keep the wallet from the optimistic confirm when the WS echo still
     // attributes the fill to the router contract.
-    const preferPrevWallet = !!(prev.addr && o.addr && prev.addr.toLowerCase() !== o.addr.toLowerCase() && preferPrevHops);
-    const hops = preferPrevHops ? prev.hops : o.hops ?? prev.hops;
+    const preferPrevWallet = !!(
+      prev.addr &&
+      o.addr &&
+      prev.addr.toLowerCase() !== o.addr.toLowerCase() &&
+      preferPrevHops
+    );
+    const hops = preferPrevHops ? prev.hops : (o.hops ?? prev.hops);
     const merged: Trade = {
       ...prev,
       t: prev.t,
@@ -297,11 +453,11 @@ export function pushTrade(
       tok,
       mc: o.mc ?? prev.mc,
       ...(o.cb !== undefined || prev.cb !== undefined ? { cb: o.cb ?? prev.cb } : {}),
-      w: preferPrevWallet ? prev.w : o.cb ? 'CASHBACK' : o.w ?? prev.w,
+      w: preferPrevWallet ? prev.w : o.cb ? 'CASHBACK' : (o.w ?? prev.w),
       ...(preferPrevWallet || o.addr || prev.addr
-        ? { addr: preferPrevWallet ? prev.addr : o.addr ?? prev.addr }
+        ? { addr: preferPrevWallet ? prev.addr : (o.addr ?? prev.addr) }
         : {}),
-      v: preferPrevRoute ? prev.v : o.v ?? prev.v,
+      v: preferPrevRoute ? prev.v : (o.v ?? prev.v),
       ...(hops ? { hops } : {}),
       ...(sig || prev.sig ? { sig: sig ?? prev.sig } : {}),
       ...(prev.open !== undefined ? { open: prev.open } : {}),
@@ -322,7 +478,7 @@ export function pushTrade(
     tok,
     mc: o.mc ?? c.mc,
     cb: !!o.cb,
-    w: o.cb ? 'CASHBACK' : o.w ?? (o.mine ? 'YOU..7xKQ' : fakeAddr((Math.random() * 1e6) | 0)),
+    w: o.cb ? 'CASHBACK' : (o.w ?? (o.mine ? 'YOU..7xKQ' : fakeAddr((Math.random() * 1e6) | 0))),
     ...(o.addr ? { addr: o.addr } : {}),
     v: o.v ?? (o.cb ? 'CB' : randomVenue()),
     ...(o.hops && o.hops.length ? { hops: o.hops } : {}),

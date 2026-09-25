@@ -224,7 +224,11 @@ export class Ledger {
 
   /* ----------------------------------------------------------------- awards */
 
-  private async assertVerified(reason: string, txSig: string | null | undefined, net: Net): Promise<void> {
+  private async assertVerified(
+    reason: string,
+    txSig: string | null | undefined,
+    net: Net,
+  ): Promise<void> {
     if (!requiresVerifiedEvent(reason)) return;
     if (!txSig) throw new UnverifiedEventError(reason, null);
     const rows = await this.db
@@ -335,10 +339,18 @@ export class Ledger {
     // The ledger row points at the `xp_events` row that caused it, not at the
     // signature: one transaction can pay several reasons (a fill that also
     // unlocks `first` and `whale`), and each needs its own idempotency key.
-    const after = await this.applyBalanceDeltas(net, wallet, dayUtc, reason, 'xp_event', String(eventId), {
-      XP: xp,
-      SP: sp,
-    });
+    const after = await this.applyBalanceDeltas(
+      net,
+      wallet,
+      dayUtc,
+      reason,
+      'xp_event',
+      String(eventId),
+      {
+        XP: xp,
+        SP: sp,
+      },
+    );
     const rankAfter = rankOf(after.xp).i;
 
     if (xp > 0) {
@@ -352,7 +364,13 @@ export class Ledger {
       });
     }
     if (sp > 0) {
-      await this.opts.publisher.user(net, wallet, { type: 'sp', net, wallet, delta: sp, total: after.sp });
+      await this.opts.publisher.user(net, wallet, {
+        type: 'sp',
+        net,
+        wallet,
+        delta: sp,
+        total: after.sp,
+      });
       if (this.afterSpCredit) await this.afterSpCredit(net, wallet, after.sp);
       if (!input.skipReferralKickback && this.afterSpAwarded) {
         await this.afterSpAwarded(net, wallet, sp, reason, String(eventId));
@@ -423,7 +441,13 @@ export class Ledger {
       // already unlocked and pay nothing.
       await this.db
         .delete(achievements)
-        .where(and(eq(achievements.wallet, wallet), eq(achievements.net, net), eq(achievements.key, key)));
+        .where(
+          and(
+            eq(achievements.wallet, wallet),
+            eq(achievements.net, net),
+            eq(achievements.key, key),
+          ),
+        );
       throw err;
     }
 
@@ -447,7 +471,10 @@ export class Ledger {
 
   /* --------------------------------------------------------------- balances */
 
-  async readBalance(net: Net, wallet: string): Promise<{ xp: number; sp: number; optionz: number }> {
+  async readBalance(
+    net: Net,
+    wallet: string,
+  ): Promise<{ xp: number; sp: number; optionz: number }> {
     const [row] = await this.db
       .select()
       .from(balances)
@@ -488,7 +515,8 @@ export class Ledger {
     const entries: { asset: Asset; delta: number; balanceAfter: number }[] = [];
     if (xp !== 0) entries.push({ asset: 'XP', delta: xp, balanceAfter: totals.xp });
     if (sp !== 0) entries.push({ asset: 'SP', delta: sp, balanceAfter: totals.sp });
-    if (optionz !== 0) entries.push({ asset: 'OPTIONZ', delta: optionz, balanceAfter: totals.optionz });
+    if (optionz !== 0)
+      entries.push({ asset: 'OPTIONZ', delta: optionz, balanceAfter: totals.optionz });
 
     if (entries.length > 0) {
       await this.db.insert(balanceLedger).values(
@@ -560,10 +588,24 @@ export class Ledger {
       throw err;
     }
 
-    const after = await this.applyBalanceDeltas(net, wallet, dayUtc, reason, 'xp_event', String(eventId), {
-      SP: sp,
+    const after = await this.applyBalanceDeltas(
+      net,
+      wallet,
+      dayUtc,
+      reason,
+      'xp_event',
+      String(eventId),
+      {
+        SP: sp,
+      },
+    );
+    await this.opts.publisher.user(net, wallet, {
+      type: 'sp',
+      net,
+      wallet,
+      delta: sp,
+      total: after.sp,
     });
-    await this.opts.publisher.user(net, wallet, { type: 'sp', net, wallet, delta: sp, total: after.sp });
     if (this.afterSpCredit) await this.afterSpCredit(net, wallet, after.sp);
     // No afterSpAwarded — SP-only credits must not recurse into referral kickbacks.
     return { awarded: true, sp, totalSp: after.sp };
@@ -624,7 +666,10 @@ export class Ledger {
         .select()
         .from(crateState)
         .where(and(eq(crateState.wallet, wallet), eq(crateState.net, net))),
-      this.db.select().from(itemFlags).where(and(eq(itemFlags.wallet, wallet), eq(itemFlags.net, net))),
+      this.db
+        .select()
+        .from(itemFlags)
+        .where(and(eq(itemFlags.wallet, wallet), eq(itemFlags.net, net))),
       this.db
         .select()
         .from(crateOpens)
@@ -678,7 +723,9 @@ export class Ledger {
   async achievementList(
     net: Net,
     wallet: string | null,
-  ): Promise<{ key: AchievementKey; name: string; desc: string; xp: number; unlockedAt: number | null }[]> {
+  ): Promise<
+    { key: AchievementKey; name: string; desc: string; xp: number; unlockedAt: number | null }[]
+  > {
     const unlocked =
       wallet === null
         ? new Map<string, number>()

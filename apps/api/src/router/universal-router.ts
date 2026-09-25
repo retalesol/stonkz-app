@@ -77,7 +77,13 @@ function encodeV3SwapExactInInput(
   payerIsUser: boolean,
 ): Hex {
   return encodeAbiParameters(
-    [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'bytes' }, { type: 'bool' }],
+    [
+      { type: 'address' },
+      { type: 'uint256' },
+      { type: 'uint256' },
+      { type: 'bytes' },
+      { type: 'bool' },
+    ],
     [recipient, amountIn, amountOutMinimum, path, payerIsUser],
   );
 }
@@ -89,7 +95,10 @@ function encodeWrapEthInput(recipient: Address, amount: bigint): Hex {
 
 /** `abi.encode(recipient, amountMinimum)` — `UNWRAP_WETH`'s input (`Payments.sol`'s `unwrapWETH9`). */
 function encodeUnwrapWethInput(recipient: Address, amountMinimum: bigint): Hex {
-  return encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [recipient, amountMinimum]);
+  return encodeAbiParameters(
+    [{ type: 'address' }, { type: 'uint256' }],
+    [recipient, amountMinimum],
+  );
 }
 
 export interface UniversalRouterLeg {
@@ -105,7 +114,10 @@ export interface UniversalRouterLeg {
  * it is about to spend on the curve.
  */
 export function buildWrapOnlyLeg(): UniversalRouterLeg {
-  return { commands: commandsBytes([CMD_WRAP_ETH]), inputs: [encodeWrapEthInput(MSG_SENDER, CONTRACT_BALANCE)] };
+  return {
+    commands: commandsBytes([CMD_WRAP_ETH]),
+    inputs: [encodeWrapEthInput(MSG_SENDER, CONTRACT_BALANCE)],
+  };
 }
 
 /**
@@ -116,7 +128,10 @@ export function buildWrapOnlyLeg(): UniversalRouterLeg {
  * call.
  */
 export function buildUnwrapOnlyLeg(): UniversalRouterLeg {
-  return { commands: commandsBytes([CMD_UNWRAP_WETH]), inputs: [encodeUnwrapWethInput(MSG_SENDER, 0n)] };
+  return {
+    commands: commandsBytes([CMD_UNWRAP_WETH]),
+    inputs: [encodeUnwrapWethInput(MSG_SENDER, 0n)],
+  };
 }
 
 /**
@@ -125,7 +140,11 @@ export function buildUnwrapOnlyLeg(): UniversalRouterLeg {
  * (UR `WRAP_ETH` targets mainnet aeWETH on RH testnet and reverts). The swap
  * spends that WETH (`payerIsUser = false`) and delivers base to `MSG_SENDER`.
  */
-export function buildBuyAggregatorLeg(weth: Address, base: Address, feeTier: number): UniversalRouterLeg {
+export function buildBuyAggregatorLeg(
+  weth: Address,
+  base: Address,
+  feeTier: number,
+): UniversalRouterLeg {
   const path = encodeV3Path(weth, feeTier, base);
   return {
     commands: commandsBytes([CMD_V3_SWAP_EXACT_IN]),
@@ -138,7 +157,11 @@ export function buildBuyAggregatorLeg(weth: Address, base: Address, feeTier: num
  * `StonkzRouter` just before `execute()`. Swap delivers WETH to `MSG_SENDER`;
  * the router unwraps locally (`UNWRAP_WETH` is broken on RH testnet).
  */
-export function buildSellAggregatorLeg(base: Address, weth: Address, feeTier: number): UniversalRouterLeg {
+export function buildSellAggregatorLeg(
+  base: Address,
+  weth: Address,
+  feeTier: number,
+): UniversalRouterLeg {
   const path = encodeV3Path(base, feeTier, weth);
   return {
     commands: commandsBytes([CMD_V3_SWAP_EXACT_IN]),

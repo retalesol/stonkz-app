@@ -27,24 +27,37 @@ describe('migration history', () => {
       '0005_router_and_launch',
       '0006_social_layer',
       '0007_indexer_chain_mode',
+      // 0008–0013 landed with duplicate tickers (9aa2c68) and the Base Sepolia
+      // net (284ae9a); 0013 seeds the BASE replay cursor.
+      '0008_token_image',
+      '0009_token_mint_pk',
+      '0010_crate_inventory_sp_levels',
+      '0011_referrals_social',
+      '0012_net_base',
+      '0013_base_cursor',
+      '0014_base_treasuries',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(8);
+    expect(second.skipped).toHaveLength(15);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
-    expect(files.map((f) => f.idx)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(files.map((f) => f.idx)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });
 
-  it('seeds exactly two replay cursors and four treasury vaults', async () => {
+  it('seeds three replay cursors and six treasury vaults', async () => {
+    // 0001 seeds SOL + RH; 0013 adds the BASE cursor (284ae9a); 0014 adds the
+    // BASE vaults so Base fees have somewhere to land.
     const cursors = await h.db.select().from(schema.indexerCursors);
-    expect(cursors.map((c) => c.net).sort()).toEqual(['RH', 'SOL']);
+    expect(cursors.map((c) => c.net).sort()).toEqual(['BASE', 'RH', 'SOL']);
 
     const vaults = await h.db.select().from(schema.treasuries);
     expect(vaults.map((v) => `${v.net}:${v.kind}`).sort()).toEqual([
+      'BASE:protocol',
+      'BASE:stonkz_ops',
       'RH:protocol',
       'RH:stonkz_ops',
       'SOL:protocol',

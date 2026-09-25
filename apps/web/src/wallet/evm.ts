@@ -20,8 +20,18 @@ import {
   evmChainIdForNet,
 } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
-import type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice, WalletKind } from './types.js';
-import { WALLETCONNECT_PROJECT_ID, connectWalletConnect, walletConnectUnavailableReason } from './walletconnect.js';
+import type {
+  BroadcastResult,
+  ConnectedWallet,
+  SignPayload,
+  WalletChoice,
+  WalletKind,
+} from './types.js';
+import {
+  WALLETCONNECT_PROJECT_ID,
+  connectWalletConnect,
+  walletConnectUnavailableReason,
+} from './walletconnect.js';
 import type { EvmNet } from '@stonkz/shared';
 
 /**
@@ -194,8 +204,11 @@ export function listEvmWallets(net: EvmNet = 'RH'): WalletChoice[] {
 
   const metamasks = details.filter(isMetaMaskDetail);
   const preferredMm =
-    metamasks.find((d) => METAMASK_RDNS.has(d.info.rdns.toLowerCase()) || d.info.rdns.toLowerCase().startsWith('io.metamask.')) ??
-    metamasks[0];
+    metamasks.find(
+      (d) =>
+        METAMASK_RDNS.has(d.info.rdns.toLowerCase()) ||
+        d.info.rdns.toLowerCase().startsWith('io.metamask.'),
+    ) ?? metamasks[0];
   if (preferredMm) {
     out.push({
       id: 'injected:' + preferredMm.info.rdns,
@@ -274,7 +287,10 @@ export function toHexWei(decimalWei: string): string {
   if (trimmed === '' || trimmed === '0') return '0x0';
   if (trimmed.startsWith('0x')) return trimmed;
   if (!/^\d+$/.test(trimmed)) {
-    throw new WalletError('unknown', 'The API returned a transaction value this wallet cannot encode: ' + decimalWei);
+    throw new WalletError(
+      'unknown',
+      'The API returned a transaction value this wallet cannot encode: ' + decimalWei,
+    );
   }
   return '0x' + BigInt(trimmed).toString(16);
 }
@@ -287,7 +303,8 @@ export function toHexWei(decimalWei: string): string {
 export type ChainRequest = (method: string, params?: unknown[]) => Promise<unknown>;
 
 function toChainId(raw: unknown): number {
-  if (typeof raw === 'string') return raw.startsWith('0x') ? Number(hexToBigInt(raw as `0x${string}`)) : Number(raw);
+  if (typeof raw === 'string')
+    return raw.startsWith('0x') ? Number(hexToBigInt(raw as `0x${string}`)) : Number(raw);
   return Number(raw);
 }
 
@@ -390,7 +407,9 @@ class EvmWallet implements ConnectedWallet {
   }
 
   private async request<T>(method: string, params?: unknown[] | object): Promise<T> {
-    return (await this.provider.request(params === undefined ? { method } : { method, params })) as T;
+    return (await this.provider.request(
+      params === undefined ? { method } : { method, params },
+    )) as T;
   }
 
   /**
@@ -433,7 +452,10 @@ class EvmWallet implements ConnectedWallet {
 
   async signTypedData(typedData: unknown): Promise<string> {
     try {
-      return await this.request<string>('eth_signTypedData_v4', [this.account, JSON.stringify(typedData)]);
+      return await this.request<string>('eth_signTypedData_v4', [
+        this.account,
+        JSON.stringify(typedData),
+      ]);
     } catch (err) {
       throw mapWalletError(err, 'The wallet would not sign the permit.');
     }
@@ -465,7 +487,10 @@ class EvmWallet implements ConnectedWallet {
 
   async signAndSend(payload: SignPayload): Promise<BroadcastResult> {
     if (payload.net !== 'RH' && payload.net !== 'BASE') {
-      throw new WalletError('unsupported_method', 'An EVM wallet cannot sign a Solana transaction.');
+      throw new WalletError(
+        'unsupported_method',
+        'An EVM wallet cannot sign a Solana transaction.',
+      );
     }
     await this.ensureChain();
     await this.preflight(payload.to, payload.data, payload.value);
@@ -486,7 +511,10 @@ class EvmWallet implements ConnectedWallet {
 
     let receipt;
     try {
-      receipt = await rpc(this.net).waitForTransactionReceipt({ hash: hash as `0x${string}`, timeout: 120_000 });
+      receipt = await rpc(this.net).waitForTransactionReceipt({
+        hash: hash as `0x${string}`,
+        timeout: 120_000,
+      });
     } catch (err) {
       const mapped = mapWalletError(err);
       if (mapped.kind === 'unknown' || mapped.kind === 'network') {
@@ -553,14 +581,19 @@ function normalise(address: string): string {
   }
 }
 
-async function accountsOf(provider: Eip1193Provider, mode: 'prompt' | 'reconnect'): Promise<string[]> {
+async function accountsOf(
+  provider: Eip1193Provider,
+  mode: 'prompt' | 'reconnect',
+): Promise<string[]> {
   // Reconnect: prefer eth_accounts (no popup). Many injected wallets still
   // return [] here even when the site is already authorised — fall through to
   // eth_requestAccounts, which MetaMask/Rabby approve silently when unlocked.
   if (mode === 'reconnect') {
     try {
       const existing = (await provider.request({ method: 'eth_accounts' })) as unknown;
-      const list = Array.isArray(existing) ? existing.filter((a): a is string => typeof a === 'string') : [];
+      const list = Array.isArray(existing)
+        ? existing.filter((a): a is string => typeof a === 'string')
+        : [];
       if (list.length > 0) return list;
     } catch {
       /* fall through */
@@ -580,7 +613,10 @@ export interface EvmConnectHooks {
   silent?: boolean;
 }
 
-export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}): Promise<ConnectedWallet> {
+export async function connectEvmWallet(
+  id: string,
+  hooks: EvmConnectHooks = {},
+): Promise<ConnectedWallet> {
   if (id === 'walletconnect') {
     const reason = walletConnectUnavailableReason();
     if (reason) throw new WalletError('unconfigured', reason);
@@ -591,13 +627,24 @@ export async function connectEvmWallet(id: string, hooks: EvmConnectHooks = {}):
       ...(hooks.onWalletConnectUri ? { onUri: hooks.onWalletConnectUri } : {}),
       ...(hooks.silent ? { resumeOnly: true } : {}),
     });
-    return new EvmWallet('evm-walletconnect', 'WALLETCONNECT', normalise(address), provider, true, disconnect, wcNet);
+    return new EvmWallet(
+      'evm-walletconnect',
+      'WALLETCONNECT',
+      normalise(address),
+      provider,
+      true,
+      disconnect,
+      wcNet,
+    );
   }
 
   const rdns = id.startsWith('injected:') ? id.slice('injected:'.length) : id;
   const detail = injectedDetails().find((d) => d.info.rdns === rdns);
   if (!detail) {
-    throw new WalletError('no_wallet', `${rdns} is no longer available. Is the extension still enabled?`);
+    throw new WalletError(
+      'no_wallet',
+      `${rdns} is no longer available. Is the extension still enabled?`,
+    );
   }
   let accounts: string[];
   try {

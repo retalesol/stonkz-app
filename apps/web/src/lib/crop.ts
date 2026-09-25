@@ -109,7 +109,13 @@ export class SquareCropper {
     if (!ctx) throw new Error('2d context unavailable');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(this.img, this.ox, this.oy, this.img.naturalWidth * this.scale, this.img.naturalHeight * this.scale);
+    ctx.drawImage(
+      this.img,
+      this.ox,
+      this.oy,
+      this.img.naturalWidth * this.scale,
+      this.img.naturalHeight * this.scale,
+    );
     const blob = await new Promise<Blob>((resolve, reject) => {
       out.toBlob(
         (b) => (b ? resolve(b) : reject(new Error('crop export failed'))),
@@ -125,7 +131,13 @@ export class SquareCropper {
     if (!ctx || !this.img) return;
     ctx.fillStyle = '#0a0c10';
     ctx.fillRect(0, 0, this.size, this.size);
-    ctx.drawImage(this.img, this.ox, this.oy, this.img.naturalWidth * this.scale, this.img.naturalHeight * this.scale);
+    ctx.drawImage(
+      this.img,
+      this.ox,
+      this.oy,
+      this.img.naturalWidth * this.scale,
+      this.img.naturalHeight * this.scale,
+    );
     // Soft vignette frame
     ctx.strokeStyle = 'rgba(242,174,75,.55)';
     ctx.lineWidth = 2;

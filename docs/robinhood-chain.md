@@ -16,54 +16,54 @@ config flags, not constants.
 
 ## 1. Verdict table
 
-| # | Fact | Value | Confidence | Source (date) |
-|---|---|---|---|---|
-| 1 | Chain exists publicly | **Yes — public mainnet, permissionless deployment** | Confirmed | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) (live 2026-09-06); [robinhood.com newsroom](https://robinhood.com/us/en/newsroom/robinhood-accelerates-global-expansion-robinhood-chain-mainnet-stock-tokens-agentic-trading/) (2026-07-01) |
-| 2 | Mainnet launch date | **2026-07-01** (testnet 2026-02-10) | Confirmed | [Decrypt](https://decrypt.co/resources/what-robinhood-chain-ethereum-layer-2-network-tokenized-stocks); [datawallet](https://www.datawallet.com/crypto/robinhood-chain-explained) |
-| 3 | Mainnet chain id | **4663** (`0x1237`) | Confirmed | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/); [RH support](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/); `eth_chainId` read 2026-08-25 by [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) |
-| 4 | Testnet chain id | **46630** (`0xB626`) | Confirmed | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/) |
-| 5 | Public RPC | `https://rpc.mainnet.chain.robinhood.com` (rate-limited, **not for production**) | Confirmed | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/) |
-| 6 | Production RPC / WS | Alchemy `https://robinhood-mainnet.g.alchemy.com/v2/{KEY}` / `wss://…` — Alchemy is the *recommended* provider; QuickNode, Blockdaemon, dRPC, Validation Cloud also serve the chain | Confirmed | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/) |
-| 7 | Sequencer feed (for the indexer) | `wss://feed.mainnet.chain.robinhood.com` | Confirmed | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/) |
-| 8 | Block explorer | `https://robinhoodchain.blockscout.com` (Blockscout) | Likely — host spelling varies across sources, see §2.3 | [RH support](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/) |
-| 9 | **Gas token** | **ETH, 18 decimals. The UI's ETH assumption is correct.** No native chain token, no announced airdrop | Confirmed | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [trustswap network details](https://trustswap.com/robinhood/network-details) |
-| 10 | Stack | Arbitrum Orbit / Nitro optimistic rollup ("Arbitrum Dedicated Blockchains"), settling to Ethereum, **EIP-4844 blobs for DA** | Confirmed | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); precompile probe (`0x6b` returns `0xfe`) 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) |
-| 11 | EVM equivalence | Full. Solidity/Vyper deploy unmodified; Hardhat/Foundry/ethers/viem/wagmi work; PUSH0, CREATE2 deployer, Multicall3, Permit2, Safe v1.4.1 all present at canonical addresses | Confirmed | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); on-chain 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) |
-| 12 | `block.number` semantics | **Returns an estimate of the L1 block number**, not the L2 height. Use `ArbSys(0x64).arbBlockNumber()` for L2 height | Confirmed (primary docs; one third-party source disagrees, see §5.1) | [docs.robinhood.com/chain/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/) |
-| 13 | `block.timestamp` semantics | L2 sequencer clock, ≈ wall clock, updated per L2 block. Safe over hours, loose over seconds | Likely | [docs.robinhood.com/chain/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/); [investorscenter chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) (re-verified 2026-08-30) |
-| 14 | Gas model | Two components: L2 execution + L1 calldata fee. `gasleft()` and estimation differ from Ethereum. `ArbGasInfo` `0x6C`, `NodeInterface` `0xC8` | Confirmed | [docs.robinhood.com/chain/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/) |
-| 15 | Transaction ordering | **First-come-first-served by sequencer arrival time. No priority-fee ordering, no public mempool, no PGA.** Priority fees do not buy inclusion | Confirmed | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [docs …/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/) |
-| 16 | Base fee | ≈0.02 gwei floor; ~0.023 gwei measured | Likely | measured 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly); [ArbOS 61](https://docs.arbitrum.io/run-arbitrum-node/arbos-releases/arbos61) |
-| 17 | Confirmation model | Sequencer soft confirmation ~100–250 ms; Ethereum finality ~13 min after batch; withdrawals to L1 have a 7-day challenge period | Likely | [getblock RH reference](https://docs.getblock.io/api-reference/robinhood); [backpack learn](https://learn.backpack.exchange/articles/what-is-robinhood-chain); [docs …/bridging](https://docs.robinhood.com/chain/bridging/) |
-| 18 | Account abstraction | **ERC-4337 is first-class**, with Alchemy gas sponsorship / batching / session keys available | Confirmed | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) |
-| 19 | Sequencer-level censorship | Real and **in active use**: `ArbFilteredTransactionsManager` at `0x74`, one authorised filterer `0xebDc18A1…24b7`, ~6,092 `addFilteredTransaction` calls, first 2026-06-30, ≈150/day. Can defeat L1 force-inclusion | Confirmed (mechanism) / Likely (usage volume, one investigator) | [Beosin code analysis](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) (2026-07-20); nonce + txlist read 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) |
-| 20 | **DEX availability** | **Uniswap v2, v3, v4 and UniswapX all live since day one. Uniswap is the chain's primary public AMM**, with Web App, Wallet and API support | Confirmed | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02); [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) ecosystem table |
-| 21 | Universal Router | `0x8876789976decbfcbbbe364623c63652db8c0904` | Confirmed | [developers.uniswap.org v3 RH deployments](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-robinhood-chain-deployments); [Uniswap/contracts deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md) |
-| 22 | Uniswap **v2** (fungible LP) | Factory `0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f`, Router02 `0x89e5DB8B5aA49aA85AC63f691524311AEB649eba` | Confirmed | [developers.uniswap.org v2 deployments](https://developers.uniswap.org/docs/protocols/v2/deployments); [deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md) |
-| 23 | Uniswap **v3** | Factory `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA`, SwapRouter02 `0xCaf681a66D020601342297493863E78C959E5cb2`, QuoterV2 `0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7`, NFPM `0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3` | Confirmed | [developers.uniswap.org v3 RH deployments](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-robinhood-chain-deployments) |
-| 24 | Uniswap **v4** | PoolManager `0x8366a39CC670B4001A1121B8F6A443A643e40951`, PositionManager `0x58daEC3116AAe6d93017bAAea7749052E8a04fA7`, V4Quoter `0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94`, StateView `0xf3334192d15450cdd385c8b70e03f9a6bd9e673b` | Confirmed | [developers.uniswap.org/deployments](https://developers.uniswap.org/deployments); [deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md) |
-| 25 | Permit2 / WETH9 | Permit2 `0x000000000022D473030F116dDEE9F6B43aC78BA3`; WETH9 = aeWETH `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` | Confirmed | Universal Router constructor params in [deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md); WETH re-read on-chain 2026-07-30 [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) |
-| 26 | Uniswap **Trading API** supports 4663 | **Yes** — `tokenInChainId`/`tokenOutChainId` enum includes `4663`; official quickstart says "set the chain ID 4663" | Confirmed (one stale mirror disagrees, see §3.2) | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02); Trading API `/v1/quote` schema |
-| 27 | **Atomic native→base→curve in one tx** | **Possible, but only via a Stonkz-owned periphery router contract.** Not possible by relaying Trading API calldata straight from the user's EOA | Confirmed (by construction; see §3.3) | Universal Router recipient semantics; ERC-4337 support |
-| 28 | **LP form at graduation** | **Both exist**: v2 pools mint fungible ERC-20 LP tokens; v3/v4 positions are ERC-721 NFTs. Choice is ours | Confirmed | rows 22–24 |
-| 29 | **"Burn LP but keep fee-claim authority"** | **Not achievable as written on v2** (burning LP tokens forfeits the fees — they are the same claim). Achievable on **v3/v4 via an immutable locker contract** that owns the NFT and exposes `collect` but never `decreaseLiquidity` | Confirmed (protocol semantics) | §4; precedent: [pools.trade](https://blog.uniswap.org/pools-trade-a-new-way-to-launch-on-robinhood-chain) protocol-held locked position (2026-08-05); [StonkBrokers v3/v4 lockers](https://www.stonkbrokers.cash/docs) |
-| 30 | Launchpad precedent on-chain | **pools.trade**, by Uniswap Labs, live 2026-08-05: fixed 1B supply, v4 pool from block one, permanently locked protocol-held position, 0.25% LP fee autocompounds, optional 0.05% creator fee, off-chain **$50K FDV** graduation display | Confirmed | [blog.uniswap.org](https://blog.uniswap.org/pools-trade-a-new-way-to-launch-on-robinhood-chain); [bitquery pools.trade API](https://docs.bitquery.io/docs/blockchain/robinhood/pools-trade-api/) |
-| 31 | Wallet — native support | Robinhood Wallet supports Robinhood Chain natively (send/receive + dapp connect). Backpack Wallet also native. MetaMask/OKX/any EVM wallet by manual network add | Confirmed | [RH support](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/); [RH Wallet FAQ](https://robinhood.com/us/en/support/articles/robinhood-wallet-faqs/); [backpack learn](https://learn.backpack.exchange/articles/what-is-robinhood-chain) |
-| 32 | Wallet — EIP-1193 injection | **Robinhood Wallet is mobile-only (iOS/Android); there is no browser extension**, so no `window.ethereum` on desktop. Injection only applies to its in-app web3 browser | Confirmed | [RH Wallet FAQ](https://robinhood.com/us/en/support/articles/robinhood-wallet-faqs/); [connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/) |
-| 33 | Wallet — WalletConnect | **Supported, and Robinhood Chain is in the listed WalletConnect network set** (desktop = QR scan). Same page still carries a stale sentence telling users to "set the network to Polygon or Ethereum" | Confirmed | [connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/) (read 2026-09-06) |
-| 34 | Wallet — EIP-4361 (SIWE) | **No Robinhood document states `personal_sign` support explicitly.** It follows from "any wallet or dapp that supports standard Ethereum tooling can connect", and WalletConnect's wallet SDK specifies `personal_sign`/`eth_sign`/`eth_signTypedData`. SIWE is chain-agnostic message signing, so no chain feature is required | **Likely** — verify against a real device before SIWE ships | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [WalletConnect EVM methods](https://docs.walletconnect.network/wallet-sdk/chain-support/evm) |
-| 35 | Tokenized stocks exist | **Yes.** "Stock Tokens" — standard ERC-20, 18 decimals, ERC-8056 scaled-UI, issued by Robinhood Assets (Jersey) Ltd. ~96 tokenized at launch; **203 canonical tokens** enumerated 2026-08-14 | Confirmed | [docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/); [Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) (2026-07-20); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) |
-| 36 | Stock tokens tradeable on the AMM | **Yes** — Uniswap supports Stock Tokens on Web App, Wallet and API via the AMM and UniswapX from day one; "fully transferrable" | Confirmed (one source disagrees, see §7.2) | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02) |
-| 37 | Stock token transfer control | **Per-address blocklist, not an allowlist** (`onlyNotBlocked` on both sides and the caller) — the USDC/USDT default-open model. **Plus a global kill switch**: one registry can pause every stock token at once | Confirmed (verified source/bytecode read) | [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) (read 2026-08-25); [Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) |
-| 38 | Stock tokens are **not** rebasing | ERC-8056 changes only a UI multiplier. `balanceOf`, `totalSupply` and `transfer` operate on raw amounts and do not move during a corporate action — safe for a curve vault | Confirmed | [EIP-8056](https://eips.ethereum.org/EIPS/eip-8056); [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md) |
-| 39 | Stock token jurisdiction | **Not available to US persons.** Also restricted in Canada, UK, Switzerland, UAE and sanctioned jurisdictions. Legal form = tokenised **debt securities**, not equity | Confirmed | [docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/); [robinhood.com/rhj/stocktokens](https://robinhood.com/rhj/stocktokens/) |
-| 40 | Oracle | **Chainlink**, `AggregatorV3Interface`, USD feeds 8 decimals. ETH/USD proxy `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9`, **heartbeat 86400 s**. 57 feeds in the canonical directory for chain 4663 | Confirmed | [docs …/oracles-and-price-feeds](https://docs.robinhood.com/chain/oracles-and-price-feeds/); Chainlink [reference-data-directory `feeds-robinhood-mainnet.json`](https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json) (fetched 2026-09-06) |
-| 41 | Pyth on Robinhood Chain | Not listed in Robinhood's ecosystem table; no deployment found. **Chainlink is the only oracle to code against** | Likely (absence of evidence) | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) |
-| 42 | Chainlink **L2 Sequencer Uptime Feed** | **Not found for chain 4663** — no entry in the reference directory, none located by third-party research. Chainlink's standard L2 staleness guard therefore cannot be applied as documented | **Unknown** | directory fetch 2026-09-06 (0 sequencer entries); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) marks it ⚠️ not located |
-| 43 | Stablecoin base | **USDG (Paxos Global Dollar) `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`, 6 decimals** — the chain's headline stablecoin and recommended stable quote. USDC/USDT **Chainlink feeds exist**, but I could not verify canonical token addresses | Confirmed (USDG) / **Unknown** (USDC, USDT addresses) | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) ecosystem; on-chain decimals read 2026-07-30 [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) |
-| 44 | Liquidity depth | TVL $426.9M; DEX volume $322.8M on 2026-08-04; Uniswap v3+v4 the two largest venues; Uniswap fees $1.67M/24h. Weekly volume **down 33%** week-over-week | Likely (single aggregator snapshot, one month stale) | [The Defiant](https://thedefiant.io/news/defi/uniswap-pools-trade-launchpad-live-frong-memecoin) citing DefiLlama (2026-08-05) |
-| 45 | Hostile pool population | A 2026-08-14 sweep of all 203 stock tokens found ~19.5k v4 pools, ~12.7k with liquidity, of which **~1.9k are fee-trap pools at 88–100% LP fee engineered to fleece naive routers**, ~8.8k dynamic-fee hooked pools, and only a handful of genuine venues | Likely (single researcher, method documented) | [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) |
-| 46 | Token impersonation | Rampant. Fifty results for one ticker; clones copy names character-for-character and append `• Robinhood Token`. Canonical provenance = `StockFactory` `Deployed` event / EIP-1967 beacon slot `0xe10b…1b00`, **never** symbol match | Confirmed | [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) impersonator table |
+| #   | Fact                                       | Value                                                                                                                                                                                                                                                                                                                           | Confidence                                                           | Source (date)                                                                                                                                                                                                                                                                                           |
+| --- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Chain exists publicly                      | **Yes — public mainnet, permissionless deployment**                                                                                                                                                                                                                                                                             | Confirmed                                                            | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) (live 2026-09-06); [robinhood.com newsroom](https://robinhood.com/us/en/newsroom/robinhood-accelerates-global-expansion-robinhood-chain-mainnet-stock-tokens-agentic-trading/) (2026-07-01)                                               |
+| 2   | Mainnet launch date                        | **2026-07-01** (testnet 2026-02-10)                                                                                                                                                                                                                                                                                             | Confirmed                                                            | [Decrypt](https://decrypt.co/resources/what-robinhood-chain-ethereum-layer-2-network-tokenized-stocks); [datawallet](https://www.datawallet.com/crypto/robinhood-chain-explained)                                                                                                                       |
+| 3   | Mainnet chain id                           | **4663** (`0x1237`)                                                                                                                                                                                                                                                                                                             | Confirmed                                                            | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/); [RH support](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/); `eth_chainId` read 2026-08-25 by [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly)                            |
+| 4   | Testnet chain id                           | **46630** (`0xB626`)                                                                                                                                                                                                                                                                                                            | Confirmed                                                            | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/)                                                                                                                                                                                                                     |
+| 5   | Public RPC                                 | `https://rpc.mainnet.chain.robinhood.com` (rate-limited, **not for production**)                                                                                                                                                                                                                                                | Confirmed                                                            | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/)                                                                                                                                                                                                                     |
+| 6   | Production RPC / WS                        | Alchemy `https://robinhood-mainnet.g.alchemy.com/v2/{KEY}` / `wss://…` — Alchemy is the _recommended_ provider; QuickNode, Blockdaemon, dRPC, Validation Cloud also serve the chain                                                                                                                                             | Confirmed                                                            | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/)                                                                                                                                                                                                                     |
+| 7   | Sequencer feed (for the indexer)           | `wss://feed.mainnet.chain.robinhood.com`                                                                                                                                                                                                                                                                                        | Confirmed                                                            | [docs.robinhood.com/chain/connecting](https://docs.robinhood.com/chain/connecting/)                                                                                                                                                                                                                     |
+| 8   | Block explorer                             | `https://robinhoodchain.blockscout.com` (Blockscout)                                                                                                                                                                                                                                                                            | Likely — host spelling varies across sources, see §2.3               | [RH support](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/)                                                                                                                                                                                                                     |
+| 9   | **Gas token**                              | **ETH, 18 decimals. The UI's ETH assumption is correct.** No native chain token, no announced airdrop                                                                                                                                                                                                                           | Confirmed                                                            | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [trustswap network details](https://trustswap.com/robinhood/network-details)                                                                                                                                                             |
+| 10  | Stack                                      | Arbitrum Orbit / Nitro optimistic rollup ("Arbitrum Dedicated Blockchains"), settling to Ethereum, **EIP-4844 blobs for DA**                                                                                                                                                                                                    | Confirmed                                                            | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); precompile probe (`0x6b` returns `0xfe`) 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly)                                                                                                                    |
+| 11  | EVM equivalence                            | Full. Solidity/Vyper deploy unmodified; Hardhat/Foundry/ethers/viem/wagmi work; PUSH0, CREATE2 deployer, Multicall3, Permit2, Safe v1.4.1 all present at canonical addresses                                                                                                                                                    | Confirmed                                                            | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); on-chain 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly)                                                                                                                                                    |
+| 12  | `block.number` semantics                   | **Returns an estimate of the L1 block number**, not the L2 height. Use `ArbSys(0x64).arbBlockNumber()` for L2 height                                                                                                                                                                                                            | Confirmed (primary docs; one third-party source disagrees, see §5.1) | [docs.robinhood.com/chain/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/)                                                                                                                                                                                       |
+| 13  | `block.timestamp` semantics                | L2 sequencer clock, ≈ wall clock, updated per L2 block. Safe over hours, loose over seconds                                                                                                                                                                                                                                     | Likely                                                               | [docs.robinhood.com/chain/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/); [investorscenter chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) (re-verified 2026-08-30)                                                              |
+| 14  | Gas model                                  | Two components: L2 execution + L1 calldata fee. `gasleft()` and estimation differ from Ethereum. `ArbGasInfo` `0x6C`, `NodeInterface` `0xC8`                                                                                                                                                                                    | Confirmed                                                            | [docs.robinhood.com/chain/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/)                                                                                                                                                                                       |
+| 15  | Transaction ordering                       | **First-come-first-served by sequencer arrival time. No priority-fee ordering, no public mempool, no PGA.** Priority fees do not buy inclusion                                                                                                                                                                                  | Confirmed                                                            | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [docs …/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/)                                                                                                                                          |
+| 16  | Base fee                                   | ≈0.02 gwei floor; ~0.023 gwei measured                                                                                                                                                                                                                                                                                          | Likely                                                               | measured 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly); [ArbOS 61](https://docs.arbitrum.io/run-arbitrum-node/arbos-releases/arbos61)                                                                                                                                    |
+| 17  | Confirmation model                         | Sequencer soft confirmation ~100–250 ms; Ethereum finality ~13 min after batch; withdrawals to L1 have a 7-day challenge period                                                                                                                                                                                                 | Likely                                                               | [getblock RH reference](https://docs.getblock.io/api-reference/robinhood); [backpack learn](https://learn.backpack.exchange/articles/what-is-robinhood-chain); [docs …/bridging](https://docs.robinhood.com/chain/bridging/)                                                                            |
+| 18  | Account abstraction                        | **ERC-4337 is first-class**, with Alchemy gas sponsorship / batching / session keys available                                                                                                                                                                                                                                   | Confirmed                                                            | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/)                                                                                                                                                                                                                                           |
+| 19  | Sequencer-level censorship                 | Real and **in active use**: `ArbFilteredTransactionsManager` at `0x74`, one authorised filterer `0xebDc18A1…24b7`, ~6,092 `addFilteredTransaction` calls, first 2026-06-30, ≈150/day. Can defeat L1 force-inclusion                                                                                                             | Confirmed (mechanism) / Likely (usage volume, one investigator)      | [Beosin code analysis](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) (2026-07-20); nonce + txlist read 2026-08-25 [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly)                                        |
+| 20  | **DEX availability**                       | **Uniswap v2, v3, v4 and UniswapX all live since day one. Uniswap is the chain's primary public AMM**, with Web App, Wallet and API support                                                                                                                                                                                     | Confirmed                                                            | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02); [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) ecosystem table                                                                                                                                        |
+| 21  | Universal Router                           | `0x8876789976decbfcbbbe364623c63652db8c0904`                                                                                                                                                                                                                                                                                    | Confirmed                                                            | [developers.uniswap.org v3 RH deployments](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-robinhood-chain-deployments); [Uniswap/contracts deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md)                                                    |
+| 22  | Uniswap **v2** (fungible LP)               | Factory `0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f`, Router02 `0x89e5DB8B5aA49aA85AC63f691524311AEB649eba`                                                                                                                                                                                                                     | Confirmed                                                            | [developers.uniswap.org v2 deployments](https://developers.uniswap.org/docs/protocols/v2/deployments); [deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md)                                                                                                        |
+| 23  | Uniswap **v3**                             | Factory `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA`, SwapRouter02 `0xCaf681a66D020601342297493863E78C959E5cb2`, QuoterV2 `0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7`, NFPM `0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3`                                                                                                       | Confirmed                                                            | [developers.uniswap.org v3 RH deployments](https://developers.uniswap.org/docs/protocols/v3/deployments/v3-robinhood-chain-deployments)                                                                                                                                                                 |
+| 24  | Uniswap **v4**                             | PoolManager `0x8366a39CC670B4001A1121B8F6A443A643e40951`, PositionManager `0x58daEC3116AAe6d93017bAAea7749052E8a04fA7`, V4Quoter `0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94`, StateView `0xf3334192d15450cdd385c8b70e03f9a6bd9e673b`                                                                                           | Confirmed                                                            | [developers.uniswap.org/deployments](https://developers.uniswap.org/deployments); [deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md)                                                                                                                             |
+| 25  | Permit2 / WETH9                            | Permit2 `0x000000000022D473030F116dDEE9F6B43aC78BA3`; WETH9 = aeWETH `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73`                                                                                                                                                                                                               | Confirmed                                                            | Universal Router constructor params in [deployments/4663.md](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md); WETH re-read on-chain 2026-07-30 [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)                                                       |
+| 26  | Uniswap **Trading API** supports 4663      | **Yes** — `tokenInChainId`/`tokenOutChainId` enum includes `4663`; official quickstart says "set the chain ID 4663"                                                                                                                                                                                                             | Confirmed (one stale mirror disagrees, see §3.2)                     | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02); Trading API `/v1/quote` schema                                                                                                                                                                                       |
+| 27  | **Atomic native→base→curve in one tx**     | **Possible, but only via a Stonkz-owned periphery router contract.** Not possible by relaying Trading API calldata straight from the user's EOA                                                                                                                                                                                 | Confirmed (by construction; see §3.3)                                | Universal Router recipient semantics; ERC-4337 support                                                                                                                                                                                                                                                  |
+| 28  | **LP form at graduation**                  | **Both exist**: v2 pools mint fungible ERC-20 LP tokens; v3/v4 positions are ERC-721 NFTs. Choice is ours                                                                                                                                                                                                                       | Confirmed                                                            | rows 22–24                                                                                                                                                                                                                                                                                              |
+| 29  | **"Burn LP but keep fee-claim authority"** | **Not achievable as written on v2** (burning LP tokens forfeits the fees — they are the same claim). Achievable on **v3/v4 via an immutable locker contract** that owns the NFT and exposes `collect` but never `decreaseLiquidity`                                                                                             | Confirmed (protocol semantics)                                       | §4; precedent: [pools.trade](https://blog.uniswap.org/pools-trade-a-new-way-to-launch-on-robinhood-chain) protocol-held locked position (2026-08-05); [StonkBrokers v3/v4 lockers](https://www.stonkbrokers.cash/docs)                                                                                  |
+| 30  | Launchpad precedent on-chain               | **pools.trade**, by Uniswap Labs, live 2026-08-05: fixed 1B supply, v4 pool from block one, permanently locked protocol-held position, 0.25% LP fee autocompounds, optional 0.05% creator fee, off-chain **$50K FDV** graduation display                                                                                        | Confirmed                                                            | [blog.uniswap.org](https://blog.uniswap.org/pools-trade-a-new-way-to-launch-on-robinhood-chain); [bitquery pools.trade API](https://docs.bitquery.io/docs/blockchain/robinhood/pools-trade-api/)                                                                                                        |
+| 31  | Wallet — native support                    | Robinhood Wallet supports Robinhood Chain natively (send/receive + dapp connect). Backpack Wallet also native. MetaMask/OKX/any EVM wallet by manual network add                                                                                                                                                                | Confirmed                                                            | [RH support](https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/); [RH Wallet FAQ](https://robinhood.com/us/en/support/articles/robinhood-wallet-faqs/); [backpack learn](https://learn.backpack.exchange/articles/what-is-robinhood-chain)                                           |
+| 32  | Wallet — EIP-1193 injection                | **Robinhood Wallet is mobile-only (iOS/Android); there is no browser extension**, so no `window.ethereum` on desktop. Injection only applies to its in-app web3 browser                                                                                                                                                         | Confirmed                                                            | [RH Wallet FAQ](https://robinhood.com/us/en/support/articles/robinhood-wallet-faqs/); [connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/)                                                                                                                                |
+| 33  | Wallet — WalletConnect                     | **Supported, and Robinhood Chain is in the listed WalletConnect network set** (desktop = QR scan). Same page still carries a stale sentence telling users to "set the network to Polygon or Ethereum"                                                                                                                           | Confirmed                                                            | [connect to dapps](https://robinhood.com/us/en/support/articles/connect-to-dapps/) (read 2026-09-06)                                                                                                                                                                                                    |
+| 34  | Wallet — EIP-4361 (SIWE)                   | **No Robinhood document states `personal_sign` support explicitly.** It follows from "any wallet or dapp that supports standard Ethereum tooling can connect", and WalletConnect's wallet SDK specifies `personal_sign`/`eth_sign`/`eth_signTypedData`. SIWE is chain-agnostic message signing, so no chain feature is required | **Likely** — verify against a real device before SIWE ships          | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/); [WalletConnect EVM methods](https://docs.walletconnect.network/wallet-sdk/chain-support/evm)                                                                                                                                             |
+| 35  | Tokenized stocks exist                     | **Yes.** "Stock Tokens" — standard ERC-20, 18 decimals, ERC-8056 scaled-UI, issued by Robinhood Assets (Jersey) Ltd. ~96 tokenized at launch; **203 canonical tokens** enumerated 2026-08-14                                                                                                                                    | Confirmed                                                            | [docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/); [Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol) (2026-07-20); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) |
+| 36  | Stock tokens tradeable on the AMM          | **Yes** — Uniswap supports Stock Tokens on Web App, Wallet and API via the AMM and UniswapX from day one; "fully transferrable"                                                                                                                                                                                                 | Confirmed (one source disagrees, see §7.2)                           | [blog.uniswap.org](https://blog.uniswap.org/robinhood-chain-is-live) (2026-07-02)                                                                                                                                                                                                                       |
+| 37  | Stock token transfer control               | **Per-address blocklist, not an allowlist** (`onlyNotBlocked` on both sides and the caller) — the USDC/USDT default-open model. **Plus a global kill switch**: one registry can pause every stock token at once                                                                                                                 | Confirmed (verified source/bytecode read)                            | [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly) (read 2026-08-25); [Beosin](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol)                                                                                |
+| 38  | Stock tokens are **not** rebasing          | ERC-8056 changes only a UI multiplier. `balanceOf`, `totalSupply` and `transfer` operate on raw amounts and do not move during a corporate action — safe for a curve vault                                                                                                                                                      | Confirmed                                                            | [EIP-8056](https://eips.ethereum.org/EIPS/eip-8056); [BEP-677](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-677.md)                                                                                                                                                                           |
+| 39  | Stock token jurisdiction                   | **Not available to US persons.** Also restricted in Canada, UK, Switzerland, UAE and sanctioned jurisdictions. Legal form = tokenised **debt securities**, not equity                                                                                                                                                           | Confirmed                                                            | [docs …/stock-tokens](https://docs.robinhood.com/chain/stock-tokens/); [robinhood.com/rhj/stocktokens](https://robinhood.com/rhj/stocktokens/)                                                                                                                                                          |
+| 40  | Oracle                                     | **Chainlink**, `AggregatorV3Interface`, USD feeds 8 decimals. ETH/USD proxy `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9`, **heartbeat 86400 s**. 57 feeds in the canonical directory for chain 4663                                                                                                                             | Confirmed                                                            | [docs …/oracles-and-price-feeds](https://docs.robinhood.com/chain/oracles-and-price-feeds/); Chainlink [reference-data-directory `feeds-robinhood-mainnet.json`](https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json) (fetched 2026-09-06)                                         |
+| 41  | Pyth on Robinhood Chain                    | Not listed in Robinhood's ecosystem table; no deployment found. **Chainlink is the only oracle to code against**                                                                                                                                                                                                                | Likely (absence of evidence)                                         | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/)                                                                                                                                                                                                                                           |
+| 42  | Chainlink **L2 Sequencer Uptime Feed**     | **Not found for chain 4663** — no entry in the reference directory, none located by third-party research. Chainlink's standard L2 staleness guard therefore cannot be applied as documented                                                                                                                                     | **Unknown**                                                          | directory fetch 2026-09-06 (0 sequencer entries); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) marks it ⚠️ not located                                                                                                                                                |
+| 43  | Stablecoin base                            | **USDG (Paxos Global Dollar) `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`, 6 decimals** — the chain's headline stablecoin and recommended stable quote. USDC/USDT **Chainlink feeds exist**, but I could not verify canonical token addresses                                                                                   | Confirmed (USDG) / **Unknown** (USDC, USDT addresses)                | [docs.robinhood.com/chain](https://docs.robinhood.com/chain/) ecosystem; on-chain decimals read 2026-07-30 [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)                                                                                                               |
+| 44  | Liquidity depth                            | TVL $426.9M; DEX volume $322.8M on 2026-08-04; Uniswap v3+v4 the two largest venues; Uniswap fees $1.67M/24h. Weekly volume **down 33%** week-over-week                                                                                                                                                                         | Likely (single aggregator snapshot, one month stale)                 | [The Defiant](https://thedefiant.io/news/defi/uniswap-pools-trade-launchpad-live-frong-memecoin) citing DefiLlama (2026-08-05)                                                                                                                                                                          |
+| 45  | Hostile pool population                    | A 2026-08-14 sweep of all 203 stock tokens found ~19.5k v4 pools, ~12.7k with liquidity, of which **~1.9k are fee-trap pools at 88–100% LP fee engineered to fleece naive routers**, ~8.8k dynamic-fee hooked pools, and only a handful of genuine venues                                                                       | Likely (single researcher, method documented)                        | [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts)                                                                                                                                                                                                                          |
+| 46  | Token impersonation                        | Rampant. Fifty results for one ticker; clones copy names character-for-character and append `• Robinhood Token`. Canonical provenance = `StockFactory` `Deployed` event / EIP-1967 beacon slot `0xe10b…1b00`, **never** symbol match                                                                                            | Confirmed                                                            | [xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly); [chain-facts](https://docs.investorscenter.finance/docs/reference/chain-facts) impersonator table                                                                                                                                    |
 
 ---
 
@@ -140,7 +140,7 @@ stream on this chain carries a switch-flip risk that should be written into the 
 
 ### 3.1 Uniswap is fully deployed — the plan's route is buildable
 
-**Uniswap v2, v3, v4 and UniswapX are all live on Robinhood Chain**, and Uniswap is the chain's *primary public AMM*, with
+**Uniswap v2, v3, v4 and UniswapX are all live on Robinhood Chain**, and Uniswap is the chain's _primary public AMM_, with
 Web App, Wallet and API support from day one ([blog.uniswap.org, 2026-07-02](https://blog.uniswap.org/robinhood-chain-is-live)).
 Robinhood's own ecosystem table lists Uniswap under "Public DEX" ([docs.robinhood.com/chain](https://docs.robinhood.com/chain/)).
 
@@ -150,23 +150,23 @@ Full address set for chain 4663, from Uniswap's own registries
 [deployments index](https://developers.uniswap.org/deployments),
 [Uniswap/contracts `deployments/4663.md`](https://github.com/Uniswap/contracts/blob/main/deployments/4663.md)):
 
-| Contract | Address |
-|---|---|
-| UniversalRouter | `0x8876789976decbfcbbbe364623c63652db8c0904` |
-| Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
-| WETH9 (aeWETH) | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
-| UniswapV2Factory | `0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f` |
-| UniswapV2Router02 | `0x89e5DB8B5aA49aA85AC63f691524311AEB649eba` |
-| UniswapV3Factory | `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA` |
-| SwapRouter02 (v3) | `0xCaf681a66D020601342297493863E78C959E5cb2` |
-| QuoterV2 (v3) | `0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7` |
+| Contract                        | Address                                      |
+| ------------------------------- | -------------------------------------------- |
+| UniversalRouter                 | `0x8876789976decbfcbbbe364623c63652db8c0904` |
+| Permit2                         | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
+| WETH9 (aeWETH)                  | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+| UniswapV2Factory                | `0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f` |
+| UniswapV2Router02               | `0x89e5DB8B5aA49aA85AC63f691524311AEB649eba` |
+| UniswapV3Factory                | `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA` |
+| SwapRouter02 (v3)               | `0xCaf681a66D020601342297493863E78C959E5cb2` |
+| QuoterV2 (v3)                   | `0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7` |
 | NonfungiblePositionManager (v3) | `0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3` |
-| TickLens (v3) | `0x7dfd4f31be6814d2906bde155c3e1b146eac1468` |
-| PoolManager (v4) | `0x8366a39CC670B4001A1121B8F6A443A643e40951` |
-| PositionManager (v4) | `0x58daEC3116AAe6d93017bAAea7749052E8a04fA7` |
-| V4Quoter | `0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94` |
-| StateView (v4) | `0xf3334192d15450cdd385c8b70e03f9a6bd9e673b` |
-| Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` |
+| TickLens (v3)                   | `0x7dfd4f31be6814d2906bde155c3e1b146eac1468` |
+| PoolManager (v4)                | `0x8366a39CC670B4001A1121B8F6A443A643e40951` |
+| PositionManager (v4)            | `0x58daEC3116AAe6d93017bAAea7749052E8a04fA7` |
+| V4Quoter                        | `0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94` |
+| StateView (v4)                  | `0xf3334192d15450cdd385c8b70e03f9a6bd9e673b` |
+| Multicall3                      | `0xcA11bde05977b3631167028862bE2a173976CA11` |
 
 Two cautions. First, `@uniswap/sdk-core` **does not carry chain 4663 in its address maps** (the chain postdates the
 published SDK), so every address must come from config, not from an SDK lookup
@@ -190,7 +190,7 @@ oracle; call `/v1/quote` against 4663 in a smoke test instead.
 **A fee trap to close explicitly.** The Trading API docs state that a service fee can be **attached to the API key** by
 Uniswap Labs and is "always taken from the output token", surfacing as `portionBips` / `portionAmount`; separately,
 `integratorFees` accepts `bips` up to 500 and, when provided, "is applied to the swap **instead of** the default partner
-fee service." The plan's locked decision is *zero* Stonkz fee on hop 1 and hop 3 (plan lines around "Stonkz charges 0 on
+fee service." The plan's locked decision is _zero_ Stonkz fee on hop 1 and hop 3 (plan lines around "Stonkz charges 0 on
 hop 1", plan step 84). So: **never populate `integratorFees`, and assert on every quote response that `portionBips` is
 absent or 0**, failing the quote loudly if it is not. Otherwise Stonkz would silently take an aggregator-hop fee it has
 promised not to take — exactly the item on the "must never ship" list.
@@ -221,11 +221,11 @@ The workable construction, given the facts:
    `UniversalRouter.execute` with recipient = the user → ETH out. Do not ship a sell path that needs a separate
    `approve` transaction and then a swap; that is two signatures and reintroduces the stuck-mid-flow state.
 5. **Build the Universal Router calldata ourselves** with the universal-router encoding (v4/v3/v2 command mix), using the
-   Trading API or `QuoterV2`/`V4Quoter` only for *pricing*. The Trading API's `/swap` response cannot express "recipient is
+   Trading API or `QuoterV2`/`V4Quoter` only for _pricing_. The Trading API's `/swap` response cannot express "recipient is
    a contract that then does something else," so it is a quoting dependency, not an execution dependency. This also keeps
    the 8-second quote refresh (plan step 82) independent of Uniswap's calldata service being up.
 6. **Alternative considered and rejected as the default:** ERC-4337 is first-class on this chain and EIP-5792
-   `wallet_sendCalls` could batch two calls atomically. But atomic batching is a *wallet capability*, and I found no
+   `wallet_sendCalls` could batch two calls atomically. But atomic batching is a _wallet capability_, and I found no
    statement that Robinhood Wallet exposes it. Keep it as a later optimisation behind a capability check, not as the Phase
    2.R mechanism.
 
@@ -252,7 +252,7 @@ Consequences for plan step 85 (settings apply to the composed tx: "slippage, pri
   ([backpack learn](https://learn.backpack.exchange/articles/what-is-robinhood-chain)). Do not present "MEV SHIELD ON" to
   an RH user as though it were doing something.
 - **This is a config flag, not an invariant.** ArbOS 61 shipped an opt-in mechanism for an Arbitrum chain to collect tips
-  as priority fees, requiring the chain owner to enable tip collection *and* update the sequencer's sorting logic
+  as priority fees, requiring the chain owner to enable tip collection _and_ update the sequencer's sorting logic
   ([ArbOS 61 Elara](https://docs.arbitrum.io/run-arbitrum-node/arbos-releases/arbos61)). Robinhood has not enabled it. So
   gate the behaviour on `RH_PRIORITY_FEE_ORDERING=false` rather than deleting the code path.
 - **Gas estimation must not be hardcoded.** Fees have an L2 execution component plus an L1 calldata component, and
@@ -270,7 +270,7 @@ This is the section where the plan's wording does not survive the facts. Read it
 
 Because Uniswap **v2, v3 and v4 are all deployed** on 4663 (§3.1), we can graduate into either shape:
 
-- **v2**: the pool *is* an ERC-20 (`UniswapV2Pair`). LP is **fungible**, and "burn the LP" is literally possible — send the
+- **v2**: the pool _is_ an ERC-20 (`UniswapV2Pair`). LP is **fungible**, and "burn the LP" is literally possible — send the
   LP tokens to a dead address and the liquidity is permanently unwithdrawable, verifiable by anyone with the explorer.
 - **v3 / v4**: a position is an **ERC-721 NFT** (v3 `NonfungiblePositionManager` `0x73991a…DE0D3`, v4 `PositionManager`
   `0x58daEC…04fA7`). Concentrated by design; a full-range position emulates v2.
@@ -284,7 +284,7 @@ compatible on v3/v4 and **mutually exclusive on v2**:
 - **v2 has no separate fee claim.** Swap fees stay inside the pool's reserves and accrue to LP-token holders pro rata.
   There is no `collect()`. The only way to realise v2 fees is to burn LP tokens and withdraw a proportional slice of
   reserves. So burning the LP tokens forfeits every past and future fee at the same moment it locks the principal — the
-  fee claim *is* the principal claim.
+  fee claim _is_ the principal claim.
 - **v3/v4 separate the two.** Fees accrue to the position independently of principal and are claimed by the position's
   owner or an approved operator (`collect` on v3; a zero-liquidity-delta `modifyLiquidity` + take on v4). Principal is
   withdrawn by a different call (`decreaseLiquidity`).
@@ -307,7 +307,7 @@ This is exactly what the chain's existing precedents do, which is a useful signa
 - **StonkBrokers** on 4663 ships separate V3 and V4 liquidity lockers, each issuing a transferable ownership NFT whose
   holder "collects the position's swap fees" ([stonkbrokers docs](https://www.stonkbrokers.cash/docs)). Note their design
   caveat, worth verifying before copying: they state **v4 position NFTs cannot be escrowed as-is**, so their V4 locker
-  *mints* a native-ETH v4 position directly into the canonical PoolManager rather than accepting a transferred one. If that
+  _mints_ a native-ETH v4 position directly into the canonical PoolManager rather than accepting a transferred one. If that
   holds, `StonkzLpLock` must mint the v4 position itself, not receive it.
 
 ### 4.3 Recommended split: burn for memecoin graduation, lock for `$STONKZ` POL
@@ -318,7 +318,7 @@ The two mechanics in the plan have different requirements, and should therefore 
 Nobody is promised those LP fees: the plan states that after graduation "curve fee stops; remaining venue fees are the
 DEX's." Given that, v2 is strictly better here:
 
-- It is the only variant where "liquidity is burned" is *verifiable by a user with a block explorer* and requires trusting
+- It is the only variant where "liquidity is burned" is _verifiable by a user with a block explorer_ and requires trusting
   no Stonkz contract at all. That is a real product asset for a launchpad.
 - **Burned v2 LP autocompounds for free.** Fees accrue into reserves, and because the LP tokens no longer exist they can
   never be withdrawn — so the pool's floor thickens permanently with no locker, no searcher incentive, and no keeper. It
@@ -333,7 +333,7 @@ WETH wrapping entirely; otherwise v3, whose locker semantics are the simplest an
 `STONKZ_POL_VERSION={v3|v4}` because plan Phase 7 is far enough out that Uniswap's v4 periphery may have moved.
 
 Either way, **update the plan's copy**. "Lock and burn LP tokens for life. Keep the fee-claim authority" should read, for
-the POL: "*Deposit the LP position into an immutable locker with no withdrawal path; retain only the fee-collect call.*"
+the POL: "_Deposit the LP position into an immutable locker with no withdrawal path; retain only the fee-collect call._"
 And the graduation copy should not promise fee claims on graduated memecoin pools.
 
 ### 4.4 Graduation-time hazards specific to this chain
@@ -353,7 +353,7 @@ And the graduation copy should not promise fee claims on graduated memecoin pool
    heartbeat-aware bound (86400 plus a grace window) and accept that the $69K threshold is therefore fuzzy at the margin —
    document that, rather than pretending it is exact.
 4. **There is no L2 Sequencer Uptime Feed for this chain** (row 42). Chainlink's documented L2 best practice — gate
-   `latestRoundData()` on the uptime feed — is *not available* here. Compensate with: the heartbeat-aware staleness bound,
+   `latestRoundData()` on the uptime feed — is _not available_ here. Compensate with: the heartbeat-aware staleness bound,
    a sanity band on `answer`, `answeredInRound` checks, and an admin pause on graduation specifically (plan step 79
    already asks for "oracle staleness on graduation"; this is the concrete shape of it).
 5. **Equity-based bases go stale by design at the weekend.** Chainlink's Robinhood equity/ETF feeds "update 24/5 following
@@ -379,7 +379,7 @@ the Robinhood Chain block number, and updates only periodically. Do not use it t
 per-block counter" ([docs …/differences-from-ethereum](https://docs.robinhood.com/chain/differences-from-ethereum/)).
 
 **Conflict, flagged:** a third-party protocol-security write-up asserts the opposite — that on Arbitrum `block.number`
-returns the *L2* block number advancing every ~250 ms
+returns the _L2_ block number advancing every ~250 ms
 ([chainscorelabs](https://chainscorelabs.com/protocol/arbitrum/incidents-and-security-advisories/defi-exploits-with-protocol-level-root-causes)),
 and it contradicts itself between two of its own pages. I weight the primary documentation plus an independent measurement
 over it: a researcher compared an Orbit chain's `block.number` against its parent chain's `eth_blockNumber` seconds apart
@@ -399,7 +399,7 @@ Concretely for `programs/evm`:
   point directly for Orbit).
 
 A useful nuance: self-consistent uses of `block.number` (write `block.number + N`, later compare against `block.number`)
-are not *broken*, just denominated in the wrong clock. It becomes a bug the moment a block height crosses a boundary — into
+are not _broken_, just denominated in the wrong clock. It becomes a bug the moment a block height crosses a boundary — into
 the API, the indexer, or a comparison against `eth_blockNumber`. The indexer's EVM replay cursor (plan step 45, "two replay
 cursors: Solana slot + EVM block") must therefore be keyed on the **L2** height from `eth_blockNumber`/`arbBlockNumber`,
 and must never be compared with a `block.number` value emitted from a contract.
@@ -526,16 +526,16 @@ canonical tokens**, none deployed after 2026-07-28, of which only **35 have a Ch
 Representative canonical addresses (re-verified on-chain 2026-07-30 by that source; TSLA also cited by Beosin from
 Blockscout):
 
-| Symbol | Address |
-|---|---|
-| TSLA | `0x322F0929c4625eD5bAd873c95208D54E1c003b2d` |
-| AAPL | `0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9` |
-| NVDA | `0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC` |
-| MSFT | `0xe93237C50D904957Cf27E7B1133b510C669c2e74` |
-| GOOGL | `0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3` |
-| SPY | `0x117cc2133c37B721F49dE2A7a74833232B3B4C0C` |
-| QQQ | `0xD5f3879160bc7c32ebb4dC785F8a4F505888de68` |
-| COIN | `0x6330D8C3178a418788dF01a47479c0ce7CCF450b` |
+| Symbol | Address                                      |
+| ------ | -------------------------------------------- |
+| TSLA   | `0x322F0929c4625eD5bAd873c95208D54E1c003b2d` |
+| AAPL   | `0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9` |
+| NVDA   | `0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC` |
+| MSFT   | `0xe93237C50D904957Cf27E7B1133b510C669c2e74` |
+| GOOGL  | `0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3` |
+| SPY    | `0x117cc2133c37B721F49dE2A7a74833232B3B4C0C` |
+| QQQ    | `0xD5f3879160bc7c32ebb4dC785F8a4F505888de68` |
+| COIN   | `0x6330D8C3178a418788dF01a47479c0ce7CCF450b` |
 
 **The Solana `STOCKS` snapshot does not map across.** The plan's `/base-tokens` endpoint (step 60) says "RH stocks only if
 that market exists; otherwise majors only" — the market exists, so RH gets its own list, sourced independently, with its
@@ -546,7 +546,7 @@ own addresses. It is not a mirror of the xStock symbol set.
 This was the single most disputed fact in the research, and it decides whether stock-token base pairs are viable at all.
 
 - **Blocklist (default-open).** A verified-source read of the `Stock` implementation found `onlyNotBlocked` applied 15
-  times — on `transfer`, on `transferFrom`, on both counterparties *and* the caller — and found `canTransfer`, `whitelist`
+  times — on `transfer`, on `transferFrom`, on both counterparties _and_ the caller — and found `canTransfer`, `whitelist`
   and `allowlist` appearing **zero** times. This is the USDC/USDT model, not ERC-3643's default-closed model
   ([xroot.dev](https://xroot.dev/blog/robinhood-chain-read-directly), read 2026-08-25). Beosin's independent code analysis
   describes the same contract shape ([Beosin, 2026-07-20](https://beosin.com/resources/robinhood-chain-stock-token-practice-code-analysis-on-token-contract-and-blockchain-protocol)).
@@ -563,7 +563,7 @@ This was the single most disputed fact in the research, and it decides whether s
   it as stale/misapplied, not as a live risk** — but it is the reason to keep the base-token allow-list in config rather
   than hardcoded, so a single flag can drop stock bases if this ever becomes true.
 
-### 7.3 What *is* real, and what it does to a curve vault
+### 7.3 What _is_ real, and what it does to a curve vault
 
 Three live control surfaces, none of them a dealbreaker, all of them things the EVM launchpad must handle:
 
@@ -588,7 +588,7 @@ survives a split untouched" ([EIP-8056](https://eips.ethereum.org/EIPS/eip-8056)
 token needs **no special handling** — the plan's "vault holds the base mint" design is safe, and this is a genuinely
 better outcome than a rebasing RWA token would have been.
 
-**But the USD *display* and valuation must read `uiMultiplier()`**, and here two sources give opposite conventions:
+**But the USD _display_ and valuation must read `uiMultiplier()`**, and here two sources give opposite conventions:
 
 - BNB's ERC-8056 guide says to convert a raw-denominated feed to a UI price with `rawPrice × 1e18 / uiMultiplier`
   ([docs.bnbchain.org](https://docs.bnbchain.org/developer-kit/scaled-ui-amount/)).
@@ -659,15 +659,15 @@ From Chainlink's canonical directory for this chain
 ([`feeds-robinhood-mainnet.json`](https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json), fetched
 2026-09-06 — **57 feeds**):
 
-| Feed | Proxy | Decimals | Heartbeat |
-|---|---|---|---|
-| ETH / USD | `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9` | 8 | 86400 s |
-| BTC / USD | `0xa2c5184bF03d373Dc9dE4876eb4Bce595B460251` | 8 | — |
-| USDG / USD | `0x61B7e5650328764B076A108EFF5fa7282a1B9aD2` | 8 | — |
-| USDC / USD | `0x9e6f4605992a899eE2999999F3Ec80C41F452546` | 8 | — |
-| Robinhood TSLA / USD | `0x4A1166a659A55625345e9515b32adECea5547C38` | 8 | — |
-| Robinhood AAPL / USD | `0x6B22A786bAa607d76728168703a39Ea9C99f2cD0` | 8 | — |
-| Robinhood NVDA / USD | `0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15` | 8 | — |
+| Feed                 | Proxy                                        | Decimals | Heartbeat |
+| -------------------- | -------------------------------------------- | -------- | --------- |
+| ETH / USD            | `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9` | 8        | 86400 s   |
+| BTC / USD            | `0xa2c5184bF03d373Dc9dE4876eb4Bce595B460251` | 8        | —         |
+| USDG / USD           | `0x61B7e5650328764B076A108EFF5fa7282a1B9aD2` | 8        | —         |
+| USDC / USD           | `0x9e6f4605992a899eE2999999F3Ec80C41F452546` | 8        | —         |
+| Robinhood TSLA / USD | `0x4A1166a659A55625345e9515b32adECea5547C38` | 8        | —         |
+| Robinhood AAPL / USD | `0x6B22A786bAa607d76728168703a39Ea9C99f2cD0` | 8        | —         |
+| Robinhood NVDA / USD | `0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15` | 8        | —         |
 
 (Equity feeds are named `Robinhood <SYM> / USD` in the directory and `RH<SYM> / USD` in some third-party tables — same
 feeds. The non-ETH addresses above come from the same directory fetch cross-checked against
@@ -695,19 +695,19 @@ Ordered by how much work it moves. Each row says what the plan currently assumes
 
 ### 9.1 Must change
 
-| Plan location | Plan assumes | Truth | Change |
-|---|---|---|---|
-| Locked decisions; step 162–163 | "Lock and **burn** LP tokens for life. **Keep the fee-claim authority**" | Impossible on v2 (fees *are* the LP claim); burning a v3/v4 NFT also kills the fee claim | Split the mechanic. Memecoin graduation → **v2 pool, LP burned** (fees then autocompound into reserves forever, by construction). `$STONKZ` POL → **v3/v4 position inside an immutable `StonkzLpLock`** with a fee-collect call and *no* withdrawal path. Rewrite the plan's copy. §4.2–4.3 |
-| Step 83 | "Uniswap Universal Router (or Trading API calldata) + curve contract in one wallet tx" | Trading API calldata puts the base token in the user's EOA and cannot target our contract as the next step | Deploy a **`StonkzRouter` periphery contract**; encode Universal Router commands ourselves with recipient = `MSG_SENDER` (i.e. `StonkzRouter`, since it is the caller — `ADDRESS_THIS` would strand output in the Universal Router itself); use the Trading API/Quoters for **pricing only**. Add ERC-2612 `permit` to the launched token so the sell path stays one signature. §3.3 |
-| Step 85; settings modal | Priority fee and MEV shield/relay apply to the composed tx | Sequencer is **FCFS with no public mempool**; priority fees do not buy inclusion and there is no PGA to shield from | Make both controls inert for `net=RH` behind `RH_PRIORITY_FEE_ORDERING=false`; exclude prio from the `SET.cap` pre-flight on RH; do not tell an RH user "MEV SHIELD ON" is protecting them. Keep the code path — ArbOS 61 makes this chain-owner-flippable. §3.4 |
-| Step 79; step 126 | Standard oracle-staleness guard; time windows | ETH/USD **heartbeat is 86400 s**; there is **no L2 sequencer uptime feed**; equity feeds are 24/5 | Heartbeat-aware staleness bound (86400 + grace), sanity band, graduation-specific admin pause, graduation denominated through **ETH/USD**. **A stale oracle must never revert a buy/sell** — it just defers graduation. §4.4 |
-| Step 72; steps 126, 131 | Straight Solidity port of the Anchor program | `block.number` returns the **L1** height on this chain | Every deadline — cashback 300 s, stake locks, quote expiry — on `block.timestamp`. `ArbSys(0x64).arbBlockNumber()` for L2 height. No OZ `Governor` with the default block-number clock. §5.1 |
-| Step 50 | "wagmi/viem for Robinhood Wallet / **injected** EVM" | Robinhood Wallet is **mobile-only**; no browser extension, so no desktop `window.ethereum` | **WalletConnect is a required connector**, plus a WalletConnect project id in `.env`. Do not gate connect on `wallet_switchEthereumChain`. §6.1 |
-| Step 49 | SIWE verified by signature recovery | **ERC-4337 is first-class** on this chain, so smart-contract accounts will log in | SIWE verifier must fall back to **EIP-1271** `isValidSignature`, not just `ecrecover`. §6.3 |
-| Step 84; "must never ship" list | Zero Stonkz fee on aggregator hops | Trading API can carry a **fee attached to the API key** (`portionBips`), and `integratorFees` overrides it | Never send `integratorFees`; **assert `portionBips` is absent or 0 on every quote** and fail loudly otherwise. §3.2 |
-| Steps 60, 90 | Base-mint allow-list is a convenience list | Rampant impersonation; fake `GME`/`DJT` live; `~1,900` fee-trap pools at 88–100% LP fee | Allow-list is a **security control**: address-pinned, provenance-checked via the `StockFactory` `Deployed` event or the EIP-1967 beacon slot, never symbol-matched. Router pins pool keys/fee tiers and never probes arbitrary tiers. §3.3, §7.4 |
-| Step 156 | Jurisdiction gate is Phase 5 polish | Stock Tokens are **debt securities**, barred from US persons and restricted in CA/UK/CH/UAE | Stock-base launches become a **jurisdiction-gated feature with a Phase 2 dependency**; `/base-tokens` and `/launch/prepare` enforce it server-side. §7.5 |
-| Step 5; step 45 | Public RPC URL in env | Robinhood documents the public RPC as rate-limited and **not for production**; Alchemy is the recommended provider | `ALCHEMY_KEY` + provider URL in env; public RPC as dev fallback only; indexer needs an **archive** endpoint and can use the sequencer feed `wss://feed.mainnet.chain.robinhood.com`. §2.2 |
+| Plan location                   | Plan assumes                                                                           | Truth                                                                                                               | Change                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Locked decisions; step 162–163  | "Lock and **burn** LP tokens for life. **Keep the fee-claim authority**"               | Impossible on v2 (fees _are_ the LP claim); burning a v3/v4 NFT also kills the fee claim                            | Split the mechanic. Memecoin graduation → **v2 pool, LP burned** (fees then autocompound into reserves forever, by construction). `$STONKZ` POL → **v3/v4 position inside an immutable `StonkzLpLock`** with a fee-collect call and _no_ withdrawal path. Rewrite the plan's copy. §4.2–4.3                                                                                          |
+| Step 83                         | "Uniswap Universal Router (or Trading API calldata) + curve contract in one wallet tx" | Trading API calldata puts the base token in the user's EOA and cannot target our contract as the next step          | Deploy a **`StonkzRouter` periphery contract**; encode Universal Router commands ourselves with recipient = `MSG_SENDER` (i.e. `StonkzRouter`, since it is the caller — `ADDRESS_THIS` would strand output in the Universal Router itself); use the Trading API/Quoters for **pricing only**. Add ERC-2612 `permit` to the launched token so the sell path stays one signature. §3.3 |
+| Step 85; settings modal         | Priority fee and MEV shield/relay apply to the composed tx                             | Sequencer is **FCFS with no public mempool**; priority fees do not buy inclusion and there is no PGA to shield from | Make both controls inert for `net=RH` behind `RH_PRIORITY_FEE_ORDERING=false`; exclude prio from the `SET.cap` pre-flight on RH; do not tell an RH user "MEV SHIELD ON" is protecting them. Keep the code path — ArbOS 61 makes this chain-owner-flippable. §3.4                                                                                                                     |
+| Step 79; step 126               | Standard oracle-staleness guard; time windows                                          | ETH/USD **heartbeat is 86400 s**; there is **no L2 sequencer uptime feed**; equity feeds are 24/5                   | Heartbeat-aware staleness bound (86400 + grace), sanity band, graduation-specific admin pause, graduation denominated through **ETH/USD**. **A stale oracle must never revert a buy/sell** — it just defers graduation. §4.4                                                                                                                                                         |
+| Step 72; steps 126, 131         | Straight Solidity port of the Anchor program                                           | `block.number` returns the **L1** height on this chain                                                              | Every deadline — cashback 300 s, stake locks, quote expiry — on `block.timestamp`. `ArbSys(0x64).arbBlockNumber()` for L2 height. No OZ `Governor` with the default block-number clock. §5.1                                                                                                                                                                                         |
+| Step 50                         | "wagmi/viem for Robinhood Wallet / **injected** EVM"                                   | Robinhood Wallet is **mobile-only**; no browser extension, so no desktop `window.ethereum`                          | **WalletConnect is a required connector**, plus a WalletConnect project id in `.env`. Do not gate connect on `wallet_switchEthereumChain`. §6.1                                                                                                                                                                                                                                      |
+| Step 49                         | SIWE verified by signature recovery                                                    | **ERC-4337 is first-class** on this chain, so smart-contract accounts will log in                                   | SIWE verifier must fall back to **EIP-1271** `isValidSignature`, not just `ecrecover`. §6.3                                                                                                                                                                                                                                                                                          |
+| Step 84; "must never ship" list | Zero Stonkz fee on aggregator hops                                                     | Trading API can carry a **fee attached to the API key** (`portionBips`), and `integratorFees` overrides it          | Never send `integratorFees`; **assert `portionBips` is absent or 0 on every quote** and fail loudly otherwise. §3.2                                                                                                                                                                                                                                                                  |
+| Steps 60, 90                    | Base-mint allow-list is a convenience list                                             | Rampant impersonation; fake `GME`/`DJT` live; `~1,900` fee-trap pools at 88–100% LP fee                             | Allow-list is a **security control**: address-pinned, provenance-checked via the `StockFactory` `Deployed` event or the EIP-1967 beacon slot, never symbol-matched. Router pins pool keys/fee tiers and never probes arbitrary tiers. §3.3, §7.4                                                                                                                                     |
+| Step 156                        | Jurisdiction gate is Phase 5 polish                                                    | Stock Tokens are **debt securities**, barred from US persons and restricted in CA/UK/CH/UAE                         | Stock-base launches become a **jurisdiction-gated feature with a Phase 2 dependency**; `/base-tokens` and `/launch/prepare` enforce it server-side. §7.5                                                                                                                                                                                                                             |
+| Step 5; step 45                 | Public RPC URL in env                                                                  | Robinhood documents the public RPC as rate-limited and **not for production**; Alchemy is the recommended provider  | `ALCHEMY_KEY` + provider URL in env; public RPC as dev fallback only; indexer needs an **archive** endpoint and can use the sequencer feed `wss://feed.mainnet.chain.robinhood.com`. §2.2                                                                                                                                                                                            |
 
 ### 9.2 Confirmed as planned — no change needed
 
@@ -741,68 +741,70 @@ in config, not in code.
 ```ts
 // packages/shared/src/chains/rh.ts  (illustrative — values sourced in §2, §3, §8)
 export const RH = {
-  chainId: 4663,                                   // ⚙ flag: 46630 on testnet
+  chainId: 4663, // ⚙ flag: 46630 on testnet
   testnetChainId: 46630,
   nativeSymbol: 'ETH',
   nativeDecimals: 18,
 
   // §2.2 — production must use a provider key, not the public RPC
-  rpcUrl: env.RH_RPC_URL,                          // Alchemy in prod
+  rpcUrl: env.RH_RPC_URL, // Alchemy in prod
   wsUrl: env.RH_WS_URL,
   sequencerFeed: 'wss://feed.mainnet.chain.robinhood.com',
-  explorer: env.RH_EXPLORER,                       // ⚙ flag: host spelling varies, §2.3
+  explorer: env.RH_EXPLORER, // ⚙ flag: host spelling varies, §2.3
 
   // §3.1 — none of these are in @uniswap/sdk-core for 4663; config only
   uniswap: {
     universalRouter: '0x8876789976decbfcbbbe364623c63652db8c0904',
-    permit2:         '0x000000000022D473030F116dDEE9F6B43aC78BA3',
-    weth9:           '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
-    v2Factory:       '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f',
-    v2Router02:      '0x89e5DB8B5aA49aA85AC63f691524311AEB649eba',
-    v3Factory:       '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
-    v3QuoterV2:      '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7',
-    v3PositionMgr:   '0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3',
-    v4PoolManager:   '0x8366a39CC670B4001A1121B8F6A443A643e40951',
-    v4PositionMgr:   '0x58daEC3116AAe6d93017bAAea7749052E8a04fA7',
-    v4Quoter:        '0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94',
+    permit2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    weth9: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    v2Factory: '0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f',
+    v2Router02: '0x89e5DB8B5aA49aA85AC63f691524311AEB649eba',
+    v3Factory: '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
+    v3QuoterV2: '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7',
+    v3PositionMgr: '0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3',
+    v4PoolManager: '0x8366a39CC670B4001A1121B8F6A443A643e40951',
+    v4PositionMgr: '0x58daEC3116AAe6d93017bAAea7749052E8a04fA7',
+    v4Quoter: '0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94',
     tradingApiChainId: 4663,
-    integratorFeeBps: 0,          // never set; assert portionBips == 0 on every quote, §3.2
+    integratorFeeBps: 0, // never set; assert portionBips == 0 on every quote, §3.2
   },
 
-  arb: { arbSys: '0x0000000000000000000000000000000000000064',
-         arbGasInfo: '0x000000000000000000000000000000000000006C',
-         nodeInterface: '0x00000000000000000000000000000000000000C8' },
+  arb: {
+    arbSys: '0x0000000000000000000000000000000000000064',
+    arbGasInfo: '0x000000000000000000000000000000000000006C',
+    nodeInterface: '0x00000000000000000000000000000000000000C8',
+  },
 
   oracle: {
     kind: 'chainlink',
-    ethUsd: '0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9',   // ⚙ flag, re-read Chainlink directory
+    ethUsd: '0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9', // ⚙ flag, re-read Chainlink directory
     usdDecimals: 8,
-    ethUsdHeartbeatSec: 86_400,                              // ⚙ flag — NOT minutes, §4.4
-    stalenessGraceSec: 3_600,                                // ⚙ tune
-    hasSequencerUptimeFeed: false,                           // §8, none exists on 4663
+    ethUsdHeartbeatSec: 86_400, // ⚙ flag — NOT minutes, §4.4
+    stalenessGraceSec: 3_600, // ⚙ tune
+    hasSequencerUptimeFeed: false, // §8, none exists on 4663
   },
 
   // §3.4 — inert today, chain-owner-flippable via ArbOS 61
-  priorityFeeOrdering: false,   // ⚙ flag
+  priorityFeeOrdering: false, // ⚙ flag
   hasPublicMempool: false,
-  mevShieldMeaningful: false,   // ⚙ flag
+  mevShieldMeaningful: false, // ⚙ flag
 
   // §4.3 — the two mechanics use different pool types on purpose
-  graduation: { targetUsd: 69_000, poolVersion: 'v2', lpDisposition: 'burn' },   // ⚙ flag
-  stonkzPol:  { poolVersion: 'v4', lpDisposition: 'immutable-locker' },          // ⚙ flag
+  graduation: { targetUsd: 69_000, poolVersion: 'v2', lpDisposition: 'burn' }, // ⚙ flag
+  stonkzPol: { poolVersion: 'v4', lpDisposition: 'immutable-locker' }, // ⚙ flag
 
   baseTokens: {
     // address-pinned allow-list; never resolve by symbol (§7.4)
-    ETH:  { address: 'native', decimals: 18, gated: false },
+    ETH: { address: 'native', decimals: 18, gated: false },
     WETH: { address: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', decimals: 18, gated: false },
-    USDG: { address: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6,  gated: false }, // 6 dp, not 18
+    USDG: { address: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6, gated: false }, // 6 dp, not 18
     // stock bases: jurisdiction-gated (§7.5), require Chainlink feed + oraclePaused()==false
     TSLA: { address: '0x322F0929c4625eD5bAd873c95208D54E1c003b2d', decimals: 18, gated: true },
     AAPL: { address: '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9', decimals: 18, gated: true },
     NVDA: { address: '0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC', decimals: 18, gated: true },
     // USDC / USDT: feeds exist, canonical token addresses UNVERIFIED — do not add until read on-chain
   },
-} as const
+} as const;
 ```
 
 **Behavioural defaults for the contracts agent**

@@ -35,7 +35,15 @@ export interface HttpXProviderOptions {
 }
 
 function miss(handle: string, status: Exclude<XProfileStatus, 'ok'>, reason: string): XProfile {
-  return { handle, displayName: null, avatarUrl: null, verified: false, found: false, status, reason };
+  return {
+    handle,
+    displayName: null,
+    avatarUrl: null,
+    verified: false,
+    found: false,
+    status,
+    reason,
+  };
 }
 
 /** The real thing — only reachable when `X_BEARER_TOKEN` is configured. */
@@ -67,7 +75,12 @@ export class HttpXProvider implements XProvider {
       if (res.status === 404) return miss(clean, 'not_found', "Username doesn't exist");
 
       const body = (await res.json().catch(() => ({}))) as {
-        data?: { name?: string; profile_image_url?: string; verified?: boolean; protected?: boolean };
+        data?: {
+          name?: string;
+          profile_image_url?: string;
+          verified?: boolean;
+          protected?: boolean;
+        };
         errors?: Array<{ title?: string; detail?: string; type?: string; status?: number }>;
       };
 
@@ -77,7 +90,11 @@ export class HttpXProvider implements XProvider {
 
       if (res.status === 403 || res.status === 401) {
         const detail = (body.errors?.[0]?.detail || body.errors?.[0]?.title || '').toLowerCase();
-        if (detail.includes('suspend') || detail.includes('banned') || detail.includes('forbidden')) {
+        if (
+          detail.includes('suspend') ||
+          detail.includes('banned') ||
+          detail.includes('forbidden')
+        ) {
           return miss(clean, 'suspended', 'User is banned or suspended');
         }
         return miss(clean, 'unavailable', 'X API refused this lookup');
@@ -128,10 +145,6 @@ export class PlaceholderXProvider implements XProvider {
   async fetchProfile(handle: string): Promise<XProfile> {
     const clean = handle.replace(/^@/, '').trim();
     if (!clean) return miss(handle, 'not_found', "Username doesn't exist");
-    return miss(
-      clean,
-      'unavailable',
-      'X API not configured on this server',
-    );
+    return miss(clean, 'unavailable', 'X API not configured on this server');
   }
 }

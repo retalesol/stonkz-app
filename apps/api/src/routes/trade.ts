@@ -18,7 +18,11 @@ import {
 } from '../router/errors.js';
 import { isOracleHopRaw } from '../router/oracle-hop.js';
 import { isV3PoolHopRaw } from '../router/v3-pool-hop.js';
-import { syncCurveReserves, type EthCaller, type SolanaAccountSource } from '../router/curve-sync.js';
+import {
+  syncCurveReserves,
+  type EthCaller,
+  type SolanaAccountSource,
+} from '../router/curve-sync.js';
 import { toAtoms } from '../router/units.js';
 import { asErc20BalanceSource } from '../chain/types.js';
 import { SolanaRpc } from '../chain/solana.js';
@@ -65,7 +69,9 @@ async function eip712TokenName(
 function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
   if (rpc instanceof SolanaRpc) return rpc;
   const candidate = rpc as Partial<SolanaAccountSource>;
-  return typeof candidate.getAccountDataBase64 === 'function' ? (candidate as SolanaAccountSource) : undefined;
+  return typeof candidate.getAccountDataBase64 === 'function'
+    ? (candidate as SolanaAccountSource)
+    : undefined;
 }
 
 /** `settings` table defaults — aligned with web `DEFAULTS` so UI and prepare agree. */
@@ -154,7 +160,13 @@ function parsePermit(raw: unknown): PermitInput | null {
   ) {
     return null;
   }
-  return { value: p['value'], deadline: p['deadline'], v: p['v'], r: p['r'] as `0x${string}`, s: p['s'] as `0x${string}` };
+  return {
+    value: p['value'],
+    deadline: p['deadline'],
+    v: p['v'],
+    r: p['r'] as `0x${string}`,
+    s: p['s'] as `0x${string}`,
+  };
 }
 
 /**
@@ -189,7 +201,10 @@ export function tradeRoutes(): Hono<AppEnv> {
     const amount = typeof body.amount === 'number' ? body.amount : Number.NaN;
 
     if (!sym || !side || !Number.isFinite(amount) || amount <= 0) {
-      return c.json({ error: 'bad_request', detail: 'sym, side (buy|sell) and a positive amount are required' }, 400);
+      return c.json(
+        { error: 'bad_request', detail: 'sym, side (buy|sell) and a positive amount are required' },
+        400,
+      );
     }
 
     const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
@@ -201,7 +216,10 @@ export function tradeRoutes(): Hono<AppEnv> {
       db: deps.db,
       row: row as TokenRow,
       ...(isEvm(net) ? { evm: { eth: asEthCaller(deps.rpcs[net]), launchpad: evmLaunchpad } } : {}),
-      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+      sol: {
+        rpc: asSolanaAccountSource(deps.rpcs.SOL),
+        programId: deps.env.solanaLaunchpadProgramId,
+      },
     });
 
     if (synced.graduatedAt !== null) {
@@ -215,7 +233,10 @@ export function tradeRoutes(): Hono<AppEnv> {
     }
     if (synced.curveK === '0' || !synced.mint) {
       return c.json(
-        { error: 'not_tradeable', detail: 'this token has no on-chain launch yet (no curve state / mint on record)' },
+        {
+          error: 'not_tradeable',
+          detail: 'this token has no on-chain launch yet (no curve state / mint on record)',
+        },
         422,
       );
     }
@@ -326,7 +347,8 @@ export function tradeRoutes(): Hono<AppEnv> {
     try {
       if (net === 'SOL') {
         const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-        if (!blockhashSource) throw new Error('trade/prepare: Solana RPC does not implement latestBlockhash()');
+        if (!blockhashSource)
+          throw new Error('trade/prepare: Solana RPC does not implement latestBlockhash()');
         const blockhash = await blockhashSource.latestBlockhash();
 
         const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
@@ -335,7 +357,12 @@ export function tradeRoutes(): Hono<AppEnv> {
         const trader = new PublicKey(wallet);
 
         const jupiter = trade.aggregatorQuote
-          ? { response: await deps.jupiter.swapInstructions(trade.aggregatorQuote.raw as JupiterQuoteResponseRaw, wallet) }
+          ? {
+              response: await deps.jupiter.swapInstructions(
+                trade.aggregatorQuote.raw as JupiterQuoteResponseRaw,
+                wallet,
+              ),
+            }
           : undefined;
 
         const composed = composeSolanaTradeTransaction(
@@ -369,7 +396,8 @@ export function tradeRoutes(): Hono<AppEnv> {
       const isDirectPair = trade.aggregatorQuote === null;
       const weth = deps.baseMints.mintFor(net, 'WETH');
       const routerAddr = net === 'BASE' ? deps.env.baseRouterAddress : deps.env.rhRouterAddress;
-      const feeOverrides = net === 'BASE' ? deps.env.baseV3FeeTierOverrides : deps.env.rhV3FeeTierOverrides;
+      const feeOverrides =
+        net === 'BASE' ? deps.env.baseV3FeeTierOverrides : deps.env.rhV3FeeTierOverrides;
       const evmChainId = net === 'BASE' ? deps.env.baseChainId : deps.env.rhChainId;
       const quotedFee =
         trade.aggregatorQuote && isV3PoolHopRaw(trade.aggregatorQuote.raw)
@@ -446,11 +474,7 @@ export function tradeRoutes(): Hono<AppEnv> {
           ? null
           : buildSellPermitTypedData({
               tokenAddress: token,
-              tokenName: await eip712TokenName(
-                asEthCaller(deps.rpcs[net]),
-                token,
-                synced.name,
-              ),
+              tokenName: await eip712TokenName(asEthCaller(deps.rpcs[net]), token, synced.name),
               chainId: evmChainId,
               routerAddress,
               owner: wallet as Address,
@@ -516,14 +540,19 @@ export function tradeRoutes(): Hono<AppEnv> {
       return c.json({ error: 'bad_request', detail: 'sym and signature|txHash are required' }, 400);
     }
 
-    const mintBody = typeof (body as { mint?: unknown }).mint === 'string' ? (body as { mint: string }).mint.trim() : undefined;
+    const mintBody =
+      typeof (body as { mint?: unknown }).mint === 'string'
+        ? (body as { mint: string }).mint.trim()
+        : undefined;
     const resolved = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!resolved) return c.json({ error: 'not_found' }, 404);
 
     // Best-effort proof check: confirm the tx exists / succeeded. We still
     // sync reserves from chain even if the indexer never sees the fill.
     if (net === 'RH' || net === 'BASE') {
-      const rpc = deps.rpcs[net] as { getTransactionReceipt?: (h: string) => Promise<{ status: string } | null> };
+      const rpc = deps.rpcs[net] as {
+        getTransactionReceipt?: (h: string) => Promise<{ status: string } | null>;
+      };
       if (typeof rpc.getTransactionReceipt === 'function') {
         const receipt = await rpc.getTransactionReceipt(proof).catch(() => null);
         if (receipt && receipt.status === 'reverted') {
@@ -531,7 +560,9 @@ export function tradeRoutes(): Hono<AppEnv> {
         }
       }
     } else {
-      const rpc = deps.rpcs.SOL as { getTransactionMessageBase64?: (s: string) => Promise<string | null> };
+      const rpc = deps.rpcs.SOL as {
+        getTransactionMessageBase64?: (s: string) => Promise<string | null>;
+      };
       if (typeof rpc.getTransactionMessageBase64 === 'function') {
         const msg = await rpc.getTransactionMessageBase64(proof).catch(() => null);
         if (msg === null) {
@@ -546,7 +577,10 @@ export function tradeRoutes(): Hono<AppEnv> {
       db: deps.db,
       row: resolved as TokenRow,
       ...(isEvm(net) ? { evm: { eth: asEthCaller(deps.rpcs[net]), launchpad: evmLaunchpad } } : {}),
-      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+      sol: {
+        rpc: asSolanaAccountSource(deps.rpcs.SOL),
+        programId: deps.env.solanaLaunchpadProgramId,
+      },
     });
 
     return c.json({

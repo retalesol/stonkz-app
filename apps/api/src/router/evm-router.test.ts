@@ -29,7 +29,9 @@ describe('stonkzRouterDecision', () => {
   });
 
   it('accepts BASE the same way as RH once a router is configured', () => {
-    expect(stonkzRouterDecision('BASE', ROUTER, true, WETH, 'WETH', {})).toEqual({ mode: 'direct' });
+    expect(stonkzRouterDecision('BASE', ROUTER, true, WETH, 'WETH', {})).toEqual({
+      mode: 'direct',
+    });
   });
 
   it('takes the direct-pair mode with no fee-tier lookup needed once a router is configured', () => {
@@ -217,9 +219,20 @@ describe('buildSellPermitTypedData', () => {
       valueAtoms: 5000n,
       deadlineUnixSeconds: 2_000_000_000,
     });
-    expect(typed.domain).toEqual({ name: 'Atom Coin', version: '1', chainId: 4663, verifyingContract: TOKEN });
+    expect(typed.domain).toEqual({
+      name: 'Atom Coin',
+      version: '1',
+      chainId: 4663,
+      verifyingContract: TOKEN,
+    });
     expect(typed.primaryType).toBe('Permit');
-    expect(typed.types.Permit.map((f) => f.name)).toEqual(['owner', 'spender', 'value', 'nonce', 'deadline']);
+    expect(typed.types.Permit.map((f) => f.name)).toEqual([
+      'owner',
+      'spender',
+      'value',
+      'nonce',
+      'deadline',
+    ]);
     expect(typed.message.owner).toBe(WALLET);
     expect(typed.message.spender).toBe(ROUTER);
     expect(typed.message.value).toBe('5000');

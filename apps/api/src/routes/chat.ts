@@ -43,7 +43,11 @@ export function chatRoutes(): Hono<AppEnv> {
     const room = c.req.param('room');
     if (!net || !room) return c.json({ error: 'bad_request' }, 400);
     const messages = await deps.chat.history(net, room);
-    const profiles = await profileMap(deps, net, messages.map((m) => m.wallet));
+    const profiles = await profileMap(
+      deps,
+      net,
+      messages.map((m) => m.wallet),
+    );
     return c.json({
       net,
       room: room.toUpperCase().replace(/^\$/, ''),
@@ -69,7 +73,8 @@ export function chatRoutes(): Hono<AppEnv> {
 
     const body = (await c.req.json().catch(() => ({}))) as { text?: unknown };
     const result = await deps.chat.send(net, room, user.wallet, String(body.text ?? ''));
-    if (!result.ok) return c.json({ error: result.error }, result.error === 'rate_limited' ? 429 : 400);
+    if (!result.ok)
+      return c.json({ error: result.error }, result.error === 'rate_limited' ? 429 : 400);
 
     const [profile] = await deps.db
       .select({ username: users.username, avatarUrl: users.avatarUrl })

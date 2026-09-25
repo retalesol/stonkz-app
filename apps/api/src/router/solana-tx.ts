@@ -14,13 +14,17 @@ import { buildBuyInstruction, buildSellInstruction, traderAtas } from './solana-
 /** Mirrors `app/deps.ts`'s `asEthCaller` — narrows a `ChainRpc` to the blockhash capability only the real Solana RPC (and `FakeChainRpc`) implement. */
 export function asSolanaBlockhashSource(rpc: ChainRpc): SolanaBlockhashSource | undefined {
   const candidate = rpc as Partial<SolanaBlockhashSource>;
-  return typeof candidate.latestBlockhash === 'function' ? (candidate as SolanaBlockhashSource) : undefined;
+  return typeof candidate.latestBlockhash === 'function'
+    ? (candidate as SolanaBlockhashSource)
+    : undefined;
 }
 
 /** Same narrowing, for `routes/launch.ts`'s confirm-time transaction lookup. */
 export function asSolanaTransactionSource(rpc: ChainRpc): SolanaTransactionSource | undefined {
   const candidate = rpc as Partial<SolanaTransactionSource>;
-  return typeof candidate.getTransactionMessageBase64 === 'function' ? (candidate as SolanaTransactionSource) : undefined;
+  return typeof candidate.getTransactionMessageBase64 === 'function'
+    ? (candidate as SolanaTransactionSource)
+    : undefined;
 }
 
 /**
@@ -117,7 +121,12 @@ export function composeSolanaTradeTransaction(
   });
   if (feeIxs.length) tx.add(...feeIxs);
 
-  const atas = traderAtas({ programId: c.programId, mint: c.mint, baseMint: c.baseMint, trader: c.trader });
+  const atas = traderAtas({
+    programId: c.programId,
+    mint: c.mint,
+    baseMint: c.baseMint,
+    trader: c.trader,
+  });
   // Idempotent: a no-op if the trader already has either account. Included
   // unconditionally rather than after an extra `getAccountInfo` round trip —
   // one wasted, cheap instruction is preferable to a second RPC hop on the
@@ -154,7 +163,11 @@ export function composeSolanaTradeTransaction(
       // Fund the WSOL ATA with exactly the lamports the curve buy will pull,
       // then sync so the SPL balance reflects the transfer.
       tx.add(
-        SystemProgram.transfer({ fromPubkey: c.trader, toPubkey: atas.base, lamports: c.curveAmountIn }),
+        SystemProgram.transfer({
+          fromPubkey: c.trader,
+          toPubkey: atas.base,
+          lamports: c.curveAmountIn,
+        }),
         createSyncNativeInstruction(atas.base),
       );
     }
@@ -181,6 +194,8 @@ export function composeSolanaTradeTransaction(
     }
   }
 
-  const base64 = tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+  const base64 = tx
+    .serialize({ requireAllSignatures: false, verifySignatures: false })
+    .toString('base64');
   return { base64, lastValidBlockHeight: blockhash.lastValidBlockHeight };
 }

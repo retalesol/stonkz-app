@@ -288,6 +288,9 @@ export function assertEventIntegrity(event: ChainEvent): void {
     throw new EventIntegrityError(event, 'negative nativeAmount');
   }
   if (event.kind === 'TokenCreated' && (event.feeBps < 100 || event.feeBps > 500)) {
-    throw new EventIntegrityError(event, `feeBps ${event.feeBps} outside the 1.0%-5.0% slider range`);
+    throw new EventIntegrityError(
+      event,
+      `feeBps ${event.feeBps} outside the 1.0%-5.0% slider range`,
+    );
   }
 }

@@ -4,9 +4,9 @@
 
 Today's production-shaped code still graduates to:
 
-| Chain | Current | Target (this doc) |
-|-------|---------|-------------------|
-| Solana | Raydium CPMM + 100% LP burn | **Meteora DAMM v2** permanent lock (fees still claimable) |
+| Chain     | Current                     | Target (this doc)                                              |
+| --------- | --------------------------- | -------------------------------------------------------------- |
+| Solana    | Raydium CPMM + 100% LP burn | **Meteora DAMM v2** permanent lock (fees still claimable)      |
 | Robinhood | Uniswap v2 + LP to `0xdead` | **Uniswap v4** locked position / hook that preserves fee claim |
 
 Burning LP (current) **forfeits** venue fee claims. The product ask is Burn-and-Earn:

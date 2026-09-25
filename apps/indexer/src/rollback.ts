@@ -157,7 +157,9 @@ export class ReorgRollback {
 
       report.events = disowned.length;
       const signatures = [...new Set(disowned.map((e) => e.txSig))];
-      const affectedSyms = [...new Set(disowned.map((e) => e.sym).filter((s): s is string => s !== null))];
+      const affectedSyms = [
+        ...new Set(disowned.map((e) => e.sym).filter((s): s is string => s !== null)),
+      ];
       const droppedLaunches = disowned
         .filter((e) => e.kind === 'TokenCreated')
         .map((e) => ({
@@ -234,7 +236,8 @@ export class ReorgRollback {
       perWallet.set(row.wallet, acc);
       // `ach:<key>` is `achievementReason()`'s shape. An unlock paid for by a
       // disowned transaction is an unlock that never happened.
-      if (row.reason.startsWith('ach:')) revoke.push({ wallet: row.wallet, key: row.reason.slice(4) });
+      if (row.reason.startsWith('ach:'))
+        revoke.push({ wallet: row.wallet, key: row.reason.slice(4) });
     }
 
     await tx.delete(xpEvents).where(
@@ -289,7 +292,13 @@ export class ReorgRollback {
     for (const { wallet, key } of revoke) {
       const deleted = await tx
         .delete(achievements)
-        .where(and(eq(achievements.wallet, wallet), eq(achievements.net, net), eq(achievements.key, key)))
+        .where(
+          and(
+            eq(achievements.wallet, wallet),
+            eq(achievements.net, net),
+            eq(achievements.key, key),
+          ),
+        )
         .returning({ key: achievements.key });
       report.achievementsRevoked += deleted.length;
     }
@@ -301,7 +310,9 @@ export class ReorgRollback {
     const feeRows = await tx
       .select()
       .from(referralFeeEvents)
-      .where(and(eq(referralFeeEvents.net, net), inArray(referralFeeEvents.txSig, [...signatures])));
+      .where(
+        and(eq(referralFeeEvents.net, net), inArray(referralFeeEvents.txSig, [...signatures])),
+      );
     if (feeRows.length === 0) return;
 
     const byEarner = new Map<string, number>();
@@ -321,7 +332,9 @@ export class ReorgRollback {
     }
     await tx
       .delete(referralFeeEvents)
-      .where(and(eq(referralFeeEvents.net, net), inArray(referralFeeEvents.txSig, [...signatures])));
+      .where(
+        and(eq(referralFeeEvents.net, net), inArray(referralFeeEvents.txSig, [...signatures])),
+      );
   }
 
   /* --------------------------------------------------- additive accumulators */
@@ -336,7 +349,12 @@ export class ReorgRollback {
   private async unwindAccumulators(
     tx: Tx,
     net: Net,
-    disowned: readonly { kind: string; sym: string | null; wallet: string | null; payload: unknown }[],
+    disowned: readonly {
+      kind: string;
+      sym: string | null;
+      wallet: string | null;
+      payload: unknown;
+    }[],
   ): Promise<void> {
     for (const row of disowned) {
       switch (row.kind) {
@@ -434,7 +452,11 @@ export class ReorgRollback {
         case 'StakeClaimed': {
           if (!row.sym || !row.wallet) break;
           // Ingest zeros claimable on claim; rollback restores the claimed amounts.
-          const claim = row.payload as { mint?: string; rewardNative: number; rewardTokens: number };
+          const claim = row.payload as {
+            mint?: string;
+            rewardNative: number;
+            rewardTokens: number;
+          };
           const stakeKey = claim.mint?.trim()
             ? and(
                 eq(stakePositions.net, net),
@@ -482,7 +504,8 @@ export class ReorgRollback {
       .where(and(eq(treasuryCredits.net, net), gte(treasuryCredits.chainPosition, fromPosition)));
 
     const byKind = new Map<string, number>();
-    for (const credit of credits) byKind.set(credit.kind, (byKind.get(credit.kind) ?? 0) + credit.amount);
+    for (const credit of credits)
+      byKind.set(credit.kind, (byKind.get(credit.kind) ?? 0) + credit.amount);
     for (const [kind, amount] of byKind) {
       await tx
         .update(treasuries)
@@ -569,10 +592,14 @@ export class ReorgRollback {
 
     if (mintHint) {
       await tx.delete(candles).where(and(eq(candles.net, net), eq(candles.mint, mint)));
-      await tx.delete(holdersSnapshot).where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint)));
+      await tx
+        .delete(holdersSnapshot)
+        .where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint)));
     } else {
       await tx.delete(candles).where(and(eq(candles.net, net), eq(candles.sym, sym)));
-      await tx.delete(holdersSnapshot).where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym)));
+      await tx
+        .delete(holdersSnapshot)
+        .where(and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.sym, sym)));
     }
 
     interface Bucket {
@@ -589,7 +616,13 @@ export class ReorgRollback {
     const buckets = new Map<string, Bucket>();
     const holders = new Map<
       string,
-      { tokenAmount: number; costNative: number; realizedNative: number; firstSeen: number; updatedAt: number }
+      {
+        tokenAmount: number;
+        costNative: number;
+        realizedNative: number;
+        firstSeen: number;
+        updatedAt: number;
+      }
     >();
 
     for (const fill of surviving) {
@@ -619,9 +652,13 @@ export class ReorgRollback {
         }
       }
 
-      const holder =
-        holders.get(fill.trader) ??
-        { tokenAmount: 0, costNative: 0, realizedNative: 0, firstSeen: at, updatedAt: at };
+      const holder = holders.get(fill.trader) ?? {
+        tokenAmount: 0,
+        costNative: 0,
+        realizedNative: 0,
+        firstSeen: at,
+        updatedAt: at,
+      };
       if (fill.side === 'buy') {
         holder.tokenAmount += fill.tokenAmount;
         holder.costNative += fill.nativeAmount;
@@ -693,7 +730,11 @@ export class ReorgRollback {
       .select({ payload: chainEvents.payload })
       .from(chainEvents)
       .where(
-        and(eq(chainEvents.net, net), eq(chainEvents.sym, sym), eq(chainEvents.kind, 'TokenCreated')),
+        and(
+          eq(chainEvents.net, net),
+          eq(chainEvents.sym, sym),
+          eq(chainEvents.kind, 'TokenCreated'),
+        ),
       )
       .limit(1);
     const launchPayload = launch?.payload as { mc?: number; curve?: CurveSnapshot } | undefined;
@@ -703,7 +744,9 @@ export class ReorgRollback {
     const stillGraduated = await tx
       .select({ id: chainEvents.id })
       .from(chainEvents)
-      .where(and(eq(chainEvents.net, net), eq(chainEvents.sym, sym), eq(chainEvents.kind, 'Graduated')))
+      .where(
+        and(eq(chainEvents.net, net), eq(chainEvents.sym, sym), eq(chainEvents.kind, 'Graduated')),
+      )
       .limit(1);
 
     const last = surviving.at(-1);
@@ -776,4 +819,3 @@ export class ReorgRollback {
       });
   }
 }
-

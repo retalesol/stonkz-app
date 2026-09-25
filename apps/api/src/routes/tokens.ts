@@ -13,7 +13,6 @@ const TIMEFRAMES = new Set(['1m', '5m', '15m', '1h', '4h', '1d']);
 /** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
 const SORTS = new Set(['new', 'mc', 'chg', 'rep']);
 
-
 function parseLane(raw: string | undefined): Lane | null {
   return raw === 'new' || raw === 'soon' || raw === 'grad' ? raw : null;
 }
@@ -217,12 +216,20 @@ export function tokenRoutes(): Hono<AppEnv> {
       curve?: boolean;
     };
 
-    const fromDb = async (): Promise<{ holders: HolderOut[]; source: 'db'; holderCount: number }> => {
+    const fromDb = async (): Promise<{
+      holders: HolderOut[];
+      source: 'db';
+      holderCount: number;
+    }> => {
       const rows = await deps.db
         .select()
         .from(holdersSnapshot)
         .where(
-          and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint), gt(holdersSnapshot.tokenAmount, 0)),
+          and(
+            eq(holdersSnapshot.net, net),
+            eq(holdersSnapshot.mint, mint),
+            gt(holdersSnapshot.tokenAmount, 0),
+          ),
         )
         .orderBy(desc(holdersSnapshot.tokenAmount))
         .limit(max);
@@ -335,7 +342,12 @@ export function tokenRoutes(): Hono<AppEnv> {
     return c.json({
       net,
       sym,
-      ...(isEvm(net) ? { curveWallet: net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress } : {}),
+      ...(isEvm(net)
+        ? {
+            curveWallet:
+              net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress,
+          }
+        : {}),
       ...fallback,
     });
   });

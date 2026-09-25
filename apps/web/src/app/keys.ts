@@ -55,7 +55,8 @@ function privateKeyFor(net: Net): Uint8Array {
     // in-memory-only key for the rest of this page load.
   }
   if (stored) return hexToBytes(stored);
-  const priv = net === 'SOL' ? ed25519.utils.randomPrivateKey() : secp256k1.utils.randomPrivateKey();
+  const priv =
+    net === 'SOL' ? ed25519.utils.randomPrivateKey() : secp256k1.utils.randomPrivateKey();
   try {
     localStorage.setItem(storageKey(net), bytesToHex(priv));
   } catch {

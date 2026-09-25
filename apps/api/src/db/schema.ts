@@ -379,7 +379,10 @@ export const creatorVaults = pgTable(
     claimedNative: doublePrecision('claimed_native').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.net, t.mint] }), index('creator_vaults_creator_idx').on(t.net, t.creator)],
+  (t) => [
+    primaryKey({ columns: [t.net, t.mint] }),
+    index('creator_vaults_creator_idx').on(t.net, t.creator),
+  ],
 );
 
 export const stakePositions = pgTable(
@@ -397,7 +400,10 @@ export const stakePositions = pgTable(
     rewardTokens: doublePrecision('reward_tokens').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.net, t.mint, t.wallet] }), index('stake_by_wallet_idx').on(t.net, t.wallet)],
+  (t) => [
+    primaryKey({ columns: [t.net, t.mint, t.wallet] }),
+    index('stake_by_wallet_idx').on(t.net, t.wallet),
+  ],
 );
 
 /**
