@@ -140,7 +140,7 @@ const SOL_TICKER_BODY = {
 };
 
 /** Plan steps 90–91 — launch validation, curve derivation, and confirm verification. */
-describe('POST /launch/prepare + /launch/confirm', { timeout: 30_000 }, () => {
+describe('POST /launch/prepare + /launch/confirm', () => {
   it('launches on Solana with a direct SOL base pair and no dev buy', async () => {
     const { token, address } = await h.login('SOL');
     const { status, body } = await prepare(token, SOL_TICKER_BODY);
