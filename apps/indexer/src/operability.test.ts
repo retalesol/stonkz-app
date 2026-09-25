@@ -178,7 +178,9 @@ describe('chain-mode configuration', () => {
 
 /* -------------------------------------------------------- health / metrics */
 
-describe('the health and metrics surface', () => {
+// Each case boots a PGlite rig; on a loaded CI runner that alone runs past the
+// 5s default.
+describe('the health and metrics surface', { timeout: 30_000 }, () => {
   /**
    * A caught-up chain. `confirmations` is the buffer, and the head is placed
    * that far past the last event so the whole scenario is confirmed — a head
