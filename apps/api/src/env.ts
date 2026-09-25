@@ -1,3 +1,4 @@
+import { withChainsFile } from './chains-file.js';
 import type { Net } from '@stonkz/shared';
 import { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
 import { ARC_BLOCK_MS, ARC_CHAIN_ID, ARC_EXPLORER_URL, ARC_RPC_URL } from './chain/arc.js';
@@ -279,7 +280,10 @@ function oneOf<T extends string>(
   return v as T;
 }
 
-export function readEnv(src: EnvSource = process.env): ApiEnv {
+export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
+  // `STONKZ_CHAINS_FILE` fills blank launchpad / router / program keys from
+  // the deployment record; explicit env always wins (chains-file.ts).
+  const src = withChainsFile(rawSrc);
   const nodeEnv = oneOf(
     src,
     'NODE_ENV',

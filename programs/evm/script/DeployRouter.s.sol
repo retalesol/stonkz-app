@@ -18,7 +18,8 @@ contract DeployRouter is Script {
             IUniversalRouter(RobinhoodChainTestnet.UNIVERSAL_ROUTER),
             StonkzLaunchpad(launchpad),
             IWETH9(RobinhoodChainTestnet.WETH9),
-            ISwapRouter02(RobinhoodChainTestnet.UNISWAP_V3_SWAP_ROUTER02)
+            ISwapRouter02(RobinhoodChainTestnet.UNISWAP_V3_SWAP_ROUTER02),
+            0 // no per-buy cap
         );
         vm.stopBroadcast();
         console2.log("StonkzRouter", address(router));

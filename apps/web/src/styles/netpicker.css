@@ -21,3 +21,7 @@
 .wmenu .netrow b{color:var(--txt);font-weight:600;letter-spacing:.08em;font-size:10.5px}
 
 
+
+/* not deployed in this environment: greyed name, amber note */
+.net-item.undeployed .nn{color:var(--dim)}
+.net-item.undeployed .ns{color:var(--amber2)}

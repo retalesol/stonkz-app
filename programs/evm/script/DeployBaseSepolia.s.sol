@@ -74,7 +74,8 @@ contract DeployBaseSepolia is Script {
             IUniversalRouter(BaseSepolia.UNIVERSAL_ROUTER),
             StonkzLaunchpad(address(launchpad)),
             IWETH9(BaseSepolia.WETH9),
-            ISwapRouter02(BaseSepolia.UNISWAP_V3_SWAP_ROUTER02)
+            ISwapRouter02(BaseSepolia.UNISWAP_V3_SWAP_ROUTER02),
+            0 // no per-buy cap
         );
 
         priceSource.pushPrice(BaseSepolia.WETH9, ethUsd1e6, 0);

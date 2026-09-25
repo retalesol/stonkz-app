@@ -234,6 +234,44 @@ Until step 3 lands, graduation cannot migrate. Until steps 1-2 land,
 
 ---
 
+## 2b. Coinbase Base and Circle Arc
+
+Both reuse the Robinhood EVM stack (`DeployPad`, `StonkzLaunchpad` UUPS,
+`StonkzRouter`, `UniswapV2Migrator` on a Stonkz-owned V2 factory).
+
+**Base Sepolia (84532)** — `script/DeployBaseSepolia.s.sol`, pins in
+`src/config/BaseSepolia.sol`, record in `deployments/84532.json`. Same env
+shape as RH with the `BASE_` prefix.
+
+**Arc (5042) — mainnet, capped.** Arc's public testnet (5042002) closed on
+17 Sep 2026, so there is no test chain; the Arc deployment is real funds under
+a hard cap.
+
+- `src/config/Arc.sol` ships with **zero placeholders** for the wrapped
+  native USDC, the ERC-20 USDC and the Uniswap pins. `DeployArc` refuses to
+  broadcast until every one is filled in from docs.arc.io and checked on the
+  explorer. Note the two faces of USDC: native (18 decimals at the EVM layer,
+  what `msg.value` carries) and ERC-20 (6 decimals). The router wraps native
+  into `WRAPPED_NATIVE`; a coin's base must be exactly that address for the
+  one-signature `buyWithEth` path.
+- The router is deployed with `Arc.MAX_BUY_NATIVE = 25e18` (25 USDC). Every
+  native-in entry point reverts `BuyAboveCap` above it. The API
+  (`NET_INFO.ARC.maxTradeUsd`) and the UI mirror the number; change all three
+  together.
+- Use a **fresh deployer key** (the RH/Base testnet key is burned).
+- Afterwards: write `deployments/5042.json`, run `node scripts/emit-chains.mjs`
+  (CI checks that `apps/web/public/chains.json` matches), and set
+  `ARC_LAUNCHPAD_ADDRESS` / `ARC_ROUTER_ADDRESS` (or point
+  `STONKZ_CHAINS_FILE` at the record). Setting the launchpad address is what
+  adds chain 5042 to the SIWE allow-list.
+
+```
+export PRIVATE_KEY=0x...   # fresh, funded with USDC on Arc
+export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
+export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...
+forge script script/DeployArc.s.sol:DeployArc --rpc-url $ARC_RPC_URL --broadcast -vvv
+```
+
 ## 3. Configure the API and indexer
 
 Both deploy scripts print these lines. Set them in the API's environment:

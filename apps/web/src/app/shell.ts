@@ -2,6 +2,7 @@ import { GRAD, usd } from '@stonkz/shared';
 import { api, DISCLOSURE } from '../api/index.js';
 import { setNetSwitchHandler } from '../views/board.js';
 import { savedNet, selectNet } from '../state/wallet.js';
+import { loadChains } from '../wallet/chain.js';
 import { initFx } from '../fx/debris.js';
 import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
@@ -147,6 +148,7 @@ export async function boot(): Promise<void> {
     console.warn('api.ready failed', err);
   }
 
+  if (api.mode === 'live') void loadChains();
   const remembered = savedNet();
   if (remembered) selectNet(remembered);
   initBoard();

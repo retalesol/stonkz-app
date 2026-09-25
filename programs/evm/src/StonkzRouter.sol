@@ -110,6 +110,11 @@ contract StonkzRouter {
     /// the Universal Router's CREATE2 pool address does not match the live V3
     /// factory, so pinned-fee aggregator hops use SwapRouter02 instead.
     ISwapRouter02 public immutable swapRouter02;
+    /// @notice Hard ceiling on `msg.value` per buy, in native wei; `0` means no cap.
+    /// @dev Set only on chains where "testing" means real funds (Arc: native USDC,
+    /// 18 decimals at the EVM layer, so 25 USDC is `25e18`). The API and the UI
+    /// enforce the same number; this is the layer that cannot be bypassed.
+    uint256 public immutable maxBuyNative;
 
     /// @notice Ceiling on the tolerance a caller may declare against the
     /// aggregator's quote.
@@ -185,11 +190,14 @@ contract StonkzRouter {
         _;
     }
 
+    error BuyAboveCap(uint256 value, uint256 cap);
+
     constructor(
         IUniversalRouter _universalRouter,
         StonkzLaunchpad _launchpad,
         IWETH9 _weth,
-        ISwapRouter02 _swapRouter02
+        ISwapRouter02 _swapRouter02,
+        uint256 _maxBuyNative
     ) {
         require(
             address(_universalRouter) != address(0) && address(_launchpad) != address(0)
@@ -200,6 +208,13 @@ contract StonkzRouter {
         launchpad = _launchpad;
         weth = _weth;
         swapRouter02 = _swapRouter02;
+        maxBuyNative = _maxBuyNative;
+    }
+
+    /// @dev Every native-in entry point runs through this before touching a curve.
+    modifier underCap() {
+        if (maxBuyNative != 0 && msg.value > maxBuyNative) revert BuyAboveCap(msg.value, maxBuyNative);
+        _;
     }
 
     /* ------------------------------------------------------ direct WETH pair */
@@ -210,6 +225,7 @@ contract StonkzRouter {
     function buyWithEth(address token, uint256 minTokenOut, uint256 deadline)
         external
         payable
+        underCap
         nonReentrant
         before(deadline)
         returns (uint256 tokensOut)
@@ -237,7 +253,7 @@ contract StonkzRouter {
         uint256 maxSlippageBps,
         uint256 minTokenOut,
         uint256 deadline
-    ) external payable nonReentrant before(deadline) returns (uint256 tokensOut) {
+    ) external payable nonReentrant underCap before(deadline) returns (uint256 tokensOut) {
         if (msg.value == 0) revert NothingIn();
         address base = _baseOf(token);
 
@@ -389,7 +405,7 @@ contract StonkzRouter {
         AggregatorLeg calldata leg,
         uint256 minTokenOut,
         uint256 deadline
-    ) external payable nonReentrant before(deadline) returns (uint256 tokensOut) {
+    ) external payable nonReentrant underCap before(deadline) returns (uint256 tokensOut) {
         if (msg.value == 0) revert NothingIn();
         address base = _baseOf(token);
 

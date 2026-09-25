@@ -10,23 +10,29 @@ import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 import {IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
 import {IUniswapV2Factory} from "../src/UniswapV2Migrator.sol";
-import {RobinhoodChainTestnet} from "../src/config/RobinhoodChainTestnet.sol";
+import {Arc} from "../src/config/Arc.sol";
 import {StonkzV2Factory} from "../src/testnet/StonkzV2Factory.sol";
 import {DeployPad} from "./DeployPad.sol";
 
-/// @title Robinhood Chain **testnet** (46630) deployment.
+/// @title Circle Arc (5042) deployment — mainnet, capped.
+///
+/// Arc has no public testnet any more, so this is a real-funds deployment run
+/// with a fresh key (the RH/Base testnet deployer is burned — see
+/// `deployments/46630.json`). The router is deployed with `Arc.MAX_BUY_NATIVE`
+/// so no single buy can exceed 25 USDC regardless of what the API or UI do.
 ///
 /// ```
-/// export PRIVATE_KEY=0x...
-/// export STONKZ_ADMIN=0x...                 # same as deployer on testnet
+/// export PRIVATE_KEY=0x...                       # fresh key, funded with USDC on Arc
+/// export STONKZ_ADMIN=0x...
 /// export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
-/// export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...  # must differ from protocol
-/// forge script script/DeployTestnet.s.sol:DeployTestnet \
-///   --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+/// export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...     # must differ from protocol
+/// forge script script/DeployArc.s.sol:DeployArc \
+///   --rpc-url $ARC_RPC_URL --broadcast -vvv
 /// ```
-contract DeployTestnet is Script {
+contract DeployArc is Script {
     function run() external {
-        require(RobinhoodChainTestnet.isTestnet(), "DeployTestnet: not chain 46630");
+        require(Arc.isArc(), "DeployArc: not chain 5042");
+        require(Arc.pinned(), "DeployArc: fill in src/config/Arc.sol first (placeholders are zero)");
 
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -37,7 +43,6 @@ contract DeployTestnet is Script {
         address migrationAuthority = vm.envOr("STONKZ_MIGRATION_AUTHORITY", admin);
         address oracleAuthority = vm.envOr("STONKZ_ORACLE_AUTHORITY", admin);
 
-        require(admin == deployer, "DeployTestnet: admin must be the broadcaster on testnet");
         require(protocolWithdrawAuthority != address(0), "zero protocol");
         require(opsWithdrawAuthority != address(0), "zero ops");
         require(
@@ -45,64 +50,69 @@ contract DeployTestnet is Script {
             "protocol and ops withdraw authorities must differ"
         );
 
-        _requireCode(RobinhoodChainTestnet.WETH9, "WETH9");
-        _requireCode(RobinhoodChainTestnet.UNIVERSAL_ROUTER, "UniversalRouter");
+        _requireCode(Arc.WRAPPED_NATIVE, "WRAPPED_NATIVE");
+        _requireCode(Arc.USDC_ERC20, "USDC_ERC20");
+        _requireCode(Arc.UNIVERSAL_ROUTER, "UniversalRouter");
+        _requireCode(Arc.UNISWAP_V3_SWAP_ROUTER02, "SwapRouter02");
 
-        uint256 ethUsd1e6 = vm.envOr("STONKZ_ETH_USD_1E6", uint256(3_000_000_000));
-        uint256 usdgUsd1e6 = vm.envOr("STONKZ_USDG_USD_1E6", uint256(1_000_000));
+        // USDC is the unit of account: both faces are one dollar.
+        uint256 usdcUsd1e6 = 1_000_000;
 
         vm.startBroadcast(pk);
 
         PushPriceSource priceSource =
-            DeployPad.pushOracle(admin, oracleAuthority, RobinhoodChainTestnet.ORACLE_MAX_AGE_SECS);
+            DeployPad.pushOracle(admin, oracleAuthority, Arc.ORACLE_MAX_AGE_SECS);
 
         StonkzLaunchpad launchpad = DeployPad.launchpad(
             admin, protocolWithdrawAuthority, opsWithdrawAuthority, priceSource, migrationAuthority
         );
 
+        // Same Stonkz-owned V2 factory as the testnets until a public V2 on
+        // Arc is confirmed; graduation migrates into it and burns the LP.
         StonkzV2Factory v2Factory = new StonkzV2Factory();
         UniswapV2Migrator migrator =
             new UniswapV2Migrator(IUniswapV2Factory(address(v2Factory)), address(launchpad));
 
         launchpad.setMigrator(IGraduationMigrator(address(migrator)), migrationAuthority);
-        launchpad.setMaxOracleStaleness(RobinhoodChainTestnet.ORACLE_MAX_AGE_SECS);
+        launchpad.setMaxOracleStaleness(Arc.ORACLE_MAX_AGE_SECS);
 
         StonkzRouter router = new StonkzRouter(
-            IUniversalRouter(RobinhoodChainTestnet.UNIVERSAL_ROUTER),
+            IUniversalRouter(Arc.UNIVERSAL_ROUTER),
             StonkzLaunchpad(address(launchpad)),
-            IWETH9(RobinhoodChainTestnet.WETH9),
-            ISwapRouter02(RobinhoodChainTestnet.UNISWAP_V3_SWAP_ROUTER02),
-            0 // no per-buy cap
+            IWETH9(Arc.WRAPPED_NATIVE),
+            ISwapRouter02(Arc.UNISWAP_V3_SWAP_ROUTER02),
+            Arc.MAX_BUY_NATIVE
         );
 
-        priceSource.pushPrice(RobinhoodChainTestnet.WETH9, ethUsd1e6, 0);
-        if (RobinhoodChainTestnet.USDG.code.length > 0) {
-            priceSource.pushPrice(RobinhoodChainTestnet.USDG, usdgUsd1e6, 0);
-        }
+        priceSource.pushPrice(Arc.WRAPPED_NATIVE, usdcUsd1e6, 0);
+        priceSource.pushPrice(Arc.USDC_ERC20, usdcUsd1e6, 0);
 
         vm.stopBroadcast();
 
         console2.log("");
-        console2.log("=== Robinhood testnet 46630 deployed ===");
+        console2.log("=== Arc 5042 deployed (MAINNET, capped) ===");
         console2.log("PushPriceSource      :", address(priceSource));
         console2.log("StonkzLaunchpad      :", address(launchpad));
         console2.log("StonkzV2Factory      :", address(v2Factory));
         console2.log("UniswapV2Migrator    :", address(migrator));
         console2.log("StonkzRouter         :", address(router));
+        console2.log("router.maxBuyNative  :", router.maxBuyNative());
         console2.log("deployer/admin       :", deployer);
-        console2.log("WETH9                :", RobinhoodChainTestnet.WETH9);
         console2.log("");
         console2.log("=== apps/api + indexer env ===");
-        console2.log("RH_CHAIN_ID=46630");
-        console2.log("RH_RPC_URL=https://rpc.testnet.chain.robinhood.com");
-        console2.log("RH_LAUNCHPAD_ADDRESS=%s", address(launchpad));
-        console2.log("RH_ROUTER_ADDRESS=%s", address(router));
+        console2.log("ARC_CHAIN_ID=5042");
+        console2.log("ARC_LAUNCHPAD_ADDRESS=%s", address(launchpad));
+        console2.log("ARC_ROUTER_ADDRESS=%s", address(router));
+        console2.log("ARC_V3_FACTORY_ADDRESS=%s", Arc.UNISWAP_V3_FACTORY);
+        console2.log("ARC_V3_QUOTER_ADDRESS=%s", Arc.UNISWAP_V3_QUOTER_V2);
+        console2.log("BASE_MINT_OVERRIDES_ARC=USDC:%s", Arc.USDC_ERC20);
+        console2.log("Then: record deployments/5042.json and run scripts/emit-chains.mjs");
     }
 
     function _requireCode(address a, string memory what) internal view {
         if (a.code.length == 0) {
-            console2.log("DeployTestnet: no code at", what, a);
-            revert("DeployTestnet: pinned dependency has no code");
+            console2.log("DeployArc: no code at", what, a);
+            revert("DeployArc: pinned dependency has no code");
         }
     }
 }

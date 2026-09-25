@@ -116,7 +116,8 @@ contract Deploy is Script {
             IUniversalRouter(RobinhoodChain.UNIVERSAL_ROUTER),
             StonkzLaunchpad(address(launchpad)),
             IWETH9(RobinhoodChain.WETH9),
-            ISwapRouter02(RobinhoodChain.UNISWAP_V3_SWAP_ROUTER02)
+            ISwapRouter02(RobinhoodChain.UNISWAP_V3_SWAP_ROUTER02),
+            0 // no per-buy cap
         );
 
         vm.stopBroadcast();

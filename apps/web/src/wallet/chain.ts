@@ -230,6 +230,70 @@ export function evmAddChainParams(net: Net): EvmChainConfig['addChainParams'] {
   return net === 'SOL' ? EVM_CHAINS.RH.addChainParams : EVM_CHAINS[net].addChainParams;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Deployment record — apps/web/public/chains.json                             */
+/* -------------------------------------------------------------------------- */
+
+export interface DeployedChain {
+  readonly launchpad: string | null;
+  readonly router: string | null;
+  readonly programId?: string;
+  readonly deployedAt: string | null;
+}
+
+/** `dev` holds the test chains (and Arc's capped mainnet); `main` the production ones. */
+export type DeployEnv = 'dev' | 'main';
+
+/** Which env this build settles on: mainnet on every net, or the dev set. */
+export const DEPLOY_ENV: DeployEnv =
+  (import.meta.env['VITE_ENV'] as string | undefined) === 'main' ? 'main' : 'dev';
+
+const deployed: Partial<Record<Net, DeployedChain>> = {};
+let chainsLoaded = false;
+
+/**
+ * Read `chains.json` (written by `scripts/emit-chains.mjs`) once at boot.
+ * Failing to fetch it leaves every net "unknown", which the picker treats as
+ * deployed so a CDN hiccup does not lock the app; the API is the enforcing
+ * side and refuses trades on a net it has no address for.
+ */
+export async function loadChains(fetchImpl: typeof fetch = fetch): Promise<void> {
+  try {
+    const res = await fetchImpl('/chains.json', { cache: 'no-cache' });
+    if (!res.ok) return;
+    const doc = (await res.json()) as Partial<
+      Record<DeployEnv, Record<string, Partial<DeployedChain>>>
+    >;
+    const envBlock = doc[DEPLOY_ENV] ?? {};
+    for (const net of Object.keys(NET_INFO) as Net[]) {
+      const row = envBlock[net];
+      deployed[net] = row
+        ? {
+            launchpad: row.launchpad ?? null,
+            router: row.router ?? null,
+            ...(row.programId ? { programId: row.programId } : {}),
+            deployedAt: row.deployedAt ?? null,
+          }
+        : { launchpad: null, router: null, deployedAt: null };
+    }
+    chainsLoaded = true;
+  } catch {
+    /* offline or not served: see above */
+  }
+}
+
+/** True until chains.json says otherwise: nets it lists without a launchpad or program are not deployed. */
+export function isDeployed(net: Net): boolean {
+  if (!chainsLoaded) return true;
+  const d = deployed[net];
+  if (!d) return false;
+  return net === 'SOL' ? !!d.programId : !!d.launchpad;
+}
+
+export function deployment(net: Net): DeployedChain | null {
+  return deployed[net] ?? null;
+}
+
 /** The EVM net a chain id belongs to in this build, or null. */
 export function evmNetForChainId(chainId: number): EvmNet | null {
   for (const net of EVM_NETS) if (EVM_CHAINS[net].chainId === chainId) return net;

@@ -1,6 +1,8 @@
 import type { Net } from '@stonkz/shared';
 import { paintNetMarks } from '../canvas/netmark.js';
 import { NETS } from '../state/wallet.js';
+import { api } from '../api/index.js';
+import { isDeployed } from '../wallet/chain.js';
 import { must } from '../lib/dom.js';
 
 /**
@@ -20,9 +22,14 @@ export function netOpen(v: boolean): void {
     // The rows are static markup; the environment line under each name is
     // whatever this build settles on (devnet, Sepolia, mainnet-capped).
     for (const row of must('#netMenu').querySelectorAll<HTMLElement>('[data-net]')) {
-      const n = NETS[row.dataset['net'] as Net];
+      const net = row.dataset['net'] as Net;
+      const n = NETS[net];
       const ns = row.querySelector('.ns');
-      if (n && ns) ns.textContent = n.sub;
+      // Live builds read chains.json: a net with nothing deployed in this
+      // environment is still selectable (to browse) but says so up front.
+      const live = api.mode === 'live' && !isDeployed(net);
+      row.classList.toggle('undeployed', live);
+      if (n && ns) ns.textContent = live ? 'NOT DEPLOYED ON THIS ENV YET' : n.sub;
     }
   }
 }

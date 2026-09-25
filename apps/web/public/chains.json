@@ -1,0 +1,63 @@
+{
+  "generatedAt": "2026-09-25",
+  "dev": {
+    "RH": {
+      "kind": "EVM",
+      "chainId": 46630,
+      "network": "robinhood-testnet",
+      "rpc": "https://rpc.testnet.chain.robinhood.com",
+      "explorer": "https://explorer.testnet.chain.robinhood.com",
+      "deployedAt": "2026-09-08",
+      "launchpad": "0x2588E500B1e5fCF18253F44b6f2607BF2B14161C",
+      "router": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883",
+      "migrator": "0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45",
+      "priceSource": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
+      "v2Factory": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+      "tokens": {
+        "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
+        "USDG": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
+        "UniversalRouter": "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+        "TSLA": "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E",
+        "AMZN": "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02",
+        "PLTR": "0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0",
+        "NFLX": "0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93",
+        "AMD": "0x71178BAc73cBeb415514eB542a8995b82669778d",
+        "TestnetUsdg": "0x4bfBc27516EdCf36a93060A3c42Ef0c1cDB9E267",
+        "V3ExactInputQuoter": "0xB69f73bc96f8315bcd4d3332Cb88822197045345",
+        "WethUsdgV3Pool": "0xB195fBc3204967e126A733b3A90C5Eb3A1946528",
+        "WethUsdgV3Fee": 3000
+      }
+    },
+    "BASE": {
+      "kind": "EVM",
+      "chainId": 84532,
+      "network": "base-sepolia",
+      "rpc": "https://sepolia.base.org",
+      "explorer": "https://sepolia.basescan.org",
+      "deployedAt": "2026-09-14",
+      "launchpad": "0x02032371b6B2173211b8aa0Fa90c216d6a3a4E3A",
+      "router": "0x7859eC8639311beFF4b45D543AdE7c650020bcF5",
+      "migrator": "0xdb77897c7d31Abb555fC207CB9d8E22C69b480Cc",
+      "priceSource": "0x114a28D29956E90Ca73B616Fe0Fb5CF6b336e612",
+      "v2Factory": "0xE02338b55E78A1345e4E676b98F1D68fD9C361b6",
+      "tokens": {
+        "WETH9": "0x4200000000000000000000000000000000000006",
+        "USDC": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        "UniversalRouter": "0x492E6456D9528771018DeB9E87ef7750EF184104",
+        "SwapRouter02": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+        "V3Factory": "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24",
+        "V3QuoterV2": "0xC5290058841028F1614F3A6F0F5816cAd0df5E27",
+        "Permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+        "WethUsdcV3Fee": 3000
+      }
+    },
+    "SOL": {
+      "kind": "SVM",
+      "cluster": "devnet",
+      "programId": "FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg",
+      "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
+      "deployedAt": "2026-09-13"
+    }
+  },
+  "main": {}
+}
