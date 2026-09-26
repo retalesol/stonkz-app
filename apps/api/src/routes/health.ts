@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { sql } from 'drizzle-orm';
-import { ALL_NETS, type Net } from '@stonkz/shared';
+import { ALL_NETS, isEvmNet, type Net } from '@stonkz/shared';
+import { ZERO_EVM_ADDRESS, type ApiEnv } from '../env.js';
+import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { indexerCursors } from '../db/schema.js';
 import { listAppliedMigrations } from '../db/migrate.js';
 import type { AppDeps, AppEnv } from '../app/context.js';
@@ -28,9 +30,21 @@ export interface HealthReport {
       lagSeconds: number | null;
       alerting: boolean;
       error?: string;
+      /** `false` when this env has no launchpad on the net: not probed, never a reason to be down. */
+      deployed: boolean;
     }
   >;
   metrics: ReturnType<AppDeps['metrics']['snapshot']>;
+}
+
+/**
+ * An EVM net with no launchpad configured is not part of this environment
+ * (Arc before its deploy, RH on a Base-only stack). Its RPC is not probed and
+ * it cannot drag `/health` to 503; the picker shows it as "not deployed".
+ * Solana is always probed: the API refuses to boot without its program id.
+ */
+export function isNetDeployed(env: ApiEnv, net: Net): boolean {
+  return !isEvmNet(net) || evmLaunchpadAddress(env, net) !== ZERO_EVM_ADDRESS;
 }
 
 async function timed<T>(
@@ -62,7 +76,8 @@ export function healthRoutes(): Hono<AppEnv> {
 
   app.get('/health', async (c) => {
     const deps = c.get('deps');
-    const nets: Net[] = [...ALL_NETS];
+    const nets: Net[] = ALL_NETS.filter((n) => isNetDeployed(deps.env, n));
+    const skipped: Net[] = ALL_NETS.filter((n) => !isNetDeployed(deps.env, n));
 
     const cursorRows = await deps.db
       .select()
@@ -77,6 +92,18 @@ export function healthRoutes(): Hono<AppEnv> {
     ]);
 
     const chains = {} as HealthReport['chains'];
+    for (const net of skipped) {
+      chains[net] = {
+        status: 'ok',
+        head: null,
+        cursor: cursorByNet.get(net) ?? 0,
+        behind: null,
+        lagSeconds: null,
+        alerting: false,
+        deployed: false,
+        error: 'not deployed on this env',
+      };
+    }
     nets.forEach((net, i) => {
       const probe = chainProbes[i];
       const cursor = cursorByNet.get(net) ?? 0;
@@ -89,6 +116,7 @@ export function healthRoutes(): Hono<AppEnv> {
           behind: null,
           lagSeconds: null,
           alerting: true,
+          deployed: true,
           error: probe && !probe.ok ? probe.error : 'probe missing',
         };
         return;
@@ -103,6 +131,7 @@ export function healthRoutes(): Hono<AppEnv> {
         behind: lag.behind,
         lagSeconds: Number(lag.seconds.toFixed(1)),
         alerting: lag.alerting,
+        deployed: true,
       };
     });
 

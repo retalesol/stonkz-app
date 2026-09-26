@@ -8,8 +8,14 @@ import type { HealthReport } from './health.js';
 
 let h: TestApp;
 
+const DEPLOYED = {
+  RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0',
+  BASE_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000ba5e',
+  ARC_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000a4c0',
+};
+
 beforeAll(async () => {
-  h = await createTestApp();
+  h = await createTestApp({ env: DEPLOYED });
 });
 afterAll(async () => {
   await h.close();
@@ -101,6 +107,28 @@ describe('GET /health', () => {
     expect(body.chains.RH.error).toMatch(/outage/);
     expect(body.chains.SOL.status).toBe('ok');
     h.rpcs.RH.setFailing(false);
+  });
+
+  it('skips a net this env has no launchpad on, and never goes down for it', async () => {
+    const bare = await createTestApp({
+      env: { RH_LAUNCHPAD_ADDRESS: DEPLOYED.RH_LAUNCHPAD_ADDRESS },
+    });
+    try {
+      bare.rpcs.SOL.setHead(0);
+      bare.rpcs.RH.setHead(0);
+      bare.rpcs.ARC.setFailing(true);
+      bare.rpcs.BASE.setFailing(true);
+      const res = await bare.app.request('/health');
+      const body = (await res.json()) as HealthReport;
+      expect(res.status).toBe(200);
+      expect(body.status).toBe('ok');
+      expect(body.chains.ARC).toMatchObject({ status: 'ok', deployed: false, head: null });
+      expect(body.chains.BASE).toMatchObject({ status: 'ok', deployed: false });
+      expect(body.chains.RH.deployed).toBe(true);
+      expect(body.chains.SOL.deployed).toBe(true);
+    } finally {
+      await bare.close();
+    }
   });
 
   it('keeps liveness independent of every dependency', async () => {
