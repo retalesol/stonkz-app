@@ -43,7 +43,7 @@ describe('resetNets', () => {
     const r = await resetNets(db.db, ['RH']);
     expect(r.deleted['tokens']).toBe(1);
     expect(r.deleted['koth']).toBe(1);
-    expect(r.deleted['indexer_cursors']).toBe(1);
+    expect(r.cursorsRewound).toBe(1);
     expect(r.treasuriesZeroed).toBeGreaterThanOrEqual(1);
     for (const table of CHAIN_DERIVED_TABLES) expect(r.deleted[table]).toBeTypeOf('number');
 
@@ -51,6 +51,13 @@ describe('resetNets', () => {
     expect(await count('tokens', 'SOL')).toBe(1);
     expect(await count('koth', 'SOL')).toBe(1);
     expect(await count('indexer_cursors', 'SOL')).toBe(1);
+    expect(await count('indexer_cursors', 'RH')).toBe(1);
+    const c = await db.db.execute(
+      sql`select position, chain_head from indexer_cursors where net = 'RH'`,
+    );
+    expect(rowsOf(c)[0]).toMatchObject({ position: 0, chain_head: 0 });
+    const cs = await db.db.execute(sql`select position from indexer_cursors where net = 'SOL'`);
+    expect(Number((rowsOf(cs)[0] as { position: number | string }).position)).toBe(100);
     expect(await count('users', 'RH')).toBe(1);
 
     const t = await db.db.execute(sql`

@@ -29,7 +29,7 @@ const handle = createDb({ url: env.databaseUrl, singleConnection: true });
 try {
   const r = await resetNets(handle.db, nets);
   for (const [table, n] of Object.entries(r.deleted)) console.log(`- ${table}: ${n}`);
-  console.log(`treasuries zeroed: ${r.treasuriesZeroed}`);
+  console.log(`treasuries zeroed: ${r.treasuriesZeroed}, cursors rewound: ${r.cursorsRewound}`);
   console.log(
     `reset ${nets.join(', ')}. Set INDEXER_<NET>_START_* to the new deploy block before rolling the indexer.`,
   );

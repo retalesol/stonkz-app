@@ -7,9 +7,10 @@ import type { Db } from './client.js';
  * wallet)` (users, sessions, XP, crates, chat, follows, referrals) is kept: a
  * tester's rank does not depend on which proxy address the curve lives at.
  *
- * The indexer cursor row is deleted rather than rewound: on its next start the
- * indexer opens a fresh cursor one position before `INDEXER_<NET>_START_*`, so
- * that env var must point at the new deployment block before the roll.
+ * The indexer cursor row is rewound to position 0, not deleted: the migrations
+ * seed one row per net and the indexer refuses to run without it. At 0 it opens
+ * a fresh cursor one position before `INDEXER_<NET>_START_*`, so that env var
+ * must point at the new deployment block before the roll.
  *
  * Treasuries keep their rows (the API lists them) with balances zeroed.
  */
@@ -26,7 +27,6 @@ export const CHAIN_DERIVED_TABLES = [
   'stake_positions',
   'chain_events',
   'indexer_dead_letters',
-  'indexer_cursors',
 ] as const;
 
 /**
@@ -46,6 +46,7 @@ export function affected(r: unknown): number {
 export interface ResetNetResult {
   deleted: Record<string, number>;
   treasuriesZeroed: number;
+  cursorsRewound: number;
 }
 
 export async function resetNets(db: Db, nets: readonly string[]): Promise<ResetNetResult> {
@@ -69,6 +70,12 @@ export async function resetNets(db: Db, nets: readonly string[]): Promise<ResetN
     const t = await tx.execute(sql`
       update treasuries set native_balance = 0, lifetime_credited = 0, updated_at = now()
       where net in (${list})`);
-    return { deleted, treasuriesZeroed: affected(t) };
+    const c = await tx.execute(sql`
+      insert into indexer_cursors (net) select unnest(array[${list}]::text[])
+      on conflict (net) do update set position = 0, chain_head = 0, confirmed_head = 0,
+        position_hash = null, position_signature = null, reorgs = 0, last_reorg_at = null,
+        last_error = null, last_error_at = null, failed_attempts = 0, last_event_at = null,
+        updated_at = now()`);
+    return { deleted, treasuriesZeroed: affected(t), cursorsRewound: affected(c) };
   });
 }
