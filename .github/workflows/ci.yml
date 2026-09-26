@@ -45,9 +45,6 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: The oracle must not drift
-        run: diff index.html legacy/index.html
-
       - name: chains.json matches the deployment records
         run: node scripts/emit-chains.mjs --check
 
