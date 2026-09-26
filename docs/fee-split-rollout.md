@@ -138,3 +138,11 @@ Rule going forward, pinned by `test_StorageLayoutIsAppendOnly`: new state on
 `StonkzLaunchpad` goes after `tokenCount`, never next to its siblings, and
 `forge inspect StonkzLaunchpad storage-layout` is diffed against the deployed
 source before any `upgradeToAndCall`.
+
+**Outcome (2026-09-27).** The protocol withdraw authority key was not held, so
+both proxies were abandoned and fresh stacks deployed: RH launchpad
+`0xe308…28e8` (block 124871527) and Base Sepolia `0x2f19…4D35` (block
+47348724), recorded in `programs/evm/deployments/`. `reset-net RH BASE` wiped
+the chain-derived rows, Railway and Vercel point at the new addresses, and
+the indexer walks both chains from the new deploy blocks with no dead letters.
+Solana devnet was upgraded in place (slot 504567336) with the burn vault seeded.
