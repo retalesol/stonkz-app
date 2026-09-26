@@ -25,6 +25,42 @@ contract UpgradeTest is Test {
     address creator = address(0xC4EA7);
     address trader = address(0x74AD3);
 
+    /// @notice Pins the live storage layout behind the RH 46630 and Base 84532
+    /// proxies. Every slot here is already written on chain; a new state
+    /// variable may only ever land after the last one. The 2026-09-27 upgrade
+    /// put `stonkzBurn` before `admin` and shifted every later slot by one.
+    function test_StorageLayoutIsAppendOnly() public {
+        vm.warp(1_800_000_000);
+        PushPriceSource oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
+        StonkzLaunchpad pad = DeployPad.launchpad(admin, protocolCold, opsCold, oracle, admin);
+        address p = address(pad);
+
+        assertEq(address(uint160(uint256(vm.load(p, bytes32(uint256(5)))))), admin, "slot 5 = admin");
+        assertEq(uint256(vm.load(p, bytes32(uint256(6)))), 0, "slot 6 = pendingAdmin");
+        assertEq(
+            address(uint160(uint256(vm.load(p, bytes32(uint256(7)))))),
+            protocolCold,
+            "slot 7 = protocol authority"
+        );
+        assertEq(
+            address(uint160(uint256(vm.load(p, bytes32(uint256(8)))))), opsCold, "slot 8 = ops authority"
+        );
+        assertEq(
+            address(uint160(uint256(vm.load(p, bytes32(uint256(11)))))),
+            address(oracle),
+            "slot 11 = priceSource"
+        );
+        assertEq(uint256(vm.load(p, bytes32(uint256(12)))), 90_000, "slot 12 = maxOracleStaleness");
+
+        // `stonkzBurn` is the first slot after `tokenCount` (13): the mapping's
+        // base is 14, so its value for `key` lives at keccak256(key . 14).
+        address key = address(0xBEEF);
+        bytes32 where = keccak256(abi.encode(key, uint256(14)));
+        assertEq(uint256(vm.load(p, where)), 0);
+        vm.store(p, where, bytes32(uint256(77)));
+        assertEq(pad.stonkzBurn(key), 77, "stonkzBurn base slot is 14");
+    }
+
     function test_LaunchpadUpgradePreservesState() public {
         vm.warp(1_800_000_000);
         MockERC20 base = new MockERC20("USDG", "USDG", 6);

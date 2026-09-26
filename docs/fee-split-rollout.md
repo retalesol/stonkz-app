@@ -117,3 +117,24 @@ existing `VITE_*` keys. Nothing else changes for the web.
   script exists for RH) and the keeper (`apps/api/src/jobs/sweep.ts`, not yet
   written). Until then the vaults simply grow, withdrawable by the ops
   authority through `withdrawTreasury(1|2, …)` / `Treasury::{Ops,Burn}`.
+
+## Incident, 2026-09-27: shifted storage on RH 46630 and Base 84532
+
+The first fee-split implementation (`0xA947…Ca9C` on RH, `0x4F01…0890` on
+Base) declared `stonkzBurn` before `admin`, so behind both proxies every
+variable from `admin` on reads one slot late: `admin()` returns zero,
+`pendingAdmin()` returns the protocol withdraw authority, and so on. No
+transaction touched either proxy under that implementation, so the stored
+values are intact.
+
+Recovery is `script/RecoverLaunchpadLayout.s.sol`, run once per chain with two
+keys: the old protocol withdraw authority (`RECOVERY_KEY`, which the shifted
+implementation accepts as `pendingAdmin`) and the admin (`PRIVATE_KEY`). It
+takes admin through `acceptAdmin`, upgrades to the append-only implementation,
+then has the admin restore the protocol authority and clear `pendingAdmin`.
+`test/fork/RecoverLayout.t.sol` replays it on a fork of either proxy.
+
+Rule going forward, pinned by `test_StorageLayoutIsAppendOnly`: new state on
+`StonkzLaunchpad` goes after `tokenCount`, never next to its siblings, and
+`forge inspect StonkzLaunchpad storage-layout` is diffed against the deployed
+source before any `upgradeToAndCall`.

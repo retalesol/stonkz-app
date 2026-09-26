@@ -104,8 +104,6 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     mapping(address => uint256) public protocolRevenue;
     /// Stonkz Game buyback vault (historical name).
     mapping(address => uint256) public stonkzOps;
-    /// Buyback-and-burn vault, per base token. Not claimable by any user path.
-    mapping(address => uint256) public stonkzBurn;
 
     address public admin;
     address public pendingAdmin;
@@ -143,6 +141,12 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// off the curve.
     uint64 public maxOracleStaleness;
     uint256 public tokenCount;
+
+    /// Buyback-and-burn vault, per base token. Not claimable by any user path.
+    /// Appended after `tokenCount` (storage slot 15): every earlier slot is
+    /// already live behind the RH and Base proxies, so new state goes at the
+    /// end of the layout, never next to its siblings.
+    mapping(address => uint256) public stonkzBurn;
 
     uint256 private _lock;
 
