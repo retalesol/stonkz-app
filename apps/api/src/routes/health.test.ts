@@ -97,6 +97,25 @@ describe('GET /health', () => {
     expect(body.status).toBe('degraded');
   });
 
+  it('does not count the confirmation buffer as lag', async () => {
+    // RH ticks every 2s with a 12-block buffer: a cursor exactly at the
+    // confirmed head is 24s behind the raw head, which used to read as lag.
+    h.rpcs.SOL.setHead(1000);
+    h.rpcs.RH.setHead(600);
+    await h.deps.db
+      .update(indexerCursors)
+      .set({ position: 585, chainHead: 597, confirmedHead: 585 })
+      .where(eq(indexerCursors.net, 'RH'));
+    const { body } = await health();
+    expect(body.chains.RH.head).toBe(600);
+    expect(body.chains.RH.behind).toBe(3);
+    expect(body.chains.RH.alerting).toBe(false);
+    await h.deps.db
+      .update(indexerCursors)
+      .set({ position: 500, chainHead: 0, confirmedHead: 0 })
+      .where(eq(indexerCursors.net, 'RH'));
+  });
+
   it('reports 503 and names the chain when an RPC is down', async () => {
     h.rpcs.SOL.setHead(1000);
     h.rpcs.RH.setFailing(true);

@@ -84,6 +84,13 @@ export function healthRoutes(): Hono<AppEnv> {
       .from(indexerCursors)
       .catch(() => []);
     const cursorByNet = new Map(cursorRows.map((r) => [r.net, r.position]));
+    // The indexer commits only up to its confirmed head, so it always trails
+    // the raw head by the chain's confirmation depth (12 blocks on RH). That
+    // buffer is not lag: it is read back off the cursor row as the gap the
+    // indexer last observed between the raw and confirmed heads.
+    const bufferByNet = new Map(
+      cursorRows.map((r) => [r.net, Math.max(0, (r.chainHead ?? 0) - (r.confirmedHead ?? 0))]),
+    );
 
     const [dbProbe, redisProbe, ...chainProbes] = await Promise.all([
       timed(() => deps.db.execute(sql`select 1`)),
@@ -123,7 +130,13 @@ export function healthRoutes(): Hono<AppEnv> {
       }
       deps.metrics.rpcCall(net, true);
       const head = probe.value;
-      const lag = deps.metrics.observeChainLag(net, cursor, head, deps.env.chainTickMs[net]);
+      const confirmedHead = Math.max(cursor, head - (bufferByNet.get(net) ?? 0));
+      const lag = deps.metrics.observeChainLag(
+        net,
+        cursor,
+        confirmedHead,
+        deps.env.chainTickMs[net],
+      );
       chains[net] = {
         status: lag.alerting ? 'degraded' : 'ok',
         head,
