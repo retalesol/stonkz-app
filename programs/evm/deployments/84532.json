@@ -3,14 +3,14 @@
   "network": "base-sepolia",
   "rpc": "https://sepolia.base.org",
   "explorer": "https://sepolia.basescan.org",
-  "deployedAt": "2026-09-14",
+  "deployedAt": "2026-09-27",
   "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
   "contracts": {
-    "PushPriceSource": "0x114a28D29956E90Ca73B616Fe0Fb5CF6b336e612",
-    "StonkzLaunchpad": "0x02032371b6B2173211b8aa0Fa90c216d6a3a4E3A",
-    "StonkzV2Factory": "0xE02338b55E78A1345e4E676b98F1D68fD9C361b6",
-    "UniswapV2Migrator": "0xdb77897c7d31Abb555fC207CB9d8E22C69b480Cc",
-    "StonkzRouter": "0x7859eC8639311beFF4b45D543AdE7c650020bcF5"
+    "PushPriceSource": "0x12DA47672287c188C79c1504eE72E2aC8b446f7B",
+    "StonkzLaunchpad": "0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35",
+    "StonkzV2Factory": "0x7c7eDfF0e0EFb7d82e8790aDaa4a72b4D36A3Cc0",
+    "UniswapV2Migrator": "0xFfFDfc7DEfbfaF64c232897452Aa6E6F92809426",
+    "StonkzRouter": "0xEeE3db8e58a0b371ed1CAA16bc4a25D296E57276"
   },
   "tokens": {
     "WETH9": "0x4200000000000000000000000000000000000006",
@@ -22,16 +22,47 @@
     "Permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
     "WethUsdcV3Fee": 3000
   },
-  "smoke": {
-    "BASEDOG": "0x146a1dcc6fbed79d3dd3b4ef78423630648f33d3",
-    "BASEDOG_createTx": "0x09fe4d9633d3d2eb606566264252b235ac98c5292ad6041dc0e5950fb13fcb87"
-  },
   "notes": [
     "Launchpad and PushPriceSource are UUPS proxies (admin can upgradeToAndCall).",
     "StonkzRouter is immutable; redeploy + update BASE_ROUTER_ADDRESS to change logic.",
-    "StonkzV2Factory is a Stonkz-deployed Uniswap V2–compatible factory (no public V2 on Base Sepolia at mainnet pin).",
-    "Pin BASE_V3_FEE_TIER_OVERRIDES=USDC:3000 for ETH↔USDC hops (pools exist at 100/500/3000/10000).",
-    "No RH stock tokens on Base — ETH/WETH/USDC majors only.",
-    "Deployer is the same testnet key used for RH 46630 — burned for mainnet."
-  ]
+    "StonkzV2Factory is a Stonkz-deployed Uniswap V2\u2013compatible factory (no public V2 on Base Sepolia at mainnet pin).",
+    "Pin BASE_V3_FEE_TIER_OVERRIDES=USDC:3000 for ETH\u2194USDC hops (pools exist at 100/500/3000/10000).",
+    "No RH stock tokens on Base \u2014 ETH/WETH/USDC majors only.",
+    "Deployer is the same testnet key used for RH 46630 \u2014 burned for mainnet.",
+    "2026-09-27: full redeploy at block 47348724 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`."
+  ],
+  "previous": [
+    {
+      "contracts": {
+        "PushPriceSource": "0x114a28D29956E90Ca73B616Fe0Fb5CF6b336e612",
+        "StonkzLaunchpad": "0x02032371b6B2173211b8aa0Fa90c216d6a3a4E3A",
+        "StonkzV2Factory": "0xE02338b55E78A1345e4E676b98F1D68fD9C361b6",
+        "UniswapV2Migrator": "0xdb77897c7d31Abb555fC207CB9d8E22C69b480Cc",
+        "StonkzRouter": "0x7859eC8639311beFF4b45D543AdE7c650020bcF5"
+      },
+      "implementation": null,
+      "deployedAt": "2026-09-14",
+      "smoke": {
+        "BASEDOG": "0x146a1dcc6fbed79d3dd3b4ef78423630648f33d3",
+        "BASEDOG_createTx": "0x09fe4d9633d3d2eb606566264252b235ac98c5292ad6041dc0e5950fb13fcb87"
+      },
+      "note": "Abandoned 2026-09-27: the fee-split upgrade shifted its storage layout and the only key that could recover it (protocol withdraw authority) is lost. Nothing routes here any more."
+    }
+  ],
+  "implementation": {
+    "StonkzLaunchpad": "0xd3E7E74A6A4aE4b54c6Aa32611B4DB74b34e1415",
+    "upgradedAt": "2026-09-27",
+    "note": "Fresh deploy on the four-leg fee split (20 protocol / 10 game / 10 burn / 60 creator bucket), append-only layout."
+  },
+  "deployBlock": 47348724,
+  "deployTxs": {
+    "launchpadProxy": "0x30aaebe43229641a7aa6c30a1dfc0b6137ad090ceefe54c81bc7e4d2ad06d4ff",
+    "launchpadImpl": "0x8a264cb3ec8406461cdd2b5b5e4f6a90d32682d19caaa980762bfb00938280b8",
+    "router": "0x7ac39e245b248e42606642f808f5b1d2eccf679bbf517832c799358353b2b7ec"
+  },
+  "authorities": {
+    "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
+    "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
+    "opsWithdraw": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca"
+  }
 }

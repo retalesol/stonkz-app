@@ -3,14 +3,14 @@
   "network": "robinhood-testnet",
   "rpc": "https://rpc.testnet.chain.robinhood.com",
   "explorer": "https://explorer.testnet.chain.robinhood.com",
-  "deployedAt": "2026-09-08",
+  "deployedAt": "2026-09-27",
   "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
   "contracts": {
-    "PushPriceSource": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
-    "StonkzLaunchpad": "0x2588E500B1e5fCF18253F44b6f2607BF2B14161C",
-    "StonkzV2Factory": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
-    "UniswapV2Migrator": "0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45",
-    "StonkzRouter": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883"
+    "PushPriceSource": "0x1440A9776a93dcb10c7B6AD9f8053Bac469637B8",
+    "StonkzLaunchpad": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
+    "StonkzV2Factory": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
+    "UniswapV2Migrator": "0x5CD47DBA6F6a7dA8785E74CD1602743712fe7888",
+    "StonkzRouter": "0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa"
   },
   "tokens": {
     "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
@@ -26,28 +26,6 @@
     "WethUsdgV3Pool": "0xB195fBc3204967e126A733b3A90C5Eb3A1946528",
     "WethUsdgV3Fee": 3000
   },
-  "smoke": {
-    "BETADOG": "0x7Fb46AFa7aD4835Be52C02d26541174b2A09070D",
-    "BETADOG_note": "graduated + migrated; curve closed",
-    "RHLIVE": "0xB9C37853787b71d91Db900E10CA96231aC0Df429",
-    "RHLIVE_createTx": "0xc6c8716b1e67e063975e250416655603dcebf0a10939bce62a24b6e942183757",
-    "createTx": "0x31fbd4ab68546680a78af31242bb13cdc56ad86a7f340f506387446e6732222d",
-    "buyTx": "0x04905653aa53ae9ef9799d75a66f80911027e103d46dabc2d75a9f85e69ce316",
-    "sellTx": "0xc184e0151c85a276bff09ad3a45952f017deb5e6467b712ab095155a1d1a7164",
-    "pushPriceTx": "0x4b9f5e91112977aa85d7fd27aa8ecc6df63ce4dcb0209732029c49909e75ae14",
-    "graduateTx": "0xdd534cd563c7219bb92063cb69e54877e2d29d3b11b7557d02381fec6dce57e8",
-    "migrateTx": "0x07db173ef39b0086e7c1cd39353719308b7d87807d70ef0c18b5b7fc82b1447c",
-    "v2Pair": "0xcEF66c6955d6F27B712CC52700a835307AeFbF58",
-    "deadLp": "985854938711039069469",
-    "apiPrepareAtomic": true,
-    "buyWithEthEthCallOk": true,
-    "buyViaV3Router": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883",
-    "copiumBuyViaV3EthCallOk": true,
-    "RHLIVE_DUP": "0x6e0f626e7714A21A57DdE8913444856dA14cAe22",
-    "RHLIVE_DUP_createTx": "0xfd4ac53c24e33b80ed91acdbbf4cf6043b0853b70b8fa3b2ce6edfbf6728ac96",
-    "RHLIVE_DUP_note": "2026-09-13 live smoke: second RHLIVE after UUPS upgrade; tokenByTicker points here; original RHLIVE still live",
-    "pushPricesTx": "0xbc72573283fa17f27555969c1757d6a27331973fb616b1703170b410c0df8357"
-  },
   "notes": [
     "Launchpad and PushPriceSource are UUPS proxies (admin can upgradeToAndCall).",
     "StonkzRouter is immutable; redeploy + update RH_ROUTER_ADDRESS to change logic.",
@@ -58,11 +36,63 @@
     "Aggregator buys use buyViaV3/sellViaV3 via SwapRouter02 (UR V3 CREATE2 pool address is wrong on 46630).",
     "Pin RH_V3_FEE_TIER_OVERRIDES=USDG:3000 and RH_V3_QUOTER_ADDRESS for executable ETH\u2194USDG hops.",
     "BASE_MINT_OVERRIDES_RH maps USDG to TestnetUsdg for COPIUM staging (real USDG not faucetable).",
-    "2026-09-13: upgraded StonkzLaunchpad impl to 0xe729089137ee7Af2495F3C55cf1538121fBea68d (duplicate ticker/name allowed on-chain)."
+    "2026-09-13: upgraded StonkzLaunchpad impl to 0xe729089137ee7Af2495F3C55cf1538121fBea68d (duplicate ticker/name allowed on-chain).",
+    "2026-09-27: full redeploy at block 124871527 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`."
   ],
   "implementation": {
-    "StonkzLaunchpad": "0xe729089137ee7Af2495F3C55cf1538121fBea68d",
-    "upgradedAt": "2026-09-13",
-    "note": "UUPS upgrade: duplicate tickers allowed (tokenByTicker is latest pointer only); mint identity is address."
+    "StonkzLaunchpad": "0xc762a0e8659596a19989E75a5E349f0B6b413dd7",
+    "upgradedAt": "2026-09-27",
+    "note": "Fresh deploy on the four-leg fee split (20 protocol / 10 game / 10 burn / 60 creator bucket), append-only layout."
+  },
+  "previous": [
+    {
+      "contracts": {
+        "PushPriceSource": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
+        "StonkzLaunchpad": "0x2588E500B1e5fCF18253F44b6f2607BF2B14161C",
+        "StonkzV2Factory": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+        "UniswapV2Migrator": "0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45",
+        "StonkzRouter": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883"
+      },
+      "implementation": {
+        "StonkzLaunchpad": "0xe729089137ee7Af2495F3C55cf1538121fBea68d",
+        "upgradedAt": "2026-09-13",
+        "note": "UUPS upgrade: duplicate tickers allowed (tokenByTicker is latest pointer only); mint identity is address."
+      },
+      "deployedAt": "2026-09-08",
+      "smoke": {
+        "BETADOG": "0x7Fb46AFa7aD4835Be52C02d26541174b2A09070D",
+        "BETADOG_note": "graduated + migrated; curve closed",
+        "RHLIVE": "0xB9C37853787b71d91Db900E10CA96231aC0Df429",
+        "RHLIVE_createTx": "0xc6c8716b1e67e063975e250416655603dcebf0a10939bce62a24b6e942183757",
+        "createTx": "0x31fbd4ab68546680a78af31242bb13cdc56ad86a7f340f506387446e6732222d",
+        "buyTx": "0x04905653aa53ae9ef9799d75a66f80911027e103d46dabc2d75a9f85e69ce316",
+        "sellTx": "0xc184e0151c85a276bff09ad3a45952f017deb5e6467b712ab095155a1d1a7164",
+        "pushPriceTx": "0x4b9f5e91112977aa85d7fd27aa8ecc6df63ce4dcb0209732029c49909e75ae14",
+        "graduateTx": "0xdd534cd563c7219bb92063cb69e54877e2d29d3b11b7557d02381fec6dce57e8",
+        "migrateTx": "0x07db173ef39b0086e7c1cd39353719308b7d87807d70ef0c18b5b7fc82b1447c",
+        "v2Pair": "0xcEF66c6955d6F27B712CC52700a835307AeFbF58",
+        "deadLp": "985854938711039069469",
+        "apiPrepareAtomic": true,
+        "buyWithEthEthCallOk": true,
+        "buyViaV3Router": "0x16487D4ABf800F6Fd8b8A074D86a35e46fD23883",
+        "copiumBuyViaV3EthCallOk": true,
+        "RHLIVE_DUP": "0x6e0f626e7714A21A57DdE8913444856dA14cAe22",
+        "RHLIVE_DUP_createTx": "0xfd4ac53c24e33b80ed91acdbbf4cf6043b0853b70b8fa3b2ce6edfbf6728ac96",
+        "RHLIVE_DUP_note": "2026-09-13 live smoke: second RHLIVE after UUPS upgrade; tokenByTicker points here; original RHLIVE still live",
+        "pushPricesTx": "0xbc72573283fa17f27555969c1757d6a27331973fb616b1703170b410c0df8357"
+      },
+      "note": "Abandoned 2026-09-27: the fee-split upgrade shifted its storage layout and the only key that could recover it (protocol withdraw authority) is lost. Nothing routes here any more."
+    }
+  ],
+  "deployBlock": 124871527,
+  "deployTxs": {
+    "launchpadProxy": "0x41a02a5e70db3beebbdd03ad87aafa2c5a0a54e47df79e05e7fb7519f72a6667",
+    "launchpadImpl": "0xdb2c3a01d63cc2a41333abad90d8ea01bdc6f2102e6d76da7bf4da839aa0b424",
+    "router": "0x351c06f87c1bbaa40a92ca5ce0ae10af565c9e8f80b5ac94ca48a3ba25e66742"
+  },
+  "authorities": {
+    "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
+    "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
+    "opsWithdraw": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca"
   }
 }
