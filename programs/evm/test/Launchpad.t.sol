@@ -130,7 +130,7 @@ contract LaunchpadTest is Test {
 
     /* ----------------------------------------------------------- fee split */
 
-    /// The gate: 20/10/70, exact to the wei, on every fill.
+    /// The gate: 20/10/10/60, exact to the wei, on every fill.
     function testFuzz_FeeSplitIsExactOnEveryFill(uint96 amountIn, uint16 feeSeed, bool sellSome)
         public
     {
@@ -171,7 +171,7 @@ contract LaunchpadTest is Test {
         }
     }
 
-    /// @dev Holds the three per-coin fee ledgers to `splitFee` across one fill.
+    /// @dev Holds the four per-coin fee ledgers to `splitFee` across one fill.
     function _assertSplit(address token, StonkzLaunchpad.Coin memory before_)
         internal
         view
@@ -180,17 +180,20 @@ contract LaunchpadTest is Test {
         StonkzLaunchpad.Coin memory c = pad.coinInfo(token);
         uint256 dProtocol = c.protocolAccrued - before_.protocolAccrued;
         uint256 dOps = c.opsAccrued - before_.opsAccrued;
+        uint256 dBurn = c.burnAccrued - before_.burnAccrued;
         uint256 dBucket = c.creatorBucketAccrued - before_.creatorBucketAccrued;
-        uint256 fee = dProtocol + dOps + dBucket;
+        uint256 fee = dProtocol + dOps + dBurn + dBucket;
 
         CurveMath.FeeShares memory want = CurveMath.splitFee(fee);
         assertEq(dProtocol, want.protocol, "protocol is exactly 20%");
-        assertEq(dOps, want.stonkzOps, "ops is exactly 10%");
+        assertEq(dOps, want.stonkzOps, "game (ops) is exactly 10%");
+        assertEq(dBurn, want.burn, "burn is exactly 10%");
         assertEq(dBucket, want.creatorBucket, "creator bucket is the remainder");
-        assertEq(dProtocol + dOps + dBucket, fee, "the three reconstruct the fee");
-        // The two floors can only ever lose to the bucket, never to the fee.
+        assertEq(dProtocol + dOps + dBurn + dBucket, fee, "the four reconstruct the fee");
+        // The three floors can only ever lose to the bucket, never to the fee.
         assertLe(dProtocol * 10_000, fee * 2_000);
         assertLe(dOps * 10_000, fee * 1_000);
+        assertLe(dBurn * 10_000, fee * 1_000);
         return fee;
     }
 
@@ -258,15 +261,18 @@ contract LaunchpadTest is Test {
 
         uint256 p0 = pad.protocolRevenue(address(base));
         uint256 o0 = pad.stonkzOps(address(base));
+        uint256 b0 = pad.stonkzBurn(address(base));
         _buy(token, trader, FILL / 4);
 
-        // The elevated fee still splits 20/10/70 — cashback changes the size of
-        // the fee, never its division.
+        // The elevated fee still splits 20/10/10/60 — cashback changes the size
+        // of the fee, never its division.
         uint256 dProtocol = pad.protocolRevenue(address(base)) - p0;
         uint256 dOps = pad.stonkzOps(address(base)) - o0;
+        uint256 dBurn = pad.stonkzBurn(address(base)) - b0;
         assertEq(dOps * 2, dProtocol, "ops is half of protocol at any fee level");
+        assertEq(dBurn, dOps, "burn matches the game leg at any fee level");
 
-        // Protocol and ops stayed in the base token; only the bucket converted.
+        // Protocol, game and burn stayed in the base token; only the bucket converted.
         assertGt(pad.coinInfo(token).creatorClaimableToken, 0, "the bucket came back as the token");
 
         // Halfway through: 1% + 49% * 150/300 = 2550 bps.
@@ -390,17 +396,19 @@ contract LaunchpadTest is Test {
         StonkzLaunchpad.Coin memory b1 = pad.coinInfo(token);
         uint256 dProtocol = b1.protocolAccrued - b0.protocolAccrued;
         uint256 dOps = b1.opsAccrued - b0.opsAccrued;
+        uint256 dBurn = b1.burnAccrued - b0.burnAccrued;
         uint256 dCreator = b1.creatorClaimableBase - b0.creatorClaimableBase;
         uint256 dStakers = b1.stakerAccruedBase - b0.stakerAccruedBase;
-        uint256 fee = dProtocol + dOps + dCreator + dStakers;
+        uint256 fee = dProtocol + dOps + dBurn + dCreator + dStakers;
         CurveMath.FeeShares memory want = CurveMath.splitFee(fee);
 
         assertEq(dProtocol, want.protocol, "the peel does not touch protocol");
         assertEq(dOps, want.stonkzOps, "the peel does not touch ops");
-        assertEq(dCreator + dStakers, want.creatorBucket, "stakers are paid from the 70% only");
+        assertEq(dBurn, want.burn, "the peel does not touch burn");
+        assertEq(dCreator + dStakers, want.creatorBucket, "stakers are paid from the 60% only");
         assertLe(dStakers, want.creatorBucket / 2, "capped at half the bucket");
-        // Which is 35% of the fee at the cap, and never more.
-        assertLe(dStakers * 100, fee * 35 + 100);
+        // Which is 30% of the fee at the cap, and never more.
+        assertLe(dStakers * 100, fee * 30 + 200);
 
         // And it is really withdrawable, not just an accrual.
         uint256 held = base.balanceOf(staker);

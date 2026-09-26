@@ -46,8 +46,11 @@ let st: StepsState | null = null;
 
 function stepRow(s: UiStep, i: number, index: number): ReturnType<typeof html> {
   const mark = i < index ? '\u2713' : String(i + 1);
-  return html`<li style="display:flex;gap:10px;align-items:center;padding:5px 0;opacity:${i > index ? '.55' : '1'}"
-    ><b style="width:20px;text-align:center;flex:none">${mark}</b><span>${s.description}</span></li>`;
+  return html`<li
+    style="display:flex;gap:10px;align-items:center;padding:5px 0;opacity:${i > index ? '.55' : '1'}"
+  >
+    <b style="width:20px;text-align:center;flex:none">${mark}</b><span>${s.description}</span>
+  </li>`;
 }
 
 function renderSteps(): void {
@@ -56,18 +59,34 @@ function renderSteps(): void {
   const cur = steps[index] as UiStep;
   render(
     must('#txBody'),
-    html`${warning
-        ? html`<p class="hint" style="border:1px solid #ffa22b;border-radius:8px;padding:9px 10px;color:#ffa22b;margin-bottom:12px">${warning}</p>`
-        : ''}<p class="hint" style="margin-bottom:8px">${title}</p>
-      <ol style="list-style:none;margin:0 0 14px;padding:0">${steps.map((s, i) => stepRow(s, i, index))}</ol>
+    html`${
+        warning
+          ? html`<p
+              class="hint"
+              style="border:1px solid #ffa22b;border-radius:8px;padding:9px 10px;color:#ffa22b;margin-bottom:12px"
+            >
+              ${warning}
+            </p>`
+          : ''
+      }
+      <p class="hint" style="margin-bottom:8px">${title}</p>
+      <ol style="list-style:none;margin:0 0 14px;padding:0">
+        ${steps.map((s, i) => stepRow(s, i, index))}
+      </ol>
       ${error ? html`<p class="wp-err" style="margin-bottom:10px">${error}</p>` : ''}
-      <p class="hint" style="margin-bottom:10px">STEP ${index + 1} OF ${steps.length} &#183; ${cur.description}</p>
-      <button type="button" class="big" id="steps-go"${signing ? ' disabled' : ''}>${
-        signing
-          ? 'CONFIRMING ON CHAIN\u2026'
-          : (error ? 'RETRY STEP ' : 'SIGN STEP ') + (index + 1) + ' OF ' + steps.length
-      }</button>
-      <button type="button" class="back" id="steps-cancel" style="width:100%;margin-top:8px">CANCEL</button>`,
+      <p class="hint" style="margin-bottom:10px">
+        STEP ${index + 1} OF ${steps.length} &#183; ${cur.description}
+      </p>
+      <button type="button" class="big" id="steps-go" ${signing ? ' disabled' : ''}>
+        ${
+          signing
+            ? 'CONFIRMING ON CHAIN\u2026'
+            : (error ? 'RETRY STEP ' : 'SIGN STEP ') + (index + 1) + ' OF ' + steps.length
+        }
+      </button>
+      <button type="button" class="back" id="steps-cancel" style="width:100%;margin-top:8px">
+        CANCEL
+      </button>`,
   );
   refreshScrim('#txScrim');
   must('#steps-go').addEventListener('click', () => void advance());
@@ -85,7 +104,10 @@ async function signStep(net: Net, step: UiStep): Promise<{ signature: string }> 
   if (!payload) {
     // Every real caller supplies a payload; reaching here means a plan shape
     // this build does not understand, which must not look like a success.
-    throw new WalletError('unknown', 'This step has nothing to sign — the API returned a plan this build cannot walk.');
+    throw new WalletError(
+      'unknown',
+      'This step has nothing to sign — the API returned a plan this build cannot walk.',
+    );
   }
   return signAndConfirm(net, payload);
 }
@@ -159,7 +181,17 @@ export function openSteps(
   opener?: Element | null,
 ): Promise<{ signature: string }> {
   return new Promise((resolve, reject) => {
-    st = { net, title, steps, warning, index: 0, signing: false, error: undefined, resolve, reject };
+    st = {
+      net,
+      title,
+      steps,
+      warning,
+      index: 0,
+      signing: false,
+      error: undefined,
+      resolve,
+      reject,
+    };
     openScrim('#txScrim', opener);
     renderSteps();
   });

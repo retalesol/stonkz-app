@@ -27,7 +27,6 @@ import { serialiseToken } from './serialise.js';
 const USERNAME_MAX = 22;
 const BIO_MAX = 160;
 
-
 function isValidUsername(v: string): boolean {
   return /^[A-Za-z0-9_]{1,22}$/.test(v);
 }
@@ -184,34 +183,58 @@ export function socialRoutes(): Hono<AppEnv> {
         patch.username = null;
       } else {
         if (v.length > USERNAME_MAX || !isValidUsername(v)) {
-          return c.json({ error: 'bad_request', detail: `username must be 1-${USERNAME_MAX} letters, numbers or _` }, 400);
+          return c.json(
+            {
+              error: 'bad_request',
+              detail: `username must be 1-${USERNAME_MAX} letters, numbers or _`,
+            },
+            400,
+          );
         }
         patch.username = v;
       }
     }
     if ('bio' in body) {
       const v = String(body['bio'] ?? '');
-      if (v.length > BIO_MAX) return c.json({ error: 'bad_request', detail: `bio must be at most ${BIO_MAX} chars` }, 400);
+      if (v.length > BIO_MAX)
+        return c.json(
+          { error: 'bad_request', detail: `bio must be at most ${BIO_MAX} chars` },
+          400,
+        );
       patch.bio = v;
     }
-    if ('avatarUrl' in body) patch.avatarUrl = body['avatarUrl'] ? String(body['avatarUrl']).slice(0, 2048) : null;
-    if ('xHandle' in body) patch.xHandle = body['xHandle'] ? String(body['xHandle']).replace(/^@/, '').slice(0, 64) : null;
-    if ('website' in body) patch.website = body['website'] ? String(body['website']).slice(0, 2048) : null;
-    if ('telegram' in body) patch.telegram = body['telegram'] ? String(body['telegram']).slice(0, 64) : null;
+    if ('avatarUrl' in body)
+      patch.avatarUrl = body['avatarUrl'] ? String(body['avatarUrl']).slice(0, 2048) : null;
+    if ('xHandle' in body)
+      patch.xHandle = body['xHandle']
+        ? String(body['xHandle']).replace(/^@/, '').slice(0, 64)
+        : null;
+    if ('website' in body)
+      patch.website = body['website'] ? String(body['website']).slice(0, 2048) : null;
+    if ('telegram' in body)
+      patch.telegram = body['telegram'] ? String(body['telegram']).slice(0, 64) : null;
 
-    if (Object.keys(patch).length === 0) return c.json({ error: 'bad_request', detail: 'no fields to update' }, 400);
+    if (Object.keys(patch).length === 0)
+      return c.json({ error: 'bad_request', detail: 'no fields to update' }, 400);
 
     try {
       await deps.db
         .insert(users)
         .values({ net, wallet, ...patch, updatedAt: new Date(deps.now()) })
-        .onConflictDoUpdate({ target: [users.net, users.wallet], set: { ...patch, updatedAt: new Date(deps.now()) } });
+        .onConflictDoUpdate({
+          target: [users.net, users.wallet],
+          set: { ...patch, updatedAt: new Date(deps.now()) },
+        });
     } catch (err) {
       if (isUniqueViolation(err)) return c.json({ error: 'username_taken' }, 409);
       throw err;
     }
 
-    const [row] = await deps.db.select().from(users).where(and(eq(users.net, net), eq(users.wallet, wallet))).limit(1);
+    const [row] = await deps.db
+      .select()
+      .from(users)
+      .where(and(eq(users.net, net), eq(users.wallet, wallet)))
+      .limit(1);
     return c.json({ net, wallet, profile: row ? serialiseUser(row) : null });
   });
 
@@ -252,7 +275,11 @@ export function socialRoutes(): Hono<AppEnv> {
           target: [users.net, users.wallet],
           set: { avatarUrl: uploaded.url, updatedAt: new Date(deps.now()) },
         });
-      const [row] = await deps.db.select().from(users).where(and(eq(users.net, net), eq(users.wallet, wallet))).limit(1);
+      const [row] = await deps.db
+        .select()
+        .from(users)
+        .where(and(eq(users.net, net), eq(users.wallet, wallet)))
+        .limit(1);
       return c.json({
         net,
         wallet,
@@ -263,7 +290,8 @@ export function socialRoutes(): Hono<AppEnv> {
     } catch (err) {
       const { PinataError } = await import('../social/pinata.js');
       if (err instanceof PinataError) {
-        const status = err.code === 'not_configured' ? 503 : err.code === 'upload_failed' ? 502 : 400;
+        const status =
+          err.code === 'not_configured' ? 503 : err.code === 'upload_failed' ? 502 : 400;
         return c.json({ error: err.code, detail: err.message }, status);
       }
       throw err;
@@ -299,11 +327,17 @@ export function socialRoutes(): Hono<AppEnv> {
         filename,
         name: 'stonkz-token',
       });
-      return c.json({ url: uploaded.url, cid: uploaded.cid, mimeType: uploaded.mimeType, size: uploaded.size });
+      return c.json({
+        url: uploaded.url,
+        cid: uploaded.cid,
+        mimeType: uploaded.mimeType,
+        size: uploaded.size,
+      });
     } catch (err) {
       const { PinataError } = await import('../social/pinata.js');
       if (err instanceof PinataError) {
-        const status = err.code === 'not_configured' ? 503 : err.code === 'upload_failed' ? 502 : 400;
+        const status =
+          err.code === 'not_configured' ? 503 : err.code === 'upload_failed' ? 502 : 400;
         return c.json({ error: err.code, detail: err.message }, status);
       }
       throw err;
@@ -320,28 +354,29 @@ export function socialRoutes(): Hono<AppEnv> {
     const { wallet, profileRow } = await resolveWallet(deps, net, key);
     const memberNet = (profileRow?.net as Net | undefined) ?? net;
 
-    const [followerCountRow, followingCountRow, followingRows, snapshot, launchedRows] = await Promise.all([
-      deps.db
-        .select({ n: count() })
-        .from(follows)
-        .where(and(eq(follows.net, memberNet), eq(follows.followee, wallet))),
-      deps.db
-        .select({ n: count() })
-        .from(follows)
-        .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet))),
-      deps.db
-        .select({ followee: follows.followee })
-        .from(follows)
-        .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet)))
-        .limit(24),
-      deps.ledger.snapshot(memberNet, wallet),
-      deps.db
-        .select()
-        .from(tokens)
-        .where(and(eq(tokens.net, memberNet), eq(tokens.creator, wallet)))
-        .orderBy(sql`${tokens.launchedAt} desc`)
-        .limit(40),
-    ]);
+    const [followerCountRow, followingCountRow, followingRows, snapshot, launchedRows] =
+      await Promise.all([
+        deps.db
+          .select({ n: count() })
+          .from(follows)
+          .where(and(eq(follows.net, memberNet), eq(follows.followee, wallet))),
+        deps.db
+          .select({ n: count() })
+          .from(follows)
+          .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet))),
+        deps.db
+          .select({ followee: follows.followee })
+          .from(follows)
+          .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet)))
+          .limit(24),
+        deps.ledger.snapshot(memberNet, wallet),
+        deps.db
+          .select()
+          .from(tokens)
+          .where(and(eq(tokens.net, memberNet), eq(tokens.creator, wallet)))
+          .orderBy(sql`${tokens.launchedAt} desc`)
+          .limit(40),
+      ]);
 
     const caller = c.get('user');
     let isFollowing = false;
@@ -350,7 +385,11 @@ export function socialRoutes(): Hono<AppEnv> {
         .select({ n: count() })
         .from(follows)
         .where(
-          and(eq(follows.net, memberNet), eq(follows.follower, caller.wallet), eq(follows.followee, wallet)),
+          and(
+            eq(follows.net, memberNet),
+            eq(follows.follower, caller.wallet),
+            eq(follows.followee, wallet),
+          ),
         );
       isFollowing = (row?.n ?? 0) > 0;
     }
@@ -371,7 +410,9 @@ export function socialRoutes(): Hono<AppEnv> {
 
     const holdings =
       onChainHoldings ??
-      (await holdingsFromTape(deps, memberNet, wallet).catch(() => [] as Awaited<ReturnType<typeof holdingsFromTape>>));
+      (await holdingsFromTape(deps, memberNet, wallet).catch(
+        () => [] as Awaited<ReturnType<typeof holdingsFromTape>>,
+      ));
     const holdingsSource = onChainHoldings ? 'chain' : 'index';
     const now = deps.now();
     const portfolioUsd = holdings.reduce((s, h) => s + h.value, 0);
@@ -439,7 +480,9 @@ export function socialRoutes(): Hono<AppEnv> {
 
     await deps.db
       .delete(follows)
-      .where(and(eq(follows.net, net), eq(follows.follower, user.wallet), eq(follows.followee, target)));
+      .where(
+        and(eq(follows.net, net), eq(follows.follower, user.wallet), eq(follows.followee, target)),
+      );
 
     return c.json({ net, addr: target, following: false });
   });
@@ -505,7 +548,8 @@ export function socialRoutes(): Hono<AppEnv> {
       .values({ net, postId, wallet: user.wallet })
       .onConflictDoNothing()
       .returning({ postId: wallLikes.postId });
-    if (inserted.length === 0) return c.json({ ok: true, liked: true, xpAwarded: 0, already: true });
+    if (inserted.length === 0)
+      return c.json({ ok: true, liked: true, xpAwarded: 0, already: true });
 
     const { xp } = await deps.awards.like({ net, wallet: user.wallet, postId });
     return c.json({ ok: true, liked: true, xpAwarded: xp });
@@ -528,7 +572,8 @@ export function socialRoutes(): Hono<AppEnv> {
     const body = (await c.req.json().catch(() => ({}))) as { text?: unknown; tipTxSig?: unknown };
     const text = String(body.text ?? '').trim();
     const tipTxSig = String(body.tipTxSig ?? '').trim();
-    if (!text || text.length > 140) return c.json({ error: 'bad_request', detail: 'text must be 1-140 chars' }, 400);
+    if (!text || text.length > 140)
+      return c.json({ error: 'bad_request', detail: 'text must be 1-140 chars' }, 400);
     if (!tipTxSig) return c.json({ error: 'bad_request', detail: 'tipTxSig is required' }, 400);
 
     const verification = await verifyTip({
@@ -540,7 +585,8 @@ export function socialRoutes(): Hono<AppEnv> {
       nowMs: deps.now(),
       maxAgeMs: deps.env.tipMaxAgeSeconds * 1000,
     });
-    if (!verification.ok) return c.json({ error: 'tip_rejected', reason: verification.reason }, 422);
+    if (!verification.ok)
+      return c.json({ error: 'tip_rejected', reason: verification.reason }, 422);
 
     let inserted: { id: number; createdAt: Date } | undefined;
     try {
@@ -561,7 +607,12 @@ export function socialRoutes(): Hono<AppEnv> {
     }
     if (!inserted) throw new Error('wall_posts insert returned no row');
 
-    const award = await deps.awards.wallPost({ net, wallet: user.wallet, target, tipSig: tipTxSig });
+    const award = await deps.awards.wallPost({
+      net,
+      wallet: user.wallet,
+      target,
+      tipSig: tipTxSig,
+    });
 
     return c.json({
       net,

@@ -34,8 +34,7 @@ export interface SolanaTransactionMeta {
   err: unknown;
   logMessages?: string[] | null;
   innerInstructions?:
-    | { index: number; instructions: { programIdIndex?: number; data?: string }[] }[]
-    | null;
+    { index: number; instructions: { programIdIndex?: number; data?: string }[] }[] | null;
 }
 
 export interface SolanaTransaction {

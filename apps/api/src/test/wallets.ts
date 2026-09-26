@@ -45,7 +45,10 @@ export function contractWallet(seed = 'evm-contract-wallet'): TestContractWallet
   const owner = evmWallet(`${seed}:owner`);
   // Deliberately unrelated to the owner key, exactly like a deployed account.
   const address = toChecksumAddress(
-    '0x' + Buffer.from(seedBytes(`${seed}:account`)).subarray(12).toString('hex'),
+    '0x' +
+      Buffer.from(seedBytes(`${seed}:account`))
+        .subarray(12)
+        .toString('hex'),
   );
 
   return {
@@ -82,7 +85,12 @@ function recoverSiweAddressFromHash(hashHex: string, signature: string): string 
       Buffer.from(raw.subarray(0, 64)).toString('hex'),
     ).addRecoveryBit(v);
     const pub = sig.recoverPublicKey(Buffer.from(hashHex, 'hex')).toRawBytes(false);
-    return toChecksumAddress('0x' + Buffer.from(keccak_256(pub.slice(1))).subarray(12).toString('hex'));
+    return toChecksumAddress(
+      '0x' +
+        Buffer.from(keccak_256(pub.slice(1)))
+          .subarray(12)
+          .toString('hex'),
+    );
   } catch {
     return null;
   }
@@ -91,7 +99,12 @@ function recoverSiweAddressFromHash(hashHex: string, signature: string): string 
 export function evmWallet(seed = 'evm-test-wallet'): TestWallet {
   const priv = seedBytes(seed);
   const pub = secp256k1.getPublicKey(priv, false);
-  const address = toChecksumAddress('0x' + Buffer.from(keccak_256(pub.slice(1))).subarray(12).toString('hex'));
+  const address = toChecksumAddress(
+    '0x' +
+      Buffer.from(keccak_256(pub.slice(1)))
+        .subarray(12)
+        .toString('hex'),
+  );
 
   return {
     address,

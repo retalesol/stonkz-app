@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-sim",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@stonkz/web", "dev"],
+      "port": 5173
+    }
+  ]
+}

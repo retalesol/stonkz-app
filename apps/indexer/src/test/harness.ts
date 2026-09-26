@@ -30,7 +30,7 @@ export interface IndexerTestRig {
   runner: IndexerRunner;
   deadLetters: DeadLetters;
   rollback: ReorgRollback;
-  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc };
+  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc; ARC: FakeChainRpc };
   oracle: FakePriceOracle;
   published: { channel: string; data: unknown }[];
   userEvents: UserEvent[];
@@ -73,7 +73,7 @@ export async function createIndexerRig(
 
   const redis = new MemoryRedis(now);
   const rpcs = createFakeRpcs();
-  const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200 });
+  const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200, USDC: 1 });
 
   const env = readEnv({
     NODE_ENV: 'test',
@@ -114,12 +114,19 @@ export async function createIndexerRig(
     logger,
     now,
   });
-  const lag = new LagMonitor({ cursors, rpcs, metrics: built.deps.metrics, logger, tickMs: env.chainTickMs });
+  const lag = new LagMonitor({
+    cursors,
+    rpcs,
+    metrics: built.deps.metrics,
+    logger,
+    tickMs: env.chainTickMs,
+  });
 
   const sources: Record<Net, EventSource> = options.sources ?? {
     SOL: new FixtureEventSource('SOL', events),
     RH: new FixtureEventSource('RH', events),
     BASE: new FixtureEventSource('BASE', []),
+    ARC: new FixtureEventSource('ARC', []),
   };
   const deadLetters = new DeadLetters({ db: db.db, logger, now });
   const rollback = new ReorgRollback({ db: db.db, logger, now });
@@ -131,7 +138,9 @@ export async function createIndexerRig(
     oracle,
     sources,
     ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
-    ...(options.maxBatchAttempts === undefined ? {} : { maxBatchAttempts: options.maxBatchAttempts }),
+    ...(options.maxBatchAttempts === undefined
+      ? {}
+      : { maxBatchAttempts: options.maxBatchAttempts }),
     ...(options.reorgDepth === undefined ? {} : { reorgDepth: options.reorgDepth }),
     ...(options.rollback ? { rollback } : {}),
     ...(options.deadLetters ? { deadLetters } : {}),
@@ -140,6 +149,8 @@ export async function createIndexerRig(
   // The lag monitor reads heads off the RPCs, so point them at the fixtures.
   rpcs.SOL.setHead(await sources.SOL.head());
   rpcs.RH.setHead(await sources.RH.head());
+  rpcs.BASE.setHead(await sources.BASE.head());
+  rpcs.ARC.setHead(await sources.ARC.head());
 
   return {
     deps: built.deps,

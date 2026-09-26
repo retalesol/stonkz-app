@@ -260,7 +260,10 @@ export class CrateService {
         baseXp,
         meta: { tier, dropIndex, rarity, crateOpenId: openRow.id },
       });
-      await this.db.update(crateOpens).set({ xpAwarded: award.xp }).where(eq(crateOpens.id, openRow.id));
+      await this.db
+        .update(crateOpens)
+        .set({ xpAwarded: award.xp })
+        .where(eq(crateOpens.id, openRow.id));
 
       await this.opts.ledger.unlock(net, wallet, 'crate');
 
@@ -286,7 +289,11 @@ export class CrateService {
         .update(crateInventory)
         .set({ count: sql`${crateInventory.count} + 1`, updatedAt: nowDate })
         .where(
-          and(eq(crateInventory.wallet, wallet), eq(crateInventory.net, net), eq(crateInventory.tier, tier)),
+          and(
+            eq(crateInventory.wallet, wallet),
+            eq(crateInventory.net, net),
+            eq(crateInventory.tier, tier),
+          ),
         );
       await this.db
         .update(crateCooldown)

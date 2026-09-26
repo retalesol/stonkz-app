@@ -1,6 +1,6 @@
 import type { ApiEnv } from '@stonkz/api/env';
 import { ZERO_EVM_ADDRESS } from '@stonkz/api/env';
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, parseNet, type Net } from '@stonkz/shared';
 
 /**
  * The indexer's own knobs.
@@ -72,6 +72,12 @@ export interface IndexerConfig {
   baseRouterAddress: string;
   baseStartBlock: number;
   baseLogWindow: number;
+
+  /* ---------------------------------------------------------------- Arc */
+  arcLaunchpadAddress: string;
+  arcRouterAddress: string;
+  arcStartBlock: number;
+  arcLogWindow: number;
 }
 
 export type ConfigSource = Record<string, string | undefined>;
@@ -85,7 +91,8 @@ function int(src: ConfigSource, key: string, fallback: number): number {
   const raw = src[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
+  if (!Number.isFinite(n))
+    throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
   return n;
 }
 
@@ -119,13 +126,20 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     }
   }
 
+  // ARC is deliberately not in the default: it joins once a launchpad exists
+  // there. `INDEXER_CHAIN_NETS=SOL,RH,BASE,ARC` opts in and then requires
+  // ARC_LAUNCHPAD_ADDRESS + INDEXER_ARC_START_BLOCK like every other net.
   const chainNetsRaw = str(src, 'INDEXER_CHAIN_NETS', 'SOL,RH')
     .split(',')
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
-  const chainNets = [...new Set(chainNetsRaw)].filter((n): n is Net => n === 'SOL' || n === 'RH' || n === 'BASE');
+  const chainNets = [...new Set(chainNetsRaw)]
+    .map((n) => parseNet(n))
+    .filter((n): n is Net => n !== null);
   if (mode === 'chain' && chainNets.length === 0) {
-    throw new Error('INDEXER_CHAIN_NETS must list SOL, RH, and/or BASE when INDEXER_SOURCE=chain');
+    throw new Error(
+      `INDEXER_CHAIN_NETS must list one or more of ${ALL_NETS.join(', ')} when INDEXER_SOURCE=chain`,
+    );
   }
 
   const config: IndexerConfig = {
@@ -139,11 +153,15 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
       SOL: int(src, 'INDEXER_SOL_CONFIRMATIONS', 0),
       RH: int(src, 'INDEXER_RH_CONFIRMATIONS', 12),
       BASE: int(src, 'INDEXER_BASE_CONFIRMATIONS', 12),
+      // Arc finalises in under a second, so one block is already final.
+      ARC: int(src, 'INDEXER_ARC_CONFIRMATIONS', 1),
     },
     reorgDepth: {
       SOL: int(src, 'INDEXER_SOL_REORG_DEPTH', 32),
       RH: int(src, 'INDEXER_RH_REORG_DEPTH', 64),
       BASE: int(src, 'INDEXER_BASE_REORG_DEPTH', 64),
+      // Deterministic finality: a finalised Arc block cannot be reorged.
+      ARC: int(src, 'INDEXER_ARC_REORG_DEPTH', 0),
     },
     // Railway injects PORT; prefer an explicit INDEXER_HTTP_PORT, then PORT.
     httpPort: int(src, 'INDEXER_HTTP_PORT', int(src, 'PORT', 8788)),
@@ -153,7 +171,10 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
 
     solanaProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', env.solanaLaunchpadProgramId),
     solanaStartSlot: int(src, 'INDEXER_SOL_START_SLOT', 0),
-    solanaSignaturePageSize: Math.min(1_000, Math.max(1, int(src, 'INDEXER_SOL_SIGNATURE_PAGE', 1_000))),
+    solanaSignaturePageSize: Math.min(
+      1_000,
+      Math.max(1, int(src, 'INDEXER_SOL_SIGNATURE_PAGE', 1_000)),
+    ),
     solanaMaxTxPerPass: int(src, 'INDEXER_SOL_MAX_TX_PER_PASS', 200),
     solanaTrackBlockhash: bool(src, 'INDEXER_SOL_TRACK_BLOCKHASH', false),
 
@@ -166,6 +187,11 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
     baseRouterAddress: str(src, 'BASE_ROUTER_ADDRESS', env.baseRouterAddress),
     baseStartBlock: int(src, 'INDEXER_BASE_START_BLOCK', 0),
     baseLogWindow: int(src, 'INDEXER_BASE_LOG_WINDOW', 2_000),
+
+    arcLaunchpadAddress: str(src, 'ARC_LAUNCHPAD_ADDRESS', env.arcLaunchpadAddress),
+    arcRouterAddress: str(src, 'ARC_ROUTER_ADDRESS', env.arcRouterAddress),
+    arcStartBlock: int(src, 'INDEXER_ARC_START_BLOCK', 0),
+    arcLogWindow: int(src, 'INDEXER_ARC_LOG_WINDOW', 2_000),
   };
 
   if (config.mode === 'chain') assertChainModeConfigured(config);
@@ -198,6 +224,16 @@ export function assertChainModeConfigured(config: IndexerConfig): void {
       throw new Error('INDEXER_SOURCE=chain needs INDEXER_BASE_START_BLOCK (the deployment block)');
     }
   }
+  if (config.chainNets.includes('ARC')) {
+    if (config.arcLaunchpadAddress.toLowerCase() === ZERO_EVM_ADDRESS) {
+      throw new Error(
+        'INDEXER_SOURCE=chain needs ARC_LAUNCHPAD_ADDRESS; the zero address means "not deployed here"',
+      );
+    }
+    if (config.arcStartBlock <= 0) {
+      throw new Error('INDEXER_SOURCE=chain needs INDEXER_ARC_START_BLOCK (the deployment block)');
+    }
+  }
   if (config.chainNets.includes('SOL')) {
     if (config.solanaStartSlot <= 0) {
       throw new Error(
@@ -206,8 +242,13 @@ export function assertChainModeConfigured(config: IndexerConfig): void {
     }
   }
   for (const net of config.chainNets) {
-    if (config.confirmations[net] < 0) throw new Error(`INDEXER_${net}_CONFIRMATIONS must not be negative`);
-    if (config.reorgDepth[net] < 1) throw new Error(`INDEXER_${net}_REORG_DEPTH must be at least 1`);
+    if (config.confirmations[net] < 0)
+      throw new Error(`INDEXER_${net}_CONFIRMATIONS must not be negative`);
+    // A net with deterministic finality (Arc) may run with reorg depth 0:
+    // its cursor never has to rewind. Every probabilistic chain needs >= 1.
+    const minReorgDepth = net === 'ARC' ? 0 : 1;
+    if (config.reorgDepth[net] < minReorgDepth)
+      throw new Error(`INDEXER_${net}_REORG_DEPTH must be at least ${minReorgDepth}`);
   }
   if (config.maxBatchAttempts < 1) throw new Error('INDEXER_MAX_BATCH_ATTEMPTS must be at least 1');
 }

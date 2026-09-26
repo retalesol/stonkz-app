@@ -91,7 +91,8 @@ export class ChatService {
       `${net}:${wallet}`,
       Math.floor(this.now() / 1000),
     );
-    if (!verdict.ok) return { ok: false, error: 'rate_limited', retryAfterSeconds: verdict.resetSeconds };
+    if (!verdict.ok)
+      return { ok: false, error: 'rate_limited', retryAfterSeconds: verdict.resetSeconds };
 
     const flagged = isFlagged(text);
     const normalisedRoom = normaliseRoom(room);
@@ -135,6 +136,11 @@ export class ChatService {
       )
       .orderBy(desc(chatMessages.id))
       .limit(limit);
-    return rows.reverse().map((r) => ({ id: r.id, wallet: r.wallet, text: r.text, createdAtMs: r.createdAt.getTime() }));
+    return rows.reverse().map((r) => ({
+      id: r.id,
+      wallet: r.wallet,
+      text: r.text,
+      createdAtMs: r.createdAt.getTime(),
+    }));
   }
 }

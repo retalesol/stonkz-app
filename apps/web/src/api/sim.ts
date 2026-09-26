@@ -30,16 +30,43 @@ import {
   xpForStake,
   xpForTrade,
   circ,
+  splitFee,
+  type TokenFees,
+  nativeUnit as unitFor,
 } from '@stonkz/shared';
+import { isEvm } from '@stonkz/shared';
 import { emit } from '../lib/bus.js';
-import { COINS, type SimCoin, bySym, pushTrade, seedSeries, seedTrades, toFill } from '../state/coins.js';
+import {
+  COINS,
+  type SimCoin,
+  bySym,
+  pushTrade,
+  seedSeries,
+  seedTrades,
+  toFill,
+} from '../state/coins.js';
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
 import { USER, addXP, pushDrop, saveUser, syncSpLevelGrants, unlock } from '../state/user.js';
-import { NATIVE_PRICE, WALLET, nativeUnit, selectNet } from '../state/wallet.js';
+import {
+  NATIVE_PRICE,
+  SIM_BALANCE,
+  WALLET,
+  nativeUnit,
+  nativeUsd,
+  selectNet,
+} from '../state/wallet.js';
 import { clock, fakeAddr } from '../lib/fmt.js';
-import type { ClaimResult, CrateResult, FeeVault, QuoteInput, StakeClaim, StakeInput, StonkzApi } from './types.js';
+import type {
+  ClaimResult,
+  CrateResult,
+  FeeVault,
+  QuoteInput,
+  StakeClaim,
+  StakeInput,
+  StonkzApi,
+} from './types.js';
 
 /**
  * The simulation adapter — everything the single-file build did, behind the
@@ -88,8 +115,7 @@ function beat(): void {
   NATIVE_PRICE.usd = Math.max(120, NATIVE_PRICE.usd * (1 + (Math.random() - 0.5) * 0.0018));
   NATIVE_PRICE.sol = Math.max(120, NATIVE_PRICE.sol * (1 + (Math.random() - 0.5) * 0.0018));
   NATIVE_PRICE.eth = Math.max(800, NATIVE_PRICE.eth * (1 + (Math.random() - 0.5) * 0.0018));
-  if (WALLET.net === 'RH') NATIVE_PRICE.usd = NATIVE_PRICE.eth;
-  else NATIVE_PRICE.usd = NATIVE_PRICE.sol;
+  NATIVE_PRICE.usd = nativeUsd(nativeUnit());
 
   for (const c of COINS) {
     c.lastMc = c.mc;
@@ -160,7 +186,8 @@ function accrueFees(c: SimCoin, now: number): void {
   const share = poolFrac(c);
   if (c.mine) {
     c.fee = (c.fee ?? 0) + bucket * (1 - share);
-    if (inCashback(c, now)) c.feeTokens = (c.feeTokens ?? 0) + (bucket * (1 - share) * NATIVE_PRICE.usd) / price(c);
+    if (inCashback(c, now))
+      c.feeTokens = (c.feeTokens ?? 0) + (bucket * (1 - share) * NATIVE_PRICE.usd) / price(c);
   }
   accrueStake(c, now);
 }
@@ -171,7 +198,7 @@ function accrueStake(c: SimCoin, now: number): void {
   if (!st || st.amt <= 0) return;
   const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
   const feeNative = (turnover * (effFee(c, now) / 100)) / NATIVE_PRICE.usd;
-  // Only the creator's 70% bucket funds stakers, and poolFrac splits that
+  // Only the creator's 60% bucket funds stakers, and poolFrac splits that
   // bucket between the creator and the pool. Protocol and ops never enter it.
   const pool = feeNative * FEE_SPLIT.creatorBucket * poolFrac(c);
   const weight = totalWeight(c);
@@ -186,7 +213,7 @@ function accrueStake(c: SimCoin, now: number): void {
 
 /** The aggregator that fronts each network. `index.html` had no hop 1 at all. */
 function aggregatorOf(net: Net): Venue {
-  return net === 'RH' ? 'UNISWAP' : 'JUPITER';
+  return isEvm(net) ? 'UNISWAP' : 'JUPITER';
 }
 
 /**
@@ -320,7 +347,12 @@ export const simApi: StonkzApi = {
   async search(query) {
     const v = query.trim().toUpperCase();
     if (!v) return [];
-    return COINS.filter((c) => c.sym.indexOf(v) > -1 || c.name.toUpperCase().indexOf(v) > -1 || c.dev.toUpperCase().indexOf(v) > -1);
+    return COINS.filter(
+      (c) =>
+        c.sym.indexOf(v) > -1 ||
+        c.name.toUpperCase().indexOf(v) > -1 ||
+        c.dev.toUpperCase().indexOf(v) > -1,
+    );
   },
 
   async quote(input) {
@@ -332,25 +364,60 @@ export const simApi: StonkzApi = {
     const c = bySym(q.sym);
     if (!c) throw new Error('unknown ticker ' + q.sym);
     const buy = q.side === 'buy';
-    const t = pushTrade(c, { buy, sol: q.amountIn, mine: true });
-    noteTrade(c, buy, q.amountIn);
+    // Buy amountIn is native; sell amountIn is tokens (matches live quotes).
+    const nativeAmt = buy ? q.amountIn : q.amountOut;
+    const tokAmt = buy ? q.amountOut : q.amountIn;
+    const t = pushTrade(c, { buy, sol: nativeAmt, tok: tokAmt, mine: true });
+    noteTrade(c, buy, nativeAmt, tokAmt);
     // A fill moves the curve, which is what makes the board feel alive.
-    const push = (q.amountIn * NATIVE_PRICE.usd) / Math.max(1, liq(c));
+    const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
     c.lastMc = c.mc;
     c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
-    addXP(xpForTrade(q.amountIn), (buy ? 'BUY ' : 'SELL ') + c.sym);
+    addXP(xpForTrade(nativeAmt), (buy ? 'BUY ' : 'SELL ') + c.sym);
     unlock('first');
-    if (q.amountIn * NATIVE_PRICE.usd >= 1000) unlock('whale');
+    if (nativeAmt * NATIVE_PRICE.usd >= 1000) unlock('whale');
     if (inCashback(c)) unlock('cashback');
     emit('coins');
     return toFill(c, t);
+  },
+
+  /**
+   * The sandbox has no ledger, so estimate the lifetime take from 24h volume
+   * and age, then split it exactly the way the programs do.
+   */
+  async tokenFees(c: SimCoin): Promise<TokenFees> {
+    const net = c.net ?? WALLET.net;
+    const feePct = Number(c.tfee || 1);
+    const grossUsd = vol24(c) * Math.min(40, Math.max(0.15, c.age / 1440)) * (feePct / 100);
+    const gross = grossUsd / nativeUsd(unitFor(net));
+    const s = splitFee(gross);
+    const stakers = s.creatorBucket * poolFrac(c);
+    return {
+      sym: c.sym,
+      net,
+      unit: unitFor(net),
+      feeBps: Math.round(feePct * 100),
+      effFeeBps: Math.round(effFee(c) * 100),
+      split: { ...FEE_SPLIT },
+      totals: {
+        gross,
+        protocol: s.protocol,
+        game: s.stonkzOps,
+        burn: s.burn,
+        creatorBucket: s.creatorBucket,
+        creator: s.creatorBucket - stakers,
+        stakers,
+        referrals: 0,
+      },
+      source: 'sim',
+    };
   },
 
   /** TODO(Phase 1.B): SIWS / SIWE, then read the balance from RPC. */
   async connect(net: Net): Promise<Wallet> {
     selectNet(net);
     WALLET.on = true;
-    WALLET.sol = net === 'RH' ? 3.18 : 12.4;
+    WALLET.sol = SIM_BALANCE[nativeUnit()];
     emit('wallet');
     return WALLET;
   },
@@ -396,6 +463,7 @@ export const simApi: StonkzApi = {
       ...(d.x ? { x: d.x } : {}),
       ...(d.web ? { web: d.web } : {}),
       ...(d.tg ? { tg: d.tg } : {}),
+      ...(d.uri ? { image: d.uri } : {}),
     };
     COINS.unshift(c);
     if (d.buy > 0) {
@@ -420,7 +488,9 @@ export const simApi: StonkzApi = {
 
   /** TODO(Phase 2.F): `claim_creator_fees` against the coin's fee vault. */
   async claimCreatorFees(sym) {
-    const list = sym ? [bySym(sym)].filter(Boolean as unknown as (c: SimCoin | null) => c is SimCoin) : COINS.filter((c) => c.mine);
+    const list = sym
+      ? [bySym(sym)].filter(Boolean as unknown as (c: SimCoin | null) => c is SimCoin)
+      : COINS.filter((c) => c.mine);
     const res: ClaimResult = { native: 0, tokens: {} };
     for (const c of list) {
       res.native += c.fee ?? 0;
@@ -524,7 +594,15 @@ export const simApi: StonkzApi = {
         ? (() => {
             const amount = rollCrateAmount(drop);
             USER.optionz = (USER.optionz ?? 0) + amount;
-            return { tier, kind: 'S' as const, amount, item: '', label: num(amount) + ' OPTIONZ', dropIndex: i, xp };
+            return {
+              tier,
+              kind: 'S' as const,
+              amount,
+              item: '',
+              label: num(amount) + ' OPTIONZ',
+              dropIndex: i,
+              xp,
+            };
           })()
         : { tier, kind: 'I' as const, amount: 0, item: drop[2], label: drop[2], dropIndex: i, xp };
 

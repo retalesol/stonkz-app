@@ -28,3 +28,8 @@
   100%{transform:none;background:transparent}
 }
 
+
+/* ---------- chain badge ---------- */
+.netpill{display:inline-flex;align-items:center;gap:4px;font-size:9px;letter-spacing:.1em;padding:0 5px 0 4px;
+  border:1px solid var(--line2);color:var(--txt2);line-height:14px;vertical-align:middle;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700}
+.netpill i{width:6px;height:6px;background:var(--nc,var(--dim));display:inline-block}

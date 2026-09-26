@@ -88,7 +88,8 @@ const TRADE = {
   feeTotal: 37_500_000n,
   feeProtocol: 7_500_000n,
   feeOps: 3_750_000n,
-  feeCreatorBucket: 26_250_000n,
+  feeBurn: 3_750_000n,
+  feeCreatorBucket: 22_500_000n,
   feeStakers: 5_000_000n,
   feeCreator: 21_250_000n,
   cashbackTokens: 0n,
@@ -113,13 +114,20 @@ describe('launchpad event decoding', () => {
           feeTotal: 37_500_000n,
           protocol: 7_500_000n,
           ops: 3_750_000n,
-          creatorBucket: 26_250_000n,
+          burn: 3_750_000n,
+          creatorBucket: 22_500_000n,
           ts: 1n,
         }),
       ],
       [
         'TreasuryCredit',
-        encodeTreasuryCredit({ baseMint: WSOL_MINT, protocolDelta: 7_500_000n, opsDelta: 3_750_000n, ts: 2n }),
+        encodeTreasuryCredit({
+          baseMint: WSOL_MINT,
+          protocolDelta: 7_500_000n,
+          opsDelta: 3_750_000n,
+          burnDelta: 3_750_000n,
+          ts: 2n,
+        }),
       ],
       [
         'Graduated',
@@ -141,11 +149,11 @@ describe('launchpad event decoding', () => {
           mint: DOGGO_MINT,
           baseMint: WSOL_MINT,
           pool: CREATOR,
-          lpMint: TRADER,
+          position: TRADER,
           baseDeposited: 1n,
           tokenDeposited: 2n,
-          lpMinted: 3n,
-          lpBurned: 3n,
+          lockReleasePoint: 0xffff_ffff_ffff_ffffn,
+          positionLocked: 1n,
           ts: 4n,
         }),
       ],
@@ -196,7 +204,13 @@ describe('launchpad event decoding', () => {
       ],
       [
         'TreasuryWithdrawn',
-        encodeTreasuryWithdrawn({ baseMint: WSOL_MINT, which: 0, amount: 1n, destination: CREATOR, ts: 9n }),
+        encodeTreasuryWithdrawn({
+          baseMint: WSOL_MINT,
+          which: 0,
+          amount: 1n,
+          destination: CREATOR,
+          ts: 9n,
+        }),
       ],
     ];
 
@@ -226,9 +240,10 @@ describe('launchpad event decoding', () => {
   it('reads a u128 above 2^64, which a u64 field would silently truncate', () => {
     const big = (1n << 90n) + 12_345n;
     const decoded = launchpadEventCoder.decode(
-      emitPayload('TokenCreated', encodeTokenCreated({ ...TOKEN_CREATED, virtualBase: big })).toString(
-        'base64',
-      ),
+      emitPayload(
+        'TokenCreated',
+        encodeTokenCreated({ ...TOKEN_CREATED, virtualBase: big }),
+      ).toString('base64'),
     );
     expect(decoded?.data.kind === 'TokenCreated' && decoded.data.virtualBase).toBe(big);
   });
@@ -271,7 +286,8 @@ describe('launchpad event decoding', () => {
           feeTotal: 37_500_000n,
           protocol: 7_500_000n,
           ops: 3_750_000n,
-          creatorBucket: 26_250_000n,
+          burn: 3_750_000n,
+          creatorBucket: 22_500_000n,
           ts: 1n,
         }),
       ),
@@ -279,11 +295,16 @@ describe('launchpad event decoding', () => {
     ];
     const payloads = programDataPayloads(logs);
     expect(payloads).toHaveLength(2);
-    expect(payloads.map((p) => launchpadEventCoder.decode(p)?.name)).toEqual(['Trade', 'FeeAccrued']);
+    expect(payloads.map((p) => launchpadEventCoder.decode(p)?.name)).toEqual([
+      'Trade',
+      'FeeAccrued',
+    ]);
   });
 
   it('is not fooled by a log line that merely contains the words', () => {
-    expect(programDataPayloads(['Program log: writing Program data: to disk'])).toEqual(['to disk']);
+    expect(programDataPayloads(['Program log: writing Program data: to disk'])).toEqual([
+      'to disk',
+    ]);
     // …which then fails the discriminator check rather than decoding.
     expect(launchpadEventCoder.decode('to disk')).toBeNull();
   });

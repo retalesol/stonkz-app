@@ -56,7 +56,12 @@ export function initPortfolio(): void {
     ['LARP', 0],
   ];
   seedTrades.forEach((a, i) => {
-    MYTRADES.push({ t: new Date(t - (i * 2100 + 400) * 1000), sym: a[0], buy: !!a[1], sol: 0.3 + r() * 3 });
+    MYTRADES.push({
+      t: new Date(t - (i * 2100 + 400) * 1000),
+      sym: a[0],
+      buy: !!a[1],
+      sol: 0.3 + r() * 3,
+    });
   });
 }
 
@@ -80,6 +85,9 @@ export function pfValue(): number {
  *
  * Prefer `tokOut` when known (live quotes / prepare). Falling back to
  * `usdIn / price(c)` invents garbage when `mc` is still 0 on a fresh launch.
+ *
+ * `sol` is always the **native** notional (SOL/ETH spent on buy, received on
+ * sell) — never the token quantity.
  */
 export function noteTrade(c: SimCoin, buy: boolean, sol: number, tokOut?: number): void {
   const h = holdOf(c.sym);
@@ -118,7 +126,12 @@ export function noteTrade(c: SimCoin, buy: boolean, sol: number, tokOut?: number
 }
 
 /** Replace (or set) a holding from a trusted balance — e.g. ERC-20 `balanceOf`. */
-export function setHoldingTokens(sym: string, tok: number, costUsd?: number, tokAtoms?: string): void {
+export function setHoldingTokens(
+  sym: string,
+  tok: number,
+  costUsd?: number,
+  tokAtoms?: string,
+): void {
   if (!(tok > 0)) {
     const h = holdOf(sym);
     if (h) HOLD.splice(HOLD.indexOf(h), 1);

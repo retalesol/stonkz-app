@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { GRAD, MAJORS, STOCKS, nativeUnit } from '@stonkz/shared';
-import { candles, holdersSnapshot, koth, tape, tokens, trades } from '../db/schema.js';
+import { GRAD, MAJORS, RH_STOCKS, STOCKS, nativeUnit } from '@stonkz/shared';
+import {
+  candles,
+  creatorVaults,
+  holdersSnapshot,
+  koth,
+  tape,
+  tokens,
+  trades,
+  treasuryCredits,
+} from '../db/schema.js';
 import { createTestApp, type TestApp } from '../test/app.js';
 import type { SerialisedToken } from './serialise.js';
 
@@ -165,8 +174,22 @@ async function seed(): Promise<void> {
   );
 
   await h.deps.db.insert(holdersSnapshot).values([
-    { net: 'SOL', sym: 'DOGE2', mint: MINT_DOGE2, wallet: 'Whale', tokenAmount: 500_000_000, costNative: 5 },
-    { net: 'SOL', sym: 'DOGE2', mint: MINT_DOGE2, wallet: 'Shrimp', tokenAmount: 1_000, costNative: 0.01 },
+    {
+      net: 'SOL',
+      sym: 'DOGE2',
+      mint: MINT_DOGE2,
+      wallet: 'Whale',
+      tokenAmount: 500_000_000,
+      costNative: 5,
+    },
+    {
+      net: 'SOL',
+      sym: 'DOGE2',
+      mint: MINT_DOGE2,
+      wallet: 'Shrimp',
+      tokenAmount: 1_000,
+      costNative: 0.01,
+    },
     // Sold out, kept for cost basis. Must never appear in the list.
     { net: 'SOL', sym: 'DOGE2', mint: MINT_DOGE2, wallet: 'Exited', tokenAmount: 0, costNative: 2 },
   ]);
@@ -258,9 +281,13 @@ describe('GET /tokens', () => {
   });
 
   it('searches ticker by prefix and name by substring', async () => {
-    expect((await get<BoardResponse>('/tokens?q=MOON')).body.tokens.map((t) => t.sym)).toEqual(['MOONER']);
+    expect((await get<BoardResponse>('/tokens?q=MOON')).body.tokens.map((t) => t.sym)).toEqual([
+      'MOONER',
+    ]);
     // Case-insensitive, and matches inside the name.
-    expect((await get<BoardResponse>('/tokens?q=two')).body.tokens.map((t) => t.sym)).toEqual(['DOGE2']);
+    expect((await get<BoardResponse>('/tokens?q=two')).body.tokens.map((t) => t.sym)).toEqual([
+      'DOGE2',
+    ]);
     expect((await get<BoardResponse>('/tokens?q=nothinghere')).body.tokens).toEqual([]);
   });
 
@@ -375,7 +402,9 @@ describe('GET /tokens/:sym/trades', () => {
   });
 
   it('clamps the limit', async () => {
-    expect((await get<{ trades: unknown[] }>('/tokens/DOGE2/trades?limit=2')).body.trades).toHaveLength(2);
+    expect(
+      (await get<{ trades: unknown[] }>('/tokens/DOGE2/trades?limit=2')).body.trades,
+    ).toHaveLength(2);
   });
 });
 
@@ -396,10 +425,80 @@ describe('GET /tokens/:sym/holders', () => {
   });
 });
 
+describe('GET /tokens/:sym/fees', () => {
+  it('reads the four-leg ledger back from the indexer tables', async () => {
+    // Two fills' worth of vault credits plus the creator vault they fed.
+    const credit = (kind: 'protocol' | 'stonkz_ops' | 'burn', amount: number, sig: string) => ({
+      net: 'SOL' as const,
+      kind,
+      sym: 'DOGE2',
+      amount,
+      txSig: sig,
+      logIndex: 0,
+      blockTime: minutesAgo(5),
+      chainPosition: 1,
+    });
+    await h.deps.db
+      .insert(treasuryCredits)
+      .values([
+        credit('protocol', 0.2, 'f1'),
+        credit('stonkz_ops', 0.1, 'f1'),
+        credit('burn', 0.1, 'f1'),
+        credit('protocol', 0.2, 'f2'),
+        credit('stonkz_ops', 0.1, 'f2'),
+        credit('burn', 0.1, 'f2'),
+      ]);
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'SOL',
+      sym: 'DOGE2',
+      mint: MINT_DOGE2,
+      creator: 'DevOne',
+      unclaimedNative: 0.9,
+      unclaimedTokens: 0,
+      stakerPoolNative: 0.3,
+      lifetimeNative: 1.2,
+    });
+
+    const { status, body } = await get<{
+      unit: string;
+      feeBps: number;
+      split: { protocol: number; creatorBucket: number; stonkzOps: number; burn: number };
+      totals: Record<string, number>;
+      source: string;
+    }>('/tokens/DOGE2/fees?net=SOL');
+    expect(status).toBe(200);
+    expect(body.unit).toBe('SOL');
+    expect(body.feeBps).toBe(250);
+    expect(body.split).toEqual({ protocol: 0.2, creatorBucket: 0.6, stonkzOps: 0.1, burn: 0.1 });
+    expect(body.totals['protocol']).toBeCloseTo(0.4, 9);
+    expect(body.totals['game']).toBeCloseTo(0.2, 9);
+    expect(body.totals['burn']).toBeCloseTo(0.2, 9);
+    expect(body.totals['creatorBucket']).toBeCloseTo(1.2, 9);
+    expect(body.totals['stakers']).toBeCloseTo(0.3, 9);
+    expect(body.totals['creator']).toBeCloseTo(0.9, 9);
+    expect(body.totals['gross']).toBeCloseTo(2.0, 9);
+    expect(body.source).toBe('chain');
+  });
+
+  it('is empty, not an error, for a coin that has never traded', async () => {
+    const { status, body } = await get<{ totals: Record<string, number> }>(
+      '/tokens/MOONER/fees?net=SOL',
+    );
+    expect(status).toBe(200);
+    expect(body.totals['gross']).toBe(0);
+  });
+});
+
 describe('GET /koth', () => {
   it('returns the reigning king with the crown freshness the glow uses', async () => {
     const { status, body } = await get<{
-      kings: { net: string; sym: string; mc: number; freshMs: number; token: SerialisedToken | null }[];
+      kings: {
+        net: string;
+        sym: string;
+        mc: number;
+        freshMs: number;
+        token: SerialisedToken | null;
+      }[];
     }>('/koth');
     expect(status).toBe(200);
     expect(body.kings).toHaveLength(1);
@@ -418,7 +517,9 @@ describe('GET /koth', () => {
 
 describe('GET /tape', () => {
   it('returns the newest fills first, net-filtered by default', async () => {
-    const { status, body } = await get<{ net: string; fills: { sig: string; net: string }[] }>('/tape');
+    const { status, body } = await get<{ net: string; fills: { sig: string; net: string }[] }>(
+      '/tape',
+    );
     expect(status).toBe(200);
     expect(body.net).toBe('SOL');
     expect(body.fills.every((f) => f.net === 'SOL')).toBe(true);
@@ -454,12 +555,25 @@ describe('GET /base-tokens', () => {
     expect(body.stale).toBe(true);
   });
 
-  it('returns majors only on Robinhood, where the stock market is unconfirmed', async () => {
+  it('returns majors plus the Robinhood stock/ETF bases on Robinhood', async () => {
+    // 284ae9a added RH_STOCKS (canonical RH tickers, testnet pins in base-mints.ts).
+    const { body } = await get<{
+      nativeUnit: string;
+      baseTokens: { symbol: string; kind: string }[];
+    }>('/base-tokens?network=RH');
+    expect(body.nativeUnit).toBe('ETH');
+    expect(body.baseTokens).toHaveLength(MAJORS.RH.length + RH_STOCKS.length);
+    expect(body.baseTokens.filter((t) => t.kind === 'stock').map((t) => t.symbol)).toEqual(
+      RH_STOCKS.map(([symbol]) => symbol),
+    );
+  });
+
+  it('returns majors only on Base, which has no stock bases', async () => {
     const { body } = await get<{ nativeUnit: string; baseTokens: { kind: string }[] }>(
-      '/base-tokens?network=RH',
+      '/base-tokens?network=BASE',
     );
     expect(body.nativeUnit).toBe('ETH');
-    expect(body.baseTokens).toHaveLength(MAJORS.RH.length);
+    expect(body.baseTokens).toHaveLength(MAJORS.BASE.length);
     expect(body.baseTokens.some((t) => t.kind === 'stock')).toBe(false);
   });
 
@@ -478,9 +592,15 @@ describe('GET /treasuries', () => {
     }>('/treasuries');
     expect(status).toBe(200);
     expect(body.claimable).toBe(false);
-    expect(body.vaults).toHaveLength(4);
-    expect(body.vaults.filter((v) => v.kind === 'protocol')).toHaveLength(2);
-    expect(body.vaults.filter((v) => v.kind === 'stonkz_ops')).toHaveLength(2);
+    // SOL + RH from 0001, BASE from 0014, ARC from 0015.
+    // Three vaults per net: protocol, Stonkz Game buyback (stonkz_ops), burn.
+    expect(body.vaults).toHaveLength(12);
+    expect(body.vaults.filter((v) => v.kind === 'protocol')).toHaveLength(4);
+    expect(body.vaults.filter((v) => v.kind === 'stonkz_ops')).toHaveLength(4);
+    expect(body.vaults.filter((v) => v.kind === 'burn')).toHaveLength(4);
     expect(body.vaults.find((v) => v.net === 'RH')?.nativeUnit).toBe('ETH');
+    expect(body.vaults.find((v) => v.net === 'BASE')?.nativeUnit).toBe('ETH');
+    // Arc's gas token is USDC, so its vaults are USDC-denominated.
+    expect(body.vaults.find((v) => v.net === 'ARC')?.nativeUnit).toBe('USDC');
   });
 });

@@ -25,5 +25,6 @@ if (asJson) {
     console.log(`  ${kind.padEnd(20)} ${byKind.get(kind) ?? 0}`);
   }
   console.log('\nactors:');
-  for (const [role, address] of Object.entries(actors)) console.log(`  ${role.padEnd(12)} ${address}`);
+  for (const [role, address] of Object.entries(actors))
+    console.log(`  ${role.padEnd(12)} ${address}`);
 }

@@ -428,7 +428,12 @@ export class Ingestor {
 
   private async updateCandles(event: TradeEvent, mint: string): Promise<void> {
     const price = event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0;
-    for (const update of candleUpdatesFor(event.blockTimeMs, price, event.usdValue, event.nativeAmount)) {
+    for (const update of candleUpdatesFor(
+      event.blockTimeMs,
+      price,
+      event.usdValue,
+      event.nativeAmount,
+    )) {
       await this.db
         .insert(candles)
         .values({
@@ -570,13 +575,41 @@ export class Ingestor {
   private async onGraduated(event: GraduatedEvent, report: IngestReport): Promise<void> {
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
+    const [existing] = await this.db
+      .select({ graduatedAt: tokens.graduatedAt, mc: tokens.mc })
+      .from(tokens)
+      .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)))
+      .limit(1);
+
+    // Standalone `LiquidityMigrated` reuses the Graduated event shape to attach
+    // pool/position addresses after the curve flip. Do not re-run awards.
+    if (existing?.graduatedAt) {
+      await this.db
+        .update(tokens)
+        .set({
+          ...(event.mc > 0 ? { mc: event.mc } : {}),
+          updatedAt: new Date(this.now()),
+        })
+        .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
+      return;
+    }
+
     await this.db
       .update(tokens)
-      .set({ lane: 'grad', graduatedAt: new Date(event.blockTimeMs), mc: event.mc, updatedAt: new Date(this.now()) })
+      .set({
+        lane: 'grad',
+        graduatedAt: new Date(event.blockTimeMs),
+        mc: event.mc,
+        updatedAt: new Date(this.now()),
+      })
       .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
 
     await this.opts.publisher.board({ type: 'graduated', net: event.net, sym: event.sym });
-    await this.opts.publisher.token(event.sym, { type: 'graduated', net: event.net, sym: event.sym });
+    await this.opts.publisher.token(event.sym, {
+      type: 'graduated',
+      net: event.net,
+      sym: event.sym,
+    });
 
     // Everyone still holding at the moment of graduation earns `grad` — except
     // dust positions. A wallet that sprayed 0.004 SOL across the board must not
@@ -630,7 +663,7 @@ export class Ingestor {
   /* ------------------------------------------------------------------ fees */
 
   private async onFeeAccrued(event: FeeAccruedEvent): Promise<void> {
-    // Stakers' cut comes out of the creator's 70%, never out of the other legs.
+    // Stakers' cut comes out of the creator's 60%, never out of the other legs.
     const creatorNet = event.creatorBucket - event.stakerShare;
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
@@ -673,11 +706,12 @@ export class Ingestor {
     );
     await this.creditVault(event, 'protocol', Math.max(0, event.protocol - referralCut));
     await this.creditVault(event, 'stonkz_ops', event.stonkzOps);
+    await this.creditVault(event, 'burn', event.burn);
   }
 
   private async creditVault(
     event: FeeAccruedEvent | TreasuryCreditEvent,
-    kind: 'protocol' | 'stonkz_ops',
+    kind: 'protocol' | 'stonkz_ops' | 'burn',
     amount: number,
   ): Promise<void> {
     if (amount === 0) return;
@@ -714,7 +748,10 @@ export class Ingestor {
     await this.creditVault(event, event.vault, event.amount);
   }
 
-  private async onCreatorFeesClaimed(event: CreatorFeesClaimedEvent, report: IngestReport): Promise<void> {
+  private async onCreatorFeesClaimed(
+    event: CreatorFeesClaimedEvent,
+    report: IngestReport,
+  ): Promise<void> {
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
     await this.db
@@ -883,7 +920,11 @@ export class Ingestor {
         .select({ txSig: trades.txSig })
         .from(trades)
         .where(
-          and(eq(trades.net, net), eq(trades.mint, position.mint), eq(trades.trader, position.wallet)),
+          and(
+            eq(trades.net, net),
+            eq(trades.mint, position.mint),
+            eq(trades.trader, position.wallet),
+          ),
         )
         .orderBy(asc(trades.id))
         .limit(1);

@@ -336,7 +336,7 @@ export const treasuries = pgTable(
   'treasuries',
   {
     net: text('net').notNull(),
-    /** `protocol` (the 20%) or `stonkz_ops` (the 10%). Never claimable by users. */
+    /** `protocol` (20%), `stonkz_ops` (the Stonkz Game buyback 10%) or `burn` (10%). Never claimable by users. */
     kind: text('kind').notNull(),
     nativeBalance: doublePrecision('native_balance').notNull().default(0),
     lifetimeCredited: doublePrecision('lifetime_credited').notNull().default(0),
@@ -371,7 +371,7 @@ export const creatorVaults = pgTable(
     sym: text('sym').notNull(),
     mint: text('mint').notNull(),
     creator: text('creator').notNull(),
-    /** The 70% bucket, minus whatever the memecoin stakers have peeled off. */
+    /** The 60% bucket, minus whatever the memecoin stakers have peeled off. */
     unclaimedNative: doublePrecision('unclaimed_native').notNull().default(0),
     unclaimedTokens: doublePrecision('unclaimed_tokens').notNull().default(0),
     stakerPoolNative: doublePrecision('staker_pool_native').notNull().default(0),
@@ -379,7 +379,10 @@ export const creatorVaults = pgTable(
     claimedNative: doublePrecision('claimed_native').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.net, t.mint] }), index('creator_vaults_creator_idx').on(t.net, t.creator)],
+  (t) => [
+    primaryKey({ columns: [t.net, t.mint] }),
+    index('creator_vaults_creator_idx').on(t.net, t.creator),
+  ],
 );
 
 export const stakePositions = pgTable(
@@ -397,7 +400,10 @@ export const stakePositions = pgTable(
     rewardTokens: doublePrecision('reward_tokens').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.net, t.mint, t.wallet] }), index('stake_by_wallet_idx').on(t.net, t.wallet)],
+  (t) => [
+    primaryKey({ columns: [t.net, t.mint, t.wallet] }),
+    index('stake_by_wallet_idx').on(t.net, t.wallet),
+  ],
 );
 
 /**

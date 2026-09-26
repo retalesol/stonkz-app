@@ -50,3 +50,7 @@ pnpm-debug.log*
 apps/api/loadtest/fixtures/*.json
 apps/api/loadtest/results/
 .vercel
+
+# agent / editor scratch
+.codex/
+.cursor/

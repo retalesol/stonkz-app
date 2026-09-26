@@ -1,11 +1,24 @@
+import { MEMEMAN_SRC, paintAvatar } from '../lib/avatar.js';
 import { rng } from '@stonkz/shared';
 
 /** Avatar palette. `index.html:1145` */
-export const PAL = ['#ffa22b', '#00d26a', '#4d9bff', '#a273ff', '#ffd23f', '#ff4c3b', '#26d0c4', '#ff7ac0'];
+export const PAL = [
+  '#ffa22b',
+  '#00d26a',
+  '#4d9bff',
+  '#a273ff',
+  '#ffd23f',
+  '#ff4c3b',
+  '#26d0c4',
+  '#ff7ac0',
+];
+
+/** Amber square used when a coin has no custom upload. */
+export const COIN_DEFAULT_BG = '#ffa22b';
 
 /**
- * Seeded 8x8 mirrored pixel avatar. Stays the default art after Phase 5 —
- * uploads only replace it when one exists. `index.html:1146`
+ * Seeded 8x8 mirrored pixel avatar. Kept for legacy callers (wizard / tape);
+ * launch + board coin art defaults to orange mememan via `paintCoinArt`.
  */
 export function pix(cv: HTMLCanvasElement | null | undefined, seed: number): void {
   if (!cv) return;
@@ -30,8 +43,56 @@ export function pix(cv: HTMLCanvasElement | null | undefined, seed: number): voi
   }
 }
 
+/** Mememan on a fixed amber field — default coin art when nothing was uploaded. */
+export function paintDefaultCoinArt(
+  cv: HTMLCanvasElement | null | undefined,
+  logicalSize?: number,
+): void {
+  if (!cv) return;
+  const size = logicalSize ?? (cv.clientWidth || Number(cv.getAttribute('width')) || 64);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(size * dpr);
+  cv.height = Math.round(size * dpr);
+  cv.style.width = size + 'px';
+  cv.style.height = size + 'px';
+  const g = cv.getContext('2d');
+  if (!g) return;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.imageSmoothingEnabled = false;
+  g.fillStyle = COIN_DEFAULT_BG;
+  g.fillRect(0, 0, size, size);
+  const img = new Image();
+  img.decoding = 'async';
+  img.onload = () => {
+    const pad = size * 0.06;
+    g.drawImage(img, pad, pad, size - pad * 2, size - pad * 2);
+  };
+  img.src = MEMEMAN_SRC;
+}
+
+/** Custom IPFS art when set; otherwise orange mememan. */
+export function paintCoinArt(
+  cv: HTMLCanvasElement | null | undefined,
+  seed: number,
+  imageUrl?: string | null,
+): void {
+  if (!cv) return;
+  const size = cv.clientWidth || Number(cv.getAttribute('width')) || 64;
+  if (imageUrl?.trim()) {
+    paintAvatar(cv, { seed, avatarUrl: imageUrl.trim(), size });
+    return;
+  }
+  paintDefaultCoinArt(cv, size);
+}
+
 /** The same avatar drawn into an existing context, for the wizard art. `index.html:2816` */
-export function miniAv(g: CanvasRenderingContext2D, x: number, y: number, size: number, seed: number): void {
+export function miniAv(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  seed: number,
+): void {
   const r = rng(seed);
   const n = 8;
   const c = size / n;

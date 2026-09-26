@@ -14,6 +14,22 @@
   .search input{max-width:none}
   .tk-bar{flex-wrap:wrap}
   .rowf{grid-template-columns:1fr}
-  .drawer{width:88vw}
+  .drawer{width:88vw;max-height:100dvh;overflow:auto}
   .chartbox{height:220px}
+  .koth{grid-template-columns:1fr;gap:8px}
+  .foot{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .scrim .win,
+  .wiz,
+  .launch-modal{
+    max-height:calc(100dvh - env(safe-area-inset-bottom, 0px) - 24px);
+    overflow:auto;
+  }
+}
+@media (max-width:430px){
+  .top{gap:6px}
+  .brand{font-size:14px}
+  .koth{padding:8px}
+  .foot{font-size:10px;padding-inline:8px}
+  .drawer{width:100vw}
+  .board{gap:8px}
 }

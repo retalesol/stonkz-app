@@ -8,8 +8,14 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import type { Net } from '@stonkz/shared';
+import { NET_INFO, isEvm } from '@stonkz/shared';
 import { isAddress, parseEther } from 'viem';
-import { SOLANA_RPC_URL, activeWallet, describeWalletError, mapWalletError } from '../wallet/index.js';
+import {
+  SOLANA_RPC_URL,
+  activeWallet,
+  describeWalletError,
+  mapWalletError,
+} from '../wallet/index.js';
 import { practiceSolanaSecretKey } from './keys.js';
 import { signAndConfirm } from './signer.js';
 
@@ -42,7 +48,9 @@ function describe(err: unknown): string {
 async function tipFromPracticeKey(to: PublicKey, lamports: number): Promise<string> {
   const from = Keypair.fromSecretKey(practiceSolanaSecretKey());
   const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-  const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: from.publicKey, toPubkey: to, lamports }));
+  const tx = new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: from.publicKey, toPubkey: to, lamports }),
+  );
   try {
     return await sendAndConfirmTransaction(connection, tx, [from], { commitment: 'confirmed' });
   } catch (err) {
@@ -81,20 +89,24 @@ async function buildSolTransfer(from: string, to: PublicKey, lamports: number): 
  * Rejects with `TipBroadcastError` carrying a message safe to show the user
  * directly.
  */
-export async function attemptTip(net: Net, toAddress: string, amountNative: number): Promise<string> {
+export async function attemptTip(
+  net: Net,
+  toAddress: string,
+  amountNative: number,
+): Promise<string> {
   if (amountNative <= 0) throw new TipBroadcastError('Tip amount must be greater than zero.');
   const wallet = activeWallet();
   if (!wallet || wallet.net !== net) {
     throw new TipBroadcastError('Connect a wallet on this network to send a tip.');
   }
 
-  if (net === 'RH') {
+  if (isEvm(net)) {
     if (!isAddress(toAddress)) {
-      throw new TipBroadcastError('Not a valid Robinhood Chain address: ' + toAddress);
+      throw new TipBroadcastError('Not a valid ' + NET_INFO[net].name + ' address: ' + toAddress);
     }
     try {
       const { signature } = await signAndConfirm(net, {
-        net: 'RH',
+        net,
         to: toAddress,
         data: '0x',
         value: parseEther(String(amountNative)).toString(),

@@ -1,10 +1,17 @@
-import type { MevMode } from '@stonkz/shared';
+import { DEFAULT_TRADE_CAP, MAX_TRADE_CAP, type MevMode } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, must } from '../lib/dom.js';
 import { DOT } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
-import { DEFAULTS, SET, resetSettings, saveSettings, settingsPayload } from '../state/settings.js';
+import {
+  DEFAULTS,
+  SET,
+  capFor,
+  resetSettings,
+  saveSettings,
+  settingsPayload,
+} from '../state/settings.js';
 import { nativeUnit } from '../state/wallet.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
 
@@ -19,14 +26,25 @@ import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scr
 function formHTML(): ReturnType<typeof html> {
   const unit = nativeUnit();
   return html`<div>
-      <div class="set-row"><span class="k">SLIPPAGE TOLERANCE<small>MAX PRICE MOVE YOU ACCEPT</small></span>
-        <span class="set-ctl"><input class="fld r" id="st-slip" value="${attr(SET.slip)}">
-          ${[0.5, 1, 2.5, 5].map(
-            (v) => html`<button type="button" class="chipm${SET.slip === v ? ' on' : ''}" data-slip="${attr(v)}">${v}%</button>`,
-          )}</span></div>
-      <div class="set-row"><span class="k">PRIORITY FEE<small>SOLANA ONLY · PAID TO LAND THE BLOCK</small></span>
-        <span class="set-ctl"><input class="fld r" id="st-prio" value="${attr(SET.prio)}">
-          ${(
+      <div class="set-row">
+        <span class="k">SLIPPAGE TOLERANCE<small>MAX PRICE MOVE YOU ACCEPT</small></span>
+        <span class="set-ctl"
+          ><input class="fld r" id="st-slip" value="${attr(SET.slip)}" /> ${[0.5, 1, 2.5, 5].map(
+            (v) =>
+              html`<button
+                type="button"
+                class="chipm${SET.slip === v ? ' on' : ''}"
+                data-slip="${attr(v)}"
+              >
+                ${v}%
+              </button>`,
+          )}</span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">PRIORITY FEE<small>SOLANA ONLY · PAID TO LAND THE BLOCK</small></span>
+        <span class="set-ctl"
+          ><input class="fld r" id="st-prio" value="${attr(SET.prio)}" /> ${(
             [
               [0.0005, 'LOW'],
               [0.0012, 'FAST'],
@@ -34,9 +52,18 @@ function formHTML(): ReturnType<typeof html> {
             ] as Array<[number, string]>
           ).map(
             ([v, label]) =>
-              html`<button type="button" class="chipm${SET.prio === v ? ' on' : ''}" data-prio="${attr(v)}">${label}</button>`,
-          )}</span></div>
-      <div class="set-row"><span class="k">MEV PROTECTION<small>SOLANA ONLY · SANDWICH DEFENCE</small></span>
+              html`<button
+                type="button"
+                class="chipm${SET.prio === v ? ' on' : ''}"
+                data-prio="${attr(v)}"
+              >
+                ${label}
+              </button>`,
+          )}</span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">MEV PROTECTION<small>SOLANA ONLY · SANDWICH DEFENCE</small></span>
         <span class="set-ctl">
           ${(
             [
@@ -46,22 +73,51 @@ function formHTML(): ReturnType<typeof html> {
             ] as Array<[MevMode, string]>
           ).map(
             ([v, label]) =>
-              html`<button type="button" class="chipm${SET.mev === v ? ' on' : ''}" data-mev="${v}">${label}</button>`,
-          )}</span></div>
-      <div class="set-row"><span class="k">MEV TIP<small>SOLANA ONLY · PAID TO THE BLOCK ENGINE</small></span>
-        <span class="set-ctl"><input class="fld r" id="st-mev" value="${attr(SET.mevTip)}"> <span class="hint">${unit}</span></span></div>
-      <div class="set-row"><span class="k">MAX FEE CAP<small>ABORT BUY ABOVE THIS TOTAL SPEND</small></span>
-        <span class="set-ctl"><input class="fld r" id="st-cap" value="${attr(SET.cap)}"> <span class="hint">${unit}</span></span></div>
-      <div class="set-row"><span class="k">DEFAULT BUY<small>PREFILLED ON EVERY TICKET</small></span>
-        <span class="set-ctl"><input class="fld r" id="st-buy" value="${attr(Number(SET.defBuy).toFixed(2))}"> <span class="hint">${unit}</span></span></div>
-      <div class="set-row"><span class="k">CONFIRM BEFORE SEND<small>EXTRA CLICK ON EVERY ORDER</small></span>
+              html`<button type="button" class="chipm${SET.mev === v ? ' on' : ''}" data-mev="${v}">
+                ${label}
+              </button>`,
+          )}</span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">MEV TIP<small>SOLANA ONLY · PAID TO THE BLOCK ENGINE</small></span>
+        <span class="set-ctl"
+          ><input class="fld r" id="st-mev" value="${attr(SET.mevTip)}" />
+          <span class="hint">${unit}</span></span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">MAX FEE CAP<small>ABORT BUY ABOVE THIS TOTAL SPEND</small></span>
+        <span class="set-ctl"
+          ><input class="fld r" id="st-cap" value="${attr(capFor(unit))}" />
+          <span class="hint">${unit}</span></span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">DEFAULT BUY<small>PREFILLED ON EVERY TICKET</small></span>
+        <span class="set-ctl"
+          ><input class="fld r" id="st-buy" value="${attr(Number(SET.defBuy).toFixed(2))}" />
+          <span class="hint">${unit}</span></span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">CONFIRM BEFORE SEND<small>EXTRA CLICK ON EVERY ORDER</small></span>
         <span class="set-ctl">
           <button type="button" class="chipm${SET.confirm ? ' on' : ''}" data-cf="1">ON</button>
-          <button type="button" class="chipm${SET.confirm ? '' : ' on'}" data-cf="0">OFF</button></span></div>
+          <button type="button" class="chipm${SET.confirm ? '' : ' on'}" data-cf="0">
+            OFF
+          </button></span
+        >
+      </div>
     </div>
-    <p class="hint">CHIP CHANGES APPLY TO THE NEXT QUOTE IMMEDIATELY. SAVE WRITES THEM TO THIS DEVICE AND, WHEN CONNECTED, TO YOUR WALLET SESSION.</p>
-    <div class="set-foot"><button type="submit" class="big">SAVE SETTINGS</button>
-      <button type="button" class="chipm" id="st-reset" style="padding:8px 14px">RESET</button></div>`;
+    <p class="hint">
+      CHIP CHANGES APPLY TO THE NEXT QUOTE IMMEDIATELY. SAVE WRITES THEM TO THIS DEVICE AND, WHEN
+      CONNECTED, TO YOUR WALLET SESSION.
+    </p>
+    <div class="set-foot">
+      <button type="submit" class="big">SAVE SETTINGS</button>
+      <button type="button" class="chipm" id="st-reset" style="padding:8px 14px">RESET</button>
+    </div>`;
 }
 
 function fillSet(): void {
@@ -107,7 +163,8 @@ export function initSettings(onSaved: () => void): void {
     const b = (e.target as Element | null)?.closest<HTMLElement>('.chipm');
     if (!b || b.id === 'st-reset') return;
     const mark = (attrName: string, val: string | number): void => {
-      for (const x of $$('[' + attrName + ']', form)) x.classList.toggle('on', x.getAttribute(attrName) === String(val));
+      for (const x of $$('[' + attrName + ']', form))
+        x.classList.toggle('on', x.getAttribute(attrName) === String(val));
     };
     if (b.dataset['slip']) {
       SET.slip = Number(b.dataset['slip']);
@@ -134,7 +191,10 @@ export function initSettings(onSaved: () => void): void {
     resetSettings();
     fillSet();
     void pushOrToast().then((ok) => {
-      toast(ok ? 'SETTINGS RESET TO DEFAULTS' : 'SETTINGS RESET LOCALLY · SERVER SYNC FAILED', ok ? undefined : 'red');
+      toast(
+        ok ? 'SETTINGS RESET TO DEFAULTS' : 'SETTINGS RESET LOCALLY · SERVER SYNC FAILED',
+        ok ? undefined : 'red',
+      );
       onSaved();
     });
   });
@@ -144,13 +204,26 @@ export function initSettings(onSaved: () => void): void {
     SET.slip = field('#st-slip', 0.1, 50, DEFAULTS.slip);
     SET.prio = field('#st-prio', 0, 1, DEFAULTS.prio);
     SET.mevTip = field('#st-mev', 0, 1, DEFAULTS.mevTip);
-    SET.cap = field('#st-cap', 0.001, 50, DEFAULTS.cap);
+    const unit = nativeUnit();
+    SET.cap = field('#st-cap', 0.001, MAX_TRADE_CAP[unit], DEFAULT_TRADE_CAP[unit]);
+    SET.capUnit = unit;
     SET.defBuy = field('#st-buy', 0.01, 999, DEFAULTS.defBuy);
     saveSettings();
     void pushOrToast().then((ok) => {
       if (!ok) return;
       openSet(false);
-      toast('SETTINGS SAVED ' + DOT + ' SLIP ' + SET.slip + '% ' + DOT + ' PRIO ' + SET.prio + ' ' + nativeUnit());
+      toast(
+        'SETTINGS SAVED ' +
+          DOT +
+          ' SLIP ' +
+          SET.slip +
+          '% ' +
+          DOT +
+          ' PRIO ' +
+          SET.prio +
+          ' ' +
+          nativeUnit(),
+      );
       onSaved();
     });
   });

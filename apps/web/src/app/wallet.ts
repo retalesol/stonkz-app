@@ -1,4 +1,5 @@
 import { type Net, num } from '@stonkz/shared';
+import { isEvm } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { toast } from '../fx/toast.js';
 import { paintAvatar } from '../lib/avatar.js';
@@ -7,9 +8,10 @@ import { DOT, shortAddr } from '../lib/fmt.js';
 import { copyText, selectText } from '../lib/clipboard.js';
 import { myDisplayName } from '../lib/identity.js';
 import { reducedMotion } from '../lib/motion.js';
-import { NATIVE_PRICE, NETS, WALLET, nativeUnit, netOf, selectNet } from '../state/wallet.js';
+import { NETS, WALLET, nativeUnit, nativeUsd, netOf, selectNet } from '../state/wallet.js';
 import { USER, saveUser } from '../state/user.js';
 import { netOpen } from '../modals/netpicker.js';
+import { setNetFilter } from '../views/board.js';
 import { WalletPickerCancelledError, openWalletPicker } from '../modals/walletpicker.js';
 import {
   activeWallet,
@@ -61,7 +63,7 @@ export function renderWallet(): void {
     must('#wAddr').textContent = myDisplayName();
     const unit = nativeUnit();
     must('#wBal').textContent = WALLET.sol.toFixed(2) + ' ' + unit;
-    must('#wUsd').textContent = '\u2248 $' + num(WALLET.sol * NATIVE_PRICE.usd);
+    must('#wUsd').textContent = '\u2248 $' + num(WALLET.sol * nativeUsd(unit));
     must('.wbal .lbl').textContent = unit + ' BALANCE';
     must('#wFull').textContent = WALLET.full.slice(0, 10) + '\u2026' + WALLET.full.slice(-6);
   }
@@ -135,7 +137,13 @@ export async function connectWallet(netKey: Net): Promise<void> {
       l.removeEventListener('animationend', done);
     });
   }
-  const suffix = api.mode !== 'live' ? ' ' + DOT + ' SIMULATED' : isPracticeSession() ? ' ' + DOT + ' PRACTICE KEY' : '';
+  setNetFilter(n.k);
+  const suffix =
+    api.mode !== 'live'
+      ? ' ' + DOT + ' SIMULATED'
+      : isPracticeSession()
+        ? ' ' + DOT + ' PRACTICE KEY'
+        : '';
   toast(n.name + ' CONNECTED ' + DOT + ' ' + WALLET.addr + suffix);
 }
 
@@ -144,6 +152,7 @@ export function disconnectWallet(): void {
   void disconnectActive();
   void logoutSession(API_BASE);
   api.disconnect();
+  setNetFilter('ALL');
   renderWallet();
   renderPracticeBadge();
   toast('WALLET DISCONNECTED');
@@ -177,14 +186,14 @@ export async function restoreWalletSession(): Promise<boolean> {
     renderWallet();
 
     const wallet = await connectWalletFor(pref.net, { id: choice.id, silent: true });
-    const same =
-      pref.net === 'RH'
-        ? wallet.address.toLowerCase() === pref.address.toLowerCase()
-        : wallet.address === pref.address;
+    const same = isEvm(pref.net)
+      ? wallet.address.toLowerCase() === pref.address.toLowerCase()
+      : wallet.address === pref.address;
     if (!same) {
       clearSession();
     }
     await api.connect(pref.net);
+    setNetFilter(pref.net);
     renderWallet();
     renderPracticeBadge();
     return WALLET.on;
@@ -263,7 +272,11 @@ export function initWalletChip(opts: {
     const w = b.dataset['w'];
     if (w === 'profile') opts.onProfile();
     else if (w === 'settings') opts.onSettings();
-    else opts.onDisconnect();
+    else if (w === 'switch') {
+      // Same picker as CONNECT: choosing another chain reconnects there.
+      wmenu(false);
+      netOpen(true);
+    } else opts.onDisconnect();
   });
 
   document.addEventListener('mousedown', (e) => {

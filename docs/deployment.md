@@ -24,14 +24,14 @@ Two things this runbook takes seriously:
 Five distinct roles. Do not collapse them, and do not put any of them in the
 API process's environment.
 
-| Role | Purpose | Must be |
-|---|---|---|
-| Deployer | Signs the deployment transactions only | Hot is acceptable; holds nothing afterwards |
-| Admin | Pause switches, oracle config, migrator wiring. **Cannot move money.** | Multisig or cold key |
-| Protocol withdraw authority | Withdraws the 20% protocol revenue | Multisig or cold key |
-| Ops withdraw authority | Withdraws the 10% `$STONKZ` ops vault | Multisig or cold key, **distinct from protocol** |
-| Migration authority | Runs graduation migration (Solana: pays pool rent; EVM: triggers migrate) | Warm operational key, funded |
-| Oracle authority (Solana only) | Pushes base-mint USD prices | Warm operational key, funded |
+| Role                           | Purpose                                                                   | Must be                                          |
+| ------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------ |
+| Deployer                       | Signs the deployment transactions only                                    | Hot is acceptable; holds nothing afterwards      |
+| Admin                          | Pause switches, oracle config, migrator wiring. **Cannot move money.**    | Multisig or cold key                             |
+| Protocol withdraw authority    | Withdraws the 20% protocol revenue                                        | Multisig or cold key                             |
+| Ops withdraw authority         | Withdraws the 10% `$STONKZ` ops vault                                     | Multisig or cold key, **distinct from protocol** |
+| Migration authority            | Runs graduation migration (Solana: pays pool rent; EVM: triggers migrate) | Warm operational key, funded                     |
+| Oracle authority (Solana only) | Pushes base-mint USD prices                                               | Warm operational key, funded                     |
 
 Both deploy scripts **refuse** a deployment where the protocol and ops
 authorities are the same key, or where the admin equals either withdraw
@@ -110,24 +110,21 @@ pnpm exec ts-node scripts/init-deployment.ts --dry-run
 Run with `--dry-run` first; it prints every derived address and sends nothing.
 Drop the flag to execute.
 
-The script also derives Raydium's `AmmConfig` (index 0, the permissionless tier
-with no OpenBook market requirement) from the CPMM program ID and
-**cross-checks the derivation** against the known devnet address. If Raydium
-ever changes its seed layout, the script aborts rather than writing a wrong
-CPI target into `Global`.
+The script also derives Meteora's `PresetParameter2` (default index 1) under
+`lb_clmm` (`LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo`, same on mainnet and
+devnet). Override with `STONKZ_METEORA_PRESET` / `STONKZ_METEORA_PRESET_INDEX`.
 
-### 1.3 Raydium config (admin key)
+### 1.3 Meteora DLMM config (admin key)
 
-`set_raydium_config` is admin-gated. If the deployer is the admin (devnet
+`set_meteora_config` is admin-gated. If the deployer is the admin (devnet
 convenience) the script sends it; otherwise it prints the call for the admin
-signer:
+signer. One-shot helper: `pnpm exec ts-node scripts/set-meteora-config.ts`.
 
-| Cluster | Raydium CPMM program |
-|---|---|
-| mainnet-beta | `CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C` |
-| devnet | `DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb` |
+| Cluster               | Meteora DLMM (`lb_clmm`)                      |
+| --------------------- | --------------------------------------------- |
+| mainnet-beta / devnet | `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo` |
 
-**Until this lands, `migrate_liquidity` fails closed** (Anchor's `address = …`
+**Until this lands, `migrate_create_pool` fails closed** (Anchor's `address = …`
 constraint against `Pubkey::default()`) and nothing can graduate. That is the
 intended fail-closed behaviour, not a bug.
 
@@ -237,6 +234,44 @@ Until step 3 lands, graduation cannot migrate. Until steps 1-2 land,
 
 ---
 
+## 2b. Coinbase Base and Circle Arc
+
+Both reuse the Robinhood EVM stack (`DeployPad`, `StonkzLaunchpad` UUPS,
+`StonkzRouter`, `UniswapV2Migrator` on a Stonkz-owned V2 factory).
+
+**Base Sepolia (84532)** — `script/DeployBaseSepolia.s.sol`, pins in
+`src/config/BaseSepolia.sol`, record in `deployments/84532.json`. Same env
+shape as RH with the `BASE_` prefix.
+
+**Arc (5042) — mainnet, capped.** Arc's public testnet (5042002) closed on
+17 Sep 2026, so there is no test chain; the Arc deployment is real funds under
+a hard cap.
+
+- `src/config/Arc.sol` ships with **zero placeholders** for the wrapped
+  native USDC, the ERC-20 USDC and the Uniswap pins. `DeployArc` refuses to
+  broadcast until every one is filled in from docs.arc.io and checked on the
+  explorer. Note the two faces of USDC: native (18 decimals at the EVM layer,
+  what `msg.value` carries) and ERC-20 (6 decimals). The router wraps native
+  into `WRAPPED_NATIVE`; a coin's base must be exactly that address for the
+  one-signature `buyWithEth` path.
+- The router is deployed with `Arc.MAX_BUY_NATIVE = 25e18` (25 USDC). Every
+  native-in entry point reverts `BuyAboveCap` above it. The API
+  (`NET_INFO.ARC.maxTradeUsd`) and the UI mirror the number; change all three
+  together.
+- Use a **fresh deployer key** (the RH/Base testnet key is burned).
+- Afterwards: write `deployments/5042.json`, run `node scripts/emit-chains.mjs`
+  (CI checks that `apps/web/public/chains.json` matches), and set
+  `ARC_LAUNCHPAD_ADDRESS` / `ARC_ROUTER_ADDRESS` (or point
+  `STONKZ_CHAINS_FILE` at the record). Setting the launchpad address is what
+  adds chain 5042 to the SIWE allow-list.
+
+```
+export PRIVATE_KEY=0x...   # fresh, funded with USDC on Arc
+export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
+export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...
+forge script script/DeployArc.s.sol:DeployArc --rpc-url $ARC_RPC_URL --broadcast -vvv
+```
+
 ## 3. Configure the API and indexer
 
 Both deploy scripts print these lines. Set them in the API's environment:
@@ -282,11 +317,20 @@ Do all of these against the deployment, not against a local test.
 **Solana**
 
 - [ ] `Global` exists with the intended admin/authorities (read the account, don't trust the script's log).
-- [ ] `raydium_program` and `raydium_amm_config` are set and match §1.3.
+- [ ] `dex_program` and `dex_config` (Meteora DLMM + PresetParameter2) are set and match §1.3.
 - [ ] Protocol and ops vault PDAs are distinct addresses.
-- [ ] Launch a throwaway token, buy, sell. Confirm the 20/70/10 split lands in the three expected places.
-- [ ] Force a graduation. On the explorer, confirm the Raydium pool exists and the **LP mint supply is 0**. This is the claim that liquidity is gone; verify it, don't assume it.
-- [ ] Confirm the migration authority never held the LP (check the escrow ATA's history).
+- [ ] Launch a throwaway token, buy, sell. Confirm the 20/10/10/60 split lands in the four expected places (protocol, game, burn, creator bucket).
+- [ ] Force a graduation. On the explorer, confirm the Meteora DLMM pool exists and the position has `lock_release_point = u64::MAX` with operator at the incinerator. This is the claim that liquidity is gone; verify it, don't assume it.
+- [ ] Confirm the migration authority never held withdrawable liquidity (check the escrow ATA's history).
+
+### Mobile / in-wallet browser smoke (Phantom, Jupiter)
+
+Load the web app at ~390px width (or open inside Phantom / Jupiter browser):
+
+- [ ] Connect wallet sheet opens and net picker rows are tappable (≥44px hit).
+- [ ] Board scrolls; King of the Hill stacks; footer does not cover content behind the URL bar (`dvh` / safe-area).
+- [ ] Trade modal and launch wizard scroll inside the viewport with bottom safe inset.
+- [ ] Rewards / crates controls remain reachable above the home indicator.
 
 **Robinhood Chain**
 

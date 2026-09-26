@@ -17,12 +17,24 @@ export function encodeCreateTokenCall(args: CreateTokenCallArgs): Hex {
   return encodeFunctionData({
     abi: LAUNCHPAD_ABI,
     functionName: 'createToken',
-    args: [args.name, args.ticker, args.uri, args.supply, args.baseToken, args.feeBps, args.cashback],
+    args: [
+      args.name,
+      args.ticker,
+      args.uri,
+      args.supply,
+      args.baseToken,
+      args.feeBps,
+      args.cashback,
+    ],
   });
 }
 
 export function encodeClaimCreatorFeesCall(token: Address): Hex {
-  return encodeFunctionData({ abi: LAUNCHPAD_ABI, functionName: 'claimCreatorFees', args: [token] });
+  return encodeFunctionData({
+    abi: LAUNCHPAD_ABI,
+    functionName: 'claimCreatorFees',
+    args: [token],
+  });
 }
 
 export function encodeStakeCall(token: Address, amount: bigint, lockDays: number): Hex {

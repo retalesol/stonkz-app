@@ -50,7 +50,8 @@ export const noRawInnerHtml = {
     messages: {
       sink: 'Do not assign to {{name}}. Use render() / replaceWith() from lib/html.ts, or clear() from lib/dom.ts.',
       method: 'Do not call {{name}}(). Use lib/html.ts, which escapes interpolations by default.',
-      dynamicRaw: 'raw() takes literal markup only. Interpolate through html`` so the value is escaped.',
+      dynamicRaw:
+        'raw() takes literal markup only. Interpolate through html`` so the value is escaped.',
     },
   },
   create(context) {

@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import { ALL_NETS, parseNet, type Net } from '@stonkz/shared';
 
 /**
  * The backfill CLI's argument contract, split out from `backfill.ts` so it can
@@ -58,14 +58,16 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
     if (raw === undefined || raw.startsWith('--')) return null;
     const n = Number.parseInt(raw, 10);
     if (!Number.isFinite(n) || n < 0 || String(n) !== raw.trim()) {
-      throw new BackfillArgsError(`--${name} must be a non-negative integer, got ${JSON.stringify(raw)}`);
+      throw new BackfillArgsError(
+        `--${name} must be a non-negative integer, got ${JSON.stringify(raw)}`,
+      );
     }
     return n;
   };
 
-  const net = value('net')?.toUpperCase();
-  if (net !== 'SOL' && net !== 'RH' && net !== 'BASE') {
-    throw new BackfillArgsError('--net must be SOL, RH, or BASE');
+  const net = parseNet(value('net')?.toUpperCase());
+  if (net === null) {
+    throw new BackfillArgsError(`--net must be one of ${ALL_NETS.join(', ')}`);
   }
 
   const from = int('from');
@@ -73,7 +75,9 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
   if (from === null) throw new BackfillArgsError('--from is required');
   if (to === null) throw new BackfillArgsError('--to is required');
   if (to <= from) {
-    throw new BackfillArgsError(`--to (${to}) must be greater than --from (${from}); the range is (from, to]`);
+    throw new BackfillArgsError(
+      `--to (${to}) must be greater than --from (${from}); the range is (from, to]`,
+    );
   }
 
   const window = int('window');

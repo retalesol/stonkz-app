@@ -52,7 +52,12 @@ describe('SIWS — Solana', () => {
       signature: w.sign(challenge.message),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { net: string; wallet: string; accessToken: string; created: boolean };
+    const body = (await res.json()) as {
+      net: string;
+      wallet: string;
+      accessToken: string;
+      created: boolean;
+    };
     expect(body.net).toBe('SOL');
     expect(body.wallet).toBe(w.address);
     expect(body.created).toBe(true);
@@ -152,7 +157,9 @@ describe('SIWE — Robinhood', () => {
       signature: w.sign(challenge.message),
     });
     expect(res.status).toBe(400);
-    expect((await res.json()) as { error: string }).toMatchObject({ error: 'net_mismatch' });
+    // Since 284ae9a /auth/siwe reads the net off the nonce row (RH or BASE), so
+    // a Solana nonce is refused as `bad_nonce` before any net comparison runs.
+    expect((await res.json()) as { error: string }).toMatchObject({ error: 'bad_nonce' });
   });
 
   it('rejects a signature recovered to another address', async () => {
@@ -167,10 +174,11 @@ describe('SIWE — Robinhood', () => {
     expect(res.status).toBe(401);
   });
 
-  it('names the confirmed mainnet chain id in the challenge', async () => {
+  it('names the Robinhood testnet chain id in the challenge by default', async () => {
+    // RH_CHAIN_ID defaults to the testnet (46630) since 284ae9a; mainnet 4663 is opt-in.
     const challenge = await nonce('RH', evmWallet('rh-chainid').address);
-    expect(challenge.chainId).toBe('4663');
-    expect(challenge.message).toContain('Chain ID: 4663');
+    expect(challenge.chainId).toBe('46630');
+    expect(challenge.message).toContain('Chain ID: 46630');
   });
 
   it('logs in an ERC-4337 smart account through the EIP-1271 fallback', async () => {
@@ -285,8 +293,48 @@ describe('cross-environment replay', () => {
     }
   });
 
-  it('defaults the allow-list to the single configured id', () => {
-    expect(h.deps.env.allowedRhChainIds).toEqual([4663]);
+  it('defaults the allow-list to the configured RH and Base ids', () => {
+    // 284ae9a: with no EVM_ALLOWED_CHAIN_IDS the list is [rhChainId, baseChainId],
+    // i.e. RH testnet 46630 plus Base Sepolia 84532. Arc (5042) is absent until
+    // something is deployed there.
+    expect(h.deps.env.allowedRhChainIds).toEqual([h.deps.env.rhChainId, h.deps.env.baseChainId]);
+    expect(h.deps.env.allowedRhChainIds).toEqual([46630, 84532]);
+    expect(h.deps.env.allowedRhChainIds).not.toContain(h.deps.env.arcChainId);
+  });
+
+  it('refuses an Arc sign-in while no Arc launchpad is configured', async () => {
+    const w = evmWallet('arc-nobody');
+    const nonceRes = await h.app.request(
+      `/auth/nonce?net=ARC&address=${encodeURIComponent(w.address)}`,
+    );
+    expect(nonceRes.status).toBe(200);
+    const challenge = (await nonceRes.json()) as Challenge;
+    expect(challenge.chainId).toBe('5042');
+
+    const res = await h.app.request('/auth/siwe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: TEST_ORIGIN },
+      body: JSON.stringify({
+        address: w.address,
+        message: challenge.message,
+        signature: w.sign(challenge.message),
+      }),
+    });
+    expect(res.status).not.toBe(200);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: 'chain_mismatch' });
+  });
+
+  it('adds Arc to the allow-list once ARC_LAUNCHPAD_ADDRESS is set', async () => {
+    const arc = await createTestApp({
+      env: { ARC_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000a4c0' },
+    });
+    try {
+      expect(arc.deps.env.allowedRhChainIds).toEqual([46630, 84532, 5042]);
+      const { address } = await arc.login('ARC', evmWallet('arc-user'));
+      expect(address).toBe(evmWallet('arc-user').address);
+    } finally {
+      await arc.close();
+    }
   });
 });
 
@@ -341,7 +389,9 @@ describe('GET /me', () => {
     h.rpcs.RH.setBalance(rh.address, 3);
 
     const solSession = await h.login('SOL', sol);
-    const solMe = (await (await h.app.request('/me', { headers: authed(solSession.token) })).json()) as {
+    const solMe = (await (
+      await h.app.request('/me', { headers: authed(solSession.token) })
+    ).json()) as {
       net: string;
       native: { unit: string; balance: number; usdPrice: number; usdValue: number };
     };
@@ -350,7 +400,9 @@ describe('GET /me', () => {
     expect(solMe.native.usdValue).toBeCloseTo(12.5 * 214.08, 6);
 
     const rhSession = await h.login('RH', rh);
-    const rhMe = (await (await h.app.request('/me', { headers: authed(rhSession.token) })).json()) as {
+    const rhMe = (await (
+      await h.app.request('/me', { headers: authed(rhSession.token) })
+    ).json()) as {
       net: string;
       native: { unit: string; balance: number; usdPrice: number };
     };
@@ -376,7 +428,10 @@ describe('GET /me', () => {
     expect(res.status).toBe(200);
     // The sim hardcoded $214.08; here it is whatever the oracle says.
     h.oracle.set('SOL', 191.42);
-    const updated = (await (await h.app.request('/native-price')).json()) as { SOL: number; ETH: number };
+    const updated = (await (await h.app.request('/native-price')).json()) as {
+      SOL: number;
+      ETH: number;
+    };
     expect(updated.SOL).toBe(191.42);
     expect(updated.ETH).toBe(4200);
     h.oracle.set('SOL', 214.08);

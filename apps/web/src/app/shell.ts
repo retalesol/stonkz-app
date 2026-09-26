@@ -1,11 +1,21 @@
 import { GRAD, usd } from '@stonkz/shared';
 import { api, DISCLOSURE } from '../api/index.js';
+import { setNetSwitchHandler } from '../views/board.js';
+import { savedNet, selectNet } from '../state/wallet.js';
+import { loadChains } from '../wallet/chain.js';
 import { initFx } from '../fx/debris.js';
 import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { closeClaim, initClaim, isClaimOpen } from '../modals/claim.js';
 import { closeEdit, initEdit, isEditOpen } from '../modals/edit.js';
-import { closeLaunch, initLaunch, isLaunchOpen, openLaunch } from '../modals/launch.js';
+import {
+  cancelCrop,
+  closeLaunch,
+  initLaunch,
+  isCropOpen,
+  isLaunchOpen,
+  openLaunch,
+} from '../modals/launch.js';
 import { dismissSplash } from './splash.js';
 import { closeLegal, initLegal, isLegalOpen } from '../modals/legal.js';
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
@@ -39,7 +49,6 @@ import {
   restoreWalletSession,
   wmenu,
 } from './wallet.js';
-
 
 /**
  * The app shell: header, search, escape stack, footer and boot.
@@ -108,6 +117,7 @@ function onEscape(): void {
   else if (isClaimOpen()) closeClaim();
   else if (isEditOpen()) closeEdit();
   else if (isSetOpen()) openSet(false);
+  else if (isCropOpen()) cancelCrop();
   else if (isLaunchOpen()) leaveLaunch();
   else if (isNetOpen()) netOpen(false);
   else if (isWmenuOpen()) wmenu(false);
@@ -138,6 +148,9 @@ export async function boot(): Promise<void> {
     console.warn('api.ready failed', err);
   }
 
+  if (api.mode === 'live') void loadChains();
+  const remembered = savedNet();
+  if (remembered) selectNet(remembered);
   initBoard();
   initTape();
   initChat();
@@ -158,6 +171,7 @@ export async function boot(): Promise<void> {
   initClaim(() => renderWallet());
 
   initNetPicker((net) => void connectWallet(net));
+  setNetSwitchHandler((net) => void connectWallet(net));
   initWalletChip({
     onChange: () => {
       if (currentView() === 'profile') renderProfile();

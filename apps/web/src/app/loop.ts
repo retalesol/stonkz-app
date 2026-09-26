@@ -10,7 +10,7 @@ import { HOLD, holdOf } from '../state/holdings.js';
 import { USER, unlock } from '../state/user.js';
 import { addCoin, counts, king, landIn, paint, renderBoard } from '../views/board.js';
 import { addChat } from '../views/chat.js';
-import { pushFill } from '../views/tape.js';
+import { pushFill, clearTape } from '../views/tape.js';
 import { TV, drawTChart, renderTab, syncToken } from '../views/token.js';
 import { syncProfile } from '../views/profile.js';
 import { isStakeOpen, syncStake } from '../modals/stake.js';
@@ -72,7 +72,11 @@ export function startLoop(): void {
       const h = holdOf(c.sym);
       if (h && h.live && h.tok > 0) unlock('grad');
       toast(c.sym + ' GRADUATED ' + DOT + ' LIQUIDITY MIGRATED ' + DOT + ' LP BURNED', 'gold');
-      addChat('GLOBAL', { sys: true, who: '', text: '$' + c.sym + ' GRADUATED ' + DOT + ' LP BURNED' }, true);
+      addChat(
+        'GLOBAL',
+        { sys: true, who: '', text: '$' + c.sym + ' GRADUATED ' + DOT + ' LP BURNED' },
+        true,
+      );
     }
     counts();
   });
@@ -94,6 +98,7 @@ export function startLoop(): void {
   });
 
   on('fill', ({ fill, animate }) => pushFill(fill, animate));
+  on('tapeClear', () => clearTape());
 
   on('rank', () => renderRank(true));
   on('wallet', () => renderWallet());

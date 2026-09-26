@@ -4,8 +4,10 @@ import {
   MIN_CURVE_FEE_PCT,
   MIN_TIP_ETH,
   MIN_TIP_SOL,
+  MIN_TIP_USDC,
   SUPPLIES,
 } from './constants.js';
+import { NET_INFO, isEvmNet } from './nets.js';
 import type { EvmNet, NativeUnit, Net } from './types.js';
 import { ALL_NETS } from './types.js';
 
@@ -33,15 +35,14 @@ export function isTickerTaken(ticker: string, taken: Iterable<string>): boolean 
   return false;
 }
 
-/** True for Robinhood Chain and Coinbase Base (ETH gas, EVM tooling). */
+/** True for every EVM net — Robinhood Chain, Coinbase Base, Arc. */
 export function isEvm(net: Net): net is EvmNet {
-  return net === 'RH' || net === 'BASE';
+  return isEvmNet(net);
 }
 
 /** Parse a net string; returns `null` when unknown. */
 export function parseNet(raw: string | null | undefined): Net | null {
-  if (raw === 'SOL' || raw === 'RH' || raw === 'BASE') return raw;
-  return null;
+  return (ALL_NETS as readonly string[]).includes(raw ?? '') ? (raw as Net) : null;
 }
 
 /**
@@ -57,7 +58,7 @@ export function inferNetFromAddress(address: string, fallbackEvm: EvmNet = 'RH')
 
 /** The gas token the user pays on a given network. */
 export function nativeUnit(net: Net): NativeUnit {
-  return isEvm(net) ? 'ETH' : 'SOL';
+  return NET_INFO[net]?.unit ?? 'SOL';
 }
 
 /** Exhaustive list for loops that previously hard-coded `['SOL','RH']`. */
@@ -65,9 +66,9 @@ export function allNets(): readonly Net[] {
   return ALL_NETS;
 }
 
-/** Minimum wall tip: 0.001 SOL, 0.0001 ETH. `index.html:3312` */
+/** Minimum wall tip: 0.001 SOL, 0.0001 ETH, 0.25 USDC. `index.html:3312` */
 export function minTip(unit: NativeUnit): number {
-  return unit === 'ETH' ? MIN_TIP_ETH : MIN_TIP_SOL;
+  return unit === 'ETH' ? MIN_TIP_ETH : unit === 'USDC' ? MIN_TIP_USDC : MIN_TIP_SOL;
 }
 
 /** A tip clears the floor for its native unit. */

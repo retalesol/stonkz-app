@@ -1,4 +1,13 @@
-import type { CrateTier, Fill, Net, Quote, SupplyOption, Wallet } from '@stonkz/shared';
+import type {
+  CrateTier,
+  Fill,
+  Net,
+  Quote,
+  Settings,
+  SupplyOption,
+  TokenFees,
+  Wallet,
+} from '@stonkz/shared';
 import type { SimCoin } from '../state/coins.js';
 
 /**
@@ -121,9 +130,12 @@ export interface StonkzApi {
   unstake(sym: string): Promise<number>;
   claimStake(sym: string): Promise<StakeClaim>;
   /** Live: persist SET to PUT /me/settings. Sim: no-op. */
-  pushSettings?(settings: import('@stonkz/shared').Settings): Promise<void>;
+  pushSettings?(settings: Settings): Promise<void>;
   /** Live: hydrate USER.stake from GET /stake/:sym. Sim: no-op. */
   hydrateStake?(sym: string): Promise<void>;
 
   openCrate(tier: CrateTier): Promise<CrateResult>;
+
+  /** The Fees tab: lifetime split for one coin. Sim estimates it from volume. */
+  tokenFees?(coin: SimCoin): Promise<TokenFees>;
 }

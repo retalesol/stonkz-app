@@ -120,5 +120,7 @@ export interface Erc20BalanceSource {
 
 export function asErc20BalanceSource(rpc: ChainRpc): Erc20BalanceSource | undefined {
   const candidate = rpc as Partial<Erc20BalanceSource>;
-  return typeof candidate.erc20BalanceAtoms === 'function' ? (candidate as Erc20BalanceSource) : undefined;
+  return typeof candidate.erc20BalanceAtoms === 'function'
+    ? (candidate as Erc20BalanceSource)
+    : undefined;
 }

@@ -1,5 +1,5 @@
 import type { Fill } from '@stonkz/shared';
-import { pct, usd } from '@stonkz/shared';
+import { nativeUnit as nativeUnitOf, pct, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
 import { miniChart } from '../canvas/spark.js';
@@ -50,9 +50,10 @@ function randomFill(): Fill {
 function build(f: Fill): HTMLElement {
   const el = node(
     html`<span class="tx" data-sym="${attr(f.sym)}"
-      ><i class="blk ${f.buy ? 'up' : 'dn'}"></i><b class="${f.buy ? 'up' : 'dn'}">${f.buy ? 'BUY' : 'SELL'}</b
-      ><span>${f.sol.toFixed(2)} ${f.net === 'RH' ? 'ETH' : 'SOL'}</span><b class="gd">${f.sym}</b><b class="dm">${DOT}</b
-      ><span class="dm">${f.w}</span></span
+      ><i class="blk ${f.buy ? 'up' : 'dn'}"></i
+      ><b class="${f.buy ? 'up' : 'dn'}">${f.buy ? 'BUY' : 'SELL'}</b
+      ><span>${f.sol.toFixed(2)} ${nativeUnitOf(f.net)}</span><b class="gd">${f.sym}</b
+      ><b class="dm">${DOT}</b><span class="dm">${f.w}</span></span
     >`,
   );
   return el as HTMLElement;
@@ -62,7 +63,8 @@ function trim(): void {
   while (run.children.length > 60) run.removeChild(run.firstChild as ChildNode);
   const w = vw();
   if (!w) return;
-  while (run.offsetWidth > w * 2.6 && run.children.length > 4) run.removeChild(run.firstChild as ChildNode);
+  while (run.offsetWidth > w * 2.6 && run.children.length > 4)
+    run.removeChild(run.firstChild as ChildNode);
 }
 
 function push(f: Fill, animate: boolean): void {
@@ -94,6 +96,15 @@ export function pushFill(f: Fill, animate: boolean): void {
   push(f, animate);
 }
 
+/** Drop every print — call before reseeding on connect / disconnect / net switch. */
+export function clearTape(): void {
+  if (!run) return;
+  run.replaceChildren();
+  run.style.transition = 'none';
+  run.style.transform = 'translateX(0)';
+  unpin();
+}
+
 /* ----------------------------- hover: freeze one print, chart it ----------- */
 
 let pinned: HTMLElement | null = null;
@@ -101,7 +112,12 @@ let src: HTMLElement | null = null;
 let pop: HTMLElement | null = null;
 
 function hit(r: DOMRect, e: MouseEvent, pad = 6): boolean {
-  return e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+  return (
+    e.clientX >= r.left - pad &&
+    e.clientX <= r.right + pad &&
+    e.clientY >= r.top - pad &&
+    e.clientY <= r.bottom + pad
+  );
 }
 
 /** Pick a candle window from the coin's age, the way a terminal would. `index.html:1320` */
@@ -134,8 +150,13 @@ function showPop(el: HTMLElement, c: SimCoin): void {
     pop,
     html`<div class="tp-hd">
         <canvas class="av" width="64" height="64" aria-hidden="true"></canvas>
-        <div><div class="sy">${c.sym}</div><div class="nm">${c.name}</div></div>
-        <div class="px"><b class="am">${usd(c.mc)}</b><span class="${ud(c.chg)}">${pct(c.chg)}</span></div>
+        <div>
+          <div class="sy">${c.sym}</div>
+          <div class="nm">${c.name}</div>
+        </div>
+        <div class="px">
+          <b class="am">${usd(c.mc)}</b><span class="${ud(c.chg)}">${pct(c.chg)}</span>
+        </div>
       </div>
       <canvas class="tp-chart"></canvas>
       <div class="tp-ft">
@@ -219,8 +240,16 @@ export function initTape(): void {
   document.addEventListener('mouseleave', () => {
     if (pinned) unpin();
   });
-  window.addEventListener('scroll', () => { if (pinned) unpin(); }, { passive: true });
-  window.addEventListener('resize', () => { if (pinned) unpin(); });
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (pinned) unpin();
+    },
+    { passive: true },
+  );
+  window.addEventListener('resize', () => {
+    if (pinned) unpin();
+  });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) trim();
   });
@@ -231,10 +260,13 @@ export function initTape(): void {
   if (api.mode === 'sim') {
     for (let i = 0; i < 16; i++) push(randomFill(), false);
     const next = (): void => {
-      loop = window.setTimeout(() => {
-        push(randomFill(), true);
-        next();
-      }, 850 + Math.random() * 1500);
+      loop = window.setTimeout(
+        () => {
+          push(randomFill(), true);
+          next();
+        },
+        850 + Math.random() * 1500,
+      );
     };
     next();
   }

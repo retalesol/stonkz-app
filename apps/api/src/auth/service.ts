@@ -1,17 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 import type { Db } from '../db/client.js';
 import { authNonces, sessions, users } from '../db/schema.js';
 import { blacklistToken } from '../redis/blacklist.js';
 import type { RedisLike } from '../redis/types.js';
 import { hashRefreshToken, type JwtService, type TokenPair } from './jwt.js';
-import {
-  SIWS_STATEMENT,
-  buildSignInMessage,
-  chainLabel,
-  parseSignInMessage,
-} from './message.js';
+import { SIWS_STATEMENT, buildSignInMessage, chainLabel, parseSignInMessage } from './message.js';
 import { isEvmAddress, toChecksumAddress, verifySiweFull, type EthCaller } from './siwe.js';
 import { isSolanaAddress, verifySiws } from './siws.js';
 
@@ -44,6 +39,8 @@ export interface AuthServiceOptions {
   uri: string;
   rhChainId: number;
   baseChainId?: number;
+  /** Arc mainnet, 5042. Only ever *accepted* when the env allow-list names it. */
+  arcChainId?: number;
   /**
    * CAIP-2 chain id for Solana SIWS (`solana:devnet` / `solana:mainnet`).
    * Defaults to mainnet for backward-compatible unit tests; production
@@ -131,7 +128,9 @@ export class AuthService {
     });
 
     // Opportunistic sweep; the partial index makes this cheap.
-    await this.db.delete(authNonces).where(lt(authNonces.expiresAt, new Date(issuedAtMs - 3_600_000)));
+    await this.db
+      .delete(authNonces)
+      .where(lt(authNonces.expiresAt, new Date(issuedAtMs - 3_600_000)));
 
     return {
       nonce,
@@ -163,11 +162,18 @@ export class AuthService {
     return this.opts.solanaSiwsChainId ?? 'solana:mainnet';
   }
 
-  private evmChainIds(): { RH: number; BASE: number } {
-    return { RH: this.opts.rhChainId, BASE: this.opts.baseChainId ?? 84532 };
+  private evmChainIds(): Record<EvmNet, number> {
+    return {
+      RH: this.opts.rhChainId,
+      BASE: this.opts.baseChainId ?? 84532,
+      ARC: this.opts.arcChainId ?? 5042,
+    };
   }
 
-  /** The allow-list defaults to the single configured chain id. */
+  /**
+   * The allow-list defaults to RH + Base. Arc is deliberately absent here:
+   * `env.ts` adds 5042 only when `ARC_LAUNCHPAD_ADDRESS` is configured.
+   */
   private allowedChainIds(): readonly number[] {
     return this.opts.allowedRhChainIds ?? [this.opts.rhChainId, this.evmChainIds().BASE];
   }
@@ -202,11 +208,17 @@ export class AuthService {
     const parsed = parseSignInMessage(input.message);
     if (!parsed) throw new AuthError('message_mismatch', 'unparseable sign-in message');
 
-    const [row] = await this.db.select().from(authNonces).where(eq(authNonces.nonce, parsed.nonce)).limit(1);
+    const [row] = await this.db
+      .select()
+      .from(authNonces)
+      .where(eq(authNonces.nonce, parsed.nonce))
+      .limit(1);
     if (!row) throw new AuthError('bad_nonce', 'unknown nonce');
-    if (row.net !== input.net) throw new AuthError('net_mismatch', 'nonce was issued for a different network');
+    if (row.net !== input.net)
+      throw new AuthError('net_mismatch', 'nonce was issued for a different network');
     if (row.consumedAt !== null) throw new AuthError('nonce_used', 'nonce already used');
-    if (row.expiresAt.getTime() <= this.now()) throw new AuthError('nonce_expired', 'nonce expired');
+    if (row.expiresAt.getTime() <= this.now())
+      throw new AuthError('nonce_expired', 'nonce expired');
 
     // Rebuild the message from server-held facts. Anything the client changed —
     // domain, uri, chain id, statement, or the address itself — fails here.
@@ -220,7 +232,8 @@ export class AuthService {
       issuedAt: parsed.issuedAt,
       chainId: chainLabel(input.net, this.evmChainIds(), this.solanaChainId()),
     });
-    if (expected !== input.message) throw new AuthError('message_mismatch', 'signed message does not match the challenge');
+    if (expected !== input.message)
+      throw new AuthError('message_mismatch', 'signed message does not match the challenge');
     if (parsed.issuedAt !== row.issuedAt.toISOString()) {
       throw new AuthError('message_mismatch', 'issuedAt does not match the challenge');
     }
@@ -252,7 +265,12 @@ export class AuthService {
       .onConflictDoNothing()
       .returning({ wallet: users.wallet });
 
-    return { ...(await this.createSession(input.net, wallet, input.userAgent, input.ip)), net: input.net, wallet, created: inserted.length > 0 };
+    return {
+      ...(await this.createSession(input.net, wallet, input.userAgent, input.ip)),
+      net: input.net,
+      wallet,
+      created: inserted.length > 0,
+    };
   }
 
   private async createSession(
@@ -290,7 +308,11 @@ export class AuthService {
       throw new AuthError('bad_token', 'invalid refresh token');
     });
     const hash = hashRefreshToken(refreshToken);
-    const [row] = await this.db.select().from(sessions).where(eq(sessions.refreshHash, hash)).limit(1);
+    const [row] = await this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.refreshHash, hash))
+      .limit(1);
     if (!row) {
       if (claims.sid) {
         await this.db
@@ -301,7 +323,8 @@ export class AuthService {
       throw new AuthError('session_revoked', 'refresh token has already been rotated');
     }
     if (row.revokedAt !== null) throw new AuthError('session_revoked', 'session revoked');
-    if (row.expiresAt.getTime() <= this.now()) throw new AuthError('session_revoked', 'session expired');
+    if (row.expiresAt.getTime() <= this.now())
+      throw new AuthError('session_revoked', 'session expired');
     if (row.net !== claims.net || row.wallet !== claims.sub) {
       throw new AuthError('bad_token', 'refresh token does not match its session');
     }
@@ -316,7 +339,8 @@ export class AuthService {
 
   /** Kills the refresh session in Postgres and the access token in Redis. */
   async logout(accessJti: string | null, sessionId: string | null): Promise<void> {
-    if (accessJti) await blacklistToken(this.opts.redis, accessJti, this.opts.accessTtlSeconds + 60);
+    if (accessJti)
+      await blacklistToken(this.opts.redis, accessJti, this.opts.accessTtlSeconds + 60);
     if (sessionId) {
       await this.db
         .update(sessions)

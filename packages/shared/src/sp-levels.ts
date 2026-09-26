@@ -71,7 +71,10 @@ export function spLevelOf(totalSp: number): SpLevelInfo {
     sp: totalSp,
     cur: row.sp,
     next,
-    pct: next === null ? 100 : Math.max(0, Math.min(100, ((totalSp - row.sp) / (next - row.sp)) * 100)),
+    pct:
+      next === null
+        ? 100
+        : Math.max(0, Math.min(100, ((totalSp - row.sp) / (next - row.sp)) * 100)),
     toNext: next === null ? 0 : Math.max(0, next - totalSp),
     grants: { ...row.grants },
   };
@@ -86,5 +89,7 @@ export function spLevelsReached(totalSp: number): readonly SpLevelDef[] {
 export function nextSpLevelGrants(totalSp: number): SpLevelDef | null {
   const info = spLevelOf(totalSp);
   if (info.next === null) return null;
+  // `next` is read off SP_LEVELS, so the lookup cannot miss.
+  /* v8 ignore next */
   return SP_LEVELS.find((l) => l.sp === info.next) ?? null;
 }

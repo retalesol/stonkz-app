@@ -24,7 +24,7 @@ describe('OracleHopClient', () => {
   const baseMints = createBaseMintRegistry({
     RH: { WETH, USDG, ETH: NATIVE_ETH_MINT },
   });
-  const oracle = new FakePriceOracle({ ETH: 3000, SOL: 150 });
+  const oracle = new FakePriceOracle({ ETH: 3000, SOL: 150, USDC: 1 });
   const client = new OracleHopClient({ oracle, baseMints, wethMint: WETH });
 
   it('quotes buy ETH → USDG', async () => {

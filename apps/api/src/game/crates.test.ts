@@ -91,7 +91,11 @@ describe('crate opens', () => {
     expect(RAR.map((r) => r[0])).toContain(result.rarity);
     expect(result.xp).toBe(crateXp(0));
 
-    const [row] = await h.deps.db.select().from(crateOpens).where(eq(crateOpens.wallet, W)).limit(1);
+    const [row] = await h.deps.db
+      .select()
+      .from(crateOpens)
+      .where(eq(crateOpens.wallet, W))
+      .limit(1);
     expect(row?.rollCommit).toBe(result.roll.rollCommit);
     expect(row?.xpAwarded).toBe(result.xp);
 
@@ -118,12 +122,18 @@ describe('crate opens', () => {
     expect(first.cooldownHours).toBe(bronze?.cd);
 
     // Same tier still cooling.
-    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
+    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({
+      code: 'cooling_down',
+    });
     // Every other tier is locked too — global cooldown.
-    await expect(h.deps.crates.open('SOL', W, 'IRON')).rejects.toMatchObject({ code: 'cooling_down' });
+    await expect(h.deps.crates.open('SOL', W, 'IRON')).rejects.toMatchObject({
+      code: 'cooling_down',
+    });
 
     h.advance((bronze?.cd ?? 1) * HOUR - 1);
-    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
+    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({
+      code: 'cooling_down',
+    });
 
     h.advance(1);
     const second = await h.deps.crates.open('SOL', W, 'BRONZE');
@@ -148,7 +158,9 @@ describe('crate opens', () => {
     });
     const iron = CRATES[1];
     await h.deps.crates.open('SOL', W, 'IRON');
-    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
+    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({
+      code: 'cooling_down',
+    });
     h.advance((iron?.cd ?? 2) * HOUR);
     // After IRON's 2h window, BRONZE inventory from L1 may still remain.
     const states = await h.deps.crates.states('SOL', W);
@@ -156,7 +168,9 @@ describe('crate opens', () => {
   });
 
   it('refuses a tier with empty inventory', async () => {
-    await expect(h.deps.crates.open('SOL', W, 'RHODIUM')).rejects.toMatchObject({ code: 'no_inventory' });
+    await expect(h.deps.crates.open('SOL', W, 'RHODIUM')).rejects.toMatchObject({
+      code: 'no_inventory',
+    });
   });
 
   it('keeps cooldowns per net, so switching nets is not a second crate', async () => {
@@ -164,7 +178,9 @@ describe('crate opens', () => {
     const rh = await h.deps.crates.open('RH', W, 'BRONZE');
     expect(rh.tier).toBe('BRONZE');
 
-    await expect(h.deps.crates.open('RH', W, 'BRONZE')).rejects.toMatchObject({ code: 'cooling_down' });
+    await expect(h.deps.crates.open('RH', W, 'BRONZE')).rejects.toMatchObject({
+      code: 'cooling_down',
+    });
   });
 
   it('survives a concurrent double-open with exactly one payout', async () => {
@@ -183,7 +199,9 @@ describe('crate opens', () => {
     ]);
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     expect(fulfilled).toHaveLength(1);
-    expect(await h.deps.db.select().from(crateOpens).where(eq(crateOpens.wallet, W))).toHaveLength(1);
+    expect(await h.deps.db.select().from(crateOpens).where(eq(crateOpens.wallet, W))).toHaveLength(
+      1,
+    );
   });
 
   it('rejects an unknown tier', async () => {

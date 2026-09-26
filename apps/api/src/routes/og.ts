@@ -83,7 +83,11 @@ export function ogRoutes(): Hono<AppEnv> {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(ogPage({ title: 'STONKZ', description: 'A member of ston.kz.', url }));
     }
-    const [row] = await deps.db.select().from(users).where(and(eq(users.net, net), eq(users.wallet, addr))).limit(1);
+    const [row] = await deps.db
+      .select()
+      .from(users)
+      .where(and(eq(users.net, net), eq(users.wallet, addr)))
+      .limit(1);
     const name = row?.username || `${addr.slice(0, 4)}…${addr.slice(-4)}`;
     const description = row?.bio || `${name}'s profile on ston.kz.`;
     c.header('content-type', 'text/html; charset=utf-8');
@@ -99,7 +103,11 @@ export function ogRoutes(): Hono<AppEnv> {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(ogPage({ title: 'STONKZ', description: 'A member of ston.kz.', url }));
     }
-    const [row] = await deps.db.select().from(users).where(and(eq(users.net, net), eq(users.wallet, addr))).limit(1);
+    const [row] = await deps.db
+      .select()
+      .from(users)
+      .where(and(eq(users.net, net), eq(users.wallet, addr)))
+      .limit(1);
     const name = row?.username || `${addr.slice(0, 4)}…${addr.slice(-4)}`;
     const description = row?.bio || `${name}'s profile on ston.kz.`;
     c.header('content-type', 'text/html; charset=utf-8');

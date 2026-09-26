@@ -34,6 +34,7 @@ export const LAUNCHPAD_SEEDS = {
   stakePosition: 'stake',
   protocolVault: 'protocol_vault',
   opsVault: 'ops_vault',
+  burnVault: 'burn_vault',
   oracle: 'oracle',
 } as const;
 
@@ -52,6 +53,7 @@ export interface LaunchpadPdas {
   stakeEscrow: PublicKey;
   protocolVault: PublicKey;
   opsVault: PublicKey;
+  burnVault: PublicKey;
   oracle: PublicKey;
 }
 
@@ -60,17 +62,37 @@ function pda(programId: PublicKey, seeds: (Buffer | Uint8Array)[]): PublicKey {
 }
 
 /** Every PDA `buy`/`sell`/`claim_creator_fees` need, derived from `mint` and `baseMint` alone. */
-export function derivePdas(programId: PublicKey, mint: PublicKey, baseMint: PublicKey): LaunchpadPdas {
+export function derivePdas(
+  programId: PublicKey,
+  mint: PublicKey,
+  baseMint: PublicKey,
+): LaunchpadPdas {
   const global = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.global)]);
   const curve = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.curve), mint.toBuffer()]);
-  const curveBaseVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.curveBaseVault), mint.toBuffer()]);
-  const curveTokenVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.curveTokenVault), mint.toBuffer()]);
-  const bucketBaseVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.bucketBaseVault), mint.toBuffer()]);
-  const bucketTokenVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.bucketTokenVault), mint.toBuffer()]);
+  const curveBaseVault = pda(programId, [
+    Buffer.from(LAUNCHPAD_SEEDS.curveBaseVault),
+    mint.toBuffer(),
+  ]);
+  const curveTokenVault = pda(programId, [
+    Buffer.from(LAUNCHPAD_SEEDS.curveTokenVault),
+    mint.toBuffer(),
+  ]);
+  const bucketBaseVault = pda(programId, [
+    Buffer.from(LAUNCHPAD_SEEDS.bucketBaseVault),
+    mint.toBuffer(),
+  ]);
+  const bucketTokenVault = pda(programId, [
+    Buffer.from(LAUNCHPAD_SEEDS.bucketTokenVault),
+    mint.toBuffer(),
+  ]);
   const lpVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.lpVault), mint.toBuffer()]);
   const stakeEscrow = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.stakeEscrow), mint.toBuffer()]);
-  const protocolVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.protocolVault), baseMint.toBuffer()]);
+  const protocolVault = pda(programId, [
+    Buffer.from(LAUNCHPAD_SEEDS.protocolVault),
+    baseMint.toBuffer(),
+  ]);
   const opsVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.opsVault), baseMint.toBuffer()]);
+  const burnVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.burnVault), baseMint.toBuffer()]);
   const oracle = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.oracle), baseMint.toBuffer()]);
   return {
     global,
@@ -83,6 +105,7 @@ export function derivePdas(programId: PublicKey, mint: PublicKey, baseMint: Publ
     stakeEscrow,
     protocolVault,
     opsVault,
+    burnVault,
     oracle,
   };
 }

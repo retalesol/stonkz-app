@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
-import type { Net } from '@stonkz/shared';
+import { parseNet, type Net } from '@stonkz/shared';
 
 export type TokenType = 'access' | 'refresh';
 
@@ -40,7 +40,10 @@ export class JwtService {
     this.key = new TextEncoder().encode(config.secret);
   }
 
-  private async sign(claims: Omit<StonkzClaims, 'iat' | 'exp' | 'iss'>, ttlSeconds: number): Promise<string> {
+  private async sign(
+    claims: Omit<StonkzClaims, 'iat' | 'exp' | 'iss'>,
+    ttlSeconds: number,
+  ): Promise<string> {
     const iat = Math.floor(this.now() / 1000);
     return new SignJWT({ ...claims })
       .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
@@ -54,7 +57,10 @@ export class JwtService {
     const nowSeconds = Math.floor(this.now() / 1000);
     const accessJti = randomBytes(16).toString('hex');
     const [accessToken, refreshToken] = await Promise.all([
-      this.sign({ sub: wallet, net, typ: 'access', jti: accessJti, sid: sessionId }, this.config.accessTtlSeconds),
+      this.sign(
+        { sub: wallet, net, typ: 'access', jti: accessJti, sid: sessionId },
+        this.config.accessTtlSeconds,
+      ),
       this.sign(
         { sub: wallet, net, typ: 'refresh', jti: randomBytes(16).toString('hex'), sid: sessionId },
         this.config.refreshTtlSeconds,
@@ -77,11 +83,13 @@ export class JwtService {
       currentDate: new Date(this.now()),
     });
     const claims = payload as StonkzClaims;
-    if (claims.typ !== expected) throw new Error(`expected a ${expected} token, got ${String(claims.typ)}`);
-    if (claims.net !== 'SOL' && claims.net !== 'RH' && claims.net !== 'BASE') {
+    if (claims.typ !== expected)
+      throw new Error(`expected a ${expected} token, got ${String(claims.typ)}`);
+    if (parseNet(typeof claims.net === 'string' ? claims.net : null) === null) {
       throw new Error('token is missing a valid net claim');
     }
-    if (typeof claims.sub !== 'string' || claims.sub === '') throw new Error('token is missing sub');
+    if (typeof claims.sub !== 'string' || claims.sub === '')
+      throw new Error('token is missing sub');
     return claims;
   }
 }

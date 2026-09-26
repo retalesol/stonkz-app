@@ -57,7 +57,7 @@ fn fresh(supply: u64, base: (u64, u8)) -> (CurveParams, CurveState) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Gate 2.A — the 20/70/10 split, exact to the lamport                         */
+/* Gate 2.A — the 20/10/10/60 split, exact to the lamport                         */
 /* -------------------------------------------------------------------------- */
 
 /// The identity that makes the split trustworthy: the three shares reconstruct
@@ -67,15 +67,16 @@ fn split_fee_is_exact_for_every_small_fee() {
     for fee in 0u64..100_000 {
         let s = split_fee(fee);
         assert_eq!(
-            s.protocol + s.stonkz_ops + s.creator_bucket,
+            s.protocol + s.stonkz_ops + s.burn + s.creator_bucket,
             fee,
             "shares must reconstruct fee exactly, fee={fee}"
         );
         assert_eq!(s.protocol, fee * 2_000 / 10_000);
         assert_eq!(s.stonkz_ops, fee * 1_000 / 10_000);
+        assert_eq!(s.burn, fee * 1_000 / 10_000);
         // The creator bucket absorbs the floor dust, so it is never short.
-        assert!(s.creator_bucket >= fee * 7_000 / 10_000);
-        assert!(s.creator_bucket <= fee * 7_000 / 10_000 + 2);
+        assert!(s.creator_bucket >= fee * 6_000 / 10_000);
+        assert!(s.creator_bucket <= fee * 6_000 / 10_000 + 3);
     }
 }
 
@@ -85,7 +86,7 @@ fn split_fee_is_exact_across_the_whole_u64_range() {
     for _ in 0..200_000 {
         let fee = rng.next() >> (rng.next() % 64);
         let s = split_fee(fee);
-        assert_eq!(s.protocol + s.stonkz_ops + s.creator_bucket, fee);
+        assert_eq!(s.protocol + s.stonkz_ops + s.burn + s.creator_bucket, fee);
         assert_eq!(s.protocol as u128, fee as u128 * 2_000 / 10_000);
         assert_eq!(s.stonkz_ops as u128, fee as u128 * 1_000 / 10_000);
     }
@@ -119,7 +120,7 @@ fn fee_split_is_exact_on_every_random_buy_and_sell() {
 
                 let s = split_fee(f.fee);
                 assert_eq!(
-                    s.protocol + s.stonkz_ops + s.creator_bucket,
+                    s.protocol + s.stonkz_ops + s.burn + s.creator_bucket,
                     f.fee,
                     "buy split lost an atom: fee={} bps={}",
                     f.fee,
@@ -143,7 +144,7 @@ fn fee_split_is_exact_on_every_random_buy_and_sell() {
 
                 let s = split_fee(f.fee);
                 assert_eq!(
-                    s.protocol + s.stonkz_ops + s.creator_bucket,
+                    s.protocol + s.stonkz_ops + s.burn + s.creator_bucket,
                     f.fee,
                     "sell split lost an atom: fee={} bps={}",
                     f.fee,
@@ -382,10 +383,10 @@ fn cashback_decays_from_50pct_to_the_creator_fee_across_300s() {
     }
 }
 
-/// The elevated cashback fee splits 20/10/70 exactly like any other fill —
-/// protocol and ops are not skipped or discounted during the window.
+/// The elevated cashback fee splits 20/10/10/60 exactly like any other fill —
+/// protocol, game and burn are not skipped or discounted during the window.
 #[test]
-fn cashback_fills_still_split_20_10_70() {
+fn cashback_fills_still_split_20_10_10_60() {
     let mut rng = Rng::new(0xCA58_BAC4);
     let start = 1_700_000_000i64;
     for _ in 0..20_000 {
@@ -397,9 +398,10 @@ fn cashback_fills_still_split_20_10_70() {
             continue;
         };
         let s = split_fee(f.fee);
-        assert_eq!(s.protocol + s.stonkz_ops + s.creator_bucket, f.fee);
+        assert_eq!(s.protocol + s.stonkz_ops + s.burn + s.creator_bucket, f.fee);
         assert_eq!(s.protocol as u128, f.fee as u128 * 2_000 / 10_000);
         assert_eq!(s.stonkz_ops as u128, f.fee as u128 * 1_000 / 10_000);
+        assert_eq!(s.burn as u128, f.fee as u128 * 1_000 / 10_000);
     }
 }
 
@@ -419,8 +421,8 @@ fn cashback_swap_consumes_only_the_creator_bucket() {
         "the swap must be sized to the bucket, not the whole fee"
     );
 
-    // Protocol and ops remain in base, untouched by the swap.
-    assert_eq!(s.protocol + s.stonkz_ops, f.fee - s.creator_bucket);
+    // Protocol, game and burn remain in base, untouched by the swap.
+    assert_eq!(s.protocol + s.stonkz_ops + s.burn, f.fee - s.creator_bucket);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -450,6 +452,7 @@ fn protocol_and_ops_never_enter_the_stake_pool() {
     let mut rng = Rng::new(0x9E11_4CE5);
     let mut protocol_total = 0u128;
     let mut ops_total = 0u128;
+    let mut burn_total = 0u128;
     let mut creator_total = 0u128;
     let mut staker_total = 0u128;
     let mut fee_total = 0u128;
@@ -473,13 +476,17 @@ fn protocol_and_ops_never_enter_the_stake_pool() {
             sp.stakers <= s.creator_bucket / 2,
             "fully staked still caps stakers at half the bucket"
         );
-        // The staker take can never exceed 35% of the fee.
-        assert!(sp.stakers as u128 * 100 <= f.fee as u128 * 35 + 100);
-        // The creator never drops below 35% of the fee.
-        assert!(sp.creator as u128 * 100 + 100 >= f.fee as u128 * 35);
+        // The staker take can never exceed 30% of the fee (half of the 60% bucket).
+        // The bucket carries up to 3 atoms of floor dust, so half of it can
+        // overshoot 30% by up to 2 atoms.
+        assert!(sp.stakers as u128 * 100 <= f.fee as u128 * 30 + 200);
+        // The creator never drops below 30% of the fee.
+        // Floor dust in the bucket (<= 3 atoms) can shave the creator by up to 2.
+        assert!(sp.creator as u128 * 100 + 200 >= f.fee as u128 * 30);
 
         protocol_total += s.protocol as u128;
         ops_total += s.stonkz_ops as u128;
+        burn_total += s.burn as u128;
         creator_total += sp.creator as u128;
         staker_total += sp.stakers as u128;
         fee_total += f.fee as u128;
@@ -487,18 +494,20 @@ fn protocol_and_ops_never_enter_the_stake_pool() {
     }
 
     assert_eq!(
-        protocol_total + ops_total + creator_total + staker_total,
+        protocol_total + ops_total + burn_total + creator_total + staker_total,
         fee_total,
-        "the four destinations must reconstruct every fee taken"
+        "the five destinations must reconstruct every fee taken"
     );
     // In aggregate protocol still holds its 20% and ops its 10%, short only by
     // the per-fill floor, which is strictly less than one atom of the fee —
     // so less than 10 units of `fee_total * 10` per fill.
     assert!(protocol_total * 10 + 10 * fills >= fee_total * 2);
     assert!(ops_total * 10 + 10 * fills >= fee_total);
+    assert!(burn_total * 10 + 10 * fills >= fee_total);
     // And they never hold more than their nominal share.
     assert!(protocol_total * 10 <= fee_total * 2);
     assert!(ops_total * 10 <= fee_total);
+    assert!(burn_total * 10 <= fee_total);
 }
 
 #[test]
@@ -639,7 +648,10 @@ fn published_parameters_match_curve_json() {
     assert_eq!(p.grad_mcap_base, 69_000_000_000);
     assert_eq!(p.virtual_base, 69_000_000_000 / 15);
     assert_eq!(p.k, p.virtual_base * p.virtual_token);
-    assert_eq!(FEE_PROTOCOL_BPS + FEE_OPS_BPS + FEE_CREATOR_BUCKET_BPS_NOMINAL, BPS_DEN);
+    assert_eq!(
+        FEE_PROTOCOL_BPS + FEE_OPS_BPS + FEE_BURN_BPS + FEE_CREATOR_BUCKET_BPS_NOMINAL,
+        BPS_DEN
+    );
 }
 
 #[test]

@@ -41,7 +41,12 @@ async function seedRow(opts: {
 }): Promise<TokenRow> {
   const supply = 1e9;
   const supplyAtoms = BigInt(Math.round(supply)) * 10n ** BigInt(opts.tokenDecimals);
-  const derived = deriveCurveColumns(supplyAtoms, opts.basePrice1e6, opts.baseDecimals, opts.tokenDecimals);
+  const derived = deriveCurveColumns(
+    supplyAtoms,
+    opts.basePrice1e6,
+    opts.baseDecimals,
+    opts.tokenDecimals,
+  );
   if (!derived) throw new Error('seedRow: curve derivation failed — bad fixture inputs');
   const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
   const mc = Number(mcapUsd1e6(mcapBaseAtoms, opts.basePrice1e6, opts.baseDecimals)) / 1e6;
@@ -49,9 +54,14 @@ async function seedRow(opts: {
   let columns = derived.columns;
   if (opts.preFillBaseAtoms) {
     const fill = buyQuote(derived.state, opts.feeBps, opts.preFillBaseAtoms);
-    if (!fill) throw new Error('seedRow: preFillBaseAtoms could not be filled against a fresh curve');
+    if (!fill)
+      throw new Error('seedRow: preFillBaseAtoms could not be filled against a fresh curve');
     const next = applyBuy(derived.state, fill);
-    columns = { ...columns, curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
+    columns = {
+      ...columns,
+      curveRealBase: next.realBase.toString(),
+      curveRealToken: next.realToken.toString(),
+    };
   }
 
   const [row] = await h.deps.db
@@ -61,7 +71,10 @@ async function seedRow(opts: {
       sym: opts.sym,
       name: opts.sym,
       creator: 'Dev',
-      mint: opts.net === 'SOL' ? '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin' : '0x0000000000000000000000000000000000000001',
+      mint:
+        opts.net === 'SOL'
+          ? '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'
+          : '0x0000000000000000000000000000000000000001',
       baseSymbol: opts.baseSymbol,
       baseMint: opts.baseMint,
       supply,

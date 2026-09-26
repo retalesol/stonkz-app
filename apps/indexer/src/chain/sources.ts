@@ -41,6 +41,7 @@ export function buildChainSources(opts: ChainSourcesOptions): ChainSources {
     SOL: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_SOL']),
     RH: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_RH']),
     BASE: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_BASE']),
+    ARC: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_ARC']),
     solanaCluster: env.solanaCluster,
   });
 
@@ -89,6 +90,19 @@ export function buildChainSources(opts: ChainSourcesOptions): ChainSources {
       logger,
       confirmations: config.confirmations.BASE,
       logWindow: config.baseLogWindow,
+    }),
+    ARC: new EvmChainSource({
+      net: 'ARC',
+      rpc: new HttpEvmIndexRpc({ url: env.arcRpcUrl }),
+      launchpadAddress: config.arcLaunchpadAddress,
+      routerAddress: config.arcRouterAddress,
+      startBlock: config.arcStartBlock,
+      registry,
+      baseMints,
+      nativeUsd: nativeUsd('ARC'),
+      logger,
+      confirmations: config.confirmations.ARC,
+      logWindow: config.arcLogWindow,
     }),
   };
 

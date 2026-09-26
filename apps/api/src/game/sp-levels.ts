@@ -105,9 +105,7 @@ export class SpLevelService {
     const next = nextSpLevelGrants(totalSp);
     return {
       ...synced,
-      nextLevel: next
-        ? { level: next.level, sp: next.sp, grants: { ...next.grants } }
-        : null,
+      nextLevel: next ? { level: next.level, sp: next.sp, grants: { ...next.grants } } : null,
       levels: SP_LEVELS.map((l) => ({
         level: l.level,
         sp: l.sp,

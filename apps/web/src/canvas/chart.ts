@@ -55,7 +55,8 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   mx += rg * 0.1;
   rg = mx - mn;
   const vmx = Math.max(...v, 0) || 1;
-  const X = (i: number): number => (n === 1 ? pl + (w - pl - pr) / 2 : pl + (i * (w - pl - pr)) / (n - 1));
+  const X = (i: number): number =>
+    n === 1 ? pl + (w - pl - pr) / 2 : pl + (i * (w - pl - pr)) / (n - 1);
   const Y = (p: number): number => pt + ((mx - p) / rg) * plotH;
   const base = h - pb;
   const supply = input.coin.supply || SUPPLY;
@@ -114,9 +115,17 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   }
   g.fillStyle = '#cac6ba';
   g.textAlign = hi > n * 0.75 ? 'right' : 'left';
-  g.fillText('HI ' + usd(d[hi] as number), X(hi) + (hi > n * 0.75 ? -5 : 5), Y(d[hi] as number) - 8);
+  g.fillText(
+    'HI ' + usd(d[hi] as number),
+    X(hi) + (hi > n * 0.75 ? -5 : 5),
+    Y(d[hi] as number) - 8,
+  );
   g.textAlign = lo > n * 0.75 ? 'right' : 'left';
-  g.fillText('LO ' + usd(d[lo] as number), X(lo) + (lo > n * 0.75 ? -5 : 5), Y(d[lo] as number) + 9);
+  g.fillText(
+    'LO ' + usd(d[lo] as number),
+    X(lo) + (lo > n * 0.75 ? -5 : 5),
+    Y(d[lo] as number) + 9,
+  );
 
   const ly = Y(d[n - 1] as number);
   g.fillStyle = '#ffa22b';
@@ -137,8 +146,8 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   g.textAlign = 'right';
   g.fillText('NOW', w - pr - 3, h - 6);
 
-  let hud = html`<span><b>HI</b> ${usd(d[hi] as number)}</span><span><b>LO</b> ${usd(d[lo] as number)}</span
-    ><span><b>VOL</b> ${usd(vol24(input.coin))}</span
+  let hud = html`<span><b>HI</b> ${usd(d[hi] as number)}</span
+    ><span><b>LO</b> ${usd(d[lo] as number)}</span><span><b>VOL</b> ${usd(vol24(input.coin))}</span
     ><span><b>SUPPLY</b> ${fmtSupply(input.coin.supply || SUPPLY)}</span>`;
 
   if (input.cross !== null) {
@@ -160,7 +169,8 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
     g.fillStyle = '#ffd23f';
     g.fillRect(cx - 2, cy - 2, 4, 4);
     hud = html`<span><b>T-</b>${n - 1 - idx}m</span><span><b>MCAP</b> ${usd(d[idx] as number)}</span
-      ><span><b>PRICE</b> ${px((d[idx] as number) / supply)}</span><span><b>VOL</b> ${usd(v[idx] as number)}</span>`;
+      ><span><b>PRICE</b> ${px((d[idx] as number) / supply)}</span
+      ><span><b>VOL</b> ${usd(v[idx] as number)}</span>`;
   }
   return hud;
 }
@@ -199,7 +209,8 @@ export function drawLaunchChart(cv: HTMLCanvasElement | null, input: LaunchChart
   const maxMc = curveMc(maxSol);
   const minMc = curveMc(0);
   const X = (v: number): number => pl + (v / maxSol) * (w - pl - pr);
-  const Y = (mc: number): number => pt + (1 - (mc - minMc) / Math.max(1, maxMc - minMc)) * (h - pt - pb);
+  const Y = (mc: number): number =>
+    pt + (1 - (mc - minMc) / Math.max(1, maxMc - minMc)) * (h - pt - pb);
 
   g.font = '9px "IBM Plex Mono", monospace';
   g.textBaseline = 'middle';

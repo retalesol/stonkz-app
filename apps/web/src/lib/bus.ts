@@ -34,6 +34,8 @@ export interface BusEvents {
    * every fill after that. `plan step 65`
    */
   fill: { fill: Fill; animate: boolean };
+  /** Board scope changed — wipe the strip before a fresh `GET /tape` seed. */
+  tapeClear: void;
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;
@@ -52,7 +54,10 @@ export function on<K extends keyof BusEvents>(event: K, fn: Handler<K>): () => v
   };
 }
 
-export function emit<K extends keyof BusEvents>(event: K, ...payload: BusEvents[K] extends void ? [] : [BusEvents[K]]): void {
+export function emit<K extends keyof BusEvents>(
+  event: K,
+  ...payload: BusEvents[K] extends void ? [] : [BusEvents[K]]
+): void {
   const set = handlers.get(event);
   if (!set) return;
   for (const fn of [...set]) (fn as Handler<K>)(payload[0] as BusEvents[K]);

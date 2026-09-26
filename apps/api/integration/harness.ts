@@ -63,10 +63,13 @@ export async function runScenarios(scenarios: Scenario[]): Promise<number> {
     const prefix = `[${scenario.name}]`;
     const ctx: Ctx = {
       cfg,
-      log: (msg, extra) => console.log(`${prefix} ${msg}${extra ? ` ${JSON.stringify(extra)}` : ''}`),
+      log: (msg, extra) =>
+        console.log(`${prefix} ${msg}${extra ? ` ${JSON.stringify(extra)}` : ''}`),
       expect: (cond, what, detail) => {
         if (!cond) {
-          throw new AssertionFailed(`${what}${detail === undefined ? '' : ` — observed ${JSON.stringify(detail)}`}`);
+          throw new AssertionFailed(
+            `${what}${detail === undefined ? '' : ` — observed ${JSON.stringify(detail)}`}`,
+          );
         }
         console.log(`${prefix}   ok: ${what}`);
       },

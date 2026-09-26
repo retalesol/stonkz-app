@@ -12,6 +12,12 @@
 import { runScenarios, type Scenario } from './harness.js';
 import { baseAtomicRoundTrip, rhAtomicRoundTrip, solanaRoundTrip } from './scenarios/trade.js';
 import {
+  baseStakeRoundTrip,
+  creatorFeesAndReferrals,
+  rhStakeRoundTrip,
+  solanaStakeRoundTrip,
+} from './scenarios/stake.js';
+import {
   rhGraduationBurn,
   rhOracleStalenessGuard,
   smartAccountLogin,
@@ -23,6 +29,10 @@ const ALL: Scenario[] = [
   solanaRoundTrip,
   rhAtomicRoundTrip,
   baseAtomicRoundTrip,
+  solanaStakeRoundTrip,
+  rhStakeRoundTrip,
+  baseStakeRoundTrip,
+  creatorFeesAndReferrals,
   solanaGraduationBurn,
   rhGraduationBurn,
   rhOracleStalenessGuard,

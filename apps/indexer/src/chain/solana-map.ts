@@ -10,7 +10,7 @@ import {
   toWhole,
   TOKEN_DECIMALS,
 } from './market.js';
-import type { TokenRegistry} from './registry.js';
+import type { TokenRegistry } from './registry.js';
 import { UnknownMintError, type TokenMeta } from './registry.js';
 import type { SolanaLaunchpadEvent } from './solana-events.js';
 
@@ -31,9 +31,12 @@ import type { SolanaLaunchpadEvent } from './solana-events.js';
  *    protocol/ops vaults from `FeeAccrued` already. Materialising both would
  *    double-credit both treasuries. A standalone `TreasuryCredit` (a
  *    reconciliation, not a fill) is still materialised.
- * 2. **`LiquidityMigrated` and `TreasuryWithdrawn` produce no indexer event.**
- *    Neither has a read table. `LiquidityMigrated.pool` is folded into a
- *    `Graduated` in the same transaction when there is one.
+ * 2. **`LiquidityMigrated` folds its pool into a `Graduated` in the same
+ *    transaction when there is one.** A standalone `LiquidityMigrated` (the
+ *    usual case: graduate then migrate in a later tx) still materialises a
+ *    `Graduated`-shaped update carrying `poolAddress` / `positionAddress` so
+ *    the board can link to the Meteora DLMM pool. `TreasuryWithdrawn` produces
+ *    no indexer event.
  * 3. **No `CashbackWindow` event is ever produced.** The programs do not emit
  *    one; the window is `cb_start` plus `CB_WINDOW_SECS`, which is what
  *    `tokens.cbStartMs` and `@stonkz/shared`'s `effFee()` already compute.
@@ -69,12 +72,20 @@ export async function mapSolanaTransaction(
 ): Promise<ChainEvent[]> {
   const out: ChainEvent[] = [];
   const hasFeeAccrued = records.some((r) => r.kind === 'FeeAccrued');
-  const trade = records.find((r): r is Extract<SolanaLaunchpadEvent, { kind: 'Trade' }> => r.kind === 'Trade');
+  const trade = records.find(
+    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'Trade' }> => r.kind === 'Trade',
+  );
   const migrated = records.find(
-    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'LiquidityMigrated' }> => r.kind === 'LiquidityMigrated',
+    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'LiquidityMigrated' }> =>
+      r.kind === 'LiquidityMigrated',
   );
 
-  const base = { net: 'SOL' as const, txSig: ctx.txSig, chainPosition: ctx.slot, blockTimeMs: ctx.blockTimeMs };
+  const base = {
+    net: 'SOL' as const,
+    txSig: ctx.txSig,
+    chainPosition: ctx.slot,
+    blockTimeMs: ctx.blockTimeMs,
+  };
   let logIndex = 0;
 
   const need = async (mint: string): Promise<TokenMeta> => {
@@ -160,6 +171,7 @@ export async function mapSolanaTransaction(
           record.feeTotal,
           record.feeProtocol,
           record.feeOps,
+          record.feeBurn,
           record.feeCreatorBucket,
         );
         const usdValue = baseAtomsToUsd(record.baseAmount, meta.basePrice1e6, meta.baseDecimals);
@@ -204,6 +216,7 @@ export async function mapSolanaTransaction(
           record.feeTotal,
           record.protocol,
           record.ops,
+          record.burn,
           record.creatorBucket,
         );
         const feeUsd = baseAtomsToUsd(record.feeTotal, meta.basePrice1e6, meta.baseDecimals);
@@ -252,7 +265,7 @@ export async function mapSolanaTransaction(
           mint: record.mint,
           sym: meta.sym,
           mc: Number(record.mcapUsd1e6) / 1e6,
-          ...(migrated ? { poolAddress: migrated.pool } : {}),
+          ...(migrated ? { poolAddress: migrated.pool, positionAddress: migrated.position } : {}),
         });
         break;
       }
@@ -340,8 +353,23 @@ export async function mapSolanaTransaction(
         break;
       }
 
-      // See decision (2): no read table, nothing to materialise.
-      case 'LiquidityMigrated':
+      // Standalone migrate (after `graduate` in a prior tx): surface the pool.
+      case 'LiquidityMigrated': {
+        if (records.some((r) => r.kind === 'Graduated')) break;
+        const meta = await need(record.mint);
+        out.push({
+          ...base,
+          kind: 'Graduated',
+          logIndex: logIndex++,
+          mint: record.mint,
+          sym: meta.sym,
+          mc: 0,
+          poolAddress: record.pool,
+          positionAddress: record.position,
+        });
+        break;
+      }
+
       case 'TreasuryWithdrawn':
         break;
     }

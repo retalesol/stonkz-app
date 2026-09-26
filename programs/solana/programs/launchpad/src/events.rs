@@ -34,6 +34,8 @@ pub struct Trade {
     pub fee_total: u64,
     pub fee_protocol: u64,
     pub fee_ops: u64,
+    /// Buyback-and-burn leg (10%).
+    pub fee_burn: u64,
     pub fee_creator_bucket: u64,
     /// The slice of the creator bucket peeled off to this coin's stakers.
     pub fee_stakers: u64,
@@ -58,6 +60,7 @@ pub struct FeeAccrued {
     pub fee_total: u64,
     pub protocol: u64,
     pub ops: u64,
+    pub burn: u64,
     pub creator_bucket: u64,
     pub ts: i64,
 }
@@ -68,6 +71,7 @@ pub struct TreasuryCredit {
     pub base_mint: Pubkey,
     pub protocol_delta: u64,
     pub ops_delta: u64,
+    pub burn_delta: u64,
     pub ts: i64,
 }
 
@@ -85,20 +89,22 @@ pub struct Graduated {
     pub ts: i64,
 }
 
-/// Emitted once per coin, when `migrate_liquidity` seeds the Raydium CPMM pool
-/// and burns everything it received. `lp_burned` should always equal the pool
-/// mint's total supply immediately after creation — anyone can verify that
-/// independently on a block explorer, which is the whole point.
+/// Emitted once per coin, when `migrate_seed_liquidity` deposits into a Meteora
+/// DLMM position and permanently locks it (owner → dead / lock_release = max).
+/// DLMM has no fungible LP mint; `position` is the PositionV2 account.
 #[event]
 pub struct LiquidityMigrated {
     pub mint: Pubkey,
     pub base_mint: Pubkey,
     pub pool: Pubkey,
-    pub lp_mint: Pubkey,
+    /// DLMM PositionV2 account (replaces the former Raydium `lp_mint` field).
+    pub position: Pubkey,
     pub base_deposited: u64,
     pub token_deposited: u64,
-    pub lp_minted: u64,
-    pub lp_burned: u64,
+    /// `lock_release_point` written on the position (`u64::MAX` = permanent).
+    pub lock_release_point: u64,
+    /// Non-zero once the position operator has been cleared to the dead address.
+    pub position_locked: u64,
     pub ts: i64,
 }
 

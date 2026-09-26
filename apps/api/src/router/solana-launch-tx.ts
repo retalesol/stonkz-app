@@ -6,7 +6,12 @@ import {
 } from '@solana/spl-token';
 import { JupiterAltRequiredError } from './errors.js';
 import type { JupiterHop } from './solana-tx.js';
-import { buildBuyInstruction, buildCreateTokenInstruction, traderAtas, type CreateTokenArgs } from './solana-instructions.js';
+import {
+  buildBuyInstruction,
+  buildCreateTokenInstruction,
+  traderAtas,
+  type CreateTokenArgs,
+} from './solana-instructions.js';
 
 /**
  * `POST /launch/prepare` on Solana — `create_token`, optionally followed
@@ -53,10 +58,18 @@ export interface ComposedSolanaLaunch {
   curve: PublicKey;
 }
 
-function toIx(ix: { programId: string; accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }): TransactionInstruction {
+function toIx(ix: {
+  programId: string;
+  accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[];
+  data: string;
+}): TransactionInstruction {
   return new TransactionInstruction({
     programId: new PublicKey(ix.programId),
-    keys: ix.accounts.map((a) => ({ pubkey: new PublicKey(a.pubkey), isSigner: a.isSigner, isWritable: a.isWritable })),
+    keys: ix.accounts.map((a) => ({
+      pubkey: new PublicKey(a.pubkey),
+      isSigner: a.isSigner,
+      isWritable: a.isWritable,
+    })),
     data: Buffer.from(ix.data, 'base64'),
   });
 }
@@ -85,7 +98,11 @@ export function composeSolanaLaunchTransaction(
     lastValidBlockHeight: blockhash.lastValidBlockHeight,
   });
 
-  const { instruction: createIx, mint, curve } = buildCreateTokenInstruction(
+  const {
+    instruction: createIx,
+    mint,
+    curve,
+  } = buildCreateTokenInstruction(
     {
       programId: c.programId,
       creator: c.creator,
@@ -96,13 +113,29 @@ export function composeSolanaLaunchTransaction(
   );
 
   if (c.devBuy) {
-    const atas = traderAtas({ programId: c.programId, mint, baseMint: c.baseMint, trader: c.creator });
+    const atas = traderAtas({
+      programId: c.programId,
+      mint,
+      baseMint: c.baseMint,
+      trader: c.creator,
+    });
     const isDirectNativePair = !c.devBuy.jupiter && c.baseMint.equals(NATIVE_MINT);
 
-    tx.add(createAssociatedTokenAccountIdempotentInstruction(c.creator, atas.base, c.creator, c.baseMint));
+    tx.add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        c.creator,
+        atas.base,
+        c.creator,
+        c.baseMint,
+      ),
+    );
     if (isDirectNativePair) {
       tx.add(
-        SystemProgram.transfer({ fromPubkey: c.creator, toPubkey: atas.base, lamports: c.devBuy.curveAmountIn }),
+        SystemProgram.transfer({
+          fromPubkey: c.creator,
+          toPubkey: atas.base,
+          lamports: c.devBuy.curveAmountIn,
+        }),
         createSyncNativeInstruction(atas.base),
       );
     } else if (c.devBuy.jupiter) {
@@ -110,7 +143,9 @@ export function composeSolanaLaunchTransaction(
     }
 
     tx.add(createIx);
-    tx.add(createAssociatedTokenAccountIdempotentInstruction(c.creator, atas.token, c.creator, mint));
+    tx.add(
+      createAssociatedTokenAccountIdempotentInstruction(c.creator, atas.token, c.creator, mint),
+    );
     tx.add(
       buildBuyInstruction(
         { programId: c.programId, mint, baseMint: c.baseMint, trader: c.creator },
@@ -122,7 +157,15 @@ export function composeSolanaLaunchTransaction(
     tx.add(createIx);
   }
 
-  const base64 = tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+  const base64 = tx
+    .serialize({ requireAllSignatures: false, verifySignatures: false })
+    .toString('base64');
   const messageBase64 = tx.compileMessage().serialize().toString('base64');
-  return { base64, messageBase64, lastValidBlockHeight: blockhash.lastValidBlockHeight, mint, curve };
+  return {
+    base64,
+    messageBase64,
+    lastValidBlockHeight: blockhash.lastValidBlockHeight,
+    mint,
+    curve,
+  };
 }

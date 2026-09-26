@@ -41,6 +41,8 @@ test('the shell renders the oracle element order', async ({ page }) => {
     'chatScrim',
     'drawer',
     'newScrim',
+    // Avatar crop sheet (profile edit), added with the Meteora / mobile batch.
+    'cropScrim',
     'setScrim',
     'wizScrim',
     'editScrim',

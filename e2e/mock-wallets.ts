@@ -89,7 +89,10 @@ export const MOCK_SOL_ADDRESS = bs58.encode(ed25519.getPublicKey(SOL_PRIVATE_KEY
 
 /** EIP-55 address the mock Robinhood wallet reports, derived from its real key. */
 export const MOCK_EVM_ADDRESS = toChecksumAddress(
-  '0x' + Buffer.from(keccak_256(secp256k1.getPublicKey(EVM_PRIVATE_KEY, false).slice(1))).toString('hex').slice(24),
+  '0x' +
+    Buffer.from(keccak_256(secp256k1.getPublicKey(EVM_PRIVATE_KEY, false).slice(1)))
+      .toString('hex')
+      .slice(24),
 );
 
 /** ed25519 over the raw message bytes — what `auth/siws.ts` verifies. */
@@ -117,8 +120,10 @@ function signSiwe(messageHex: string): string {
  * asserted instead is that the wallet was handed the bytes the API prepared —
  * see `walletRecord`.
  */
-export const MOCK_SOL_SIGNATURE = '4NPvhqRP2r3vGrfvUvUAsUJoNvzYALJUmR2VuPFULsSJqacDdyMoREfEV9x9FSVEFVxUXZWs4hLdWCC1Bn9Ynz9Y';
-export const MOCK_EVM_TX_HASH = '0x9d8f7c6b5a4938271605f4e3d2c1b0a998877665544332211ffeeddccbbaa9988';
+export const MOCK_SOL_SIGNATURE =
+  '4NPvhqRP2r3vGrfvUvUAsUJoNvzYALJUmR2VuPFULsSJqacDdyMoREfEV9x9FSVEFVxUXZWs4hLdWCC1Bn9Ynz9Y';
+export const MOCK_EVM_TX_HASH =
+  '0x9d8f7c6b5a4938271605f4e3d2c1b0a998877665544332211ffeeddccbbaa9988';
 
 /**
  * Install the mocks. Must run before `page.goto()` — EIP-6963 and Wallet
@@ -126,14 +131,24 @@ export const MOCK_EVM_TX_HASH = '0x9d8f7c6b5a4938271605f4e3d2c1b0a99887766554433
  * announces after the app has stopped listening is a wallet that does not
  * exist, which is exactly the behaviour being relied on here.
  */
-export async function installMockWallets(page: Page, options: MockWalletOptions = {}): Promise<void> {
+export async function installMockWallets(
+  page: Page,
+  options: MockWalletOptions = {},
+): Promise<void> {
   // Real signing, done in Node with the keys above. Registered before the
   // init script so the wallet objects can await them.
   await page.exposeFunction('__mockSignSiws', (messageHex: string) => signSiws(messageHex));
   await page.exposeFunction('__mockSignSiwe', (messageHex: string) => signSiwe(messageHex));
 
   await page.addInitScript(
-    (opts: MockWalletOptions & { solSig: string; evmHash: string; solAddr: string; evmAddr: string }) => {
+    (
+      opts: MockWalletOptions & {
+        solSig: string;
+        evmHash: string;
+        solAddr: string;
+        evmAddr: string;
+      },
+    ) => {
       const REJECTION = { code: 4001, message: 'User rejected the request.' };
       const win = window as unknown as Record<string, unknown>;
       const toHex = (bytes: Uint8Array): string => {
@@ -144,7 +159,9 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
       const signSiws = (bytes: Uint8Array): Promise<string> =>
         (win['__mockSignSiws'] as (h: string) => Promise<string>)(toHex(bytes));
       const signSiwe = (hexOrText: string): Promise<string> => {
-        const hex = hexOrText.startsWith('0x') ? hexOrText.slice(2) : toHex(new TextEncoder().encode(hexOrText));
+        const hex = hexOrText.startsWith('0x')
+          ? hexOrText.slice(2)
+          : toHex(new TextEncoder().encode(hexOrText));
         return (win['__mockSignSiwe'] as (h: string) => Promise<string>)(hex);
       };
 
@@ -235,8 +252,9 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
         const register = (api: { register: (w: unknown) => void }): void => {
           api.register(wallet);
         };
-        window.addEventListener('wallet-standard:app-ready', ((ev: CustomEvent<{ register: (w: unknown) => void }>) =>
-          register(ev.detail)) as EventListener);
+        window.addEventListener('wallet-standard:app-ready', ((
+          ev: CustomEvent<{ register: (w: unknown) => void }>,
+        ) => register(ev.detail)) as EventListener);
         window.dispatchEvent(
           new CustomEvent('wallet-standard:register-wallet', { detail: register }),
         );
@@ -318,7 +336,9 @@ export async function installMockWallets(page: Page, options: MockWalletOptions 
           provider,
         };
         const announce = (): void => {
-          window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze(detail) }));
+          window.dispatchEvent(
+            new CustomEvent('eip6963:announceProvider', { detail: Object.freeze(detail) }),
+          );
         };
         window.addEventListener('eip6963:requestProvider', announce);
         announce();
@@ -359,7 +379,10 @@ export async function stubChainRpc(
       getBalance: { context: { slot: 1 }, value: 2_500_000_000 },
       getLatestBlockhash: {
         context: { slot: 1 },
-        value: { blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi', lastValidBlockHeight: 999_999 },
+        value: {
+          blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi',
+          lastValidBlockHeight: 999_999,
+        },
       },
     };
     await route.fulfill({
@@ -381,7 +404,10 @@ export async function stubChainRpc(
       getBalance: { context: { slot: 1 }, value: 2_500_000_000 },
       getLatestBlockhash: {
         context: { slot: 1 },
-        value: { blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi', lastValidBlockHeight: 999_999 },
+        value: {
+          blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi',
+          lastValidBlockHeight: 999_999,
+        },
       },
       sendTransaction: MOCK_SOL_SIGNATURE,
     };
@@ -413,7 +439,9 @@ export async function stubChainRpc(
     // EIP-2612 `nonces(address)` — empty `0x` breaks viem decode in permit.ts.
     const callData = body.params?.[0]?.data ?? '';
     const ethCallResult =
-      body.method === 'eth_call' && typeof callData === 'string' && callData.startsWith('0x7ecebe00')
+      body.method === 'eth_call' &&
+      typeof callData === 'string' &&
+      callData.startsWith('0x7ecebe00')
         ? '0x' + (7).toString(16).padStart(64, '0')
         : '0x';
     const results: Record<string, unknown> = {
@@ -466,7 +494,9 @@ export async function stubChainRpc(
     }
     const callData = body.params?.[0]?.data ?? '';
     const ethCallResult =
-      body.method === 'eth_call' && typeof callData === 'string' && callData.startsWith('0x7ecebe00')
+      body.method === 'eth_call' &&
+      typeof callData === 'string' &&
+      callData.startsWith('0x7ecebe00')
         ? '0x' + (7).toString(16).padStart(64, '0')
         : '0x';
     const results: Record<string, unknown> = {
@@ -501,7 +531,10 @@ export async function stubChainRpc(
 
 /** Read a value the mock wallet recorded, to assert what it was really asked. */
 export async function walletRecord<T>(page: Page, key: string): Promise<T> {
-  return page.evaluate((k) => (window as unknown as Record<string, unknown>)[k] as T, key) as Promise<T>;
+  return page.evaluate(
+    (k) => (window as unknown as Record<string, unknown>)[k] as T,
+    key,
+  ) as Promise<T>;
 }
 
 /** The picker row ids the mocks register under. */

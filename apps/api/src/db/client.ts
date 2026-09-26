@@ -25,7 +25,11 @@ export interface CreateDbOptions {
   singleConnection?: boolean;
 }
 
-export function createDb({ url, poolMax = 10, singleConnection = false }: CreateDbOptions): DbHandle {
+export function createDb({
+  url,
+  poolMax = 10,
+  singleConnection = false,
+}: CreateDbOptions): DbHandle {
   const client = postgres(url, {
     max: singleConnection ? 1 : poolMax,
     // Timestamps come back as Date; drizzle handles the rest.

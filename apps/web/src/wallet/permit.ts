@@ -1,7 +1,8 @@
 import { createPublicClient, http, type PublicClient } from 'viem';
-import { BASE_RPC_URL, RH_RPC_URL } from './chain.js';
+import { EVM_CHAINS, evmNetForChainId } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
-import { baseChain, robinhoodChain } from './evm.js';
+import { evmChains } from './evm.js';
+import type { EvmNet } from '@stonkz/shared';
 import type { ConnectedWallet } from './types.js';
 
 /**
@@ -58,15 +59,15 @@ const NONCES_ABI = [
   },
 ] as const;
 
-const clients: Partial<Record<'RH' | 'BASE', PublicClient>> = {};
+const clients: Partial<Record<EvmNet, PublicClient>> = {};
 function rpc(chainId: number): PublicClient {
-  const net = chainId === 8453 || chainId === 84532 ? 'BASE' : 'RH';
+  const net = evmNetForChainId(chainId) ?? 'RH';
   const existing = clients[net];
   if (existing) return existing;
   const client = createPublicClient({
-    chain: net === 'BASE' ? baseChain : robinhoodChain,
-    transport: http(net === 'BASE' ? BASE_RPC_URL : RH_RPC_URL),
-  });
+    chain: evmChains[net],
+    transport: http(EVM_CHAINS[net].rpcUrl),
+  }) as PublicClient;
   clients[net] = client;
   return client;
 }
@@ -115,7 +116,12 @@ export async function readPermitNonce(token: string, owner: string, chainId = 0)
 export function buildPermitPayload(
   td: ServerPermitTypedData,
   nonce: bigint,
-): { domain: unknown; types: Record<string, { name: string; type: string }[]>; primaryType: string; message: Record<string, unknown> } {
+): {
+  domain: unknown;
+  types: Record<string, { name: string; type: string }[]>;
+  primaryType: string;
+  message: Record<string, unknown>;
+} {
   return {
     domain: td.domain,
     types: { EIP712Domain: EIP712_DOMAIN, ...td.types },
@@ -133,7 +139,10 @@ export function splitSignature(signature: string): { v: number; r: string; s: st
   // Some wallets return 0/1 where the contract's `ecrecover` wants 27/28.
   if (v === 0 || v === 1) v += 27;
   if (v !== 27 && v !== 28) {
-    throw new WalletError('unknown', `The wallet returned an unusable permit recovery id (v=${v}).`);
+    throw new WalletError(
+      'unknown',
+      `The wallet returned an unusable permit recovery id (v=${v}).`,
+    );
   }
   return { v, r: '0x' + hex.slice(0, 64), s: '0x' + hex.slice(64, 128) };
 }

@@ -11,7 +11,15 @@ import { type FocusTrap, trapFocus } from '../lib/focus-trap.js';
 import { type Html, attr, html, node, render } from '../lib/html.js';
 import { avatarUrlOf, displayName, rememberIdentity } from '../lib/identity.js';
 import { reducedMotion } from '../lib/motion.js';
-import { CHAT, type ChatMsg, GLINES, HANDLES, TLINES, logFor, randomHandle } from '../state/chat.js';
+import {
+  CHAT,
+  type ChatMsg,
+  GLINES,
+  HANDLES,
+  TLINES,
+  logFor,
+  randomHandle,
+} from '../state/chat.js';
 import type { SimCoin } from '../state/coins.js';
 import { WALLET } from '../state/wallet.js';
 
@@ -51,7 +59,10 @@ function pushLiveFrame(
   meta?: { username?: string | null; avatarUrl?: string | null },
 ): void {
   if (meta?.username || meta?.avatarUrl) {
-    rememberIdentity(wallet, { username: meta.username ?? null, avatarUrl: meta.avatarUrl ?? null });
+    rememberIdentity(wallet, {
+      username: meta.username ?? null,
+      avatarUrl: meta.avatarUrl ?? null,
+    });
   }
   const mine = wallet === sessionWallet(WALLET.net) || wallet === WALLET.full;
   addChat(
@@ -115,23 +126,38 @@ function chatChips(): void {
   const room = CHAT.token ? '$' + CHAT.token.sym : '';
   render(
     must('#rooms'),
-    html`<button class="room${CHAT.room === 'GLOBAL' ? ' on' : ''}" data-room="GLOBAL">${back}GLOBAL</button
-      >${CHAT.token
-        ? html`<button class="room${CHAT.room === room ? ' on' : ''}" data-room="${attr(room)}">${room}</button>`
-        : ''}`,
+    html`<button class="room${CHAT.room === 'GLOBAL' ? ' on' : ''}" data-room="GLOBAL">
+        ${back}GLOBAL</button
+      >${
+        CHAT.token
+          ? html`<button class="room${CHAT.room === room ? ' on' : ''}" data-room="${attr(room)}">
+              ${room}
+            </button>`
+          : ''
+      }`,
   );
 }
 
 function msgHTML(m: ChatMsg): Html {
   const seed = m.wallet || m.who;
-  return html`<div class="cm${m.mine ? ' mine' : ''}${m.sys ? ' sys' : ''}"
-    >${m.sys
-      ? ''
-      : html`<canvas class="av" width="28" height="28" data-seed="${attr(String(seed))}" data-av="${attr(
-          m.avatarUrl || '',
-        )}" aria-hidden="true"></canvas
-        ><div class="who" style="color:${attr(m.col || '#4d9bff')}">${m.who}<span>${m.t || clock()}</span></div>`}<p
-      >${m.text}</p></div>`;
+  return html`<div class="cm${m.mine ? ' mine' : ''}${m.sys ? ' sys' : ''}">
+    ${
+      m.sys
+        ? ''
+        : html`<canvas
+              class="av"
+              width="28"
+              height="28"
+              data-seed="${attr(String(seed))}"
+              data-av="${attr(m.avatarUrl || '')}"
+              aria-hidden="true"
+            ></canvas>
+            <div class="who" style="color:${attr(m.col || '#4d9bff')}">
+              ${m.who}<span>${m.t || clock()}</span>
+            </div>`
+    }
+    <p>${m.text}</p>
+  </div>`;
 }
 
 function paintChatAvatars(root: ParentNode = must('#chatLog')): void {
@@ -332,9 +358,21 @@ export function initChat(): void {
         const h = randomHandle();
         if (CHAT.token && Math.random() > 0.45) {
           const r = '$' + CHAT.token.sym;
-          addChat(r, { who: h[0], col: h[1], text: (TLINES[(Math.random() * TLINES.length) | 0] as string).replace(/\$SYM/g, r) }, true);
+          addChat(
+            r,
+            {
+              who: h[0],
+              col: h[1],
+              text: (TLINES[(Math.random() * TLINES.length) | 0] as string).replace(/\$SYM/g, r),
+            },
+            true,
+          );
         } else {
-          addChat('GLOBAL', { who: h[0], col: h[1], text: GLINES[(Math.random() * GLINES.length) | 0] as string }, true);
+          addChat(
+            'GLOBAL',
+            { who: h[0], col: h[1], text: GLINES[(Math.random() * GLINES.length) | 0] as string },
+            true,
+          );
         }
         next();
       },

@@ -3,13 +3,8 @@
  *
  * `anchor deploy` puts the program on chain; it does not create the `Global`
  * config account, and until that exists every instruction fails. This script
- * is the second half of a deployment: `initialize`, then `set_raydium_config`
- * so `migrate_liquidity` has a CPI target.
- *
- * Every privileged key is a required env var with no default. A deployment
- * that quietly pointed the protocol treasury at whatever keypair happened to
- * be in `~/.config/solana/id.json` is the failure mode this refuses to have,
- * so a missing or malformed var is a hard exit before anything is sent.
+ * is the second half of a deployment: `initialize`, then `set_meteora_config`
+ * so migration has a DLMM CPI target.
  *
  * Usage (see docs/deployment.md for the full runbook):
  *
@@ -27,38 +22,19 @@
  */
 import * as anchor from '@coral-xyz/anchor';
 
-// Via anchor's own re-export rather than a direct `@solana/web3.js` import:
-// this package does not declare web3.js as a dependency (it arrives through
-// anchor), and a script should not rely on a transitive hoist.
 const { PublicKey, SystemProgram } = anchor.web3;
 type PublicKey = anchor.web3.PublicKey;
 
-/** Raydium CPMM ("Standard AMM"), verified against docs.raydium.io and raydium-cp-swap's own `declare_id!`. */
-const RAYDIUM_CPMM = {
-  'mainnet-beta': new PublicKey('CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C'),
-  devnet: new PublicKey('DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb'),
-  localnet: new PublicKey('DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb'),
-} as const;
+/** Meteora `lb_clmm` — same program id on mainnet and devnet. */
+const METEORA_DLMM = new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
 
 /**
- * Raydium's `AmmConfig` index to migrate every graduation into. Index 0 is the
- * permissionless default tier with no OpenBook market requirement — the reason
- * CPMM was chosen over AMM v4 in the first place (see programs/SPEC.md §6).
+ * PresetParameter2 index for graduation pools. Index 1 is a widely deployed
+ * fee/bin-step tier on both clusters; override with STONKZ_METEORA_PRESET_INDEX.
  */
-const AMM_CONFIG_INDEX = 0;
+const DEFAULT_PRESET_INDEX = 1;
 
-/**
- * Known-good `AmmConfig` index 0 addresses, used only as a self-check on the
- * PDA derivation below. If the derivation ever stops matching these, the seed
- * layout has changed and this script must stop rather than write a wrong
- * address into `Global`.
- */
-const KNOWN_AMM_CONFIG_0 = {
-  devnet: '5MxLgy9oPdTC3YgkiePHqr3EoCRD9uLVYRQS2ANAs7wy',
-  localnet: '5MxLgy9oPdTC3YgkiePHqr3EoCRD9uLVYRQS2ANAs7wy',
-} as const;
-
-type Cluster = keyof typeof RAYDIUM_CPMM;
+type Cluster = 'mainnet-beta' | 'devnet' | 'localnet';
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -84,21 +60,19 @@ function requirePubkey(name: string): PublicKey {
 
 function requireCluster(): Cluster {
   const raw = requireEnv('STONKZ_CLUSTER');
-  if (!(raw in RAYDIUM_CPMM)) {
-    throw new Error(`STONKZ_CLUSTER must be one of ${Object.keys(RAYDIUM_CPMM).join(', ')} (got ${raw})`);
+  if (raw !== 'mainnet-beta' && raw !== 'devnet' && raw !== 'localnet') {
+    throw new Error(`STONKZ_CLUSTER must be mainnet-beta|devnet|localnet (got ${raw})`);
   }
-  return raw as Cluster;
+  return raw;
 }
 
-/**
- * `["amm_config", index_be_u16]` under the CPMM program — derived rather than
- * hardcoded so a cluster whose config account this script has never seen still
- * works, with the derivation itself checked against `KNOWN_AMM_CONFIG_0`.
- */
-function deriveAmmConfig(cpmmProgram: PublicKey, index: number): PublicKey {
-  const indexBe = Buffer.alloc(2);
-  indexBe.writeUInt16BE(index);
-  const [pda] = PublicKey.findProgramAddressSync([Buffer.from('amm_config'), indexBe], cpmmProgram);
+function derivePresetParameter2(index: number): PublicKey {
+  const buf = Buffer.alloc(2);
+  buf.writeUInt16LE(index);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('preset_parameter2'), buf],
+    METEORA_DLMM,
+  );
   return pda;
 }
 
@@ -112,14 +86,9 @@ async function main() {
   const oracleAuthority = requirePubkey('STONKZ_ORACLE_AUTHORITY');
   const migrationAuthority = requirePubkey('STONKZ_MIGRATION_AUTHORITY');
 
-  // The protocol treasury (20%) and the $STONKZ ops vault (10%) are separate
-  // PDAs on-chain specifically so an ops spend can never reach protocol
-  // revenue. One shared signer would defeat that off-chain, so refuse it.
   if (protocolWithdrawAuthority.equals(opsWithdrawAuthority)) {
     throw new Error('STONKZ_PROTOCOL_WITHDRAW_AUTHORITY and STONKZ_OPS_WITHDRAW_AUTHORITY must differ (SPEC.md §4)');
   }
-  // The admin can pause but must not be able to move money, and neither
-  // withdraw authority should be a server hot key.
   if (admin.equals(protocolWithdrawAuthority) || admin.equals(opsWithdrawAuthority)) {
     throw new Error('STONKZ_ADMIN must differ from both withdraw authorities (SPEC.md §4)');
   }
@@ -130,16 +99,10 @@ async function main() {
 
   const [globalPda] = PublicKey.findProgramAddressSync([Buffer.from('global')], program.programId);
 
-  const cpmmProgram = RAYDIUM_CPMM[cluster];
-  const ammConfig = deriveAmmConfig(cpmmProgram, AMM_CONFIG_INDEX);
-
-  const known = KNOWN_AMM_CONFIG_0[cluster as keyof typeof KNOWN_AMM_CONFIG_0];
-  if (known && ammConfig.toBase58() !== known) {
-    throw new Error(
-      `AmmConfig derivation mismatch on ${cluster}: derived ${ammConfig.toBase58()}, expected ${known}. ` +
-        "Raydium's seed layout may have changed — stop and re-verify before writing this into Global.",
-    );
-  }
+  const presetIndex = Number(process.env.STONKZ_METEORA_PRESET_INDEX ?? DEFAULT_PRESET_INDEX);
+  const preset = process.env.STONKZ_METEORA_PRESET
+    ? new PublicKey(process.env.STONKZ_METEORA_PRESET)
+    : derivePresetParameter2(presetIndex);
 
   console.log('cluster                      :', cluster);
   console.log('rpc                          :', provider.connection.rpcEndpoint);
@@ -151,8 +114,8 @@ async function main() {
   console.log('ops withdraw authority       :', opsWithdrawAuthority.toBase58());
   console.log('oracle authority             :', oracleAuthority.toBase58());
   console.log('migration authority          :', migrationAuthority.toBase58());
-  console.log('raydium cpmm program         :', cpmmProgram.toBase58());
-  console.log(`raydium amm config (index ${AMM_CONFIG_INDEX}) :`, ammConfig.toBase58());
+  console.log('meteora dlmm program         :', METEORA_DLMM.toBase58());
+  console.log(`meteora preset (index ${presetIndex}) :`, preset.toBase58());
 
   const existing = await provider.connection.getAccountInfo(globalPda);
 
@@ -164,12 +127,8 @@ async function main() {
   }
 
   if (existing) {
-    // `initialize` uses `init`, not `init_if_needed`, so re-running would
-    // fail anyway. Say so clearly instead of surfacing a raw Anchor error,
-    // and still set the Raydium config, which is idempotent and is the one
-    // step a re-run legitimately wants.
     console.log('');
-    console.log('global already initialized — skipping initialize, refreshing raydium config only');
+    console.log('global already initialized — skipping initialize, refreshing meteora config only');
   } else {
     console.log('');
     console.log('sending initialize...');
@@ -184,24 +143,20 @@ async function main() {
     console.log('  initialize:', sig);
   }
 
-  // `set_raydium_config` is admin-gated. The deployer is only able to send it
-  // when the deployer *is* the admin (a devnet convenience); on mainnet the
-  // admin is a cold key/multisig, so print the instruction for that signer
-  // instead of failing with an opaque `Unauthorized`.
   if (provider.wallet.publicKey.equals(admin)) {
-    console.log('sending setRaydiumConfig...');
+    console.log('sending setMeteoraConfig...');
     const sig = await program.methods
-      .setRaydiumConfig(cpmmProgram, ammConfig)
+      .setMeteoraConfig(METEORA_DLMM, preset)
       .accounts({ global: globalPda, admin })
       .rpc();
-    console.log('  setRaydiumConfig:', sig);
+    console.log('  setMeteoraConfig:', sig);
   } else {
     console.log('');
     console.log('=== Admin must execute (deployer is not admin) ===');
-    console.log('launchpad.setRaydiumConfig(program, ammConfig) signed by', admin.toBase58());
-    console.log('  program   :', cpmmProgram.toBase58());
-    console.log('  ammConfig :', ammConfig.toBase58());
-    console.log('Until this lands, migrate_liquidity fails closed and nothing can graduate.');
+    console.log('launchpad.setMeteoraConfig(program, preset) signed by', admin.toBase58());
+    console.log('  program :', METEORA_DLMM.toBase58());
+    console.log('  preset  :', preset.toBase58());
+    console.log('Until this lands, migrate_create_pool fails closed and nothing can graduate.');
   }
 
   console.log('');

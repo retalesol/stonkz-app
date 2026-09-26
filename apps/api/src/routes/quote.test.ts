@@ -153,7 +153,13 @@ describe('GET /tokens/:sym/quote', () => {
 
     const [hop1, hop2] = body.hops;
     // Hop 1 is the aggregator. Stonkz never takes a cut here.
-    expect(hop1).toMatchObject({ venue: 'JUPITER', inSymbol: 'SOL', outSymbol: 'BONK', feeBps: 0, feeAmount: 0 });
+    expect(hop1).toMatchObject({
+      venue: 'JUPITER',
+      inSymbol: 'SOL',
+      outSymbol: 'BONK',
+      feeBps: 0,
+      feeAmount: 0,
+    });
     // Hop 2 is the curve, the only hop that carries a fee.
     expect(hop2?.venue).toBe('CURVE');
     expect(hop2?.feeBps).toBe(250);

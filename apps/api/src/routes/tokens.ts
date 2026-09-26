@@ -1,8 +1,24 @@
 import { Hono } from 'hono';
 import { and, desc, eq, gt, ilike, or, sql, type SQL } from 'drizzle-orm';
-import { isEvm, laneOf, nativeUnit, parseNet, type Lane } from '@stonkz/shared';
+import {
+  FEE_SPLIT,
+  isEvm,
+  laneOf,
+  nativeUnit,
+  parseNet,
+  type Lane,
+  type TokenFees,
+} from '@stonkz/shared';
+import { evmExplorerUrl, evmLaunchpadAddress } from '../chain/evm-net.js';
 import { fetchEvmHoldersFromExplorer, fetchSolHoldersFromRpc } from '../chain/token-holders.js';
-import { candles, holdersSnapshot, tokens, trades } from '../db/schema.js';
+import {
+  candles,
+  creatorVaults,
+  holdersSnapshot,
+  tokens,
+  trades,
+  treasuryCredits,
+} from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -12,7 +28,6 @@ import { resolveTokenRow } from './token-resolve.js';
 const TIMEFRAMES = new Set(['1m', '5m', '15m', '1h', '4h', '1d']);
 /** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
 const SORTS = new Set(['new', 'mc', 'chg', 'rep']);
-
 
 function parseLane(raw: string | undefined): Lane | null {
   return raw === 'new' || raw === 'soon' || raw === 'grad' ? raw : null;
@@ -196,6 +211,63 @@ export function tokenRoutes(): Hono<AppEnv> {
     });
   });
 
+  /**
+   * `GET /tokens/:sym/fees?net=` — the lifetime fee ledger behind the Fees tab.
+   * Treasury legs come from `treasury_credits` (one row per vault per fill,
+   * written by the indexer from `FeeAccrued`); the creator bucket and the
+   * staker peel from `creator_vaults`. Native units throughout.
+   */
+  app.get('/tokens/:sym/fees', async (c) => {
+    const deps = c.get('deps');
+    const sym = c.req.param('sym').toUpperCase();
+    const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const mintQ = c.req.query('mint')?.trim() || undefined;
+    const token = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
+    if (!token) return c.json({ error: 'not_found' }, 404);
+
+    const legs = await deps.db
+      .select({
+        kind: treasuryCredits.kind,
+        total: sql<number>`coalesce(sum(${treasuryCredits.amount}), 0)`,
+      })
+      .from(treasuryCredits)
+      .where(and(eq(treasuryCredits.net, net), eq(treasuryCredits.sym, token.sym)))
+      .groupBy(treasuryCredits.kind);
+    const leg = (kind: string): number => Number(legs.find((l) => l.kind === kind)?.total ?? 0);
+
+    const [vault] = await deps.db
+      .select()
+      .from(creatorVaults)
+      .where(and(eq(creatorVaults.net, net), eq(creatorVaults.mint, token.mint ?? '')))
+      .limit(1);
+    const creatorBucket = vault?.lifetimeNative ?? 0;
+    const stakers = vault?.stakerPoolNative ?? 0;
+    const protocol = leg('protocol');
+    const game = leg('stonkz_ops');
+    const burn = leg('burn');
+    const feeBps = token.feeBps ?? 100;
+    const body: TokenFees = {
+      sym: token.sym,
+      net,
+      unit: nativeUnit(net),
+      feeBps,
+      effFeeBps: feeBps,
+      split: { ...FEE_SPLIT },
+      totals: {
+        gross: protocol + game + burn + creatorBucket,
+        protocol,
+        game,
+        burn,
+        creatorBucket,
+        creator: Math.max(0, creatorBucket - stakers),
+        stakers,
+        referrals: 0,
+      },
+      source: 'chain',
+    };
+    return c.json(body);
+  });
+
   app.get('/tokens/:sym/holders', async (c) => {
     const deps = c.get('deps');
     const sym = c.req.param('sym').toUpperCase();
@@ -217,12 +289,20 @@ export function tokenRoutes(): Hono<AppEnv> {
       curve?: boolean;
     };
 
-    const fromDb = async (): Promise<{ holders: HolderOut[]; source: 'db'; holderCount: number }> => {
+    const fromDb = async (): Promise<{
+      holders: HolderOut[];
+      source: 'db';
+      holderCount: number;
+    }> => {
       const rows = await deps.db
         .select()
         .from(holdersSnapshot)
         .where(
-          and(eq(holdersSnapshot.net, net), eq(holdersSnapshot.mint, mint), gt(holdersSnapshot.tokenAmount, 0)),
+          and(
+            eq(holdersSnapshot.net, net),
+            eq(holdersSnapshot.mint, mint),
+            gt(holdersSnapshot.tokenAmount, 0),
+          ),
         )
         .orderBy(desc(holdersSnapshot.tokenAmount))
         .limit(max);
@@ -275,10 +355,10 @@ export function tokenRoutes(): Hono<AppEnv> {
         if (isEvm(net)) {
           const live = await fetchEvmHoldersFromExplorer({
             mint,
-            launchpad: net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress,
+            launchpad: evmLaunchpadAddress(deps.env, net),
             decimals: token.tokenDecimals || 18,
             limit: max,
-            explorerUrl: deps.env.rhExplorerUrl,
+            explorerUrl: evmExplorerUrl(deps.env, net),
           });
           const holders: HolderOut[] = live.holders.map((h) => ({
             wallet: h.wallet,
@@ -335,7 +415,11 @@ export function tokenRoutes(): Hono<AppEnv> {
     return c.json({
       net,
       sym,
-      ...(isEvm(net) ? { curveWallet: net === 'BASE' ? deps.env.baseLaunchpadAddress : deps.env.rhLaunchpadAddress } : {}),
+      ...(isEvm(net)
+        ? {
+            curveWallet: evmLaunchpadAddress(deps.env, net),
+          }
+        : {}),
       ...fallback,
     });
   });

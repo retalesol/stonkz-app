@@ -59,7 +59,10 @@ function solScenario(): { events: ChainEvent[]; positions: number[] } {
   sol.trade({ sym: 'DOGGO', trader: TRADER, side: 'buy', nativeAmount: 4.0, mc: 21_000 });
   sol.trade({ sym: 'DOGGO', trader: TRADER, side: 'buy', nativeAmount: 6.0, mc: 44_000 });
   const events = sol.all();
-  return { events, positions: [...new Set(events.map((e) => e.chainPosition))].sort((a, b) => a - b) };
+  return {
+    events,
+    positions: [...new Set(events.map((e) => e.chainPosition))].sort((a, b) => a - b),
+  };
 }
 
 const hashesFor = (positions: readonly number[], tag = 'a'): Map<number, string> =>
@@ -70,14 +73,26 @@ async function scriptedRig(
   rh: ScriptedSource,
   options: Parameters<typeof createIndexerRig>[1] = {},
 ): Promise<IndexerTestRig> {
-  rig = await createIndexerRig([], { ...options, sources: { SOL: sol, RH: rh , BASE: rh  } });
+  // BASE gets its own idle source: aliasing it to `rh` made every RH scenario
+  // run twice under two nets and leaked BASE passes into per-chain assertions.
+  const base = idleBase();
+  const arc = idleArc();
+  rig = await createIndexerRig([], {
+    ...options,
+    sources: { SOL: sol, RH: rh, BASE: base, ARC: arc },
+  });
   // The lag monitor probes the RPCs, not the sources.
   rig.rpcs.SOL.setHead(await sol.head());
   rig.rpcs.RH.setHead(await rh.head());
+  rig.rpcs.BASE.setHead(await base.head());
+  rig.rpcs.ARC.setHead(await arc.head());
   return rig;
 }
 
 const idleRh = (): ScriptedSource => new ScriptedSource({ net: 'RH', head: 0, startPosition: 1 });
+const idleBase = (): ScriptedSource =>
+  new ScriptedSource({ net: 'BASE', head: 0, startPosition: 1 });
+const idleArc = (): ScriptedSource => new ScriptedSource({ net: 'ARC', head: 0, startPosition: 1 });
 
 /* ------------------------------------------------------ confirmation depth */
 
@@ -164,7 +179,12 @@ describe('cursor advancement', () => {
   it('starts a fresh cursor one before the deployment position, never at 0', async () => {
     const { events, positions } = solScenario();
     const start = positions[0] ?? 1;
-    const sol = new ScriptedSource({ net: 'SOL', events, head: positions.at(-1) ?? 0, startPosition: start });
+    const sol = new ScriptedSource({
+      net: 'SOL',
+      events,
+      head: positions.at(-1) ?? 0,
+      startPosition: start,
+    });
     await scriptedRig(sol, idleRh());
 
     await rig.runner.pass('SOL');
@@ -318,7 +338,10 @@ describe('reorg detection', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 24, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 24, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const at = (await rig.cursors.read('SOL')).position;
@@ -350,12 +373,16 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const before = {
       trades: (await rig.db.db.select().from(trades)).length,
-      candleTrades: (await rig.db.db.select().from(candles).where(eq(candles.tf, '1d')))[0]?.trades ?? 0,
+      candleTrades:
+        (await rig.db.db.select().from(candles).where(eq(candles.tf, '1d')))[0]?.trades ?? 0,
       holder: (await rig.db.db.select().from(holdersSnapshot))[0],
     };
     expect(before.trades).toBe(3);
@@ -365,9 +392,11 @@ describe('reorg rollback: derived rows disappear with the event', () => {
     sol.setHash(p3, 'hash-FORKED');
     await rig.runner.pass('SOL');
 
-    expect((await rig.db.db.select().from(chainEvents)).every((e) => e.chainPosition < p3)).toBe(true);
-    expect((await rig.db.db.select().from(trades))).toHaveLength(2);
-    expect((await rig.db.db.select().from(tape))).toHaveLength(2);
+    expect((await rig.db.db.select().from(chainEvents)).every((e) => e.chainPosition < p3)).toBe(
+      true,
+    );
+    expect(await rig.db.db.select().from(trades)).toHaveLength(2);
+    expect(await rig.db.db.select().from(tape)).toHaveLength(2);
 
     // Candles are recomputed from the surviving fills, not decremented.
     const daily = (await rig.db.db.select().from(candles).where(eq(candles.tf, '1d')))[0];
@@ -389,9 +418,12 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 5_000, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 5_000, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
-    expect((await rig.db.db.select().from(tokens))).toHaveLength(1);
+    expect(await rig.db.db.select().from(tokens)).toHaveLength(1);
 
     // A deep reorg that swallows the launch itself.
     const at = (await rig.cursors.read('SOL')).position;
@@ -416,7 +448,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const vaultBefore = (await rig.db.db.select().from(creatorVaults))[0];
@@ -437,7 +472,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
 
     const vaultAfter = (await rig.db.db.select().from(creatorVaults))[0];
     expect(vaultAfter?.lifetimeNative).toBeCloseTo(
-      (vaultBefore?.lifetimeNative ?? 0) - lastFee * 0.7,
+      (vaultBefore?.lifetimeNative ?? 0) - lastFee * 0.6,
       9,
     );
     const protocolAfter = (
@@ -462,7 +497,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const balanceOf = async (wallet: string) =>
@@ -490,9 +528,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
 
     // The awarding rows are gone — that is what lets a re-included
     // transaction be paid again.
-    const survivingSigs = new Set(
-      (await rig.db.db.select().from(chainEvents)).map((e) => e.txSig),
-    );
+    const survivingSigs = new Set((await rig.db.db.select().from(chainEvents)).map((e) => e.txSig));
     for (const row of await rig.db.db.select().from(xpEvents)) {
       if (row.txSig !== null) expect(survivingSigs.has(row.txSig)).toBe(true);
     }
@@ -516,7 +552,13 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startMs: Date.parse('2026-09-06T00:00:00.000Z'),
     });
     sol.launch({ sym: 'DOGGO', name: 'Doggo Coin', creator: CREATOR, feeBps: 250, mc: 4_200 });
-    sol.trade({ sym: 'DOGGO', trader: 'SoLwhale2222222222222222222222222222222222', side: 'buy', nativeAmount: 12, mc: 30_000 });
+    sol.trade({
+      sym: 'DOGGO',
+      trader: 'SoLwhale2222222222222222222222222222222222',
+      side: 'buy',
+      nativeAmount: 12,
+      mc: 30_000,
+    });
     const events = sol.all();
     const positions = [...new Set(events.map((e) => e.chainPosition))].sort((a, b) => a - b);
     const whaleFill = positions.at(-1) ?? 0;
@@ -528,7 +570,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(source, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(source, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const unlocked = await rig.db.db.select().from(achievements);
@@ -553,7 +598,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(sol, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
 
     const snapshot = async () => ({
@@ -584,7 +632,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
     expect(after.protocol).toBeCloseTo(before.protocol ?? 0, 9);
   });
 
-  it('unwinds a stake position without touching another chain\'s', async () => {
+  it("unwinds a stake position without touching another chain's", async () => {
     const sol = new FixtureProducer({
       net: 'SOL',
       startPosition: 988,
@@ -592,7 +640,13 @@ describe('reorg rollback: derived rows disappear with the event', () => {
     });
     sol.launch({ sym: 'DOGGO', name: 'Doggo Coin', creator: CREATOR, feeBps: 250, mc: 4_200 });
     sol.trade({ sym: 'DOGGO', trader: TRADER, side: 'buy', nativeAmount: 2.5, mc: 9_000 });
-    sol.stake({ sym: 'DOGGO', wallet: TRADER, amount: 1_000_000, lockDays: 30, circulating: 10_000_000 });
+    sol.stake({
+      sym: 'DOGGO',
+      wallet: TRADER,
+      amount: 1_000_000,
+      lockDays: 30,
+      circulating: 10_000_000,
+    });
     const events = sol.all();
     const positions = [...new Set(events.map((e) => e.chainPosition))].sort((a, b) => a - b);
     const stakeAt = positions.at(-1) ?? 0;
@@ -604,7 +658,10 @@ describe('reorg rollback: derived rows disappear with the event', () => {
       startPosition: positions[0] ?? 1,
       hashes: hashesFor(positions),
     });
-    await scriptedRig(source, idleRh(), { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(source, idleRh(), {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drainNet('SOL');
     expect((await rig.db.db.select().from(stakePositions))[0]?.amount).toBe(1_000_000);
 
@@ -708,8 +765,9 @@ describe('the dead-letter path', () => {
       creator: CREATOR,
       feeAmount: 1,
       protocol: 0.9,
-      creatorBucket: 0.05,
-      stonkzOps: 0.05,
+      creatorBucket: 0.04,
+      stonkzOps: 0.03,
+      burn: 0.03,
       stakerShare: 0,
       creatorTokens: 0,
     };
@@ -733,7 +791,7 @@ describe('the dead-letter path', () => {
     // The payload is kept, so the event can be re-examined without the chain.
     expect(dead[0]?.payload).toMatchObject({ feeAmount: 1, protocol: 0.9 });
     // …and the good events in the same batch went through.
-    expect((await rig.db.db.select().from(trades))).toHaveLength(3);
+    expect(await rig.db.db.select().from(trades)).toHaveLength(3);
     // The cursor is past the bad event, not stuck on it.
     expect((await rig.cursors.read('SOL')).position).toBe(broken.chainPosition);
   });
@@ -770,7 +828,13 @@ describe('per-chain isolation', () => {
       startPosition: 21_000_000,
       startMs: Date.parse('2026-09-06T00:00:00.000Z'),
     });
-    rhProducer.launch({ sym: 'RHDOG', name: 'RH Dog', creator: 'creator-RHDOG', feeBps: 250, mc: 5_000 });
+    rhProducer.launch({
+      sym: 'RHDOG',
+      name: 'RH Dog',
+      creator: 'creator-RHDOG',
+      feeBps: 250,
+      mc: 5_000,
+    });
     rhProducer.trade({
       sym: 'RHDOG',
       trader: '0x1111111111111111111111111111111111111111',
@@ -796,7 +860,7 @@ describe('per-chain isolation', () => {
     };
   }
 
-  it('indexes Robinhood Chain even while Solana\'s RPC is hard down', async () => {
+  it("indexes Robinhood Chain even while Solana's RPC is hard down", async () => {
     const { sol, rh } = twoChains();
     await scriptedRig(sol, rh);
     sol.failFor(Number.POSITIVE_INFINITY, new Error('solana rpc unreachable'));
@@ -808,8 +872,14 @@ describe('per-chain isolation', () => {
     expect(rh.polls.length).toBeGreaterThan(0);
     const rhEvents = (await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'RH');
     expect(rhEvents.length).toBeGreaterThan(0);
-    expect((await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'SOL')).toHaveLength(0);
-    expect(results.every((r) => r.net === 'RH')).toBe(true);
+    expect(
+      (await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'SOL'),
+    ).toHaveLength(0);
+    // The failed chain yields no pass results at all; the healthy chains
+    // (RH with work, BASE idle since 284ae9a) still report theirs.
+    expect(results.some((r) => r.net === 'SOL')).toBe(false);
+    expect(results.some((r) => r.net === 'RH')).toBe(true);
+    expect(results.every((r) => r.net === 'RH' || r.net === 'BASE' || r.net === 'ARC')).toBe(true);
 
     // The stalled chain's cursor stays where it was; the healthy one advanced.
     expect((await rig.cursors.read('SOL')).position).toBe(0);
@@ -823,12 +893,14 @@ describe('per-chain isolation', () => {
 
     await rig.runner.drain();
 
-    expect((await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'SOL').length).toBeGreaterThan(0);
+    expect(
+      (await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'SOL').length,
+    ).toBeGreaterThan(0);
     expect((await rig.cursors.read('RH')).failedAttempts).toBe(1);
     expect((await rig.cursors.read('RH')).lastError).toBe('rh getLogs exploded');
   });
 
-  it('keeps each chain\'s failure counter and last error to itself', async () => {
+  it("keeps each chain's failure counter and last error to itself", async () => {
     const { sol, rh } = twoChains();
     await scriptedRig(sol, rh, { deadLetters: true, maxBatchAttempts: 5 });
     rh.failFor(Number.POSITIVE_INFINITY, new Error('rh down'));
@@ -841,13 +913,20 @@ describe('per-chain isolation', () => {
 
   it('rolls back one chain without disturbing the other', async () => {
     const { sol, rh } = twoChains();
-    const solPositions = [...new Set(solScenario().events.map((e) => e.chainPosition))].sort((a, b) => a - b);
+    const solPositions = [...new Set(solScenario().events.map((e) => e.chainPosition))].sort(
+      (a, b) => a - b,
+    );
     for (const p of solPositions) sol.setHash(p, `hash-a-${p}`);
 
-    await scriptedRig(sol, rh, { rollback: true, reorgDepth: { SOL: 12, RH: 64 , BASE: 64  } });
+    await scriptedRig(sol, rh, {
+      rollback: true,
+      reorgDepth: { SOL: 12, RH: 64, BASE: 64, ARC: 0 },
+    });
     await rig.runner.drain();
 
-    const rhBefore = (await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'RH').length;
+    const rhBefore = (await rig.db.db.select().from(chainEvents)).filter(
+      (e) => e.net === 'RH',
+    ).length;
     const rhCursorBefore = (await rig.cursors.read('RH')).position;
     expect(rhBefore).toBeGreaterThan(0);
 
@@ -856,7 +935,9 @@ describe('per-chain isolation', () => {
     sol.setHash(at, 'hash-FORKED');
     await rig.runner.pass('SOL');
 
-    expect((await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'RH').length).toBe(rhBefore);
+    expect((await rig.db.db.select().from(chainEvents)).filter((e) => e.net === 'RH').length).toBe(
+      rhBefore,
+    );
     expect((await rig.cursors.read('RH')).position).toBe(rhCursorBefore);
     expect((await rig.cursors.read('RH')).reorgs).toBe(0);
     expect((await rig.cursors.read('SOL')).reorgs).toBe(1);

@@ -41,7 +41,13 @@ export { FakeChainRpc, FakePriceOracle, createFakeRpcs } from './chain/fake.js';
 export type { ChainRpc, ChainRpcs, FetchLike, PriceOracle } from './chain/types.js';
 
 export { createLogger, redact, type Logger, type LogLevel } from './observability/logger.js';
-export { Metrics, loggingAlertHook, type Alert, type ChainLag, type MetricsSnapshot } from './observability/metrics.js';
+export {
+  Metrics,
+  loggingAlertHook,
+  type Alert,
+  type ChainLag,
+  type MetricsSnapshot,
+} from './observability/metrics.js';
 
 export { createRedis, IoRedis } from './redis/ioredis.js';
 export { MemoryRedis } from './redis/memory.js';
@@ -51,7 +57,13 @@ export { QuoteCache, quoteCacheKey, QUOTE_CACHE_TTL_SECONDS } from './redis/quot
 export { RATE_LIMITS, rateLimit } from './redis/ratelimit.js';
 export type { RedisLike } from './redis/types.js';
 
-export { Ledger, UnverifiedEventError, type AwardInput, type AwardResult, type RewardsSnapshot } from './game/ledger.js';
+export {
+  Ledger,
+  UnverifiedEventError,
+  type AwardInput,
+  type AwardResult,
+  type RewardsSnapshot,
+} from './game/ledger.js';
 export { GameAwards, type TradeEvent as TradeAwardEvent } from './game/awards.js';
 export { CrateError, CrateService, type CrateOpenResult } from './game/crates.js';
 export { ReferralService } from './game/referrals.js';
@@ -64,8 +76,24 @@ export { WsHub } from './ws/hub.js';
 
 export { serialiseToken, type SerialisedToken, type TokenRow } from './routes/serialise.js';
 
-export { verifyTip, minTipFor, type TipRejectionReason, type TipVerification } from './social/tips.js';
-export { ChatService, CHAT_MAX_LEN, CHAT_RATE_LIMIT, isFlagged, normaliseRoom } from './social/chat.js';
+export {
+  verifyTip,
+  minTipFor,
+  type TipRejectionReason,
+  type TipVerification,
+} from './social/tips.js';
+export {
+  ChatService,
+  CHAT_MAX_LEN,
+  CHAT_RATE_LIMIT,
+  isFlagged,
+  normaliseRoom,
+} from './social/chat.js';
 export { XProfileCacheService, type CachedXProfile } from './social/x-cache.js';
-export { HttpXProvider, PlaceholderXProvider, type XProfile, type XProvider } from './social/x-provider.js';
+export {
+  HttpXProvider,
+  PlaceholderXProvider,
+  type XProfile,
+  type XProvider,
+} from './social/x-provider.js';
 export type { NativeTransferSource, NativeTransferVerification } from './chain/types.js';

@@ -37,6 +37,8 @@ export function curveMc(sol: number): number {
  */
 export function curve(c: Pick<CurveCoin, 'mc'>): number {
   const span = GRAD - CURVE_START_MC;
+  // Guard against a misconfigured constants edit; unreachable with the shipped values.
+  /* v8 ignore next */
   if (span <= 0) return c.mc >= GRAD ? 100 : 0;
   const raw = ((c.mc - CURVE_START_MC) / span) * 100;
   return Math.max(0, Math.min(100, raw));

@@ -60,7 +60,8 @@ interface SolanaWalletFeatures {
 }
 
 function feature<T>(wallet: Wallet, name: string, method: string): T | undefined {
-  const f = (wallet.features as Record<string, unknown>)[name] as Record<string, unknown> | undefined;
+  const f = (wallet.features as Record<string, unknown>)[name] as
+    Record<string, unknown> | undefined;
   const fn = f?.[method];
   return typeof fn === 'function' ? (fn.bind(f) as T) : undefined;
 }
@@ -81,7 +82,11 @@ function readFeatures(wallet: Wallet): SolanaWalletFeatures | null {
     SolanaSignAndSendTransaction,
     'signAndSendTransaction',
   );
-  const signTransaction = feature<SolanaSignTransactionMethod>(wallet, SolanaSignTransaction, 'signTransaction');
+  const signTransaction = feature<SolanaSignTransactionMethod>(
+    wallet,
+    SolanaSignTransaction,
+    'signTransaction',
+  );
   if (!connect || !signMessage) return null;
   if (!signAndSendTransaction && !signTransaction) return null;
   return {
@@ -183,7 +188,8 @@ async function awaitConfirmation(signature: string, lastValidBlockHeight?: numbe
           'The transaction failed on chain.',
         );
       }
-      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') return;
+      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')
+        return;
     }
     if (lastValidBlockHeight !== undefined) {
       const height = await conn.getBlockHeight('confirmed').catch(() => null);
@@ -195,7 +201,10 @@ async function awaitConfirmation(signature: string, lastValidBlockHeight?: numbe
       }
     }
     if (Date.now() > deadline) {
-      throw new WalletError('timeout', 'No confirmation after 90s. The transaction may still land; check the explorer.');
+      throw new WalletError(
+        'timeout',
+        'No confirmation after 90s. The transaction may still land; check the explorer.',
+      );
     }
     await new Promise((r) => setTimeout(r, CONFIRM_POLL_MS));
   }
@@ -242,7 +251,10 @@ class SolanaStandardWallet implements ConnectedWallet {
 
   async signAndSend(payload: SignPayload): Promise<BroadcastResult> {
     if (payload.net !== 'SOL') {
-      throw new WalletError('unsupported_method', 'A Solana wallet cannot sign a Robinhood Chain transaction.');
+      throw new WalletError(
+        'unsupported_method',
+        'A Solana wallet cannot sign a Robinhood Chain transaction.',
+      );
     }
     const bytes = toBytes(payload.transaction);
     const chain = solanaWalletStandardChain() as `${string}:${string}`;
@@ -263,14 +275,21 @@ class SolanaStandardWallet implements ConnectedWallet {
     } else if (this.features.signTransaction) {
       let signed: Uint8Array;
       try {
-        const [out] = await this.features.signTransaction({ account: this.account, transaction: bytes, chain });
+        const [out] = await this.features.signTransaction({
+          account: this.account,
+          transaction: bytes,
+          chain,
+        });
         if (!out) throw new WalletError('unknown', 'The wallet returned no signed transaction.');
         signed = out.signedTransaction;
       } catch (err) {
         throw mapWalletError(err, 'The wallet would not sign this transaction.');
       }
       try {
-        signature = await rpc().sendRawTransaction(signed, { skipPreflight: false, preflightCommitment: 'confirmed' });
+        signature = await rpc().sendRawTransaction(signed, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
       } catch (err) {
         throw mapWalletError(err, 'The RPC refused this transaction.');
       }
@@ -318,7 +337,10 @@ export async function connectSolanaWallet(
 ): Promise<ConnectedWallet> {
   const wallet = registeredWallets().find((w) => w.name === id);
   if (!wallet) {
-    throw new WalletError('no_wallet', `${id} is no longer available. Is the extension still enabled?`);
+    throw new WalletError(
+      'no_wallet',
+      `${id} is no longer available. Is the extension still enabled?`,
+    );
   }
   return openSolanaWallet(wallet, opts);
 }

@@ -14,7 +14,8 @@ import type { StonkzApi } from './types.js';
 
 export type ApiMode = 'sim' | 'live';
 
-export const API_MODE: ApiMode = (import.meta.env['VITE_API_MODE'] as ApiMode) === 'live' ? 'live' : 'sim';
+export const API_MODE: ApiMode =
+  (import.meta.env['VITE_API_MODE'] as ApiMode) === 'live' ? 'live' : 'sim';
 
 export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
 
@@ -25,9 +26,12 @@ export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
  * Live mode against staging points at RH testnet + Solana devnet programs.
  * Sim mode keeps the sandbox disclosure.
  */
+import { ALL_NETS } from '@stonkz/shared';
+import { envLabel } from '../wallet/chain.js';
+
 export const DISCLOSURE =
   API_MODE === 'live'
-    ? 'DEVNET / RH TESTNET / BASE SEPOLIA \u00b7 NOT MAINNET \u00b7 NOT FINANCIAL ADVICE'
+    ? ALL_NETS.map(envLabel).join(' / ') + ' \u00b7 NOT FINANCIAL ADVICE'
     : 'SIMULATED DATA \u00b7 NOT FINANCIAL ADVICE';
 
 export type {

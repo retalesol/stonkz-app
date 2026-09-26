@@ -30,11 +30,11 @@ Do not start implementation until all of these hold:
 
 Of the accrued ops vault balance, per sweep:
 
-| Share | Action |
-|---|---|
-| 50% | Buy `$STONKZ` on the open market and **burn** it |
-| 25% | Buy `$STONKZ` to seed one side of protocol-owned liquidity |
-| 25% | Keep as native (SOL / ETH) to seed the other side of that POL |
+| Share | Action                                                        |
+| ----- | ------------------------------------------------------------- |
+| 50%   | Buy `$STONKZ` on the open market and **burn** it              |
+| 25%   | Buy `$STONKZ` to seed one side of protocol-owned liquidity    |
+| 25%   | Keep as native (SOL / ETH) to seed the other side of that POL |
 
 The arithmetic already exists and is unit-tested: `opsSplit` in
 [`packages/shared/src/fees.ts`](../packages/shared/src/fees.ts). The executor
@@ -73,7 +73,7 @@ have to be re-audited to ship it.
 The plan's original wording was "lock and burn the LP, but keep fee-claim
 authority". Taken literally that is impossible for a Uniswap v2 pool: v2 LP is
 fungible, and burning it destroys the fee claim along with the principal. That
-is exactly why memecoin graduation burns v2 LP (the claim is *meant* to die
+is exactly why memecoin graduation burns v2 LP (the claim is _meant_ to die
 there — see `UniswapV2Migrator.sol`) and why POL must use a different
 mechanism.
 
@@ -154,11 +154,11 @@ revoke that.
 `$STONKZ` staking is a **separate product** from memecoin staking and must not
 share its accounting:
 
-| | Memecoin staking (shipped) | `$STONKZ` staking (Phase 7) |
-|---|---|---|
-| Stake asset | An individual launched token | `$STONKZ` |
+|               | Memecoin staking (shipped)                      | `$STONKZ` staking (Phase 7)               |
+| ------------- | ----------------------------------------------- | ----------------------------------------- |
+| Stake asset   | An individual launched token                    | `$STONKZ`                                 |
 | Reward source | That token's 70% creator bucket, capped at half | POL trading fees from the locked position |
-| Scope | Per token | Protocol-wide |
+| Scope         | Per token                                       | Protocol-wide                             |
 
 Reuse the shipped staking program's accumulator pattern
 (`accBasePerWeight` / reward-per-weight with debt checkpoints) rather than

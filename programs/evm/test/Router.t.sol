@@ -60,7 +60,8 @@ contract RouterTest is Test {
         ur = new MockUniversalRouter(weth, base, RATE);
         MockSwapRouter02 sr02 = new MockSwapRouter02(weth, base, RATE);
         router = new StonkzRouter(
-            IUniversalRouter(address(ur)), pad, IWETH9(address(weth)), ISwapRouter02(address(sr02))
+            IUniversalRouter(address(ur)), pad, IWETH9(address(weth)), ISwapRouter02(address(sr02)),
+            0 // no per-buy cap
         );
 
         vm.prank(oracleAuth);
@@ -495,5 +496,31 @@ contract RouterTest is Test {
             "Universal Router has no code at the pinned address"
         );
         assertGt(RobinhoodChain.PERMIT2.code.length, 0, "Permit2 has no code at the pinned address");
+    }
+
+    /* ------------------------------------------------------------ buy cap */
+
+    /// Arc deploys the router with a hard per-buy ceiling (25 USDC in native
+    /// wei); the API and UI mirror it, this is the layer that cannot be bypassed.
+    function test_CappedRouterRefusesABuyAboveTheCap() public {
+        MockSwapRouter02 sr02 = new MockSwapRouter02(weth, base, RATE);
+        StonkzRouter capped = new StonkzRouter(
+            IUniversalRouter(address(ur)), pad, IWETH9(address(weth)), ISwapRouter02(address(sr02)), 1 ether
+        );
+        assertEq(capped.maxBuyNative(), 1 ether);
+
+        // Above the cap: refused before any curve state moves.
+        vm.prank(trader);
+        vm.expectRevert(abi.encodeWithSelector(StonkzRouter.BuyAboveCap.selector, 2 ether, 1 ether));
+        capped.buyViaAggregator{value: 2 ether}(token, _buyLeg(2 ether), 0, block.timestamp + 60);
+
+        // At the cap: allowed.
+        vm.prank(trader);
+        uint256 out = capped.buyViaAggregator{value: 1 ether}(token, _buyLeg(1 ether), 0, block.timestamp + 60);
+        assertGt(out, 0);
+    }
+
+    function test_UncappedRouterHasNoCeiling() public view {
+        assertEq(router.maxBuyNative(), 0);
     }
 }

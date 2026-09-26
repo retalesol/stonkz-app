@@ -5,16 +5,24 @@
  */
 
 /** Chain a coin, wallet or session belongs to. */
-export type Net = 'SOL' | 'RH' | 'BASE';
+export type Net = 'SOL' | 'RH' | 'BASE' | 'ARC';
 
-/** EVM product nets — Robinhood Chain and Coinbase Base. */
-export type EvmNet = 'RH' | 'BASE';
+/** EVM product nets — Robinhood Chain, Coinbase Base and Circle's Arc. */
+export type EvmNet = 'RH' | 'BASE' | 'ARC';
 
-/** Every product net, in picker order. */
-export const ALL_NETS: readonly Net[] = ['SOL', 'RH', 'BASE'] as const;
+/**
+ * Every product net, in picker order. Everything else about a net (gas unit,
+ * decimals, colours, DEX, caps) lives in `nets.ts`; add a net there and here
+ * and the exhaustive `Record<Net, …>` maps across the workspace tell you the
+ * rest.
+ */
+export const ALL_NETS: readonly Net[] = ['SOL', 'BASE', 'ARC', 'RH'] as const;
 
-/** The gas token the user always pays and receives. */
-export type NativeUnit = 'SOL' | 'ETH';
+/**
+ * The gas token the user always pays and receives. Arc's gas is USDC: the EVM
+ * native value carries 18 decimals there, the ERC-20 face carries 6.
+ */
+export type NativeUnit = 'SOL' | 'ETH' | 'USDC';
 
 /** Board lane, derived from market cap against `GRAD`. */
 export type Lane = 'new' | 'soon' | 'grad';
@@ -144,6 +152,39 @@ export interface DropLogEntry {
   col: string;
 }
 
+/**
+ * Lifetime fee ledger for one coin, as `GET /tokens/:sym/fees` returns it and
+ * the Fees tab renders it. Every amount is in the net's native unit.
+ */
+export interface TokenFees {
+  sym: string;
+  net: Net;
+  unit: NativeUnit;
+  /** Creator-set tax, bps. */
+  feeBps: number;
+  /** Effective tax right now (cashback decay), bps. */
+  effFeeBps: number;
+  /** The nominal split the programs assert on every fill. */
+  split: { protocol: number; creatorBucket: number; stonkzOps: number; burn: number };
+  totals: {
+    /** Everything taken in fees since launch. */
+    gross: number;
+    protocol: number;
+    /** Stonkz Game buyback vault (`stonkz_ops`). */
+    game: number;
+    burn: number;
+    /** The 60% bucket before the staker peel. */
+    creatorBucket: number;
+    /** What the creator kept (claimed + unclaimed). */
+    creator: number;
+    /** What this coin's stakers were paid out of the bucket. */
+    stakers: number;
+    /** Referral commissions paid out of the protocol leg for this coin's fills. */
+    referrals: number;
+  };
+  source: 'chain' | 'sim';
+}
+
 /** §5.3 — connected wallet. */
 export interface Wallet {
   on: boolean;
@@ -178,8 +219,14 @@ export interface Settings {
   mev: MevMode;
   /** MEV tip, native units. */
   mevTip: number;
-  /** Abort above this total, native units. */
+  /** Abort above this total, native units of `capUnit` (or the connected net). */
   cap: number;
+  /**
+   * The unit `cap` was set in. When the connected net's unit differs, the
+   * per-unit default (`DEFAULT_TRADE_CAP`) applies instead of a number that
+   * meant something else (5 ETH is not 5 USDC).
+   */
+  capUnit?: NativeUnit;
   /** Prefilled buy amount, native units. */
   defBuy: number;
   confirm: boolean;
@@ -247,7 +294,7 @@ export interface QuoteHop {
   feeAmount: number;
 }
 
-/** A priced route. `amountIn` is always the native unit. */
+/** A priced route. `amountIn` is the input the user typed: native on buys, tokens on sells. */
 export interface Quote {
   sym: string;
   /** Canonical mint when known — preferred over `sym` for duplicate tickers. */
@@ -256,7 +303,9 @@ export interface Quote {
   side: 'buy' | 'sell';
   /** Always SOL or ETH. */
   nativeUnit: NativeUnit;
+  /** Native spent (buy) or tokens sold (sell). */
   amountIn: number;
+  /** Tokens received (buy) or native received (sell). */
   amountOut: number;
   minOut: number;
   /** Ordered legs — one hop when the base mint is native, otherwise two. */

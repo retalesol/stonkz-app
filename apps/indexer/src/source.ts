@@ -108,6 +108,8 @@ export class FixtureEventSource implements EventSource {
   }
 
   async poll(fromExclusive: number, toInclusive: number): Promise<ChainEvent[]> {
-    return this.events.filter((e) => e.chainPosition > fromExclusive && e.chainPosition <= toInclusive);
+    return this.events.filter(
+      (e) => e.chainPosition > fromExclusive && e.chainPosition <= toInclusive,
+    );
   }
 }

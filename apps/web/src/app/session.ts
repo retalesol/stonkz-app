@@ -1,4 +1,5 @@
 import type { Net } from '@stonkz/shared';
+import { isEvm, parseNet } from '@stonkz/shared';
 import { WalletError, activeWallet, mapWalletError } from '../wallet/index.js';
 
 /**
@@ -58,7 +59,7 @@ function readStore(): StoredAuth | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredAuth>;
     if (
-      (parsed.net !== 'SOL' && parsed.net !== 'RH' && parsed.net !== 'BASE') ||
+      parseNet(parsed.net) === null ||
       typeof parsed.wallet !== 'string' ||
       typeof parsed.accessToken !== 'string' ||
       typeof parsed.refreshToken !== 'string' ||
@@ -135,7 +136,9 @@ async function login(base: string, net: Net): Promise<Session> {
     throw new WalletError('not_connected', 'Connect a wallet before signing in.');
   }
   const address = wallet.address;
-  const nonceRes = await fetch(`${base}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`);
+  const nonceRes = await fetch(
+    `${base}/auth/nonce?net=${net}&address=${encodeURIComponent(address)}`,
+  );
   if (!nonceRes.ok) throw new Error('auth/nonce: ' + (await readError(nonceRes)));
   const challenge = (await nonceRes.json()) as NonceChallenge;
 
@@ -180,7 +183,7 @@ function refreshUsable(s: Session): boolean {
 
 /** EVM addresses are case-insensitive; Solana base58 is not. */
 function sameAddress(net: Net, a: string, b: string): boolean {
-  return net === 'RH' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  return isEvm(net) ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 /**
@@ -195,7 +198,10 @@ export async function ensureSession(base: string, net: Net): Promise<Session> {
 
   // Drop a session that belongs to a different net or a different address than
   // the currently connected wallet.
-  if (session && (session.net !== net || (wallet && !sameAddress(net, session.wallet, wallet.address)))) {
+  if (
+    session &&
+    (session.net !== net || (wallet && !sameAddress(net, session.wallet, wallet.address)))
+  ) {
     session = null;
   }
 

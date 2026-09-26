@@ -24,7 +24,12 @@ const SOL_TOKEN_MINT = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
 const RH_TOKEN_MINT = getAddress(`0x${'fee5'.padStart(40, '0')}`);
 const MINT_EMPTY = 'mint-EMPTY';
 
-async function seedToken(net: 'SOL' | 'RH', sym: string, mint: string, creator: string): Promise<void> {
+async function seedToken(
+  net: 'SOL' | 'RH',
+  sym: string,
+  mint: string,
+  creator: string,
+): Promise<void> {
   const baseDecimals = net === 'SOL' ? 9 : 18;
   const tokenDecimals = net === 'SOL' ? 6 : 18;
   // Native-unit USD price, matching `FakePriceOracle`'s defaults — the
@@ -32,7 +37,12 @@ async function seedToken(net: 'SOL' | 'RH', sym: string, mint: string, creator: 
   // ~$4,200 (vs. SOL's ~$214) is what keeps an 18-decimal RH curve's
   // `virtualBase` under `@stonkz/curve-sim`'s `MAX_VIRTUAL_BASE`.
   const basePrice1e6 = net === 'SOL' ? 214_080_000n : 4_200_000_000n;
-  const derived = deriveCurveColumns(1_000_000_000n * 10n ** BigInt(tokenDecimals), basePrice1e6, baseDecimals, tokenDecimals);
+  const derived = deriveCurveColumns(
+    1_000_000_000n * 10n ** BigInt(tokenDecimals),
+    basePrice1e6,
+    baseDecimals,
+    tokenDecimals,
+  );
   if (!derived) throw new Error('seedToken: curve derivation failed');
   await h.deps.db.insert(tokens).values({
     net,
@@ -74,7 +84,10 @@ async function getFees(token: string): Promise<{ status: number; body: FeesRespo
   return { status: res.status, body: (await res.json()) as FeesResponse };
 }
 
-async function claimPrepare(token: string, sym: string): Promise<{ status: number; body: ClaimResponse }> {
+async function claimPrepare(
+  token: string,
+  sym: string,
+): Promise<{ status: number; body: ClaimResponse }> {
   const res = await h.app.request('/fees/claim/prepare', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authed(token) },
@@ -89,8 +102,22 @@ describe('GET /fees + POST /fees/claim/prepare', () => {
     const { token, address } = await h.login('SOL');
     await seedToken('SOL', 'FEEZ', SOL_TOKEN_MINT, address);
     await h.deps.db.insert(creatorVaults).values([
-      { net: 'SOL', sym: 'FEEZ', mint: SOL_TOKEN_MINT, creator: address, unclaimedNative: 1.5, unclaimedTokens: 0 },
-      { net: 'SOL', sym: 'EMPTY', mint: MINT_EMPTY, creator: address, unclaimedNative: 0, unclaimedTokens: 0 },
+      {
+        net: 'SOL',
+        sym: 'FEEZ',
+        mint: SOL_TOKEN_MINT,
+        creator: address,
+        unclaimedNative: 1.5,
+        unclaimedTokens: 0,
+      },
+      {
+        net: 'SOL',
+        sym: 'EMPTY',
+        mint: MINT_EMPTY,
+        creator: address,
+        unclaimedNative: 0,
+        unclaimedTokens: 0,
+      },
     ]);
 
     const { status, body } = await getFees(token);
@@ -100,11 +127,17 @@ describe('GET /fees + POST /fees/claim/prepare', () => {
     expect(body.vaults?.[0]).toMatchObject({ sym: 'FEEZ', unclaimedNative: 1.5 });
   });
 
-  it('never surfaces another wallet\'s creator vault', async () => {
+  it("never surfaces another wallet's creator vault", async () => {
     const { token, address } = await h.login('SOL');
     const other = await h.login('SOL', solanaWallet('fees-other-wallet'));
     await seedToken('SOL', 'THEIRS', SOL_TOKEN_MINT, other.address);
-    await h.deps.db.insert(creatorVaults).values({ net: 'SOL', sym: 'THEIRS', mint: SOL_TOKEN_MINT, creator: other.address, unclaimedNative: 5 });
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'SOL',
+      sym: 'THEIRS',
+      mint: SOL_TOKEN_MINT,
+      creator: other.address,
+      unclaimedNative: 5,
+    });
 
     const { body } = await getFees(token);
     expect(body.vaults).toHaveLength(0);
@@ -114,7 +147,13 @@ describe('GET /fees + POST /fees/claim/prepare', () => {
   it('builds an unsigned Solana claim_creator_fees transaction', async () => {
     const { token, address } = await h.login('SOL');
     await seedToken('SOL', 'CLAIMSOL', SOL_TOKEN_MINT, address);
-    await h.deps.db.insert(creatorVaults).values({ net: 'SOL', sym: 'CLAIMSOL', mint: SOL_TOKEN_MINT, creator: address, unclaimedNative: 2.5 });
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'SOL',
+      sym: 'CLAIMSOL',
+      mint: SOL_TOKEN_MINT,
+      creator: address,
+      unclaimedNative: 2.5,
+    });
 
     const { status, body } = await claimPrepare(token, 'CLAIMSOL');
     expect(status).toBe(200);
@@ -130,7 +169,13 @@ describe('GET /fees + POST /fees/claim/prepare', () => {
   it('builds claimCreatorFees calldata on Robinhood Chain', async () => {
     const { token, address } = await h.login('RH');
     await seedToken('RH', 'CLAIMRH', RH_TOKEN_MINT, address);
-    await h.deps.db.insert(creatorVaults).values({ net: 'RH', sym: 'CLAIMRH', mint: RH_TOKEN_MINT, creator: address, unclaimedNative: 1 });
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'RH',
+      sym: 'CLAIMRH',
+      mint: RH_TOKEN_MINT,
+      creator: address,
+      unclaimedNative: 1,
+    });
 
     const { status, body } = await claimPrepare(token, 'CLAIMRH');
     expect(status).toBe(200);
@@ -142,7 +187,14 @@ describe('GET /fees + POST /fees/claim/prepare', () => {
   it('refuses to claim when there is nothing unclaimed', async () => {
     const { token, address } = await h.login('SOL');
     await seedToken('SOL', 'DRY', SOL_TOKEN_MINT, address);
-    await h.deps.db.insert(creatorVaults).values({ net: 'SOL', sym: 'DRY', mint: SOL_TOKEN_MINT, creator: address, unclaimedNative: 0, unclaimedTokens: 0 });
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'SOL',
+      sym: 'DRY',
+      mint: SOL_TOKEN_MINT,
+      creator: address,
+      unclaimedNative: 0,
+      unclaimedTokens: 0,
+    });
 
     const { status, body } = await claimPrepare(token, 'DRY');
     expect(status).toBe(422);
@@ -153,7 +205,13 @@ describe('GET /fees + POST /fees/claim/prepare', () => {
     const { token } = await h.login('SOL');
     const other = await h.login('SOL', solanaWallet('fees-other-wallet-2'));
     await seedToken('SOL', 'NOTMINE', SOL_TOKEN_MINT, other.address);
-    await h.deps.db.insert(creatorVaults).values({ net: 'SOL', sym: 'NOTMINE', mint: SOL_TOKEN_MINT, creator: other.address, unclaimedNative: 3 });
+    await h.deps.db.insert(creatorVaults).values({
+      net: 'SOL',
+      sym: 'NOTMINE',
+      mint: SOL_TOKEN_MINT,
+      creator: other.address,
+      unclaimedNative: 3,
+    });
 
     const { status, body } = await claimPrepare(token, 'NOTMINE');
     expect(status).toBe(422);

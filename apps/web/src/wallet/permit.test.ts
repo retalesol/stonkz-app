@@ -122,7 +122,13 @@ describe('buildPermitPayload', () => {
 
   it('drops the API\u2019s note, which is not a typed-data member', () => {
     expect(Object.keys(payload)).toEqual(['domain', 'types', 'primaryType', 'message']);
-    expect(Object.keys(payload.message).sort()).toEqual(['deadline', 'nonce', 'owner', 'spender', 'value']);
+    expect(Object.keys(payload.message).sort()).toEqual([
+      'deadline',
+      'nonce',
+      'owner',
+      'spender',
+      'value',
+    ]);
   });
 });
 
@@ -196,7 +202,9 @@ describe('signSellPermit', () => {
         throw new WalletError('rejected', 'You declined the request in your wallet.');
       },
     });
-    await expect(signSellPermit(wallet, serverTypedData(), nonceIs(0n))).rejects.toMatchObject({ kind: 'rejected' });
+    await expect(signSellPermit(wallet, serverTypedData(), nonceIs(0n))).rejects.toMatchObject({
+      kind: 'rejected',
+    });
   });
 
   it('refuses a wallet that cannot sign typed data, naming the alternative', async () => {
@@ -212,7 +220,11 @@ describe('signSellPermit', () => {
     // A permit prepared for another address would be signed happily by the
     // wallet and then rejected on chain, with no useful reason attached.
     const err = await rejection(
-      signSellPermit(stubWallet(), serverTypedData({ owner: '0x9999999999999999999999999999999999999999' }), nonceIs(0n)),
+      signSellPermit(
+        stubWallet(),
+        serverTypedData({ owner: '0x9999999999999999999999999999999999999999' }),
+        nonceIs(0n),
+      ),
     );
     expect(err.message).toContain('different owner');
   });
@@ -220,8 +232,12 @@ describe('signSellPermit', () => {
   it('matches the owner case-insensitively, since checksumming differs', async () => {
     // The wallet checksums its address (EIP-55); the API returns whatever it
     // stored. A case-sensitive comparison would break every real sell.
-    const wallet = stubWallet({ address: '0x2222222222222222222222222222222222222222'.toUpperCase() });
-    await expect(signSellPermit(wallet, serverTypedData(), nonceIs(0n))).resolves.toMatchObject({ v: 27 });
+    const wallet = stubWallet({
+      address: '0x2222222222222222222222222222222222222222'.toUpperCase(),
+    });
+    await expect(signSellPermit(wallet, serverTypedData(), nonceIs(0n))).resolves.toMatchObject({
+      v: 27,
+    });
   });
 
   it('rejects a malformed payload before touching the wallet', async () => {

@@ -30,32 +30,43 @@ fn mul_div_floor(a: u128, b: u128, d: u128) -> Option<u128> {
 /* Fee split                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/// The three destinations of one curve fee.
+/// The four destinations of one curve fee: 20% protocol, 10% Stonkz Game
+/// buyback (`stonkz_ops`), 10% buyback-and-burn, 60% creator bucket.
 ///
-/// `protocol` and `stonkz_ops` are floors of their nominal shares;
+/// `protocol`, `stonkz_ops` and `burn` are floors of their nominal shares;
 /// `creator_bucket` is the **remainder**, so the identity
-/// `protocol + stonkz_ops + creator_bucket == fee` holds for every input with
-/// no exceptions. At most 2 atoms of floor dust land in the creator bucket.
+/// `protocol + stonkz_ops + burn + creator_bucket == fee` holds for every
+/// input with no exceptions. At most 3 atoms of floor dust land in the bucket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FeeShares {
     pub protocol: u64,
     pub stonkz_ops: u64,
+    pub burn: u64,
     pub creator_bucket: u64,
+}
+
+impl FeeShares {
+    /// The fee this split came from.
+    pub fn total(&self) -> u64 {
+        self.protocol + self.stonkz_ops + self.burn + self.creator_bucket
+    }
 }
 
 pub fn split_fee(fee: u64) -> FeeShares {
     let f = fee as u128;
-    // Both shares are < fee, so the casts below cannot truncate.
+    // Every share is < fee, so the casts below cannot truncate.
     let protocol = (f * FEE_PROTOCOL_BPS as u128 / BPS_DEN as u128) as u64;
     let stonkz_ops = (f * FEE_OPS_BPS as u128 / BPS_DEN as u128) as u64;
+    let burn = (f * FEE_BURN_BPS as u128 / BPS_DEN as u128) as u64;
     FeeShares {
         protocol,
         stonkz_ops,
-        creator_bucket: fee - protocol - stonkz_ops,
+        burn,
+        creator_bucket: fee - protocol - stonkz_ops - burn,
     }
 }
 
-/// How the 70% creator bucket divides between the creator and that coin's
+/// How the 60% creator bucket divides between the creator and that coin's
 /// stakers. This runs *after* `split_fee`, on the creator bucket alone —
 /// protocol and ops are already in other accounts and cannot reach here.
 ///

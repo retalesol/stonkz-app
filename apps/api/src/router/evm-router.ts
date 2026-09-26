@@ -164,14 +164,27 @@ export interface BuildAtomicSellParams {
 export function buildAtomicSellCall(p: BuildAtomicSellParams): EvmAtomicCall {
   const deadline = BigInt(p.deadlineUnixSeconds);
   const permitData = p.permit
-    ? { value: BigInt(p.permit.value), deadline: BigInt(p.permit.deadline), v: p.permit.v, r: p.permit.r, s: p.permit.s }
+    ? {
+        value: BigInt(p.permit.value),
+        deadline: BigInt(p.permit.deadline),
+        v: p.permit.v,
+        r: p.permit.r,
+        s: p.permit.s,
+      }
     : noPermit();
 
   if (p.route.mode === 'direct') {
     const data = encodeFunctionData({
       abi: STONKZ_ROUTER_ABI,
       functionName: 'sellForEth',
-      args: [p.token, p.amountTokenAtoms, permitData, p.minBaseOutAtoms, p.minEthOutAtoms, deadline],
+      args: [
+        p.token,
+        p.amountTokenAtoms,
+        permitData,
+        p.minBaseOutAtoms,
+        p.minEthOutAtoms,
+        deadline,
+      ],
     });
     return { atomic: true, chain: 'RH', to: p.routerAddress, data, value: '0' };
   }

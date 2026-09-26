@@ -25,7 +25,7 @@ export interface TestApp {
   deps: AppDeps;
   db: TestDb;
   redis: MemoryRedis;
-  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc };
+  rpcs: { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc; ARC: FakeChainRpc };
   oracle: FakePriceOracle;
   jupiter: FakeJupiterClient;
   uniswap: FakeUniswapClient;
@@ -44,7 +44,10 @@ export interface TestApp {
    * to isolate themselves; everything else gets it from `beforeEach`.
    */
   clearRateLimits(): Promise<void>;
-  login(net: Net, wallet?: TestWallet): Promise<{ token: string; address: string; refreshToken: string }>;
+  login(
+    net: Net,
+    wallet?: TestWallet,
+  ): Promise<{ token: string; address: string; refreshToken: string }>;
   close(): Promise<void>;
 }
 
@@ -63,7 +66,7 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
 
   const redis = new MemoryRedis(now);
   const rpcs = createFakeRpcs();
-  const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200 });
+  const oracle = new FakePriceOracle({ SOL: 214.08, ETH: 4200, USDC: 1 });
   const jupiter = new FakeJupiterClient();
   const uniswap = new FakeUniswapClient();
 
@@ -112,7 +115,11 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
       }),
     });
     if (res.status !== 200) throw new Error(`login failed: ${res.status} ${await res.text()}`);
-    const body = (await res.json()) as { accessToken: string; refreshToken: string; wallet: string };
+    const body = (await res.json()) as {
+      accessToken: string;
+      refreshToken: string;
+      wallet: string;
+    };
     return { token: body.accessToken, address: body.wallet, refreshToken: body.refreshToken };
   };
 

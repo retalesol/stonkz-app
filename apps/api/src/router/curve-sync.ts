@@ -96,7 +96,10 @@ export const COINS_REAL_BASE_WORD = 14;
 export const COINS_REAL_TOKEN_WORD = 15;
 
 /** Anchor `account:Curve` discriminator. */
-export const CURVE_ACCOUNT_DISC = createHash('sha256').update('account:Curve').digest().subarray(0, 8);
+export const CURVE_ACCOUNT_DISC = createHash('sha256')
+  .update('account:Curve')
+  .digest()
+  .subarray(0, 8);
 
 export function parseCoinsReserves(raw: string): CurveReserves | null {
   const hex = (raw.startsWith('0x') ? raw.slice(2) : raw).toLowerCase();
@@ -267,6 +270,8 @@ export async function syncCurveReserves<T extends CurveSyncRow>(opts: {
   return persistReserves(db, row, live);
 }
 
-export function reserveFingerprint(row: Pick<CurveStateRow, 'curveRealBase' | 'curveRealToken'>): string {
+export function reserveFingerprint(
+  row: Pick<CurveStateRow, 'curveRealBase' | 'curveRealToken'>,
+): string {
   return `${row.curveRealBase}-${row.curveRealToken}`;
 }

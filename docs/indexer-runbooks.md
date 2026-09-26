@@ -9,7 +9,8 @@ opt-in (`INDEXER_SOURCE=fixtures`) and refused in production unless
 `INDEXER_ALLOW_FIXTURES=1`. Chain mode refuses to boot unless the program
 addresses and start positions are set (`assertChainModeConfigured` in
 `src/config.ts`). Staging Railway already runs chain mode against RH 46630
-+ Solana devnet.
+
+- Solana devnet.
 
 ---
 
@@ -87,13 +88,13 @@ Lag is confirmed-head minus cursor, converted to seconds with
 `SOLANA_SLOT_MS` / `RH_BLOCK_MS`. The API's `LagMonitor` and the
 indexer's `/health` both read `indexer_cursors`.
 
-| Signal | Meaning |
-|---|---|
-| `/health` 503, `status: "degraded"` | one or both chains over the lag budget |
-| `alert: "chain-lag:SOL"` / `RH` in API logs | same, edge-triggered |
-| `failedAttempts` climbing on `/health` | current batch is retrying toward a dead-letter |
-| `deadLetters` > 0 | something was skipped; see `/dead-letters` |
-| `reorgs` incrementing | a hash mismatch triggered rollback |
+| Signal                                      | Meaning                                        |
+| ------------------------------------------- | ---------------------------------------------- |
+| `/health` 503, `status: "degraded"`         | one or both chains over the lag budget         |
+| `alert: "chain-lag:SOL"` / `RH` in API logs | same, edge-triggered                           |
+| `failedAttempts` climbing on `/health`      | current batch is retrying toward a dead-letter |
+| `deadLetters` > 0                           | something was skipped; see `/dead-letters`     |
+| `reorgs` incrementing                       | a hash mismatch triggered rollback             |
 
 A fixture-mode deploy pointed at a live RPC will look "lagging" forever
 if the stub/RPC head keeps advancing past the fixture heads. That is
@@ -110,7 +111,7 @@ not a chain problem.
 - XP/SP awards unique on `(wallet, tx_sig, reason)`.
 
 Rewinding a cursor and letting the live loop walk forward is always
-safe to *attempt*. Prefer the backfill CLI (§6) when you want a closed
+safe to _attempt_. Prefer the backfill CLI (§6) when you want a closed
 range without moving the live cursor.
 
 ---
@@ -127,6 +128,7 @@ range is dead-lettered as `scope=batch` and the cursor skips past it.
 The other chain keeps draining.
 
 **Response:**
+
 1. `GET /dead-letters` (or `SELECT * FROM indexer_dead_letters WHERE resolved_at IS NULL`).
 2. Transient RPC/DB: it should self-heal before the attempt cap.
 3. Code bug: patch, then
@@ -167,6 +169,7 @@ Chain mode records `position_hash` at the cursor. Each pass asks the
 source whether that hash is still the block/slot at that position.
 
 On mismatch:
+
 1. Walk back up to `INDEXER_SOL_REORG_DEPTH` / `INDEXER_RH_REORG_DEPTH`
    until a hash matches.
 2. `ReorgRollback` deletes materialized rows (`chain_events`, `trades`,
@@ -189,7 +192,7 @@ been observed against a live chain.
 
 ## 8. Missed deliveries
 
-There is no webhook receiver. Polling *is* the source, so a missed
+There is no webhook receiver. Polling _is_ the source, so a missed
 webhook is not a failure mode. A stalled poller looks like lag (§3).
 A provider that silently stops returning signatures looks like
 `behindRaw` growing with `failedAttempts` staying at 0 — check the
@@ -202,21 +205,21 @@ RPC, not the dead-letter table.
 Indexer listens on `INDEXER_HTTP_HOST`:`INDEXER_HTTP_PORT` (default
 `0.0.0.0:8788`):
 
-| Route | Use |
-|---|---|
-| `GET /health` | 200 / 503 JSON; readiness probe |
-| `GET /metrics` | Prometheus text |
-| `GET /dead-letters` | open dead letters as JSON |
+| Route               | Use                             |
+| ------------------- | ------------------------------- |
+| `GET /health`       | 200 / 503 JSON; readiness probe |
+| `GET /metrics`      | Prometheus text                 |
+| `GET /dead-letters` | open dead letters as JSON       |
 
-| Log | Level | Meaning |
-|---|---|---|
-| `"indexer started"` | info | boot, includes `mode` |
-| `"running on CHAIN events"` / `"FIXTURE"` | info / warn | which source |
-| `"acquired the single-writer lock"` | info | this replica is the writer |
-| `"batch complete"` | info | `net, from, to, accepted, duplicates` |
-| `"event rejected"` | error | integrity skip + dead-lettered |
-| `"indexer pass failed"` | error | exception outside a chain drain |
-| `alert: "chain-lag:*"` | error | over budget (emitted by the API) |
+| Log                                       | Level       | Meaning                               |
+| ----------------------------------------- | ----------- | ------------------------------------- |
+| `"indexer started"`                       | info        | boot, includes `mode`                 |
+| `"running on CHAIN events"` / `"FIXTURE"` | info / warn | which source                          |
+| `"acquired the single-writer lock"`       | info        | this replica is the writer            |
+| `"batch complete"`                        | info        | `net, from, to, accepted, duplicates` |
+| `"event rejected"`                        | error       | integrity skip + dead-lettered        |
+| `"indexer pass failed"`                   | error       | exception outside a chain drain       |
+| `alert: "chain-lag:*"`                    | error       | over budget (emitted by the API)      |
 
 Dashboard: `/health` `chains.*.behind`, `lagSeconds`, `reorgs`,
 `deadLetters`, `failedAttempts`, plus overall `mode` so a fixtures
@@ -226,17 +229,17 @@ deploy cannot be mistaken for chain.
 
 ## 10. Env that chain mode actually requires
 
-| Var | Why |
-|---|---|
-| `INDEXER_SOURCE=chain` | otherwise you are in fixtures |
-| `SOLANA_RPC_URL` | polling |
-| `SOLANA_LAUNCHPAD_PROGRAM_ID` | address filter |
-| `INDEXER_SOL_START_SLOT` | fresh cursor must not walk from genesis |
-| `RH_RPC_URL` | `getLogs` |
-| `RH_LAUNCHPAD_ADDRESS` | must not be the zero address |
-| `INDEXER_RH_START_BLOCK` | same genesis guard |
-| `RH_ROUTER_ADDRESS` | optional; decoded if set |
-| `DATABASE_URL` | **direct Neon host, not the pooler** |
-| `REDIS_URL` | same Redis as the API |
+| Var                           | Why                                     |
+| ----------------------------- | --------------------------------------- |
+| `INDEXER_SOURCE=chain`        | otherwise you are in fixtures           |
+| `SOLANA_RPC_URL`              | polling                                 |
+| `SOLANA_LAUNCHPAD_PROGRAM_ID` | address filter                          |
+| `INDEXER_SOL_START_SLOT`      | fresh cursor must not walk from genesis |
+| `RH_RPC_URL`                  | `getLogs`                               |
+| `RH_LAUNCHPAD_ADDRESS`        | must not be the zero address            |
+| `INDEXER_RH_START_BLOCK`      | same genesis guard                      |
+| `RH_ROUTER_ADDRESS`           | optional; decoded if set                |
+| `DATABASE_URL`                | **direct Neon host, not the pooler**    |
+| `REDIS_URL`                   | same Redis as the API                   |
 
 Fixtures mode needs none of the program addresses.

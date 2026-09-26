@@ -24,11 +24,16 @@ describe('PATCH /me', () => {
       body: JSON.stringify({ username: 'TRENCHRAT', bio: 'gm', xHandle: '@degen' }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { profile: { username: string; bio: string; xHandle: string } };
+    const body = (await res.json()) as {
+      profile: { username: string; bio: string; xHandle: string };
+    };
     expect(body.profile).toMatchObject({ username: 'TRENCHRAT', bio: 'gm', xHandle: 'degen' });
 
     const pub = await h.app.request(`/users/SOL/${address}`);
-    const pubBody = (await pub.json()) as { profile: { username: string; bio: string }; addr: string };
+    const pubBody = (await pub.json()) as {
+      profile: { username: string; bio: string };
+      addr: string;
+    };
     expect(pubBody.profile.username).toBe('TRENCHRAT');
 
     const byName = await h.app.request('/users/SOL/TRENCHRAT');
@@ -108,7 +113,10 @@ describe('follow / unfollow', () => {
     const target = solanaWallet('unfollow-target').address;
     await h.app.request(`/follow/SOL/${target}`, { method: 'POST', headers: authed(me.token) });
 
-    const res = await h.app.request(`/follow/SOL/${target}`, { method: 'DELETE', headers: authed(me.token) });
+    const res = await h.app.request(`/follow/SOL/${target}`, {
+      method: 'DELETE',
+      headers: authed(me.token),
+    });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ following: false });
 
@@ -118,7 +126,10 @@ describe('follow / unfollow', () => {
 
   it('refuses following yourself', async () => {
     const me = await h.login('SOL');
-    const res = await h.app.request(`/follow/SOL/${me.address}`, { method: 'POST', headers: authed(me.token) });
+    const res = await h.app.request(`/follow/SOL/${me.address}`, {
+      method: 'POST',
+      headers: authed(me.token),
+    });
     expect(res.status).toBe(400);
   });
 });

@@ -53,7 +53,11 @@ function nativeDecimals(net: Net): number {
 }
 
 /** `null` when this phase has no price source for the symbol — callers must reject the launch, not guess. */
-export async function basePriceFor(net: Net, baseSymbol: string, oracle: PriceOracle): Promise<BasePriceInfo | null> {
+export async function basePriceFor(
+  net: Net,
+  baseSymbol: string,
+  oracle: PriceOracle,
+): Promise<BasePriceInfo | null> {
   const sym = baseSymbol.toUpperCase();
   const native = nativeUnit(net);
   const wrapped = net === 'SOL' ? 'WSOL' : 'WETH';

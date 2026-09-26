@@ -16,7 +16,7 @@ export function stakedFrac(c: Pick<CurveCoin, 'supply'>, totalStaked: number): n
 }
 
 /**
- * Fraction of the 70% creator bucket that goes to memecoin stakers.
+ * Fraction of the 60% creator bucket that goes to memecoin stakers.
  * Half of the staked fraction, so at most 0.5 — stakers can never take more
  * than half the creator bucket (35% of the curve fee). `index.html:1583`
  */

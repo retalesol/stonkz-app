@@ -139,17 +139,25 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   }
 }
 
-export function createFakeRpcs(): ChainRpcs & { SOL: FakeChainRpc; RH: FakeChainRpc; BASE: FakeChainRpc } {
+export function createFakeRpcs(): ChainRpcs & {
+  SOL: FakeChainRpc;
+  RH: FakeChainRpc;
+  BASE: FakeChainRpc;
+  ARC: FakeChainRpc;
+} {
   return {
     SOL: new FakeChainRpc('SOL', 'SOL', 250_000_000),
     RH: new FakeChainRpc('RH', 'ETH', 21_000_000),
     BASE: new FakeChainRpc('BASE', 'ETH', 21_000_000),
+    ARC: new FakeChainRpc('ARC', 'USDC', 1_000_000),
   };
 }
 
-/** Frozen prices so USD assertions in tests are exact. */
+/** Frozen prices so USD assertions in tests are exact. USDC is 1 by definition. */
 export class FakePriceOracle implements PriceOracle {
-  constructor(private readonly prices: Record<NativeUnit, number> = { SOL: 214.08, ETH: 4200 }) {}
+  constructor(
+    private readonly prices: Record<NativeUnit, number> = { SOL: 214.08, ETH: 4200, USDC: 1 },
+  ) {}
 
   set(unit: NativeUnit, price: number): void {
     this.prices[unit] = price;

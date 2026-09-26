@@ -72,5 +72,11 @@ export function cdText(ms: number): string {
   const h = ((s % 86400) / 3600) | 0;
   const m = ((s % 3600) / 60) | 0;
   const ss = s % 60;
-  return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m ? m + 'm ' + String(ss).padStart(2, '0') + 's' : ss + 's';
+  return d
+    ? d + 'd ' + h + 'h'
+    : h
+      ? h + 'h ' + m + 'm'
+      : m
+        ? m + 'm ' + String(ss).padStart(2, '0') + 's'
+        : ss + 's';
 }

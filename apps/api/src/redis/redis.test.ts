@@ -7,7 +7,13 @@ import {
   isTokenBlacklisted,
   walletBlacklistedBefore,
 } from './blacklist.js';
-import { QUOTE_CACHE_TTL_SECONDS, QuoteCache, quantiseNativeAmount, quoteCacheKey, type QuoteCacheKey } from './quote-cache.js';
+import {
+  QUOTE_CACHE_TTL_SECONDS,
+  QuoteCache,
+  quantiseNativeAmount,
+  quoteCacheKey,
+  type QuoteCacheKey,
+} from './quote-cache.js';
 import { CHANNELS, CHANNEL_PATTERNS } from './channels.js';
 import { fanout } from './fanout.js';
 
@@ -164,7 +170,10 @@ describe('pub/sub', () => {
 describe('subscriber isolation', () => {
   it('does not let one throwing handler starve the others', async () => {
     const errors: string[] = [];
-    const isolated = new MemoryRedis(() => now, (_err, channel) => errors.push(channel));
+    const isolated = new MemoryRedis(
+      () => now,
+      (_err, channel) => errors.push(channel),
+    );
     const seen: string[] = [];
     await isolated.subscribe(CHANNELS.tape(), () => {
       throw new Error('socket already closed');
@@ -385,11 +394,9 @@ describe('quote cache', () => {
     // A longer Redis ttl than the logical one would otherwise serve a quote
     // the UI has already drained the bar on.
     const cache = new QuoteCache(redis, 8, () => now);
-    await redis.set(
-      quoteCacheKey(key),
-      JSON.stringify({ value: quote, expiresAt: now - 1 }),
-      { ttlSeconds: 60 },
-    );
+    await redis.set(quoteCacheKey(key), JSON.stringify({ value: quote, expiresAt: now - 1 }), {
+      ttlSeconds: 60,
+    });
     let calls = 0;
     const fresh = await cache.wrap(key, async () => {
       calls++;

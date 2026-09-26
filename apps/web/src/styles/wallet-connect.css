@@ -189,3 +189,13 @@
     bottom: 44px;
   }
 }
+
+/* ---------- environment block ---------- */
+.wp-env{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line2);background:var(--pnl2);padding:7px 9px;margin-bottom:10px}
+.wp-env.main{border-color:var(--down)}
+.wp-env-row{display:flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.06em;color:var(--txt2);flex-wrap:wrap}
+.wp-env-row b{color:var(--txt);font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;letter-spacing:.08em}
+.wp-env .netdot{width:7px;height:7px}
+.wp-faucet{margin-left:auto;color:var(--amber);border:1px solid var(--amber2);padding:0 6px;font-size:9.5px;letter-spacing:.1em;text-decoration:none}
+.wp-faucet:hover{background:var(--amber);color:#150d00}
+.wp-env-note{font-size:10px;letter-spacing:.06em;color:var(--down)}

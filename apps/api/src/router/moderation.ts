@@ -36,7 +36,11 @@ export interface ModerationResult {
   matched: string[];
 }
 
-export function moderateLaunch(fields: { name: string; ticker: string; descr: string }): ModerationResult {
+export function moderateLaunch(fields: {
+  name: string;
+  ticker: string;
+  descr: string;
+}): ModerationResult {
   const haystack = normalise(`${fields.name} ${fields.ticker} ${fields.descr}`);
   const matched = BLOCKLIST.filter((word) => haystack.includes(word));
   return { ok: matched.length === 0, matched };

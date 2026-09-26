@@ -46,7 +46,12 @@ export async function uploadToPinata(opts: {
 
   const form = new FormData();
   const blob = new Blob(
-    [opts.bytes.buffer.slice(opts.bytes.byteOffset, opts.bytes.byteOffset + opts.bytes.byteLength) as ArrayBuffer],
+    [
+      opts.bytes.buffer.slice(
+        opts.bytes.byteOffset,
+        opts.bytes.byteOffset + opts.bytes.byteLength,
+      ) as ArrayBuffer,
+    ],
     { type: opts.mimeType },
   );
   form.append('file', blob, opts.filename || 'upload.png');

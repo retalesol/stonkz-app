@@ -16,7 +16,10 @@
  * only ever gets the real IP Railway appended, at the right end of the
  * chain, used as the rate-limit identity.
  */
-export function resolveClientIp(forwardedFor: string | undefined | null, trustedProxyDepth: number): string | null {
+export function resolveClientIp(
+  forwardedFor: string | undefined | null,
+  trustedProxyDepth: number,
+): string | null {
   // No trusted proxy in front (e.g. reachable directly) means the header is
   // entirely client-controlled — never trust any of it.
   if (trustedProxyDepth <= 0) return null;

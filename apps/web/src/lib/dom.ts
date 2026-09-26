@@ -1,7 +1,10 @@
 /** The four DOM primitives the whole terminal is built on. */
 
 /** `document.querySelector`, scoped. The oracle's `$`. */
-export function $<T extends Element = HTMLElement>(sel: string, root: ParentNode = document): T | null {
+export function $<T extends Element = HTMLElement>(
+  sel: string,
+  root: ParentNode = document,
+): T | null {
   return root.querySelector<T>(sel);
 }
 

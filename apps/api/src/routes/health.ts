@@ -33,13 +33,19 @@ export interface HealthReport {
   metrics: ReturnType<AppDeps['metrics']['snapshot']>;
 }
 
-async function timed<T>(fn: () => Promise<T>): Promise<{ ok: true; ms: number; value: T } | { ok: false; ms: number; error: string }> {
+async function timed<T>(
+  fn: () => Promise<T>,
+): Promise<{ ok: true; ms: number; value: T } | { ok: false; ms: number; error: string }> {
   const started = Date.now();
   try {
     const value = await fn();
     return { ok: true, ms: Date.now() - started, value };
   } catch (err) {
-    return { ok: false, ms: Date.now() - started, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      ms: Date.now() - started,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -104,7 +110,10 @@ export function healthRoutes(): Hono<AppEnv> {
     const dbStatus: ComponentStatus = dbProbe.ok ? 'ok' : 'down';
     const redisStatus: ComponentStatus = redisProbe.ok && redisProbe.value ? 'ok' : 'down';
 
-    const anyDown = dbStatus === 'down' || redisStatus === 'down' || nets.some((n) => chains[n].status === 'down');
+    const anyDown =
+      dbStatus === 'down' ||
+      redisStatus === 'down' ||
+      nets.some((n) => chains[n].status === 'down');
     const anyDegraded = nets.some((n) => chains[n].status === 'degraded');
     const status: ComponentStatus = anyDown ? 'down' : anyDegraded ? 'degraded' : 'ok';
 

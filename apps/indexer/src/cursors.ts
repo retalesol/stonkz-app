@@ -55,7 +55,11 @@ export class ReplayCursors {
   ) {}
 
   async read(net: Net): Promise<CursorState> {
-    const [row] = await this.db.select().from(indexerCursors).where(eq(indexerCursors.net, net)).limit(1);
+    const [row] = await this.db
+      .select()
+      .from(indexerCursors)
+      .where(eq(indexerCursors.net, net))
+      .limit(1);
     if (!row) throw new Error(`indexer cursor for ${net} is missing — migration 0001 seeds it`);
     return {
       net,
@@ -75,8 +79,13 @@ export class ReplayCursors {
   }
 
   async readAll(): Promise<Record<Net, CursorState>> {
-    const [sol, rh, base] = await Promise.all([this.read('SOL'), this.read('RH'), this.read('BASE')]);
-    return { SOL: sol, RH: rh, BASE: base };
+    const [sol, rh, base, arc] = await Promise.all([
+      this.read('SOL'),
+      this.read('RH'),
+      this.read('BASE'),
+      this.read('ARC'),
+    ]);
+    return { SOL: sol, RH: rh, BASE: base, ARC: arc };
   }
 
   /**
@@ -100,7 +109,9 @@ export class ReplayCursors {
           ? {}
           : { confirmedHead: Math.max(current.confirmedHead, opts.confirmedHead) }),
         ...(opts.positionHash === undefined ? {} : { positionHash: opts.positionHash }),
-        ...(opts.positionSignature === undefined ? {} : { positionSignature: opts.positionSignature }),
+        ...(opts.positionSignature === undefined
+          ? {}
+          : { positionSignature: opts.positionSignature }),
         ...(opts.sawEvent ? { lastEventAt: nowDate } : {}),
         failedAttempts: 0,
         lastError: null,
@@ -128,9 +139,7 @@ export class ReplayCursors {
         position,
         positionHash: null,
         positionSignature: null,
-        ...(opts.reorg
-          ? { reorgs: sql`${indexerCursors.reorgs} + 1`, lastReorgAt: nowDate }
-          : {}),
+        ...(opts.reorg ? { reorgs: sql`${indexerCursors.reorgs} + 1`, lastReorgAt: nowDate } : {}),
         updatedAt: nowDate,
       })
       .where(eq(indexerCursors.net, net));

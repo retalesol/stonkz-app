@@ -1,5 +1,12 @@
 import type { Net } from '@stonkz/shared';
-import { CHANNELS, type BoardEvent, type ChatEvent, type TapeEvent, type TokenEvent, type UserEvent } from '../redis/channels.js';
+import {
+  CHANNELS,
+  type BoardEvent,
+  type ChatEvent,
+  type TapeEvent,
+  type TokenEvent,
+  type UserEvent,
+} from '../redis/channels.js';
 import type { RedisLike } from '../redis/types.js';
 
 /**

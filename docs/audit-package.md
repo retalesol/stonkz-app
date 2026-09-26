@@ -13,10 +13,10 @@ closed.
 
 ## 1. Scope
 
-| Chain | Path | Contracts / modules | Source LOC |
-|---|---|---|---|
-| Robinhood Chain (EVM, 4663) | `programs/evm/src` | `StonkzLaunchpad`, `StonkzRouter`, `StonkzToken`, `UniswapV2Migrator`, `CurveMath`, `SafeErc20`, `ChainlinkPriceSource`, `PushPriceSource`, `RobinhoodChain` config | ~2,110 |
-| Solana (Anchor) | `programs/solana/programs/launchpad/src` | `create_token`, `trade`, `graduate`, `stake`, `claim`, `admin`, `math`, `state` | ~4,200 (incl. in-tree tests) |
+| Chain                       | Path                                     | Contracts / modules                                                                                                                                                 | Source LOC                   |
+| --------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Robinhood Chain (EVM, 4663) | `programs/evm/src`                       | `StonkzLaunchpad`, `StonkzRouter`, `StonkzToken`, `UniswapV2Migrator`, `CurveMath`, `SafeErc20`, `ChainlinkPriceSource`, `PushPriceSource`, `RobinhoodChain` config | ~2,110                       |
+| Solana (Anchor)             | `programs/solana/programs/launchpad/src` | `create_token`, `trade`, `graduate`, `stake`, `claim`, `admin`, `math`, `state`                                                                                     | ~4,200 (incl. in-tree tests) |
 
 Also in scope, because it constructs calldata the contracts trust structurally:
 
@@ -70,13 +70,13 @@ flowchart LR
 
 Five separate roles, deliberately not collapsible. See `docs/deployment.md` §0.
 
-| Role | Can | Cannot |
-|---|---|---|
-| Admin | Pause, set oracle/migrator config | Move any money |
-| Protocol withdraw authority | Withdraw the 20% | Pause, or reach the ops vault |
-| Ops withdraw authority | Withdraw the 10% | Pause, or reach protocol revenue |
-| Migration authority | Trigger graduation migration | Hold the LP, or take the reserves |
-| Oracle authority (Solana) | Push base prices | Anything else |
+| Role                        | Can                               | Cannot                            |
+| --------------------------- | --------------------------------- | --------------------------------- |
+| Admin                       | Pause, set oracle/migrator config | Move any money                    |
+| Protocol withdraw authority | Withdraw the 20%                  | Pause, or reach the ops vault     |
+| Ops withdraw authority      | Withdraw the 10%                  | Pause, or reach protocol revenue  |
+| Migration authority         | Trigger graduation migration      | Hold the LP, or take the reserves |
+| Oracle authority (Solana)   | Push base prices                  | Anything else                     |
 
 Both deploy scripts refuse a deployment where protocol and ops authorities are
 the same key, or the admin equals either.
@@ -88,7 +88,7 @@ the same key, or the admin equals either.
 Ranked by what would hurt most if wrong.
 
 1. **The LP burn is the product's central claim.** On Solana,
-   `migrate_liquidity` CPIs into Raydium CPMM using *this program's own PDA* as
+   `migrate_liquidity` CPIs into Raydium CPMM using _this program's own PDA_ as
    a non-canonical `pool_state` (so nobody can pre-seed it), routes the deposit
    through an escrow PDA that acts as Raydium's `creator`, and burns 100% of
    the minted LP before control returns to any signer. Please attack: can any
@@ -129,7 +129,7 @@ Ranked by what would hurt most if wrong.
   by the operator, not publicly verifiable. Known; odds are not marketed.
   Off-chain, listed only so it isn't reported as a discovery.
 - **`$STONKZ` Phase 7 does not exist.** No buy-burn, no POL, no locker. The
-  ops vault only accrues. Please don't audit what isn't there; please *do*
+  ops vault only accrues. Please don't audit what isn't there; please _do_
   flag anything in the accrual that would make a future sweep unsafe.
 - **`SafeErc20` is a minimal in-tree library**, not OpenZeppelin (no OZ in
   `lib/`). Review it as first-party code.

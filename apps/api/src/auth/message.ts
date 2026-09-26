@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 
 /**
  * One message builder for both chains.
@@ -20,7 +20,8 @@ export interface SignInMessageParams {
   chainId: string;
 }
 
-export const SIWS_STATEMENT = 'Sign in to Stonkz. This request will not trigger a blockchain transaction or cost any gas.';
+export const SIWS_STATEMENT =
+  'Sign in to Stonkz. This request will not trigger a blockchain transaction or cost any gas.';
 
 /**
  * CAIP-2 chain id written into the SIWS/SIWE message.
@@ -29,12 +30,11 @@ export const SIWS_STATEMENT = 'Sign in to Stonkz. This request will not trigger 
  */
 export function chainLabel(
   net: Net,
-  evmChainIds: { RH: number; BASE: number },
+  evmChainIds: Record<EvmNet, number>,
   solanaSiwsChainId = 'solana:mainnet',
 ): string {
   if (net === 'SOL') return solanaSiwsChainId;
-  if (net === 'BASE') return String(evmChainIds.BASE);
-  return String(evmChainIds.RH);
+  return String(evmChainIds[net]);
 }
 
 export function buildSignInMessage(p: SignInMessageParams): string {

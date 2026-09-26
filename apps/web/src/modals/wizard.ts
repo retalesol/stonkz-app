@@ -44,9 +44,12 @@ const WIZ = { step: 0 };
 
 function wizArt(k: string, tag: string): Html {
   const src = WIZART[k];
-  return html`<div class="wiz-art"
-    >${src ? html`<img src="${attr(src)}" alt="">` : html`<canvas data-art="${attr(k)}"></canvas>`}<span
-      class="tagname">${tag}</span></div>`;
+  return html`<div class="wiz-art">
+    ${src ? html`<img src="${attr(src)}" alt="" />` : html`<canvas data-art="${attr(k)}"></canvas>`}<span
+      class="tagname"
+      >${tag}</span
+    >
+  </div>`;
 }
 
 function renderWiz(): void {
@@ -55,11 +58,22 @@ function renderWiz(): void {
   must('#wiz-count').textContent = 'STEP ' + (i + 1) + ' OF 3';
   render(
     must('#wizBody'),
-    html`${wizArt(st.k, st.tag)}<div><div class="wiz-step">${st.t}</div><div class="wiz-sub">${st.s}</div></div
-      ><div class="wiz-foot"><span class="wiz-dots">${WIZ_STEPS.map(
-        (_, n) => html`<i class="wiz-dot${n === i ? ' on' : n < i ? ' done' : ''}"></i>`,
-      )}</span><span class="grow"></span><button class="wiz-btn" id="wiz-back"${i ? '' : ' disabled'}>BACK</button
-      ><button class="wiz-btn go" id="wiz-next">${i === WIZ_STEPS.length - 1 ? 'FINISH' : 'NEXT'}</button></div>`,
+    html`${wizArt(st.k, st.tag)}
+      <div>
+        <div class="wiz-step">${st.t}</div>
+        <div class="wiz-sub">${st.s}</div>
+      </div>
+      <div class="wiz-foot">
+        <span class="wiz-dots"
+          >${WIZ_STEPS.map(
+            (_, n) => html`<i class="wiz-dot${n === i ? ' on' : n < i ? ' done' : ''}"></i>`,
+          )}</span
+        ><span class="grow"></span
+        ><button class="wiz-btn" id="wiz-back" ${i ? '' : ' disabled'}>BACK</button
+        ><button class="wiz-btn go" id="wiz-next">
+          ${i === WIZ_STEPS.length - 1 ? 'FINISH' : 'NEXT'}
+        </button>
+      </div>`,
   );
   paintWizArt(must('#wizBody'));
   refreshScrim('#wizScrim');
@@ -91,9 +105,17 @@ function wizFinish(): void {
   must('#wiz-count').textContent = 'VERY NICE';
   render(
     must('#wizBody'),
-    html`${wizArt('finish', 'STONKZ')}<div class="wiz-fin"><div class="big-line">VERY NICE!</div
-      ><div class="sub">THAT IS THE WHOLE GAME. FIND A GEM, APE RESPONSIBLY, AND REMEMBER NONE OF THIS IS REAL MONEY.</div></div
-      ><div class="wiz-foot"><span class="grow"></span><button class="wiz-btn go" id="wiz-done">LETS GO</button></div>`,
+    html`${wizArt('finish', 'STONKZ')}
+      <div class="wiz-fin">
+        <div class="big-line">VERY NICE!</div>
+        <div class="sub">
+          THAT IS THE WHOLE GAME. FIND A GEM, APE RESPONSIBLY, AND REMEMBER NONE OF THIS IS REAL
+          MONEY.
+        </div>
+      </div>
+      <div class="wiz-foot">
+        <span class="grow"></span><button class="wiz-btn go" id="wiz-done">LETS GO</button>
+      </div>`,
   );
   paintWizArt(must('#wizBody'));
   refreshScrim('#wizScrim');

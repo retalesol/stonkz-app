@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
-import { nativeUnit, parseNet } from '@stonkz/shared';
+import { isEvm, nativeUnit, parseNet } from '@stonkz/shared';
 import { limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
+import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { SolanaRpc } from '../chain/solana.js';
 import { aggregatorFor, composeQuote } from '../router/compose.js';
 import { RouterError } from '../router/errors.js';
+import { assertUnderMaxTradeUsd } from '../router/max-trade.js';
 import {
   reserveFingerprint,
   syncCurveReserves,
@@ -23,9 +25,10 @@ function asEthCaller(rpc: unknown): EthCaller | undefined {
 function asSolanaAccountSource(rpc: unknown): SolanaAccountSource | undefined {
   if (rpc instanceof SolanaRpc) return rpc;
   const candidate = rpc as Partial<SolanaAccountSource>;
-  return typeof candidate.getAccountDataBase64 === 'function' ? (candidate as SolanaAccountSource) : undefined;
+  return typeof candidate.getAccountDataBase64 === 'function'
+    ? (candidate as SolanaAccountSource)
+    : undefined;
 }
-
 
 /**
  * `GET /tokens/:sym/quote?side=&amount=` — plan step 82.
@@ -45,7 +48,10 @@ export function quoteRoutes(): Hono<AppEnv> {
     const amount = Number.parseFloat(c.req.query('amount') ?? '');
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      return c.json({ error: 'bad_request', detail: 'amount must be a positive native amount' }, 400);
+      return c.json(
+        { error: 'bad_request', detail: 'amount must be a positive native amount' },
+        400,
+      );
     }
 
     const mintQ = c.req.query('mint')?.trim() || undefined;
@@ -55,8 +61,18 @@ export function quoteRoutes(): Hono<AppEnv> {
     const synced = await syncCurveReserves({
       db: deps.db,
       row: row as TokenRow,
-      rh: { eth: asEthCaller(deps.rpcs.RH), launchpad: deps.env.rhLaunchpadAddress },
-      sol: { rpc: asSolanaAccountSource(deps.rpcs.SOL), programId: deps.env.solanaLaunchpadProgramId },
+      ...(isEvm(net)
+        ? {
+            evm: {
+              eth: asEthCaller(deps.rpcs[net]),
+              launchpad: evmLaunchpadAddress(deps.env, net),
+            },
+          }
+        : {}),
+      sol: {
+        rpc: asSolanaAccountSource(deps.rpcs.SOL),
+        programId: deps.env.solanaLaunchpadProgramId,
+      },
     });
 
     try {
@@ -73,10 +89,18 @@ export function quoteRoutes(): Hono<AppEnv> {
           const now = deps.now();
           const native = nativeUnit(net);
           const usdPrice = await deps.oracle.nativeUsd(native).catch(() => null);
+          // Per-net USD cap (Arc: 25 USD of real funds). A buy's `amount` is
+          // the native leg; a sell's native leg is only known after compose.
+          if (side === 'buy') assertUnderMaxTradeUsd(net, amount, usdPrice);
           const aggregatorVenue = aggregatorFor(net, synced.baseSymbol);
-          const aggregator = aggregatorVenue === 'JUPITER' ? deps.jupiter : aggregatorVenue === 'UNISWAP' ? deps.uniswap : null;
+          const aggregator =
+            aggregatorVenue === 'JUPITER'
+              ? deps.jupiter
+              : aggregatorVenue === 'UNISWAP'
+                ? deps.uniswap
+                : null;
 
-          return composeQuote({
+          const quote = await composeQuote({
             net,
             side,
             amount,
@@ -85,6 +109,8 @@ export function quoteRoutes(): Hono<AppEnv> {
             now,
             aggregator,
           });
+          if (side === 'sell') assertUnderMaxTradeUsd(net, quote.amountOut, usdPrice);
+          return quote;
         },
       );
 

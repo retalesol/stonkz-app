@@ -1,9 +1,5 @@
-import {
-  deriveCurve,
-  freshState,
-  type CurveParams,
-  type CurveState,
-} from '@stonkz/curve-sim';
+import { isEvm, type Net } from '@stonkz/shared';
+import { deriveCurve, freshState, type CurveParams, type CurveState } from '@stonkz/curve-sim';
 
 /**
  * The slice of a `tokens` row the curve math reads. A structural subset
@@ -106,8 +102,10 @@ export function deriveCurveColumns(
   basePrice1e6: bigint,
   baseDecimals: number,
   tokenDecimals: number,
+  /** Which chain will hold the curve: EVM nets skip Solana's u64 ceiling. */
+  net: Net = 'SOL',
 ): { params: CurveParams; state: CurveState; columns: CurveStateColumns } | null {
-  const params = deriveCurve(supplyAtoms, basePrice1e6, baseDecimals);
+  const params = deriveCurve(supplyAtoms, basePrice1e6, baseDecimals, { evm: isEvm(net) });
   if (!params) return null;
   const state = freshState(params);
   return {
@@ -129,6 +127,8 @@ export function deriveCurveColumns(
 }
 
 /** Columns to persist after a fill mutates the real reserves. */
-export function nextStateColumns(next: CurveState): Pick<CurveStateColumns, 'curveRealBase' | 'curveRealToken'> {
+export function nextStateColumns(
+  next: CurveState,
+): Pick<CurveStateColumns, 'curveRealBase' | 'curveRealToken'> {
   return { curveRealBase: next.realBase.toString(), curveRealToken: next.realToken.toString() };
 }

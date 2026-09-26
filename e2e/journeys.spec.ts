@@ -203,7 +203,9 @@ test('sort chips reorder the board without changing which coins are on it', asyn
   const symsIn = async (laneSel: string): Promise<string[]> =>
     page
       .locator(`${laneSel} .coin`)
-      .evaluateAll((els) => els.map((el) => el.getAttribute('data-sym')).filter((s): s is string => s !== null));
+      .evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-sym')).filter((s): s is string => s !== null),
+      );
 
   const before = new Set(await symsIn('#lane-new'));
   await page.click('.filters .chip[data-sort="mc"]');

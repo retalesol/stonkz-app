@@ -1,6 +1,10 @@
 import type { AggregatorQuote, AggregatorQuoteRequest } from './aggregator.js';
 import { AggregatorFeeDetectedError, NoRouteError } from './errors.js';
-import type { JupiterClient, JupiterQuoteResponseRaw, JupiterSwapInstructionsResponse } from './jupiter.js';
+import type {
+  JupiterClient,
+  JupiterQuoteResponseRaw,
+  JupiterSwapInstructionsResponse,
+} from './jupiter.js';
 import type { UniswapClient, UniswapQuoteResponseRaw, UniswapSwapResponseRaw } from './uniswap.js';
 
 /**
@@ -57,7 +61,8 @@ export class FakeJupiterClient implements JupiterClient {
   }
 
   async quote(req: AggregatorQuoteRequest): Promise<AggregatorQuote> {
-    if (this.failing) throw new NoRouteError(req.inMint, req.outMint, new Error('simulated outage'));
+    if (this.failing)
+      throw new NoRouteError(req.inMint, req.outMint, new Error('simulated outage'));
     if (this.noRouteFor === routeKey(req.inMint, req.outMint)) {
       throw new NoRouteError(req.inMint, req.outMint);
     }
@@ -65,7 +70,10 @@ export class FakeJupiterClient implements JupiterClient {
     if (!route) throw new NoRouteError(req.inMint, req.outMint);
 
     if (this.forcedPlatformFeeBps !== 0) {
-      throw new AggregatorFeeDetectedError('JUPITER', `platformFee.feeBps=${this.forcedPlatformFeeBps} (fixture)`);
+      throw new AggregatorFeeDetectedError(
+        'JUPITER',
+        `platformFee.feeBps=${this.forcedPlatformFeeBps} (fixture)`,
+      );
     }
 
     const outAtoms = BigInt(Math.floor(Number(req.inAmountAtoms) * route.rate));
@@ -76,7 +84,10 @@ export class FakeJupiterClient implements JupiterClient {
       inAmountAtoms: req.inAmountAtoms,
       outAmountAtoms: outAtoms,
       priceImpactPct: route.impactPct ?? 0,
-      raw: { fixture: true, inMint: req.inMint, outMint: req.outMint } satisfies Record<string, unknown>,
+      raw: { fixture: true, inMint: req.inMint, outMint: req.outMint } satisfies Record<
+        string,
+        unknown
+      >,
     };
   }
 
@@ -131,7 +142,8 @@ export class FakeUniswapClient implements UniswapClient {
   }
 
   async quote(req: AggregatorQuoteRequest): Promise<AggregatorQuote> {
-    if (this.failing) throw new NoRouteError(req.inMint, req.outMint, new Error('simulated outage'));
+    if (this.failing)
+      throw new NoRouteError(req.inMint, req.outMint, new Error('simulated outage'));
     if (this.noRouteFor === routeKey(req.inMint, req.outMint)) {
       throw new NoRouteError(req.inMint, req.outMint);
     }
@@ -139,7 +151,10 @@ export class FakeUniswapClient implements UniswapClient {
     if (!route) throw new NoRouteError(req.inMint, req.outMint);
 
     if (this.forcedPortionBips !== 0) {
-      throw new AggregatorFeeDetectedError('UNISWAP', `portionBips=${this.forcedPortionBips} (fixture)`);
+      throw new AggregatorFeeDetectedError(
+        'UNISWAP',
+        `portionBips=${this.forcedPortionBips} (fixture)`,
+      );
     }
 
     const outAtoms = BigInt(Math.floor(Number(req.inAmountAtoms) * route.rate));
@@ -168,7 +183,10 @@ export class FakeUniswapClient implements UniswapClient {
       swap: {
         to: '0x8876789976DECbFCbbbe364623c63652dB8C0904', // Universal Router, per docs/robinhood-chain.md row 21
         data: `0x${Buffer.from(`uniswap-fixture-swap:${quote.quote.input.token}->${quote.quote.output.token}`).toString('hex')}`,
-        value: quote.quote.input.token === '0x0000000000000000000000000000000000000000' ? quote.quote.input.amount : '0',
+        value:
+          quote.quote.input.token === '0x0000000000000000000000000000000000000000'
+            ? quote.quote.input.amount
+            : '0',
         from: quote.quote.swapper,
       },
     };

@@ -26,9 +26,9 @@ not their original ETH.
 separate transactions (`router/evm-tx.ts`'s `EvmTradePlan`), every response
 carrying `atomic: false` and a `warning` string spelling out that consequence:
 
-| Side | Base = WETH | Base = anything else |
-|---|---|---|
-| Buy | `WETH.deposit` → `approve` → `buy` | Uniswap swap (recipient = trader) → `approve` → `buy` |
+| Side | Base = WETH                          | Base = anything else                                   |
+| ---- | ------------------------------------ | ------------------------------------------------------ |
+| Buy  | `WETH.deposit` → `approve` → `buy`   | Uniswap swap (recipient = trader) → `approve` → `buy`  |
 | Sell | `approve` → `sell` → `WETH.withdraw` | `approve` → `sell` → Uniswap swap (recipient = trader) |
 
 This was a usable placeholder, not a fix, and it should not be presented to
@@ -105,7 +105,7 @@ only for an intermediate hop inside a multi-command sequence that the same
 buy, and the `V3_SWAP_EXACT_IN` step of an aggregator-hop sell).
 `router/universal-router.test.ts` decodes every input blob this module builds
 and asserts the recipient is always one of the two sentinels, and that the
-*final* leg of both the direct-pair and aggregator-hop paths is `MSG_SENDER`
+_final_ leg of both the direct-pair and aggregator-hop paths is `MSG_SENDER`
 specifically — the same mis-encoding `programs/evm/test/Router.t.sol` pins on
 the contract side.
 
@@ -142,7 +142,7 @@ aggregator hop" invariant is enforced on-chain (`AggregatorShortfall`) and not
 only by the API's `portionBips` assertion. `maxSlippageBps` is the caller's
 `Settings.slip`, clamped to the contract's `MAX_SLIPPAGE_BPS` ceiling (500) so
 a wide slippage setting produces a working, bounded call instead of a
-guaranteed `SlippageTooWide` revert — clamping only *tightens* the on-chain
+guaranteed `SlippageTooWide` revert — clamping only _tightens_ the on-chain
 tolerance relative to what the trader asked for, never widens it. On the
 direct-pair path (an exact 1:1 wrap/unwrap) `maxSlippageBps` is `0`: there is
 no market risk to tolerate.
@@ -153,7 +153,7 @@ no market risk to tolerate.
   floor) — already distinct in `composeCurveTrade`'s existing
   `curveMinOutAtoms`, no new field needed.
 - **Sell:** this is the one place `composeCurveTrade`'s pre-existing
-  `curveMinOutAtoms` was computed in the *wrong* terms for this purpose — it
+  `curveMinOutAtoms` was computed in the _wrong_ terms for this purpose — it
   floors the trade's **final native output** (post-aggregator-conversion),
   which is right for `minEthOut` but was the only number available for what
   should have been a **base-terms** floor on the curve leg alone. Two new
@@ -197,7 +197,7 @@ three RH response shapes:
    standing allowance. Walked as an explicit two-signature flow: sign the
    EIP-712 typed data, resend the prepare call with `body.permit`, then sign
    the returned atomic call. Kept visually distinct from case 3 so a
-   two-signature *atomic* trade is never presented as a non-atomic one.
+   two-signature _atomic_ trade is never presented as a non-atomic one.
 3. **`{ atomic: false, steps: EvmStep[], warning }`** — the fallback, walked in
    order by `modals/steps.ts` with the `warning` surfaced to the user, for the
    two operator-config gaps listed at the top of this document.

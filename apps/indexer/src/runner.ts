@@ -45,7 +45,14 @@ export interface PassResult {
 }
 
 function emptyReport(): IngestReport {
-  return { accepted: 0, duplicates: 0, rejected: [], xpAwarded: 0, achievementsUnlocked: [], positions: {} };
+  return {
+    accepted: 0,
+    duplicates: 0,
+    rejected: [],
+    xpAwarded: 0,
+    achievementsUnlocked: [],
+    positions: {},
+  };
 }
 
 /**
@@ -193,7 +200,8 @@ export class IndexerRunner {
     position: number,
     recordedHash: string | null,
   ): Promise<PassResult | null> {
-    if (!this.opts.rollback || !source.blockIdentity || recordedHash === null || position <= 0) return null;
+    if (!this.opts.rollback || !source.blockIdentity || recordedHash === null || position <= 0)
+      return null;
 
     const current = await source.blockIdentity(position);
     if (current === null || current === recordedHash) return null;
@@ -246,7 +254,12 @@ export class IndexerRunner {
    * is a chain that never advances again, and the dead letter records exactly
    * what to replay with the backfill CLI once the cause is fixed.
    */
-  private async handleFailure(net: Net, from: number, to: number, err: unknown): Promise<PassResult> {
+  private async handleFailure(
+    net: Net,
+    from: number,
+    to: number,
+    err: unknown,
+  ): Promise<PassResult> {
     const message = err instanceof Error ? err.message : String(err);
     const attempts = await this.opts.cursors.recordFailure(net, message);
 
@@ -301,9 +314,7 @@ export class IndexerRunner {
    * other chain's results are still returned.
    */
   async drain(maxPasses = 100): Promise<PassResult[]> {
-    const settled = await Promise.allSettled(
-      ALL_NETS.map((net) => this.drainNet(net, maxPasses)),
-    );
+    const settled = await Promise.allSettled(ALL_NETS.map((net) => this.drainNet(net, maxPasses)));
 
     const results: PassResult[] = [];
     for (const [i, outcome] of settled.entries()) {
@@ -326,7 +337,7 @@ export class IndexerRunner {
    * current price, not of any single event, so it has to run on a timer.
    */
   async sweepAchievements(): Promise<Record<Net, string[]>> {
-    const out: Record<Net, string[]> = { SOL: [], RH: [], BASE: [] };
+    const out: Record<Net, string[]> = { SOL: [], RH: [], BASE: [], ARC: [] };
     for (const net of ALL_NETS) {
       try {
         const price = await this.opts.oracle.nativeUsd(nativeUnit(net));

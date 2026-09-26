@@ -22,7 +22,9 @@ function fakeCoinsReturn(realBase: bigint, realToken: bigint): string {
 
 describe('parseCoinsReserves', () => {
   it('reads realBase/realToken from the coins tuple word layout', () => {
-    const parsed = parseCoinsReserves(fakeCoinsReturn(16_067_767n, 796_287_110_083_350_154_883_749_421n));
+    const parsed = parseCoinsReserves(
+      fakeCoinsReturn(16_067_767n, 796_287_110_083_350_154_883_749_421n),
+    );
     expect(parsed).toEqual({
       realBase: '16067767',
       realToken: '796287110083350154883749421',
@@ -97,7 +99,11 @@ describe('syncRhCurveReserves', () => {
 describe('fetchRhCurveReserves', () => {
   it('returns null when launchpad is unset', async () => {
     await expect(
-      fetchRhCurveReserves({ ethCall: async () => '0x' }, '0x0000000000000000000000000000000000000000', '0x11'),
+      fetchRhCurveReserves(
+        { ethCall: async () => '0x' },
+        '0x0000000000000000000000000000000000000000',
+        '0x11',
+      ),
     ).resolves.toBeNull();
   });
 });

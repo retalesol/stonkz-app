@@ -190,7 +190,9 @@ export class SolanaChainSource implements EventSource {
 
     const inner = tx.meta?.innerInstructions;
     if (inner && inner.length > 0) {
-      const keys = tx.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey));
+      const keys = tx.transaction.message.accountKeys.map((k) =>
+        typeof k === 'string' ? k : k.pubkey,
+      );
       for (const bytes of cpiEventPayloads(inner, keys, this.opts.programId)) {
         const decoded = launchpadEventCoder.decodeBytes(bytes);
         if (decoded) out.push(decoded.data);
@@ -209,7 +211,10 @@ export class SolanaChainSource implements EventSource {
    * confirmation buffer, or simply newer than this batch — is skipped and
    * picked up by a later pass.
    */
-  private async collectSignatures(fromExclusive: number, toInclusive: number): Promise<SignatureInfo[]> {
+  private async collectSignatures(
+    fromExclusive: number,
+    toInclusive: number,
+  ): Promise<SignatureInfo[]> {
     const collected: SignatureInfo[] = [];
     let before: string | undefined;
 
@@ -245,17 +250,22 @@ export class SolanaChainSource implements EventSource {
       // makes `nativeNotional` return 0 rather than a number derived from a
       // stale or invented price, and the event still records the exact base
       // and USD legs.
-      this.opts.logger.warn('native price unavailable; non-native-base fills will record 0 native', {
-        net: 'SOL',
-        err: err instanceof Error ? err.message : String(err),
-      });
+      this.opts.logger.warn(
+        'native price unavailable; non-native-base fills will record 0 native',
+        {
+          net: 'SOL',
+          err: err instanceof Error ? err.message : String(err),
+        },
+      );
       return 0;
     }
   }
 }
 
 function ascending(infos: SignatureInfo[]): SignatureInfo[] {
-  return [...infos].sort((a, b) => (a.slot !== b.slot ? a.slot - b.slot : a.signature < b.signature ? -1 : 1));
+  return [...infos].sort((a, b) =>
+    a.slot !== b.slot ? a.slot - b.slot : a.signature < b.signature ? -1 : 1,
+  );
 }
 
 /**

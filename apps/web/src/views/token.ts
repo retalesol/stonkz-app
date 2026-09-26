@@ -4,6 +4,7 @@ import {
   SUPPLY,
   type Quote,
   type QuoteHop,
+  type TokenFees,
   ago,
   cbLeft,
   curve,
@@ -18,6 +19,7 @@ import {
   usd,
   vol24,
 } from '@stonkz/shared';
+import { NET_INFO, isEvm, nativeUnit as nativeUnitOf, type Net } from '@stonkz/shared';
 import { fetchChatHistory, fetchXProfile, sendChatMessage, SocialApiError } from '../api/social.js';
 import { api } from '../api/index.js';
 import { LiveApiError, subscribeChatRoom, type LiveChatFrame } from '../api/live.js';
@@ -26,12 +28,12 @@ import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isPracticeSession, isRejection } from '../wallet/index.js';
 import { showView } from '../app/view.js';
 import { drawTokenChart } from '../canvas/chart.js';
-import { pix } from '../canvas/pix.js';
+import { paintCoinArt } from '../canvas/pix.js';
 import { burst } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, clear, must, reflow } from '../lib/dom.js';
 import { ARR, DOT, MID, clock, clockSec, fmtSupply, ud } from '../lib/fmt.js';
-import { type Html, attr, html, raw, render } from '../lib/html.js';
+import { type Html, attr, html, render } from '../lib/html.js';
 import { copyText } from '../lib/clipboard.js';
 import { displayName, myDisplayName, rememberIdentity } from '../lib/identity.js';
 import { reducedMotion } from '../lib/motion.js';
@@ -44,7 +46,8 @@ import { SET } from '../state/settings.js';
 import { NATIVE_PRICE, WALLET, nativeUnit } from '../state/wallet.js';
 import { openStake } from '../modals/stake.js';
 import { setChatToken, roomOf, addChat } from './chat.js';
-import { paint } from './board.js';
+import { netPill, paint } from './board.js';
+import { connectWallet } from '../app/wallet.js';
 
 /**
  * The token page.
@@ -56,7 +59,7 @@ import { paint } from './board.js';
 
 export interface TokenViewState {
   c: SimCoin | null;
-  tab: 'trades' | 'holders' | 'comments';
+  tab: 'trades' | 'holders' | 'comments' | 'fees';
   side: 'BUY' | 'SELL';
   range: number;
   cross: number | null;
@@ -65,7 +68,15 @@ export interface TokenViewState {
   qSeq: number;
 }
 
-export const TV: TokenViewState = { c: null, tab: 'trades', side: 'BUY', range: 90, cross: null, qTimer: 0, qSeq: 0 };
+export const TV: TokenViewState = {
+  c: null,
+  tab: 'trades',
+  side: 'BUY',
+  range: 90,
+  cross: null,
+  qTimer: 0,
+  qSeq: 0,
+};
 
 /* ------------------------------- markup ----------------------------------- */
 
@@ -86,6 +97,26 @@ function tradeHint(c: SimCoin): string {
   return 'LIVE CURVE — YOUR WALLET SIGNS AND BROADCASTS THE TRADE.';
 }
 
+/** True when the connected wallet cannot sign for this coin's chain. */
+function crossChain(c: SimCoin): boolean {
+  return WALLET.on && (c.net ?? 'SOL') !== WALLET.net;
+}
+
+function crossChainHTML(c: SimCoin): Html {
+  if (!crossChain(c)) return html``;
+  const here = NET_INFO[c.net ?? 'SOL'];
+  const mine = NET_INFO[WALLET.net];
+  return html`<div class="xchain" role="status">
+    <span class="xl">WRONG CHAIN</span>
+    <span class="xs"
+      >THIS COIN LIVES ON <b>${here.name}</b>. YOUR WALLET IS CONNECTED TO <b>${mine.name}</b>, SO
+      IT CANNOT SIGN HERE.</span
+    >
+    <span class="grow"></span>
+    <button type="button" class="custbtn" id="xchain-switch">SWITCH TO ${here.short}</button>
+  </div>`;
+}
+
 function tokenHTML(c: SimCoin): Html {
   const grad = c.lane === 'grad';
   const unit = nativeUnit();
@@ -94,57 +125,118 @@ function tokenHTML(c: SimCoin): Html {
   const caFull = c.mint || '';
   return html`<div class="tk-bar">
       <button class="back" id="tk-back">${ARR} BOARD</button
-      ><canvas width="128" height="128" aria-hidden="true"></canvas
-      ><div class="tk-id"><h1>${c.sym}<small>${c.name}</small></h1
-        ><div class="sub">${c.base
-          ? html`PAIR <b>${c.sym}/${c.base}</b> ${DOT} SUPPLY <b>${fmtSupply(c.supply || SUPPLY)}</b> ${DOT} FEE
-            <b>${Number(c.tfee).toFixed(1)}%</b> ${DOT} `
-          : ''}CA ${caFull
-            ? html`<b class="addrlink" title="${attr(caFull)}" data-addr="${attr(caFull)}">${ca}</b>`
-            : html`<b class="dm">${ca}</b>`} ${DOT} DEV
-          <b class="addrlink" data-addr="${attr(c.dev)}">${c.dev.length > 12 ? c.dev.slice(0, 4) + '…' + c.dev.slice(-4) : c.dev}</b> ${DOT} ${ago(c.age)} ${DOT}
-          <span class="${grad ? 'gd' : 'up'}" id="s-state">${grad ? 'BONDED' : 'ACTIVE'}</span></div></div
-      ><div class="tk-stats">
-        <div><span class="lbl">PRICE</span><span class="v" id="s-px">${px(price(c))}</span></div
-        ><div><span class="lbl">MARKET CAP</span><span class="v am" id="s-mc">${usd(c.mc)}</span></div
-        ><div><span class="lbl">24H</span><span class="v ${ud(c.chg)}" id="s-chg">${pct(c.chg)}</span></div
-        ><div><span class="lbl">VOL 24H</span><span class="v" id="s-vol">${usd(vol24(c))}</span></div
-        ><div><span class="lbl">LIQUIDITY</span><span class="v" id="s-liq">${usd(liq(c))}</span></div
-        ><div><span class="lbl">HOLDERS</span><span class="v" id="s-hold">${num(c.hold)}</span></div>
+      ><canvas width="128" height="128" aria-hidden="true"></canvas>
+      <div class="tk-id">
+        <h1>${c.sym}<small>${c.name}</small></h1>
+        <div class="sub">
+          ${
+            c.base
+              ? html`PAIR <b>${c.sym}/${c.base}</b> ${DOT} SUPPLY
+                  <b>${fmtSupply(c.supply || SUPPLY)}</b> ${DOT} FEE
+                  <b>${Number(c.tfee).toFixed(1)}%</b> ${DOT} `
+              : ''
+          }CA
+          ${
+            caFull
+              ? html`<b class="addrlink" title="${attr(caFull)}" data-addr="${attr(caFull)}"
+                  >${ca}</b
+                >`
+              : html`<b class="dm">${ca}</b>`
+          }
+          ${DOT} DEV
+          <b class="addrlink" data-addr="${attr(c.dev)}"
+            >${c.dev.length > 12 ? c.dev.slice(0, 4) + '…' + c.dev.slice(-4) : c.dev}</b
+          >
+          ${DOT} ${ago(c.age)} ${DOT} ON ${netPill(c.net ?? 'SOL')} ${DOT}
+          <span class="${grad ? 'gd' : 'up'}" id="s-state">${grad ? 'BONDED' : 'ACTIVE'}</span>
+        </div>
+      </div>
+      <div class="tk-stats">
+        <div><span class="lbl">PRICE</span><span class="v" id="s-px">${px(price(c))}</span></div>
+        <div>
+          <span class="lbl">MARKET CAP</span><span class="v am" id="s-mc">${usd(c.mc)}</span>
+        </div>
+        <div>
+          <span class="lbl">24H</span><span class="v ${ud(c.chg)}" id="s-chg">${pct(c.chg)}</span>
+        </div>
+        <div>
+          <span class="lbl">VOL 24H</span><span class="v" id="s-vol">${usd(vol24(c))}</span>
+        </div>
+        <div>
+          <span class="lbl">LIQUIDITY</span><span class="v" id="s-liq">${usd(liq(c))}</span>
+        </div>
+        <div><span class="lbl">HOLDERS</span><span class="v" id="s-hold">${num(c.hold)}</span></div>
       </div>
       <button class="back" id="tk-share" title="Copy link">SHARE</button>
       <button class="stakebtn" id="tk-stake">STAKE</button>
     </div>
     <div id="cbWrap">${cbBannerHTML(c)}</div>
+    <div id="xchainWrap">${crossChainHTML(c)}</div>
 
     <div class="tk-grid">
       <section class="pnl">
-        <div class="pnl-hd"><h2>Price</h2><span class="sub">${c.sym}/${pair} ${DOT} 1M CANDLES</span>
-          <div class="rt"><button class="tab" data-rg="45">45M</button><button class="tab on" data-rg="90">90M</button
-            ><button class="tab" data-rg="140">140M</button><button class="tab" data-rg="200">ALL</button></div>
+        <div class="pnl-hd">
+          <h2>Price</h2>
+          <span class="sub">${c.sym}/${pair} ${DOT} 1M CANDLES</span>
+          <div class="rt">
+            <button class="tab" data-rg="45">45M</button
+            ><button class="tab on" data-rg="90">90M</button
+            ><button class="tab" data-rg="140">140M</button
+            ><button class="tab" data-rg="200">ALL</button>
+          </div>
         </div>
-        <div class="chartbox"><canvas id="tchart"></canvas><div class="hud" id="ch-hud"></div></div>
+        <div class="chartbox">
+          <canvas id="tchart"></canvas>
+          <div class="hud" id="ch-hud"></div>
+        </div>
         <div class="curvebar">
-          <div class="pt"><span>BONDING CURVE</span><b class="am" id="cv-pct">${curve(c).toFixed(1)}%</b></div>
-          <div class="ptrack"><i id="cv-bar" class="${grad ? 'done' : ''}" style="width:${attr(curve(c))}%"></i></div>
+          <div class="pt">
+            <span>BONDING CURVE</span><b class="am" id="cv-pct">${curve(c).toFixed(1)}%</b>
+          </div>
+          <div class="ptrack">
+            <i id="cv-bar" class="${grad ? 'done' : ''}" style="width:${attr(curve(c))}%"></i>
+          </div>
           <div class="note" id="cv-note"></div>
         </div>
       </section>
 
       <section class="pnl" id="tradePnl">
-        <div class="pnl-hd"><h2>Trade</h2><span class="sub">MARKET ${DOT} ${
-          api.mode === 'live' ? (c.tradeable ? 'LIVE CURVE' : 'STAGING / INDICATIVE') : 'SIMULATED'
-        }</span></div>
+        <div class="pnl-hd">
+          <h2>Trade</h2>
+          <span class="sub"
+            >MARKET ${DOT}
+            ${
+              api.mode === 'live'
+                ? c.tradeable
+                  ? 'LIVE CURVE'
+                  : 'STAGING / INDICATIVE'
+                : 'SIMULATED'
+            }</span
+          >
+        </div>
         <div class="pnl-bd">
-          <div class="seg" id="t-side"><button type="button" data-s="BUY" class="on">BUY</button
-            ><button type="button" data-s="SELL">SELL</button></div>
-          <div><span class="lbl" id="t-amt-lbl">AMOUNT (${unit})</span
-            ><input class="fld" id="t-amt" value="${Number(SET.defBuy).toFixed(2)}" inputmode="decimal"></div>
+          <div class="seg" id="t-side">
+            <button type="button" data-s="BUY" class="on">BUY</button
+            ><button type="button" data-s="SELL">SELL</button>
+          </div>
+          <div>
+            <span class="lbl" id="t-amt-lbl">AMOUNT (${unit})</span
+            ><input
+              class="fld"
+              id="t-amt"
+              value="${Number(SET.defBuy).toFixed(2)}"
+              inputmode="decimal"
+            />
+          </div>
           <div class="amt-row" id="t-quick"></div>
           <div class="quote" id="t-quote"></div>
-          <button class="big" id="t-go"${
-            api.mode === 'live' && (!c.tradeable || c.lane === 'grad') ? ' disabled' : ''
-          }>BUY ${c.sym}</button>
+          <button
+            class="big"
+            id="t-go"
+            ${api.mode === 'live' && (!c.tradeable || c.lane === 'grad') ? ' disabled' : ''}
+          >
+            BUY ${c.sym}
+          </button>
           <div class="bal" id="t-bal"></div>
           <div class="pos" id="t-pos" hidden></div>
           <p class="hint">${tradeHint(c)}</p>
@@ -152,19 +244,33 @@ function tokenHTML(c: SimCoin): Html {
       </section>
 
       <section class="pnl">
-        <div class="pnl-hd"><h2>Activity</h2>
-          <div class="rt tabs"><button class="tab on" data-tab="trades">RECENT TRADES</button
+        <div class="pnl-hd">
+          <h2>Activity</h2>
+          <div class="rt tabs">
+            <button class="tab on" data-tab="trades">RECENT TRADES</button
             ><button class="tab" data-tab="holders">HOLDERS</button
-            ><button class="tab" data-tab="comments">COMMENTS</button></div>
+            ><button class="tab" data-tab="comments">COMMENTS</button
+            ><button class="tab" data-tab="fees">FEES</button>
+          </div>
         </div>
         <div id="tabbody"></div>
       </section>
 
       <section class="pnl">
-        <div class="pnl-hd"><h2>X Stream</h2><span class="sub" id="xSub">LOOKING UP…</span></div>
+        <div class="pnl-hd">
+          <h2>X Stream</h2>
+          <span class="sub" id="xSub">LOOKING UP…</span>
+        </div>
         <div class="pnl-bd">
-          <form class="xhandle" id="xform"><input class="fld" id="xin" value="${attr(c.x ?? '')}" maxlength="20"
-            aria-label="X account"><button class="send" type="submit">LOAD</button></form>
+          <form class="xhandle" id="xform">
+            <input
+              class="fld"
+              id="xin"
+              value="${attr(c.x ?? '')}"
+              maxlength="20"
+              aria-label="X account"
+            /><button class="send" type="submit">LOAD</button>
+          </form>
           <div id="xfeed"></div>
           <p class="xnote" id="xNote">ENTER AN @HANDLE TO LOOK UP THE REAL X PROFILE.</p>
         </div>
@@ -236,8 +342,10 @@ function hopRow(h: QuoteHop, i: number): Html {
     Number.isFinite(h.inAmount) && Number.isFinite(h.outAmount)
       ? ` ${DOT} ${fmtNativeAmt(h.inAmount)} \u2192 ${fmtNativeAmt(h.outAmount)}`
       : '';
-  return html`<div class="qrow"><span>HOP ${i + 1} ${DOT} ${venueName(h.venue)}</span
-    ><b>${h.inSymbol} ${'\u203A'} ${h.outSymbol}${sized} ${DOT} <span class="dm">${fee}</span></b></div>`;
+  return html`<div class="qrow">
+    <span>HOP ${i + 1} ${DOT} ${venueName(h.venue)}</span
+    ><b>${h.inSymbol} ${'\u203A'} ${h.outSymbol}${sized} ${DOT} <span class="dm">${fee}</span></b>
+  </div>`;
 }
 
 function quoteHTML(c: SimCoin, q: Quote): Html {
@@ -245,52 +353,66 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
   const slip = Number(SET.slip);
   const feeHop = q.hops.find((h) => h.feeAmount > 0) ?? q.hops.find((h) => h.feeBps > 0);
   const feeNative = feeHop?.feeAmount ?? q.hops.reduce((n, h) => n + h.feeAmount, 0);
-  const feeUnit = feeHop
-    ? buy
-      ? feeHop.inSymbol
-      : feeHop.outSymbol
-    : q.nativeUnit;
+  const feeUnit = feeHop ? (buy ? feeHop.inSymbol : feeHop.outSymbol) : q.nativeUnit;
   const impact = q.impactPct;
   const hops = q.hops.length > 1 ? q.hops.map((h, i) => hopRow(h, i)) : '';
   const banner = q.indicative
-    ? html`<div class="qrow"><span>STATUS</span><b class="am">INDICATIVE ${DOT} FIXTURE ONLY</b></div>`
+    ? html`<div class="qrow">
+        <span>STATUS</span><b class="am">INDICATIVE ${DOT} FIXTURE ONLY</b>
+      </div>`
     : '';
   // Amount box is always native (ETH/SOL) on buy and the launched token on sell.
   // Never label the pay/get row with `c.base` — that made 0.01 ETH read as 0.01 USDG.
   const payAmt = buy ? q.amountIn : q.amountOut;
   const payUnit = q.nativeUnit;
   const payUsd =
-    q.nativeUsd && payAmt > 0
-      ? ` ${DOT} \u2248 $${(payAmt * q.nativeUsd).toFixed(2)}`
-      : '';
+    q.nativeUsd && payAmt > 0 ? ` ${DOT} \u2248 $${(payAmt * q.nativeUsd).toFixed(2)}` : '';
   // `/quote` ships minOut with slip=0; mirror the sim and apply the trader's
   // settings so MIN RECEIVED is not identical to YOU GET / YOU RECEIVE.
   const minReceived = q.amountOut * (1 - slip / 100);
   const minLabel = buy
     ? `${num(minReceived)} ${c.sym}`
     : `${fmtNativeAmt(minReceived)} ${q.nativeUnit}`;
-  return html`${banner}<div class="qrow hero"><span>${buy ? 'YOU RECEIVE' : 'YOU SELL'}</span
-      ><b>${num(buy ? q.amountOut : (q.hops[0] as QuoteHop).inAmount)} ${c.sym}</b></div
-    ><div class="qrow"><span>${buy ? 'YOU PAY' : 'YOU GET'}</span
-      ><b>${fmtNativeAmt(payAmt)} ${payUnit}${payUsd}</b></div
-    ><div class="qrow"><span>PRICE</span><b>${px(price(c))}</b></div
-    >${hops}<div class="qrow"><span>PRICE IMPACT</span
-      ><b class="${impact < 2 ? 'up' : impact < 8 ? 'am' : 'dn'}">${impact.toFixed(2)}%</b></div
-    ><div class="qrow"><span>SLIPPAGE / FEE</span
-      ><b>${slip.toFixed(1)}% ${DOT} ${fmtNativeAmt(feeNative)} ${feeUnit}</b></div
-    ><div class="qrow"><span>NETWORK</span><b>${
-      (c.net ?? WALLET.net) === 'RH'
-        ? 'ETH GAS · PRIO/MEV N/A ON ROBINHOOD'
-        : 'PRIO ' +
-          Number(SET.prio).toFixed(4) +
-          ' ' +
-          DOT +
-          ' MEV ' +
-          (SET.mev === 'OFF' ? 'OFF' : Number(SET.mevTip).toFixed(4) + ' ' + SET.mev)
-    }</b></div
-    ><div class="qrow"><span>MIN RECEIVED</span><b>${minLabel}</b></div
-    ><div class="qrow"><span>ROUTE</span><b>${q.hops.map((h) => venueName(h.venue)).join(' \u203A ')}</b></div
-    ><div class="qfoot"><span>QUOTE</span><span class="qbar"><i id="qbar-i"></i></span><span>8S</span></div>`;
+  return html`${banner}
+    <div class="qrow hero">
+      <span>${buy ? 'YOU RECEIVE' : 'YOU SELL'}</span
+      ><b>${num(buy ? q.amountOut : (q.hops[0] as QuoteHop).inAmount)} ${c.sym}</b>
+    </div>
+    <div class="qrow">
+      <span>${buy ? 'YOU PAY' : 'YOU GET'}</span><b>${fmtNativeAmt(payAmt)} ${payUnit}${payUsd}</b>
+    </div>
+    <div class="qrow"><span>PRICE</span><b>${px(price(c))}</b></div>
+    ${hops}
+    <div class="qrow">
+      <span>PRICE IMPACT</span
+      ><b class="${impact < 2 ? 'up' : impact < 8 ? 'am' : 'dn'}">${impact.toFixed(2)}%</b>
+    </div>
+    <div class="qrow">
+      <span>SLIPPAGE / FEE</span
+      ><b>${slip.toFixed(1)}% ${DOT} ${fmtNativeAmt(feeNative)} ${feeUnit}</b>
+    </div>
+    <div class="qrow">
+      <span>NETWORK</span
+      ><b
+        >${
+          isEvm(c.net ?? WALLET.net)
+            ? nativeUnitOf(c.net ?? WALLET.net) + ' GAS · PRIO/MEV N/A ON ' + NET_INFO[c.net ?? WALLET.net].name
+            : 'PRIO ' +
+              Number(SET.prio).toFixed(4) +
+              ' ' +
+              DOT +
+              ' MEV ' +
+              (SET.mev === 'OFF' ? 'OFF' : Number(SET.mevTip).toFixed(4) + ' ' + SET.mev)
+        }</b
+      >
+    </div>
+    <div class="qrow"><span>MIN RECEIVED</span><b>${minLabel}</b></div>
+    <div class="qrow">
+      <span>ROUTE</span><b>${q.hops.map((h) => venueName(h.venue)).join(' \u203A ')}</b>
+    </div>
+    <div class="qfoot">
+      <span>QUOTE</span><span class="qbar"><i id="qbar-i"></i></span><span>8S</span>
+    </div>`;
 }
 
 /** Enough decimals for sub-0.01 ETH buys without lying as `0.00`. */
@@ -310,7 +432,9 @@ export function renderQuote(): void {
 
   const go = $('#t-go') as HTMLButtonElement | null;
   if (go) {
-    go.textContent = TV.side + ' ' + c.sym;
+    go.textContent = crossChain(c)
+      ? 'SWITCH TO ' + NET_INFO[c.net ?? 'SOL'].short + ' TO TRADE'
+      : TV.side + ' ' + c.sym;
     go.className = 'big' + (buy ? '' : ' sell');
     if (api.mode === 'live') go.disabled = !c.tradeable || c.lane === 'grad';
   }
@@ -339,7 +463,10 @@ export function renderQuote(): void {
         }
       })
       .catch((err: unknown) => {
-        render($('#t-quote'), html`<div class="qrow"><span>QUOTE</span><b class="dn">${String(err)}</b></div>`);
+        render(
+          $('#t-quote'),
+          html`<div class="qrow"><span>QUOTE</span><b class="dn">${String(err)}</b></div>`,
+        );
       });
   }
   const lbl = $('#t-amt-lbl');
@@ -353,14 +480,19 @@ export function renderQuote(): void {
       render(
         quick,
         html`${[0.1, 0.5, 1, 5].map((x) => html`<button type="button" class="qa" data-a="${attr(x)}">${x}</button>`)}<button
-          type="button" class="qa" data-a="max">MAX</button>`,
+            type="button"
+            class="qa"
+            data-a="max"
+          >
+            MAX
+          </button>`,
       );
     } else {
       render(
         quick,
         html`${[25, 50, 75].map(
-          (p) => html`<button type="button" class="qa" data-a="pct:${attr(p)}">${p}%</button>`,
-        )}<button type="button" class="qa" data-a="max">MAX</button>`,
+            (p) => html`<button type="button" class="qa" data-a="pct:${attr(p)}">${p}%</button>`,
+          )}<button type="button" class="qa" data-a="max">MAX</button>`,
       );
     }
   }
@@ -373,8 +505,8 @@ function syncPosition(c: SimCoin): void {
 
   // Live RH: overwrite HOLD from ERC-20 balance so we never show the
   // usd÷price fantasy that invents ~2.7M when MetaMask holds 21M.
-  if (api.mode === 'live' && c.net === 'RH' && c.mint && WALLET.on && WALLET.full) {
-    void syncHoldingFromChain(c, WALLET.full || sessionWallet('RH')).then((tok) => {
+  if (api.mode === 'live' && c.net && isEvm(c.net) && c.mint && WALLET.on && WALLET.full) {
+    void syncHoldingFromChain(c, WALLET.full || sessionWallet(c.net)).then((tok) => {
       if (tok === null || TV.c !== c) return;
       paintPosition(c);
     });
@@ -392,9 +524,9 @@ function paintPosition(c: SimCoin): void {
     render(
       pe,
       html`<span>YOUR POSITION <b>${num(hp.tok)} ${c.sym}</b></span
-        ><span><b>${usd(pv)}</b>${
-          hp.cost > 0 ? html` <b class="${ud(ppl)}">${pct(ppl)}</b>` : ''
-        }</span>`,
+        ><span
+          ><b>${usd(pv)}</b>${hp.cost > 0 ? html` <b class="${ud(ppl)}">${pct(ppl)}</b>` : ''}</span
+        >`,
     );
     pe.hidden = false;
   } else {
@@ -407,9 +539,10 @@ function paintPosition(c: SimCoin): void {
       WALLET.on
         ? html`<span>BALANCE <b class="am">${WALLET.sol.toFixed(2)} ${nativeUnit()}</b></span
             ><span>PAIR ${c.base || nativeUnit()} ${DOT} ${WALLET.addr}</span>`
-        : html`<span class="dm">NO WALLET CONNECTED</span><span class="dm">${
-            api.mode === 'live' ? 'CONNECT TO TRADE' : 'SIM FILLS ONLY'
-          }</span>`,
+        : html`<span class="dm">NO WALLET CONNECTED</span
+            ><span class="dm"
+              >${api.mode === 'live' ? 'CONNECT TO TRADE' : 'SIM FILLS ONLY'}</span
+            >`,
     );
   }
 }
@@ -424,62 +557,129 @@ function tradesHTML(c: SimCoin): Html {
   if (!trades.length) {
     return html`<div class="pnl-bd"><p class="hint">NO RECENT TRADES YET.</p></div>`;
   }
-  return html`<div class="scrolly"><table class="tbl"><thead><tr><th scope="col">TIME</th><th scope="col">TYPE</th
-    ><th scope="col" class="r">${nativeUnit()}</th><th scope="col" class="r">TOKENS</th
-    ><th scope="col" class="r">MCAP</th><th scope="col">TRADER</th><th scope="col">VEN</th></tr></thead><tbody
-    >${trades.map((t, i) => {
-      const link = t.addr || t.w;
-      const multi = !!(t.hops && t.hops.length > 1);
-      const open = !!t.open && multi;
-      const rowClass = ['tr-row', t.fresh && i === 0 ? 'newrow' : '', multi ? 'tr-hop' : '', open ? 'open' : '']
-        .filter(Boolean)
-        .join(' ');
-      return html`<tr class="${attr(rowClass)}"${raw(multi ? ` data-tr="${i}" tabindex="0" role="button" aria-expanded="${open ? 'true' : 'false'}` : '')}
-        ><td class="dm">${clockSec(t.t)}</td
-        ><td class="${t.buy ? 'up' : 'dn'}">${t.buy ? 'BUY' : 'SELL'}</td><td class="r">${t.sol.toFixed(2)}</td
-        ><td class="r">${num(t.tok)}</td><td class="r">${usd(t.mc)}</td><td class="${t.cb ? '' : 'bl'}"
-        >${t.cb
-          ? html`<span class="tag cb">CASHBACK</span>`
-          : html`<span class="addrlink" data-addr="${attr(link)}">${displayName(t.w)}</span>`}</td
-        ><td class="dm ven-cell">${t.v}${multi ? html`<span class="ven-chev" aria-hidden="true">${open ? '▾' : '▸'}</span>` : ''}</td></tr
-      >${
-        open && t.hops
-          ? html`<tr class="tr-hops"><td colspan="7"><div class="hop-detail">${t.hops.map(
-              (h, hi) =>
-                html`<div class="hop-leg"><span class="hop-n">HOP ${hi + 1}</span
-                  ><span class="hop-v">${h.venue}</span
-                  ><span class="hop-path">${h.inAmount < 0.001 ? h.inAmount.toPrecision(3) : num(h.inAmount)} ${h.inSymbol}
-                    \u2192 ${h.outAmount < 0.001 ? h.outAmount.toPrecision(3) : num(h.outAmount)} ${h.outSymbol}</span></div>`,
-            )}</div></td></tr>`
-          : ''
-      }`;
-    })}</tbody></table></div>`;
+  return html`<div class="scrolly">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th scope="col">TIME</th>
+          <th scope="col">TYPE</th>
+          <th scope="col" class="r">${nativeUnit()}</th>
+          <th scope="col" class="r">TOKENS</th>
+          <th scope="col" class="r">MCAP</th>
+          <th scope="col">TRADER</th>
+          <th scope="col">VEN</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${trades.map((t, i) => {
+          const link = t.addr || t.w;
+          const multi = !!(t.hops && t.hops.length > 1);
+          const open = !!t.open && multi;
+          const rowClass = [
+            'tr-row',
+            t.fresh && i === 0 ? 'newrow' : '',
+            multi ? 'tr-hop' : '',
+            open ? 'open' : '',
+          ]
+            .filter(Boolean)
+            .join(' ');
+          const hopAttrs = multi
+            ? html` data-tr="${i}" tabindex="0" role="button"
+              aria-expanded="${open ? 'true' : 'false'}"`
+            : '';
+          return html`<tr class="${attr(rowClass)}" ${hopAttrs}>
+              <td class="dm">${clockSec(t.t)}</td>
+              <td class="${t.buy ? 'up' : 'dn'}">${t.buy ? 'BUY' : 'SELL'}</td>
+              <td class="r">${t.sol.toFixed(2)}</td>
+              <td class="r">${num(t.tok)}</td>
+              <td class="r">${usd(t.mc)}</td>
+              <td class="${t.cb ? '' : 'bl'}">
+                ${
+                  t.cb
+                    ? html`<span class="tag cb">CASHBACK</span>`
+                    : html`<span class="addrlink" data-addr="${attr(link)}"
+                        >${displayName(t.w)}</span
+                      >`
+                }
+              </td>
+              <td class="dm ven-cell">
+                ${t.v}${multi ? html`<span class="ven-chev" aria-hidden="true">${open ? '▾' : '▸'}</span>` : ''}
+              </td>
+            </tr>
+            ${
+              open && t.hops
+                ? html`<tr class="tr-hops">
+                    <td colspan="7">
+                      <div class="hop-detail">
+                        ${t.hops.map(
+                      (h, hi) =>
+                        html`<div class="hop-leg">
+                          <span class="hop-n">HOP ${hi + 1}</span
+                          ><span class="hop-v">${h.venue}</span
+                          ><span class="hop-path"
+                            >${h.inAmount < 0.001 ? h.inAmount.toPrecision(3) : num(h.inAmount)}
+                            ${h.inSymbol} →
+                            ${h.outAmount < 0.001 ? h.outAmount.toPrecision(3) : num(h.outAmount)}
+                            ${h.outSymbol}</span
+                          >
+                        </div>`,
+                    )}
+                      </div>
+                    </td>
+                  </tr>`
+                : ''
+            }`;
+        })}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 function holdersHTML(c: SimCoin): Html {
   // Live mode: only show API holders (or empty). Never invent wallets.
   // Sim mode: synthetic `holdersOf` until/unless live rows exist.
-  const rows =
-    api.mode === 'live'
-      ? (c.liveHolders ?? [])
-      : (c.liveHolders ?? holdersOf(c));
+  const rows = api.mode === 'live' ? (c.liveHolders ?? []) : (c.liveHolders ?? holdersOf(c));
   if (api.mode === 'live' && c.liveHolders == null) {
     return html`<div class="pnl-bd"><p class="hint">LOADING HOLDERS…</p></div>`;
   }
   if (!rows.length) {
     return html`<div class="pnl-bd"><p class="hint">NO HOLDERS ON RECORD YET.</p></div>`;
   }
-  return html`<div class="scrolly"><table class="tbl"><thead><tr><th scope="col">#</th><th scope="col">WALLET</th
-    ><th scope="col" class="r">HOLDING</th><th scope="col" class="r">VALUE</th><th scope="col">TAG</th></tr></thead
-    ><tbody>${rows.map((h, i) => {
-      const link = h.addr || h.w;
-      return html`<tr><td class="dm">${i + 1}</td><td class="${h.curve ? 'am' : 'bl'}"
-        >${h.curve
-          ? h.w
-          : html`<span class="addrlink" data-addr="${attr(link)}">${displayName(h.w)}</span>`}</td
-        ><td class="r">${h.p.toFixed(2)}%</td><td class="r">${usd((c.mc * h.p) / 100)}</td><td
-        >${h.tag ? html`<span class="tag ${h.tag[1]}">${h.tag[0]}</span>` : html`<span class="dm">${MID}</span>`}</td></tr>`;
-    })}</tbody></table></div>`;
+  return html`<div class="scrolly">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th scope="col">#</th>
+          <th scope="col">WALLET</th>
+          <th scope="col" class="r">HOLDING</th>
+          <th scope="col" class="r">VALUE</th>
+          <th scope="col">TAG</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((h, i) => {
+          const link = h.addr || h.w;
+          return html`<tr>
+            <td class="dm">${i + 1}</td>
+            <td class="${h.curve ? 'am' : 'bl'}">
+              ${
+                h.curve
+                  ? h.w
+                  : html`<span class="addrlink" data-addr="${attr(link)}"
+                      >${displayName(h.w)}</span
+                    >`
+              }
+            </td>
+            <td class="r">${h.p.toFixed(2)}%</td>
+            <td class="r">${usd((c.mc * h.p) / 100)}</td>
+            <td>
+              ${h.tag ? html`<span class="tag ${h.tag[1]}">${h.tag[0]}</span>` : html`<span class="dm">${MID}</span>`}
+            </td>
+          </tr>`;
+        })}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 function commentsHTML(c: SimCoin): Html {
@@ -487,25 +687,41 @@ function commentsHTML(c: SimCoin): Html {
   if (api.mode === 'live' && c.comments == null) {
     return html`<div class="pnl-bd"><p class="hint">LOADING COMMENTS…</p></div>`;
   }
-  return html`<div class="pnl-bd"><div class="scrolly" style="display:flex;flex-direction:column;gap:7px" id="cmt-list"
-    >${list.length
-      ? list.map(
-          (m) => html`<div class="cmt${m.mine ? ' mine' : ''}"><div class="who"
-            >${html`<span class="addrlink" data-addr="${attr(m.who)}">${
-              m.mine ? myDisplayName() : displayName(m.who)
-            }</span>`}<span>${m.t}</span></div
-            ><p>${m.text}</p></div>`,
-        )
-      : html`<p class="hint" style="margin:0">NO COMMENTS YET ${DOT} BE THE FIRST.</p>`}</div
-    ><form class="inline-form" id="cmt-form"><input class="fld" id="cmt-in" maxlength="140" placeholder="POST A REPLY"
-      aria-label="Comment"><button class="send" type="submit">POST</button></form></div>`;
+  return html`<div class="pnl-bd">
+    <div class="scrolly" style="display:flex;flex-direction:column;gap:7px" id="cmt-list">
+      ${
+        list.length
+          ? list.map(
+              (m) =>
+                html`<div class="cmt${m.mine ? ' mine' : ''}">
+                  <div class="who">
+                    ${html`<span class="addrlink" data-addr="${attr(m.who)}"
+                      >${m.mine ? myDisplayName() : displayName(m.who)}</span
+                    >`}<span>${m.t}</span>
+                  </div>
+                  <p>${m.text}</p>
+                </div>`,
+            )
+          : html`<p class="hint" style="margin:0">NO COMMENTS YET ${DOT} BE THE FIRST.</p>`
+      }
+    </div>
+    <form class="inline-form" id="cmt-form">
+      <input
+        class="fld"
+        id="cmt-in"
+        maxlength="140"
+        placeholder="POST A REPLY"
+        aria-label="Comment"
+      /><button class="send" type="submit">POST</button>
+    </form>
+  </div>`;
 }
 
 let commentUnsub: (() => void) | null = null;
 let commentsLoadedFor: string | null = null;
 
-function commentRoomNet(c: SimCoin): 'SOL' | 'RH' {
-  return c.net === 'RH' ? 'RH' : 'SOL';
+function commentRoomNet(c: SimCoin): Net {
+  return c.net ?? 'SOL';
 }
 
 function pushComment(c: SimCoin, m: Comment): void {
@@ -533,7 +749,10 @@ async function loadLiveComments(c: SimCoin): Promise<void> {
     if (TV.c !== c) return;
     c.comments = res.messages.map((m) => {
       if (m.username || m.avatarUrl) {
-        rememberIdentity(m.wallet, { username: m.username ?? null, avatarUrl: m.avatarUrl ?? null });
+        rememberIdentity(m.wallet, {
+          username: m.username ?? null,
+          avatarUrl: m.avatarUrl ?? null,
+        });
       }
       return {
         who: m.wallet,
@@ -551,7 +770,10 @@ async function loadLiveComments(c: SimCoin): Promise<void> {
   commentUnsub = subscribeChatRoom(net, room, (msg: LiveChatFrame) => {
     if (TV.c !== c) return;
     if (msg.username || msg.avatarUrl) {
-      rememberIdentity(msg.wallet, { username: msg.username ?? null, avatarUrl: msg.avatarUrl ?? null });
+      rememberIdentity(msg.wallet, {
+        username: msg.username ?? null,
+        avatarUrl: msg.avatarUrl ?? null,
+      });
     }
     pushComment(c, {
       who: msg.wallet,
@@ -567,11 +789,113 @@ async function loadLiveComments(c: SimCoin): Promise<void> {
   paint(c);
 }
 
+/* --------------------------------- fees ----------------------------------- */
+
+function feesLoadingHTML(): Html {
+  return html`<div class="pnl-bd"><p class="hint">LOADING THE FEE LEDGER…</p></div>`;
+}
+
+async function loadFees(c: SimCoin): Promise<void> {
+  const b = $('#tabbody');
+  if (!b || !api.tokenFees) return;
+  try {
+    const f = await api.tokenFees(c);
+    if (TV.c !== c || TV.tab !== 'fees') return;
+    render(b, feesHTML(f));
+  } catch (err) {
+    if (TV.c !== c || TV.tab !== 'fees') return;
+    render(b, html`<div class="pnl-bd"><p class="hint dn">FEE LEDGER UNAVAILABLE: ${String(err)}</p></div>`);
+  }
+}
+
+function feesHTML(f: TokenFees): Html {
+  const u = f.unit;
+  const nat = (v: number): string => v.toFixed(u === 'USDC' ? 2 : 4) + ' ' + u;
+  const usdOf = (v: number): string => usd(v * NATIVE_PRICE.usd);
+  const pctOf = (v: number): string => (f.totals.gross > 0 ? ((v / f.totals.gross) * 100).toFixed(1) : '0.0') + '%';
+  const row = (k: string, share: string, v: number, note: string, cls = ''): Html =>
+    html`<tr>
+      <td class="${cls}">${k}</td>
+      <td class="r">${share}</td>
+      <td class="r">${usdOf(v)}</td>
+      <td class="r dm">${nat(v)}</td>
+      <td class="dm">${note}</td>
+    </tr>`;
+  const stakerShare = f.totals.creatorBucket > 0 ? f.totals.stakers / f.totals.creatorBucket : 0;
+  return html`<div class="pnl-bd">
+    <div class="quad" style="margin:0">
+      <div>
+        <div class="lbl">BUY / SELL TAX</div>
+        <div class="val am">${(f.effFeeBps / 100).toFixed(1)}%</div>
+        <span class="hint"
+          >${
+            f.effFeeBps > f.feeBps
+              ? 'CASHBACK ' + DOT + ' DECAYING TO ' + (f.feeBps / 100).toFixed(1) + '%'
+              : 'SET BY THE CREATOR ' + DOT + ' 1% TO 5%'
+          }</span
+        >
+      </div>
+      <div>
+        <div class="lbl">FEES COLLECTED</div>
+        <div class="val">${usdOf(f.totals.gross)}</div>
+        <span class="hint">${nat(f.totals.gross)} LIFETIME</span>
+      </div>
+      <div>
+        <div class="lbl">CREATOR EARNED</div>
+        <div class="val up">${usdOf(f.totals.creator)}</div>
+        <span class="hint">${nat(f.totals.creator)}</span>
+      </div>
+      <div>
+        <div class="lbl">TO STONKZ GAME</div>
+        <div class="val gd">${usdOf(f.totals.game)}</div>
+        <span class="hint">$STONKZ BUYBACK FOR THE DAILY POT</span>
+      </div>
+    </div>
+    <div class="scrolly">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>WHERE THE TAX GOES</th>
+            <th class="r">SHARE</th>
+            <th class="r">USD</th>
+            <th class="r">${u}</th>
+            <th>NOTE</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${row('CREATOR', pctOf(f.totals.creator), f.totals.creator, (f.split.creatorBucket * 100).toFixed(0) + '% BUCKET, LESS THE STAKING CUT', 'gd')}
+          ${row('STAKERS', pctOf(f.totals.stakers), f.totals.stakers, (stakerShare * 100).toFixed(1) + '% OF THE CREATOR BUCKET ' + DOT + ' UP TO HALF', 'am')}
+          ${row('PROTOCOL REVENUE', pctOf(f.totals.protocol), f.totals.protocol, (f.split.protocol * 100).toFixed(0) + '% OF EVERY TAX')}
+          ${row('STONKZ GAME BUYBACK', pctOf(f.totals.game), f.totals.game, (f.split.stonkzOps * 100).toFixed(0) + '% ' + DOT + ' BUYS $STONKZ FOR THE DAILY POT', 'gd')}
+          ${row('BUYBACK AND BURN', pctOf(f.totals.burn), f.totals.burn, (f.split.burn * 100).toFixed(0) + '% ' + DOT + ' BUYS $STONKZ AND BURNS IT', 'dn')}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">
+      ${
+        f.source === 'chain'
+          ? 'SETTLED ON CHAIN ON EVERY FILL AND READ BACK FROM THE INDEXER. REFERRAL COMMISSIONS (15 / 10 / 5%) ARE PAID FROM THE PROTOCOL LEG.'
+          : 'SANDBOX ESTIMATE FROM 24H VOLUME AND AGE, SPLIT EXACTLY THE WAY THE PROGRAMS DO IT.'
+      }
+    </p>
+  </div>`;
+}
+
 export function renderTab(): void {
   const c = TV.c;
   const b = $('#tabbody');
   if (!c || !b) return;
-  render(b, TV.tab === 'trades' ? tradesHTML(c) : TV.tab === 'holders' ? holdersHTML(c) : commentsHTML(c));
+  render(
+    b,
+    TV.tab === 'trades'
+      ? tradesHTML(c)
+      : TV.tab === 'holders'
+        ? holdersHTML(c)
+        : TV.tab === 'fees'
+          ? feesLoadingHTML()
+          : commentsHTML(c),
+  );
+  if (TV.tab === 'fees') void loadFees(c);
   // `fresh` drives the one-shot orange `newrow` flash. Clear after paint so
   // the 5s board poll (which re-renders this tab) does not restart it.
   if (TV.tab === 'trades' && c.trades) {
@@ -614,7 +938,12 @@ async function postComment(c: SimCoin): Promise<void> {
 
   if (api.mode !== 'live') {
     if (!c.comments) c.comments = [];
-    c.comments.push({ who: WALLET.full || WALLET.addr || myDisplayName(), t: 'now', text: v, mine: true });
+    c.comments.push({
+      who: WALLET.full || WALLET.addr || myDisplayName(),
+      t: 'now',
+      text: v,
+      mine: true,
+    });
     c.reps = c.comments.length;
     paint(c);
     input.value = '';
@@ -704,11 +1033,19 @@ export function renderX(handle: string): void {
       const href = 'https://x.com/' + encodeURIComponent(p.handle);
       render(
         feed,
-        html`<div class="xpost"><div class="xh"><b>${p.displayName || p.handle}</b><span>@${p.handle}</span>${
-            p.verified ? html`<span class="am">✓</span>` : ''
-          }</div
-          ><p class="hint" style="margin:8px 0 0">REAL X PROFILE ${DOT} NO MOCK POSTS.</p
-          ><p style="margin-top:10px"><a class="addrlink" href="${attr(href)}" target="_blank" rel="noopener noreferrer">OPEN @${p.handle} ON X ↗</a></p></div>`,
+        html`<div class="xpost">
+          <div class="xh">
+            <b>${p.displayName || p.handle}</b><span>@${p.handle}</span>${
+              p.verified ? html`<span class="am">✓</span>` : ''
+            }
+          </div>
+          <p class="hint" style="margin:8px 0 0">REAL X PROFILE ${DOT} NO MOCK POSTS.</p>
+          <p style="margin-top:10px">
+            <a class="addrlink" href="${attr(href)}" target="_blank" rel="noopener noreferrer"
+              >OPEN @${p.handle} ON X ↗</a
+            >
+          </p>
+        </div>`,
       );
       if (sub) sub.textContent = '@' + p.handle + (p.verified ? ' ✓' : '') + ' · LIVE PROFILE';
       if (note) note.textContent = 'PROFILE FROM X API. TIMELINE POSTS ARE NOT LOADED.';
@@ -727,12 +1064,14 @@ function cbBannerHTML(c: SimCoin): Html {
   if (!inCashback(c)) return html``;
   const left = cbLeft(c);
   const frac = left / CB_MS;
-  return html`<div class="cb-banner"><span class="cbl">CASHBACK LIVE</span
+  return html`<div class="cb-banner">
+    <span class="cbl">CASHBACK LIVE</span
     ><span class="cbv" id="cb-fee">${effFee(c).toFixed(1)}%</span
     ><span class="hint">FEE DECAYING TO ${Number(c.tfee).toFixed(1)}%</span
     ><span class="cbtrack"><i id="cb-bar" style="width:${attr((frac * 100).toFixed(1))}%"></i></span
     ><span class="cbv" id="cb-left">${Math.ceil(left / 1000)}S</span
-    ><span class="hint">FEES BUY ${c.sym} FOR THE CREATOR</span></div>`;
+    ><span class="hint">FEES BUY ${c.sym} FOR THE CREATOR</span>
+  </div>`;
 }
 
 function syncCashback(): void {
@@ -763,11 +1102,15 @@ function updateCurveNote(): void {
   const n = $('#cv-note');
   if (!n) return;
   if (c.lane === 'grad') {
-    n.textContent = 'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO THE DEX AND LP TOKENS WERE BURNED.';
+    const net = c.net ?? 'SOL';
+    n.textContent =
+      'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO ' + NET_INFO[net].dex + ' AND ' + NET_INFO[net].lpNote + '.';
   } else {
+    const net = c.net ?? 'SOL';
     render(
       n,
-      html`AT ${usd(GRAD)} MARKET CAP THE CURVE FILLS, LIQUIDITY MIGRATES AND THE LP BURNS.
+      html`AT ${usd(GRAD)} MARKET CAP THE CURVE FILLS, LIQUIDITY MIGRATES
+        (${NET_INFO[net].dex}) AND THE LP LOCKS.
         <b class="am">${usd(Math.max(0, GRAD - c.mc))}</b> TO GO.`,
     );
   }
@@ -838,10 +1181,7 @@ export function openToken(c: SimCoin): void {
   c.lane = laneOf(c);
   TV.c = c;
   // Keep the address bar on the resolved mint so shares/back stay unambiguous.
-  navigate(
-    { view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) },
-    { replace: true },
-  );
+  navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) }, { replace: true });
   TV.tab = 'trades';
   TV.side = 'BUY';
   TV.range = 90;
@@ -849,12 +1189,17 @@ export function openToken(c: SimCoin): void {
   const v = must('#tokenView');
   render(v, tokenHTML(c));
   showView('token');
-  pix($<HTMLCanvasElement>('.tk-bar canvas'), c.seed);
+  paintCoinArt($<HTMLCanvasElement>('.tk-bar canvas'), c.seed, c.image);
   updateCurveNote();
   render(
     must('#t-quick'),
     html`${[0.1, 0.5, 1, 5].map((x) => html`<button type="button" class="qa" data-a="${attr(x)}">${x}</button>`)}<button
-      type="button" class="qa" data-a="max">MAX</button>`,
+        type="button"
+        class="qa"
+        data-a="max"
+      >
+        MAX
+      </button>`,
   );
   renderTab();
   renderX(c.x ?? '@' + c.sym.toLowerCase());
@@ -874,12 +1219,18 @@ export function openToken(c: SimCoin): void {
     });
   }
   must('#tk-back').addEventListener('click', () => navigate({ view: 'board' }));
+  $('#xchain-switch')?.addEventListener('click', () => void connectWallet(c.net ?? 'SOL'));
   must('#tk-stake').addEventListener('click', () => openStake(c));
   must('#tk-share').addEventListener('click', () => {
     // Canonical production host; include mint so duplicate tickers resolve.
     const link =
       'https://ston.kz/t/' + c.sym + (c.mint ? '?mint=' + encodeURIComponent(c.mint) : '');
-    copyText(link, (ok) => toast(ok ? 'LINK COPIED ' + DOT + ' ' + link : 'COPY BLOCKED ' + DOT + ' ' + link, ok ? 'gold' : 'red'));
+    copyText(link, (ok) =>
+      toast(
+        ok ? 'LINK COPIED ' + DOT + ' ' + link : 'COPY BLOCKED ' + DOT + ' ' + link,
+        ok ? 'gold' : 'red',
+      ),
+    );
   });
   must('#t-side').addEventListener('click', (e) => {
     const b = (e.target as Element | null)?.closest<HTMLElement>('[data-s]');
@@ -971,6 +1322,10 @@ export function openToken(c: SimCoin): void {
 }
 
 async function submitTrade(c: SimCoin): Promise<void> {
+  if (crossChain(c)) {
+    void connectWallet(c.net ?? 'SOL');
+    return;
+  }
   const amount = parseFloat(must<HTMLInputElement>('#t-amt').value) || 0;
   if (amount <= 0) return;
   if (api.mode === 'live' && (!c.tradeable || c.lane === 'grad')) {
@@ -1008,7 +1363,9 @@ async function submitTrade(c: SimCoin): Promise<void> {
   const go = must<HTMLButtonElement>('#t-go');
   const restoreLabel = go.textContent ?? '';
   go.disabled = true;
-  go.textContent = hasSession(c.net ?? WALLET.net) ? 'CONFIRM IN WALLET\u2026' : 'SIGN IN WALLET\u2026';
+  go.textContent = hasSession(c.net ?? WALLET.net)
+    ? 'CONFIRM IN WALLET\u2026'
+    : 'SIGN IN WALLET\u2026';
   try {
     const q = await api.quote({ coin: c, side: buy ? 'buy' : 'sell', amountIn: amount });
     if (q.indicative) {
@@ -1027,14 +1384,21 @@ async function submitTrade(c: SimCoin): Promise<void> {
     else {
       const code = err instanceof LiveApiError ? err.code : '';
       const msg = String(err instanceof Error ? err.message : err);
-      if (code === 'not_tradeable' || msg.includes('indicative_only') || msg.includes('not_tradeable')) {
+      if (
+        code === 'not_tradeable' ||
+        msg.includes('indicative_only') ||
+        msg.includes('not_tradeable')
+      ) {
         toast('ORDER BLOCKED — FIXTURE TOKEN. OPEN A LIVE-CURVE TOKEN TO TRADE.', 'red');
       } else if (code === 'jupiter_alt_required' || msg.includes('jupiter_alt_required')) {
         toast('JUPITER ROUTE NEEDS ADDRESS LOOKUP TABLES — NOT SUPPORTED ON STAGING YET.', 'red');
       } else if (code === 'graduated_not_supported' || msg.includes('graduated_not_supported')) {
         toast('GRADUATED — TRADE ON THE DEX; STONKZ CURVE PREPARE IS CLOSED.', 'red');
       } else if (code === 'rh_router_required' || msg.includes('rh_router_required')) {
-        toast('ATOMIC ROUTER REQUIRED — PIN RH_ROUTER / V3 FEE TIER. NON-ATOMIC TRADES DISABLED.', 'red');
+        toast(
+          'ATOMIC ROUTER REQUIRED — PIN RH_ROUTER / V3 FEE TIER. NON-ATOMIC TRADES DISABLED.',
+          'red',
+        );
       } else {
         toast(describeWalletError(err), 'red');
       }
@@ -1044,8 +1408,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
   go.disabled = false;
   go.textContent = restoreLabel;
 
-  const simSuffix =
-    api.mode !== 'live' || isPracticeSession() ? ' ' + DOT + ' SIMULATED' : '';
+  const simSuffix = api.mode !== 'live' || isPracticeSession() ? ' ' + DOT + ' SIMULATED' : '';
   toast(
     (buy ? 'Your buy order for ' : 'Your sell order for ') +
       amount.toFixed(2) +
@@ -1073,7 +1436,13 @@ async function submitTrade(c: SimCoin): Promise<void> {
   addChat(roomOf(c), {
     who: myDisplayName(),
     col: '#ffa22b',
-    text: (buy ? 'aped ' : 'sold ') + amount.toFixed(2) + ' ' + nativeUnit().toLowerCase() + ' of $' + c.sym,
+    text:
+      (buy ? 'aped ' : 'sold ') +
+      amount.toFixed(2) +
+      ' ' +
+      nativeUnit().toLowerCase() +
+      ' of $' +
+      c.sym,
     mine: true,
     wallet: WALLET.full || WALLET.addr,
   });

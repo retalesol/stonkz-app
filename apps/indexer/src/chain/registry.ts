@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '@stonkz/api/db/client';
 import { tokens } from '@stonkz/api/db/schema';
 import type { Net } from '@stonkz/shared';
@@ -14,7 +14,7 @@ import { TOKEN_DECIMALS } from './market.js';
  */
 export interface TokenMeta {
   net: Net;
-  /** SPL mint / ERC-20 address, lowercased on the EVM. */
+  /** SPL mint / ERC-20 address (EIP-55 checksummed on the EVM, as `tokens.mint` stores it). */
   mint: string;
   sym: string;
   /** `FeeAccrued` names the mint, not the creator; the vault row needs both. */
@@ -84,11 +84,21 @@ export class TokenRegistry {
     const hit = this.cache.get(key);
     if (hit) return hit;
 
-    const normalised = net === 'SOL' ? mint : mint.toLowerCase();
+    // EVM rows are written checksummed (by `/launch/confirm` via viem and by
+    // `evm-map.ts`), but a mint can still arrive lowercased from an older row
+    // or an override — compare case-insensitively so a cache miss after a
+    // restart never dead-letters a fill over casing alone.
     const [row] = await this.db
       .select()
       .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.mint, normalised)))
+      .where(
+        and(
+          eq(tokens.net, net),
+          net === 'SOL'
+            ? eq(tokens.mint, mint)
+            : sql`lower(${tokens.mint}) = ${mint.toLowerCase()}`,
+        ),
+      )
       .limit(1);
     if (!row) return null;
     // A row seeded before curve columns existed (or by the fixture producer)
@@ -99,14 +109,16 @@ export class TokenRegistry {
     const tokensForSale = BigInt(row.curveTokensForSale);
     const meta: TokenMeta = {
       net,
-      mint: normalised,
+      mint: row.mint,
       sym: row.sym,
       creator: row.creator,
       baseMint: row.baseMint,
       baseDecimals: row.baseDecimals,
       tokenDecimals: row.tokenDecimals || TOKEN_DECIMALS[net],
       basePrice1e6: BigInt(row.basePriceUsd1e6),
-      supplyAtoms: BigInt(Math.round(row.supply * 10 ** (row.tokenDecimals || TOKEN_DECIMALS[net]))),
+      supplyAtoms: BigInt(
+        Math.round(row.supply * 10 ** (row.tokenDecimals || TOKEN_DECIMALS[net])),
+      ),
       tokensForSale,
       feeBps: row.feeBps,
       circulatingAtoms: max0(tokensForSale - BigInt(row.curveRealToken)),

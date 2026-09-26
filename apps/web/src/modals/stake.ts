@@ -51,44 +51,117 @@ export function renderStake(c: SimCoin): void {
   render(
     must('#stakeBody'),
     html`<div class="quad">
-        <div><div class="lbl">TOTAL STAKED</div><div class="val am" id="sv-tot">${num(totalStaked(c))}</div
-          ><span class="hint" id="sv-frac">${(stakedFrac(c) * 100).toFixed(1)}% OF CIRCULATING</span></div
-        ><div><div class="lbl">YOUR STAKE</div><div class="val gd" id="sv-you">${num(st.amt)}</div
-          ><span class="hint" id="sv-mult">${st.until > Date.now() ? st.mult + 'x ' + DOT + ' LOCKED' : 'NO LOCK ' + DOT + ' 1x'}</span></div
-        ><div><div class="lbl">FEES TO POOL</div><div class="val up" id="sv-pool">${(pie.stakers * 100).toFixed(1)}%</div
-          ><span class="hint">OF EVERY CURVE FEE</span></div
-        ><div><div class="lbl">YOUR EARNINGS</div><div class="val up" id="sv-earn">${earnText(c)}</div
-          ><span class="hint" id="sv-share">${(yourShare(c) * 100).toFixed(2)}% OF POOL</span></div>
-      </div>
-      ${live
-        ? html`<p class="hint" style="margin:0 0 10px">STAKE / UNSTAKE / CLAIM BUILD REAL TRANSACTIONS YOUR WALLET SIGNS ON THIS CLUSTER.</p>`
-        : ''}
-      <div class="stk-grid">
-        <div><canvas class="stk-pie" id="stkPie"></canvas>
-          <div class="stk-legend">
-            <div><i style="background:${attr(PIE_COLOURS.stakers)}"></i>STAKING POOL<b id="lg-pool">${(pie.stakers * 100).toFixed(1)}%</b></div>
-            <div><i style="background:${attr(PIE_COLOURS.creator)}"></i>CREATOR<b id="lg-cre">${(pie.creator * 100).toFixed(1)}%</b></div>
-            <div><i style="background:${attr(PIE_COLOURS.protocol)}"></i>PROTOCOL<b>${(FEE_SPLIT.protocol * 100).toFixed(0)}%</b></div>
-            <div><i style="background:${attr(PIE_COLOURS.stonkzOps)}"></i>$STONKZ OPS<b>${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}%</b></div>
-            <div><i style="background:#2c3444"></i>TRADE FEE<b id="lg-fee">${effFee(c).toFixed(1)}%</b></div>
-          </div></div
-        ><div style="display:flex;flex-direction:column;gap:8px;min-width:0">
-          <div><span class="lbl">AMOUNT (${c.sym})</span>
-            <div class="fee-row"><input class="fld r" id="stk-amt" value="" placeholder="0" inputmode="decimal"
-              ><button type="button" class="qa" id="stk-max" style="flex:0 0 54px">MAX</button></div></div>
-          <div><span class="lbl">LOCK ${DOT} WEIGHT MULTIPLIER</span><div class="lock-row" id="lockRow">${LOCKS.map(
-            (l) => html`<button type="button" class="lock-opt${STK.lock === l[0] ? ' on' : ''}" data-lock="${attr(l[0])}"
-              ><span class="lm">${l[1]}x</span><span class="ld">${l[2]}</span></button>`,
-          )}</div></div>
-          <div class="fee-row"><button type="button" class="big" id="stk-go" style="flex:1">STAKE</button
-            ><button type="button" class="wiz-btn" id="stk-un" style="flex:0 0 108px">UNSTAKE</button></div>
+        <div>
+          <div class="lbl">TOTAL STAKED</div>
+          <div class="val am" id="sv-tot">${num(totalStaked(c))}</div>
+          <span class="hint" id="sv-frac">${(stakedFrac(c) * 100).toFixed(1)}% OF CIRCULATING</span>
+        </div>
+        <div>
+          <div class="lbl">YOUR STAKE</div>
+          <div class="val gd" id="sv-you">${num(st.amt)}</div>
+          <span class="hint" id="sv-mult"
+            >${st.until > Date.now() ? st.mult + 'x ' + DOT + ' LOCKED' : 'NO LOCK ' + DOT + ' 1x'}</span
+          >
+        </div>
+        <div>
+          <div class="lbl">FEES TO POOL</div>
+          <div class="val up" id="sv-pool">${(pie.stakers * 100).toFixed(1)}%</div>
+          <span class="hint">OF EVERY CURVE FEE</span>
+        </div>
+        <div>
+          <div class="lbl">YOUR EARNINGS</div>
+          <div class="val up" id="sv-earn">${earnText(c)}</div>
+          <span class="hint" id="sv-share">${(yourShare(c) * 100).toFixed(2)}% OF POOL</span>
         </div>
       </div>
-      <div class="stk-claim"><span class="lbl" style="margin:0">CLAIMABLE</span><span class="v" id="sv-claim">${earnText(c)}</span
-        ><span class="grow"></span><button type="button" class="claimbtn" id="stk-claim">CLAIM</button></div>
-      <p class="hint">STAKE WEIGHT = AMOUNT x LOCK MULTIPLIER. THE POOL TAKES HALF THE CREATOR BUCKET WHEN ALL CIRCULATING
-        TOKENS ARE STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS ${(FEE_SPLIT.creatorBucket * 50).toFixed(0)}% OF EVERY CURVE
-        FEE AT MOST${cb ? '. DURING CASHBACK, REWARDS PAY IN ' + c.sym + '.' : '.'}</p>`,
+      ${
+        live
+          ? html`<p class="hint" style="margin:0 0 10px">
+              STAKE / UNSTAKE / CLAIM BUILD REAL TRANSACTIONS YOUR WALLET SIGNS ON THIS CLUSTER.
+            </p>`
+          : ''
+      }
+      <div class="stk-grid">
+        <div>
+          <canvas class="stk-pie" id="stkPie"></canvas>
+          <div class="stk-legend">
+            <div>
+              <i style="background:${attr(PIE_COLOURS.stakers)}"></i>STAKING POOL<b id="lg-pool"
+                >${(pie.stakers * 100).toFixed(1)}%</b
+              >
+            </div>
+            <div>
+              <i style="background:${attr(PIE_COLOURS.creator)}"></i>CREATOR<b id="lg-cre"
+                >${(pie.creator * 100).toFixed(1)}%</b
+              >
+            </div>
+            <div>
+              <i style="background:${attr(PIE_COLOURS.protocol)}"></i>PROTOCOL<b
+                >${(FEE_SPLIT.protocol * 100).toFixed(0)}%</b
+              >
+            </div>
+            <div>
+              <i style="background:${attr(PIE_COLOURS.stonkzOps)}"></i>STONKZ GAME<b
+                >${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}%</b
+              >
+            </div>
+            <div>
+              <i style="background:${attr(PIE_COLOURS.burn)}"></i>BURN<b
+                >${(FEE_SPLIT.burn * 100).toFixed(0)}%</b
+              >
+            </div>
+            <div>
+              <i style="background:#2c3444"></i>TRADE FEE<b id="lg-fee">${effFee(c).toFixed(1)}%</b>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+          <div>
+            <span class="lbl">AMOUNT (${c.sym})</span>
+            <div class="fee-row">
+              <input
+                class="fld r"
+                id="stk-amt"
+                value=""
+                placeholder="0"
+                inputmode="decimal"
+              /><button type="button" class="qa" id="stk-max" style="flex:0 0 54px">MAX</button>
+            </div>
+          </div>
+          <div>
+            <span class="lbl">LOCK ${DOT} WEIGHT MULTIPLIER</span>
+            <div class="lock-row" id="lockRow">
+              ${LOCKS.map(
+                (l) =>
+                  html`<button
+                    type="button"
+                    class="lock-opt${STK.lock === l[0] ? ' on' : ''}"
+                    data-lock="${attr(l[0])}"
+                  >
+                    <span class="lm">${l[1]}x</span><span class="ld">${l[2]}</span>
+                  </button>`,
+              )}
+            </div>
+          </div>
+          <div class="fee-row">
+            <button type="button" class="big" id="stk-go" style="flex:1">STAKE</button
+            ><button type="button" class="wiz-btn" id="stk-un" style="flex:0 0 108px">
+              UNSTAKE
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="stk-claim">
+        <span class="lbl" style="margin:0">CLAIMABLE</span
+        ><span class="v" id="sv-claim">${earnText(c)}</span><span class="grow"></span
+        ><button type="button" class="claimbtn" id="stk-claim">CLAIM</button>
+      </div>
+      <p class="hint">
+        STAKE WEIGHT = AMOUNT x LOCK MULTIPLIER. THE POOL TAKES HALF THE CREATOR BUCKET WHEN ALL
+        CIRCULATING TOKENS ARE STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS
+        ${(FEE_SPLIT.creatorBucket * 50).toFixed(0)}% OF EVERY CURVE FEE AT
+        MOST${cb ? '. DURING CASHBACK, REWARDS PAY IN ' + c.sym + '.' : '.'}
+      </p>`,
   );
   drawPie($<HTMLCanvasElement>('#stkPie'), poolFrac(c));
   refreshScrim('#stakeScrim');

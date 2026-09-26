@@ -32,22 +32,22 @@ covers.
 
 ## Environment
 
-| Variable | Needed for |
-|---|---|
-| `INTEGRATION_API_URL` | everything except the pure on-chain reads |
-| `INTEGRATION_SOL_RPC_URL` | all Solana scenarios |
-| `INTEGRATION_SOL_SECRET_KEY` | base58 secret key of a **funded** devnet keypair |
-| `INTEGRATION_SOL_SECRET_KEY_B` | a second funded keypair, for tip verification |
-| `INTEGRATION_SOL_LAUNCHPAD_PROGRAM_ID` | Solana graduation check |
-| `INTEGRATION_RH_RPC_URL` | all Robinhood scenarios |
-| `INTEGRATION_RH_PRIVATE_KEY` | `0x`-prefixed key of a **funded** RH testnet account |
-| `INTEGRATION_RH_LAUNCHPAD_ADDRESS` | oracle staleness check |
-| `INTEGRATION_RH_ROUTER_ADDRESS` | RH atomic trade check |
-| `INTEGRATION_RH_SMART_ACCOUNT` | ERC-1271 login (owner must be `INTEGRATION_RH_PRIVATE_KEY`) |
-| `INTEGRATION_BASE_RPC_URL` | Base Sepolia scenarios |
-| `INTEGRATION_BASE_PRIVATE_KEY` | funded Base Sepolia key (falls back to RH key) |
-| `INTEGRATION_BASE_LAUNCHPAD_ADDRESS` | Base launchpad after `DeployBaseSepolia` |
-| `INTEGRATION_BASE_ROUTER_ADDRESS` | Base `StonkzRouter` |
+| Variable                               | Needed for                                                  |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `INTEGRATION_API_URL`                  | everything except the pure on-chain reads                   |
+| `INTEGRATION_SOL_RPC_URL`              | all Solana scenarios                                        |
+| `INTEGRATION_SOL_SECRET_KEY`           | base58 secret key of a **funded** devnet keypair            |
+| `INTEGRATION_SOL_SECRET_KEY_B`         | a second funded keypair, for tip verification               |
+| `INTEGRATION_SOL_LAUNCHPAD_PROGRAM_ID` | Solana graduation check                                     |
+| `INTEGRATION_RH_RPC_URL`               | all Robinhood scenarios                                     |
+| `INTEGRATION_RH_PRIVATE_KEY`           | `0x`-prefixed key of a **funded** RH testnet account        |
+| `INTEGRATION_RH_LAUNCHPAD_ADDRESS`     | oracle staleness check                                      |
+| `INTEGRATION_RH_ROUTER_ADDRESS`        | RH atomic trade check                                       |
+| `INTEGRATION_RH_SMART_ACCOUNT`         | ERC-1271 login (owner must be `INTEGRATION_RH_PRIVATE_KEY`) |
+| `INTEGRATION_BASE_RPC_URL`             | Base Sepolia scenarios                                      |
+| `INTEGRATION_BASE_PRIVATE_KEY`         | funded Base Sepolia key (falls back to RH key)              |
+| `INTEGRATION_BASE_LAUNCHPAD_ADDRESS`   | Base launchpad after `DeployBaseSepolia`                    |
+| `INTEGRATION_BASE_ROUTER_ADDRESS`      | Base `StonkzRouter`                                         |
 
 Tuning: `INTEGRATION_TRADE_AMOUNT` (default `0.01` native),
 `INTEGRATION_INDEXER_TIMEOUT_MS` (default `90000`),
@@ -58,15 +58,15 @@ this at a key that holds mainnet value, and never at a withdraw authority.
 
 ## What each scenario proves
 
-| Scenario | Launch-checklist item |
-|---|---|
-| `solana: buy then sell settles on chain` | Real broadcast, Solana; plus the indexer materialising a real event |
-| `robinhood: atomic buy and sell in one signature each` | `RH_ROUTER_ADDRESS` configured, and the atomicity claim — asserted by **nonce delta of exactly 1**, not by trusting `atomic: true` |
-| `solana: graduated LP mint supply is zero` | "Liquidity is burned forever", Solana (finding H1) |
-| `robinhood: graduated LP sits at the dead address` | Same claim, RH |
-| `robinhood: oracle staleness bound is heartbeat-scale` | The 24h-heartbeat bug, asserted against the live deployment |
-| `robinhood: ERC-1271 smart account can sign in` | Smart-account support on an ERC-4337-heavy chain |
-| `solana: a wall tip is verified against the real transfer` | The server never trusts a client-claimed tip, including replay refusal |
+| Scenario                                                   | Launch-checklist item                                                                                                              |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `solana: buy then sell settles on chain`                   | Real broadcast, Solana; plus the indexer materialising a real event                                                                |
+| `robinhood: atomic buy and sell in one signature each`     | `RH_ROUTER_ADDRESS` configured, and the atomicity claim — asserted by **nonce delta of exactly 1**, not by trusting `atomic: true` |
+| `solana: graduated DLMM position is permanently locked`    | "Liquidity is burned forever", Solana (Meteora DLMM lock)                                                                          |
+| `robinhood: graduated LP sits at the dead address`         | Same claim, RH                                                                                                                     |
+| `robinhood: oracle staleness bound is heartbeat-scale`     | The 24h-heartbeat bug, asserted against the live deployment                                                                        |
+| `robinhood: ERC-1271 smart account can sign in`            | Smart-account support on an ERC-4337-heavy chain                                                                                   |
+| `solana: a wall tip is verified against the real transfer` | The server never trusts a client-claimed tip, including replay refusal                                                             |
 
 Two design notes worth knowing before reading the code:
 

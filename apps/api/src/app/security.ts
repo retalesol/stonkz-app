@@ -17,7 +17,7 @@ export const API_CSP = [
   "frame-ancestors 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  "sandbox",
+  'sandbox',
 ].join('; ');
 
 export interface SecurityHeaderOptions {

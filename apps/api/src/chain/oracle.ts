@@ -16,7 +16,12 @@ export interface HttpPriceOracleOptions {
   timeoutMs?: number;
 }
 
-const PRODUCT: Record<NativeUnit, string> = { SOL: 'SOL-USD', ETH: 'ETH-USD' };
+/**
+ * Coinbase spot product per native unit. `null` means "no feed": USDC is the
+ * unit of account itself, so Arc's native price is 1 USD by definition and is
+ * never fetched (a depeg would be a product decision, not an oracle read).
+ */
+const PRODUCT: Record<NativeUnit, string | null> = { SOL: 'SOL-USD', ETH: 'ETH-USD', USDC: null };
 
 export class HttpPriceOracle implements PriceOracle {
   private readonly baseUrl: string;
@@ -30,16 +35,19 @@ export class HttpPriceOracle implements PriceOracle {
   }
 
   async nativeUsd(unit: NativeUnit): Promise<number> {
+    const product = PRODUCT[unit];
+    if (product === null) return 1;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await this.fetchImpl(`${this.baseUrl}/${PRODUCT[unit]}/spot`, {
+      const res = await this.fetchImpl(`${this.baseUrl}/${product}/spot`, {
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`price oracle HTTP ${res.status}`);
       const body = (await res.json()) as { data?: { amount?: string } };
       const amount = Number.parseFloat(body.data?.amount ?? '');
-      if (!Number.isFinite(amount) || amount <= 0) throw new Error('price oracle returned no amount');
+      if (!Number.isFinite(amount) || amount <= 0)
+        throw new Error('price oracle returned no amount');
       return amount;
     } finally {
       clearTimeout(timer);

@@ -71,7 +71,8 @@ contract DeployTestnet is Script {
             IUniversalRouter(RobinhoodChainTestnet.UNIVERSAL_ROUTER),
             StonkzLaunchpad(address(launchpad)),
             IWETH9(RobinhoodChainTestnet.WETH9),
-            ISwapRouter02(RobinhoodChainTestnet.UNISWAP_V3_SWAP_ROUTER02)
+            ISwapRouter02(RobinhoodChainTestnet.UNISWAP_V3_SWAP_ROUTER02),
+            0 // no per-buy cap
         );
 
         priceSource.pushPrice(RobinhoodChainTestnet.WETH9, ethUsd1e6, 0);

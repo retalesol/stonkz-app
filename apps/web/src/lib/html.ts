@@ -36,7 +36,15 @@ export function raw(markup: string): Html {
 export function attr(value: unknown): Html {
   return new Html(
     String(value).replace(/[<>&"']/g, (m) =>
-      m === '<' ? '&lt;' : m === '>' ? '&gt;' : m === '&' ? '&amp;' : m === '"' ? '&quot;' : '&#39;',
+      m === '<'
+        ? '&lt;'
+        : m === '>'
+          ? '&gt;'
+          : m === '&'
+            ? '&amp;'
+            : m === '"'
+              ? '&quot;'
+              : '&#39;',
     ),
   );
 }

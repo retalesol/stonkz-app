@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import type { Address } from 'viem';
-import { and, eq } from 'drizzle-orm';
+import { encodeFunctionData } from 'viem';
+import { and, eq, sql } from 'drizzle-orm';
 import { LOCKS, isEvm, type EvmNet } from '@stonkz/shared';
 import { stakePositions } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
@@ -14,6 +15,7 @@ import {
 } from '../router/solana-instructions.js';
 import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { encodeClaimStakeCall, encodeStakeCall, encodeUnstakeCall } from '../router/evm-launch.js';
+import { ERC20_ABI } from '../router/evm-abi.js';
 import { toAtoms } from '../router/units.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import { evmLaunchpadAddress } from '../chain/evm-net.js';
@@ -36,6 +38,11 @@ import { resolveTokenRow } from './token-resolve.js';
 
 const ZERO = ZERO_EVM_ADDRESS.toLowerCase();
 
+/** Match indexer rows even when EVM casing differs (checksum vs lower). */
+function walletEq(col: typeof stakePositions.wallet, wallet: string, net: string) {
+  if (net === 'SOL') return eq(col, wallet);
+  return sql`lower(${col}) = ${wallet.toLowerCase()}`;
+}
 function lockDaysOk(days: number): boolean {
   return LOCKS.some((l) => l[0] === days);
 }
@@ -70,7 +77,7 @@ export function stakeRoutes(): Hono<AppEnv> {
         and(
           eq(stakePositions.net, user.net),
           eq(stakePositions.mint, token.mint),
-          eq(stakePositions.wallet, user.wallet),
+          walletEq(stakePositions.wallet, user.wallet, user.net),
         ),
       )
       .limit(1);
@@ -131,7 +138,8 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('stake/prepare: Solana RPC does not implement latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('stake/prepare: Solana RPC does not implement latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
       const mint = new PublicKey(row.mint);
@@ -149,7 +157,9 @@ export function stakeRoutes(): Hono<AppEnv> {
         action: 'stake',
         amount,
         days,
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }
@@ -170,16 +180,43 @@ export function stakeRoutes(): Hono<AppEnv> {
     }
 
     const atoms = toAtoms(amount, row.tokenDecimals);
-    const data = encodeStakeCall(row.mint as Address, atoms, days);
+    const token = row.mint as Address;
+    const approveData = encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [launchpad as Address, atoms],
+    });
+    const stakeData = encodeStakeCall(token, atoms, days);
+    // Launchpad uses transferFrom — the wallet must approve first. Two txs
+    // (approve → stake); same pattern as non-atomic trade sells.
     return c.json({
       net,
       sym,
       action: 'stake',
       amount,
       days,
-      to: launchpad,
-      data,
+      atomic: false,
+      steps: [
+        {
+          to: token,
+          data: approveData,
+          value: '0',
+          label: `Approve ${sym} for staking`,
+        },
+        {
+          to: launchpad as Address,
+          data: stakeData,
+          value: '0',
+          label: `Stake ${sym}`,
+        },
+      ],
+      // Keep legacy single-call fields pointing at the stake itself so older
+      // clients that ignore `steps` still build the right final call — they
+      // will fail on allowance until they learn the two-step shape.
+      to: launchpad as Address,
+      data: stakeData,
       value: '0',
+      warning: 'EVM stake needs an ERC-20 approve before stake (two signatures).',
     });
   });
 
@@ -189,7 +226,11 @@ export function stakeRoutes(): Hono<AppEnv> {
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; mint?: unknown; amount?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      sym?: unknown;
+      mint?: unknown;
+      amount?: unknown;
+    };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
     const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
     const amount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
@@ -203,7 +244,8 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('stake/unstake/prepare: Solana RPC missing latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('stake/unstake/prepare: Solana RPC missing latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
       const mint = new PublicKey(row.mint);
@@ -220,7 +262,9 @@ export function stakeRoutes(): Hono<AppEnv> {
         sym,
         action: 'unstake',
         amount,
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }
@@ -268,7 +312,8 @@ export function stakeRoutes(): Hono<AppEnv> {
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-      if (!blockhashSource) throw new Error('stake/claim/prepare: Solana RPC missing latestBlockhash()');
+      if (!blockhashSource)
+        throw new Error('stake/claim/prepare: Solana RPC missing latestBlockhash()');
       const blockhash = await blockhashSource.latestBlockhash();
       const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
       const mint = new PublicKey(row.mint);
@@ -284,7 +329,9 @@ export function stakeRoutes(): Hono<AppEnv> {
         net,
         sym,
         action: 'claim',
-        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        transaction: tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString('base64'),
         lastValidBlockHeight: blockhash.lastValidBlockHeight,
       });
     }

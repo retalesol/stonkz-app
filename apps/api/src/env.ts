@@ -1,10 +1,18 @@
+import { withChainsFile } from './chains-file.js';
 import type { Net } from '@stonkz/shared';
+import { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
+import { ARC_BLOCK_MS, ARC_CHAIN_ID, ARC_EXPLORER_URL, ARC_RPC_URL } from './chain/arc.js';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BASE_SEPOLIA_EXPLORER_URL,
   BASE_SEPOLIA_RPC_URL,
 } from './chain/base.js';
-import { RH_CHAIN_ID, RH_PUBLIC_RPC_URL, RH_TESTNET_CHAIN_ID } from './chain/evm.js';
+import {
+  RH_CHAIN_ID,
+  RH_PUBLIC_RPC_URL,
+  RH_TESTNET_CHAIN_ID,
+  RH_TESTNET_PUBLIC_RPC_URL,
+} from './chain/evm.js';
 
 /**
  * Every knob the API reads, resolved once at boot. Defaults target
@@ -56,7 +64,10 @@ export interface ApiEnv {
   /** Blockscout / RH explorer base (no trailing slash). Used for live token holders. */
   rhExplorerUrl: string;
   rhChainId: number;
-  /** EVM chain ids a SIWE message may name (RH + Base). See `AuthServiceOptions`. */
+  /**
+   * EVM chain ids a SIWE message may name (RH + Base, plus Arc once
+   * `ARC_LAUNCHPAD_ADDRESS` is configured). See `AuthServiceOptions`.
+   */
   allowedRhChainIds: readonly number[];
   rhNetworkLabel: string;
   baseRpcUrl: string;
@@ -67,6 +78,20 @@ export interface ApiEnv {
   baseV3FeeTierOverrides: Record<string, number>;
   baseV3FactoryAddress: string;
   baseV3QuoterAddress: string;
+  /* ------------------------------------------------------------------ Arc */
+  /** Circle's Arc (chain id 5042, USDC gas). See `chain/arc.ts`. */
+  arcRpcUrl: string;
+  arcExplorerUrl: string;
+  arcChainId: number;
+  /**
+   * Zero address (the default) means "not deployed on Arc": `/trade/prepare`
+   * refuses Arc trades and SIWE does not accept 5042 until this is set.
+   */
+  arcLaunchpadAddress: string;
+  arcRouterAddress: string;
+  arcV3FeeTierOverrides: Record<string, number>;
+  arcV3FactoryAddress: string;
+  arcV3QuoterAddress: string;
   maxChainLagSeconds: number;
   chainTickMs: Record<Net, number>;
 
@@ -187,7 +212,8 @@ function int(src: EnvSource, key: string, fallback: number): number {
   const raw = src[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
+  if (!Number.isFinite(n))
+    throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
   return n;
 }
 
@@ -195,7 +221,8 @@ function float(src: EnvSource, key: string, fallback: number): number {
   const raw = src[key];
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number.parseFloat(raw);
-  if (!Number.isFinite(n)) throw new Error(`env ${key} must be a number, got ${JSON.stringify(raw)}`);
+  if (!Number.isFinite(n))
+    throw new Error(`env ${key} must be a number, got ${JSON.stringify(raw)}`);
   return n;
 }
 
@@ -218,7 +245,9 @@ function ints(src: EnvSource, key: string, fallback: readonly number[]): number[
     .map((s) => {
       const n = Number.parseInt(s, 10);
       if (!Number.isInteger(n)) {
-        throw new Error(`env ${key} must be a comma-separated integer list, got ${JSON.stringify(raw)}`);
+        throw new Error(
+          `env ${key} must be a comma-separated integer list, got ${JSON.stringify(raw)}`,
+        );
       }
       return n;
     });
@@ -238,7 +267,12 @@ function intMap(src: EnvSource, key: string): Record<string, number> {
   return out;
 }
 
-function oneOf<T extends string>(src: EnvSource, key: string, allowed: readonly T[], fallback: T): T {
+function oneOf<T extends string>(
+  src: EnvSource,
+  key: string,
+  allowed: readonly T[],
+  fallback: T,
+): T {
   const v = str(src, key, fallback);
   if (!(allowed as readonly string[]).includes(v)) {
     throw new Error(`env ${key} must be one of ${allowed.join(' | ')}, got ${JSON.stringify(v)}`);
@@ -246,13 +280,26 @@ function oneOf<T extends string>(src: EnvSource, key: string, allowed: readonly 
   return v as T;
 }
 
-export function readEnv(src: EnvSource = process.env): ApiEnv {
-  const nodeEnv = oneOf(src, 'NODE_ENV', ['development', 'test', 'production'] as const, 'development');
+export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
+  // `STONKZ_CHAINS_FILE` fills blank launchpad / router / program keys from
+  // the deployment record; explicit env always wins (chains-file.ts).
+  const src = withChainsFile(rawSrc);
+  const nodeEnv = oneOf(
+    src,
+    'NODE_ENV',
+    ['development', 'test', 'production'] as const,
+    'development',
+  );
 
   const env: ApiEnv = {
     nodeEnv,
     port: int(src, 'PORT', 8787),
-    logLevel: oneOf(src, 'LOG_LEVEL', ['debug', 'info', 'warn', 'error', 'silent'] as const, nodeEnv === 'test' ? 'silent' : 'info'),
+    logLevel: oneOf(
+      src,
+      'LOG_LEVEL',
+      ['debug', 'info', 'warn', 'error', 'silent'] as const,
+      nodeEnv === 'test' ? 'silent' : 'info',
+    ),
 
     databaseUrl: str(src, 'DATABASE_URL', 'postgres://stonkz:stonkz@localhost:5432/stonkz'),
     databasePoolMax: int(src, 'DATABASE_POOL_MAX', 10),
@@ -289,11 +336,20 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
       if (cluster === 'localnet') return 'solana:localnet';
       return 'solana:mainnet';
     })(),
-    rhRpcUrl: str(src, 'RH_RPC_URL', RH_PUBLIC_RPC_URL),
+    // RPC and explorer defaults follow the configured chain id, which itself
+    // defaults to the testnet: a bare checkout must never pair a testnet id
+    // with the mainnet RPC (verifyChainId() would refuse to boot).
+    rhRpcUrl: str(
+      src,
+      'RH_RPC_URL',
+      int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === RH_TESTNET_CHAIN_ID
+        ? RH_TESTNET_PUBLIC_RPC_URL
+        : RH_PUBLIC_RPC_URL,
+    ),
     rhExplorerUrl: str(
       src,
       'RH_EXPLORER_URL',
-      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID) === 46630
+      int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === 46630
         ? 'https://explorer.testnet.chain.robinhood.com'
         : 'https://robinhoodchain.blockscout.com',
     ).replace(/\/$/, ''),
@@ -301,8 +357,13 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     allowedRhChainIds: (() => {
       const rhId = int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID);
       const baseId = int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID);
+      // Arc joins the default allow-list only once something is deployed
+      // there: a deployment with nothing on Arc must not accept a 5042 SIWE.
+      const arcDeployed = str(src, 'ARC_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS) !== ZERO_EVM_ADDRESS;
+      const arcId = int(src, 'ARC_CHAIN_ID', ARC_CHAIN_ID);
       const fromEnv = ints(src, 'EVM_ALLOWED_CHAIN_IDS', ints(src, 'RH_ALLOWED_CHAIN_IDS', []));
-      const merged = fromEnv.length > 0 ? fromEnv : [rhId, baseId];
+      const merged =
+        fromEnv.length > 0 ? fromEnv : arcDeployed ? [rhId, baseId, arcId] : [rhId, baseId];
       return [...new Set(merged)];
     })(),
     rhNetworkLabel: str(src, 'RH_NETWORK_LABEL', 'ROBINHOOD'),
@@ -320,11 +381,22 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
         : '0x33128a8fC17869897dc68A926803F6140319853',
     ),
     baseV3QuoterAddress: str(src, 'BASE_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
+    arcRpcUrl: str(src, 'ARC_RPC_URL', ARC_RPC_URL),
+    arcExplorerUrl: str(src, 'ARC_EXPLORER', ARC_EXPLORER_URL).replace(/\/$/, ''),
+    arcChainId: int(src, 'ARC_CHAIN_ID', ARC_CHAIN_ID),
+    arcLaunchpadAddress: str(src, 'ARC_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
+    arcRouterAddress: str(src, 'ARC_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
+    arcV3FeeTierOverrides: intMap(src, 'ARC_V3_FEE_TIER_OVERRIDES'),
+    // No canonical Uniswap v3 factory is confirmed for Arc yet; zero means
+    // "no on-chain pool hop" until an operator pins one.
+    arcV3FactoryAddress: str(src, 'ARC_V3_FACTORY_ADDRESS', ZERO_EVM_ADDRESS),
+    arcV3QuoterAddress: str(src, 'ARC_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
     maxChainLagSeconds: int(src, 'MAX_CHAIN_LAG_SECONDS', 30),
     chainTickMs: {
       SOL: int(src, 'SOLANA_SLOT_MS', 400),
       RH: int(src, 'RH_BLOCK_MS', 2000),
       BASE: int(src, 'BASE_BLOCK_MS', 2000),
+      ARC: int(src, 'ARC_BLOCK_MS', ARC_BLOCK_MS),
     },
 
     priceOracleUrl: str(src, 'PRICE_ORACLE_URL', 'https://api.coinbase.com/v2/prices'),
@@ -337,11 +409,14 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
       SOL: float(src, 'DUST_SOL', 0.01),
       RH: float(src, 'DUST_ETH', 0.0005),
       BASE: float(src, 'DUST_BASE_ETH', float(src, 'DUST_ETH', 0.0005)),
+      // USDC-denominated: the shared registry's floor, not the ETH one.
+      ARC: float(src, 'DUST_ARC_USDC', DEFAULT_DUST.ARC),
     },
     whaleCut: {
       SOL: float(src, 'WHALE_SOL', 5),
       RH: float(src, 'WHALE_ETH', 2),
       BASE: float(src, 'WHALE_BASE_ETH', float(src, 'WHALE_ETH', 2)),
+      ARC: float(src, 'WHALE_ARC_USDC', DEFAULT_WHALE_CUT.ARC),
     },
 
     quoteCacheTtlSeconds: int(src, 'QUOTE_CACHE_TTL_SECONDS', 8),
@@ -351,7 +426,11 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
     uniswapApiBaseUrl: str(src, 'UNISWAP_API_BASE_URL', 'https://trade-api.gateway.uniswap.org/v1'),
     uniswapApiKey: src['UNISWAP_API_KEY']?.trim() || undefined,
 
-    solanaLaunchpadProgramId: str(src, 'SOLANA_LAUNCHPAD_PROGRAM_ID', 'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg'),
+    solanaLaunchpadProgramId: str(
+      src,
+      'SOLANA_LAUNCHPAD_PROGRAM_ID',
+      'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg',
+    ),
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
     rhV3FeeTierOverrides: (() => {
@@ -398,7 +477,8 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
 
   if (env.nodeEnv === 'production') {
     if (env.jwtSecret === DEV_JWT_SECRET) throw new Error('JWT_SECRET must be set in production');
-    if (env.crateHmacSecret === DEV_CRATE_SECRET) throw new Error('CRATE_HMAC_SECRET must be set in production');
+    if (env.crateHmacSecret === DEV_CRATE_SECRET)
+      throw new Error('CRATE_HMAC_SECRET must be set in production');
     if (env.jwtSecret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
     // Atomic RH path is mandatory even on STONKZ_STAGING — never boot a
     // production image that would fall through to multi-signature EvmStep[].
@@ -416,7 +496,9 @@ export function readEnv(src: EnvSource = process.env): ApiEnv {
         );
       }
       if (env.rhLaunchpadAddress === ZERO_EVM_ADDRESS) {
-        throw new Error('RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in');
+        throw new Error(
+          'RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in',
+        );
       }
     }
   }

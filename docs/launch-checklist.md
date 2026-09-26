@@ -24,7 +24,7 @@ user-facing paths.
 ## Verify on-chain, not in a test
 
 - [ ] Graduate a throwaway token on **each** chain and confirm on a block explorer that the LP is gone: Solana LP mint supply is `0`; EVM LP sits at `0x…dEaD`.
-- [ ] Confirm a real trade's fee split landed 20/70/10 in the three expected places.
+- [ ] Confirm a real trade's fee split landed 20/10/10/60 in the four expected places (protocol, game, burn, creator bucket).
 - [ ] Confirm the aggregator hop took **zero** platform fee.
 - [ ] Confirm a memecoin staker cannot draw more than half the creator bucket.
 - [ ] Confirm the protocol treasury and the ops vault are distinct addresses and that neither is reachable from a user-facing claim.
@@ -50,15 +50,15 @@ user-facing paths.
 
 ## Do not claim until the specific gate passes
 
-| Claim | Gated on |
-|---|---|
-| "Live", "trade real memecoins" | Real wallets + broadcast + deployment |
-| Any price, market cap, or volume figure | Indexer in chain mode |
-| "Atomic trades on Robinhood Chain" | `RH_ROUTER_ADDRESS` set and verified |
-| "Liquidity is burned forever" | Explorer verification on both chains |
-| Crate odds are "fair" or "provable" | Commit-reveal VRF (finding M2) — see below |
-| "Audited" | Third-party audit complete |
-| Anything about `$STONKZ` buybacks, burns, or POL | Phase 7 shipped, token exists |
+| Claim                                            | Gated on                                   |
+| ------------------------------------------------ | ------------------------------------------ |
+| "Live", "trade real memecoins"                   | Real wallets + broadcast + deployment      |
+| Any price, market cap, or volume figure          | Indexer in chain mode                      |
+| "Atomic trades on Robinhood Chain"               | `RH_ROUTER_ADDRESS` set and verified       |
+| "Liquidity is burned forever"                    | Explorer verification on both chains       |
+| Crate odds are "fair" or "provable"              | Commit-reveal VRF (finding M2) — see below |
+| "Audited"                                        | Third-party audit complete                 |
+| Anything about `$STONKZ` buybacks, burns, or POL | Phase 7 shipped, token exists              |
 
 ### On crate odds specifically
 

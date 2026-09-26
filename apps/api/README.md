@@ -107,13 +107,13 @@ client to compose one: the mobile signing surface is not ours to control.
 A first **staging** deploy is live. See [`docs/cloud-deploy.md`](../../docs/cloud-deploy.md)
 for the URLs and the `STONKZ_STAGING=1` caveats. Intended topology:
 
-| Piece | Intended host | Notes |
-| --- | --- | --- |
-| Postgres | Neon | `DATABASE_URL` with `?sslmode=require`; `DATABASE_POOL_MAX` under Neon's pooler ceiling |
-| Redis | Railway | `REDIS_URL`; needed for more than one API instance, since pub/sub crosses instances |
-| API | Railway | `pnpm --filter @stonkz/api build && node dist/server.js` |
-| Indexer | Railway (separate service) | One replica. Two would double-apply awards; the ledger's unique constraints would reject the duplicates, but the logs would be noise |
-| Static web | any CDN | Must send its own CSP, including `frame-ancestors` |
+| Piece      | Intended host              | Notes                                                                                                                                |
+| ---------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Postgres   | Neon                       | `DATABASE_URL` with `?sslmode=require`; `DATABASE_POOL_MAX` under Neon's pooler ceiling                                              |
+| Redis      | Railway                    | `REDIS_URL`; needed for more than one API instance, since pub/sub crosses instances                                                  |
+| API        | Railway                    | `pnpm --filter @stonkz/api build && node dist/server.js`                                                                             |
+| Indexer    | Railway (separate service) | One replica. Two would double-apply awards; the ledger's unique constraints would reject the duplicates, but the logs would be noise |
+| Static web | any CDN                    | Must send its own CSP, including `frame-ancestors`                                                                                   |
 
 Before a first deploy:
 
@@ -143,7 +143,7 @@ past `MAX_CHAIN_LAG_SECONDS`.
 
 **Redis flush.** Everything in Redis is reconstructable: rate-limit counters,
 the access-token deny-list, the 8-second quote cache. A flush re-admits
-already-revoked *access* tokens until they expire on their own — at most
+already-revoked _access_ tokens until they expire on their own — at most
 `ACCESS_TOKEN_TTL_SECONDS`. Refresh sessions are revoked in Postgres
 (`sessions.revoked_at`) precisely so they survive this.
 

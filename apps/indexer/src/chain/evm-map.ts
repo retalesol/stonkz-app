@@ -1,4 +1,6 @@
 import type { BaseMintRegistry } from '@stonkz/api/router/base-mints';
+import type { EvmNet } from '@stonkz/shared';
+import { getAddress } from 'viem';
 import type { ChainEvent } from '../events.js';
 import type { DecodedEvmEvent } from './evm-events.js';
 import {
@@ -12,7 +14,7 @@ import {
   toWhole,
   TOKEN_DECIMALS,
 } from './market.js';
-import type { TokenRegistry} from './registry.js';
+import type { TokenRegistry } from './registry.js';
 import { UnknownMintError, type TokenMeta } from './registry.js';
 
 /**
@@ -28,12 +30,12 @@ import { UnknownMintError, type TokenMeta } from './registry.js';
  *    / `AtomicSell.ethOut` in the same transaction as the curve `Trade`, so a
  *    routed fill records the ETH the user actually paid instead of a USD
  *    reconstruction. Solana has no router event, so it always reconstructs.
- * 2. **Addresses are lowercased.** `eth_getLogs` casing is provider-dependent
- *    and every join key downstream is a plain string compare, so normalising
- *    at the decode boundary is the only place it can be done once.
+ * 2. **Addresses are EIP-55 checksummed.** Auth sessions store checksummed
+ *    EVM wallets; joining on lowercase used to make `GET /stake` look empty
+ *    after a successful on-chain stake. Normalise at the decode boundary.
  */
 export interface EvmMapContext {
-  net: 'RH' | 'BASE';
+  net: EvmNet;
   txHash: string;
   blockNumber: number;
   blockTimeMs: number;
@@ -73,8 +75,14 @@ type Args = Record<string, unknown>;
 
 function addr(args: Args, key: string): string {
   const value = args[key];
-  if (typeof value !== 'string') throw new Error(`RH log field ${key} is not an address: ${JSON.stringify(value)}`);
-  return value.toLowerCase();
+  if (typeof value !== 'string')
+    throw new Error(`RH log field ${key} is not an address: ${JSON.stringify(value)}`);
+  // Keep EIP-55 checksum so joins against auth sessions (`toChecksumAddress`) match.
+  try {
+    return getAddress(value);
+  } catch {
+    return value.toLowerCase();
+  }
 }
 
 function big(args: Args, key: string): bigint {
@@ -92,13 +100,15 @@ function num(args: Args, key: string): number {
 
 function bool(args: Args, key: string): boolean {
   const value = args[key];
-  if (typeof value !== 'boolean') throw new Error(`RH log field ${key} is not a bool: ${JSON.stringify(value)}`);
+  if (typeof value !== 'boolean')
+    throw new Error(`RH log field ${key} is not a bool: ${JSON.stringify(value)}`);
   return value;
 }
 
 function text(args: Args, key: string): string {
   const value = args[key];
-  if (typeof value !== 'string') throw new Error(`RH log field ${key} is not a string: ${JSON.stringify(value)}`);
+  if (typeof value !== 'string')
+    throw new Error(`RH log field ${key} is not a string: ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -236,6 +246,7 @@ export async function mapEvmTransaction(
           feeTotal,
           big(args, 'feeProtocol'),
           big(args, 'feeOps'),
+          big(args, 'feeBurn'),
           big(args, 'feeCreatorBucket'),
         );
         const baseAmount = big(args, 'baseAmount');
@@ -256,7 +267,14 @@ export async function mapEvmTransaction(
           side: bool(args, 'isBuy') ? 'buy' : 'sell',
           nativeAmount:
             routerNative(logs, token) ??
-            nativeNotional(net, meta.baseMint, baseAmount, meta.baseDecimals, usdValue, ctx.nativeUsdPrice),
+            nativeNotional(
+              net,
+              meta.baseMint,
+              baseAmount,
+              meta.baseDecimals,
+              usdValue,
+              ctx.nativeUsdPrice,
+            ),
           baseAmount: toWhole(baseAmount, meta.baseDecimals),
           tokenAmount: toWhole(big(args, 'tokenAmount'), meta.tokenDecimals),
           usdValue,
@@ -283,6 +301,7 @@ export async function mapEvmTransaction(
           feeTotal,
           big(args, 'protocol'),
           big(args, 'ops'),
+          big(args, 'burn'),
           big(args, 'creatorBucket'),
         );
         const feeUsd = baseAtomsToUsd(feeTotal, meta.basePrice1e6, meta.baseDecimals);
@@ -294,11 +313,21 @@ export async function mapEvmTransaction(
           sym: meta.sym,
           creator: meta.creator,
           ...nativeFeeLegs(
-            nativeNotional(net, meta.baseMint, feeTotal, meta.baseDecimals, feeUsd, ctx.nativeUsdPrice),
+            nativeNotional(
+              net,
+              meta.baseMint,
+              feeTotal,
+              meta.baseDecimals,
+              feeUsd,
+              ctx.nativeUsdPrice,
+            ),
             trade ? big(trade.args, 'feeStakers') : 0n,
             big(args, 'creatorBucket'),
           ),
-          creatorTokens: toWhole(trade ? big(trade.args, 'cashbackTokens') : 0n, meta.tokenDecimals),
+          creatorTokens: toWhole(
+            trade ? big(trade.args, 'cashbackTokens') : 0n,
+            meta.tokenDecimals,
+          ),
         });
         break;
       }

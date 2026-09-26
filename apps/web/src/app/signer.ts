@@ -22,7 +22,7 @@ import { signSellPermit, type SellPermit } from '../wallet/permit.js';
  *
  * **What it deliberately does not do.** It does not build, alter, re-sign or
  * re-order anything. The API composes the transaction (including every
- * `min_out` floor and the 20/70/10 fee split the contracts assert on), and
+ * `min_out` floor and the 20/60/10/10 fee split the contracts assert on), and
  * this layer's only job is custody of the signature. A signer that could
  * rewrite a payload would be a place to smuggle a fee into.
  *

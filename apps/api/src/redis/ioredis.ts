@@ -143,7 +143,10 @@ export class IoRedis implements RedisLike {
 }
 
 /** `memory://` or an empty URL selects the in-process fake. */
-export async function createRedis(url: string, onHandlerError?: HandlerErrorSink): Promise<RedisLike> {
+export async function createRedis(
+  url: string,
+  onHandlerError?: HandlerErrorSink,
+): Promise<RedisLike> {
   if (url === '' || url.startsWith('memory:')) {
     const { MemoryRedis } = await import('./memory.js');
     return new MemoryRedis(Date.now, onHandlerError);

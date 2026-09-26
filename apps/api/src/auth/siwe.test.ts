@@ -48,7 +48,9 @@ describe('ECDSA (EOA) verification', () => {
   const wallet = evmWallet('siwe-unit');
 
   it('round-trips a personal_sign signature', () => {
-    expect(verifySiwe({ message: MESSAGE, signature: wallet.sign(MESSAGE), address: wallet.address })).toBe(true);
+    expect(
+      verifySiwe({ message: MESSAGE, signature: wallet.sign(MESSAGE), address: wallet.address }),
+    ).toBe(true);
   });
 
   it('recovers the signer address', () => {
@@ -67,18 +69,25 @@ describe('ECDSA (EOA) verification', () => {
 
   it('rejects a signature over a different message', () => {
     expect(
-      verifySiwe({ message: `${MESSAGE} tampered`, signature: wallet.sign(MESSAGE), address: wallet.address }),
+      verifySiwe({
+        message: `${MESSAGE} tampered`,
+        signature: wallet.sign(MESSAGE),
+        address: wallet.address,
+      }),
     ).toBe(false);
   });
 
   it('rejects another wallet claiming the signature', () => {
     const other = evmWallet('siwe-unit-other');
-    expect(verifySiwe({ message: MESSAGE, signature: wallet.sign(MESSAGE), address: other.address })).toBe(false);
+    expect(
+      verifySiwe({ message: MESSAGE, signature: wallet.sign(MESSAGE), address: other.address }),
+    ).toBe(false);
   });
 
   it('accepts the 0/1 recovery-id form as well as 27/28', () => {
     const sig = wallet.sign(MESSAGE);
-    const legacy = sig.slice(0, -2) + (Number.parseInt(sig.slice(-2), 16) - 27).toString(16).padStart(2, '0');
+    const legacy =
+      sig.slice(0, -2) + (Number.parseInt(sig.slice(-2), 16) - 27).toString(16).padStart(2, '0');
     expect(verifySiwe({ message: MESSAGE, signature: legacy, address: wallet.address })).toBe(true);
   });
 
@@ -94,10 +103,7 @@ describe('ECDSA (EOA) verification', () => {
     const bytes = new TextEncoder().encode(message);
     expect(bytes.length).toBe(6);
     const expected = keccak_256(
-      new Uint8Array([
-        ...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n6`),
-        ...bytes,
-      ]),
+      new Uint8Array([...new TextEncoder().encode(`\u0019Ethereum Signed Message:\n6`), ...bytes]),
     );
     expect(Buffer.from(personalSignHash(message))).toEqual(Buffer.from(expected));
   });
@@ -170,7 +176,11 @@ describe('contract-account verification', () => {
   it('refuses a signature over a different message', async () => {
     await expect(
       verifySiweFull(
-        { message: `${MESSAGE} tampered`, signature: account.sign(MESSAGE), address: account.address },
+        {
+          message: `${MESSAGE} tampered`,
+          signature: account.sign(MESSAGE),
+          address: account.address,
+        },
         account,
       ),
     ).resolves.toBe(false);
@@ -179,7 +189,11 @@ describe('contract-account verification', () => {
   it('refuses the contract account when no caller is configured', async () => {
     // Degrades to the pre-fallback behaviour rather than failing open.
     await expect(
-      verifySiweFull({ message: MESSAGE, signature: account.sign(MESSAGE), address: account.address }),
+      verifySiweFull({
+        message: MESSAGE,
+        signature: account.sign(MESSAGE),
+        address: account.address,
+      }),
     ).resolves.toBe(false);
   });
 
@@ -190,14 +204,20 @@ describe('contract-account verification', () => {
       },
     };
     await expect(
-      verifySiweFull({ message: MESSAGE, signature: account.sign(MESSAGE), address: account.address }, reverting),
+      verifySiweFull(
+        { message: MESSAGE, signature: account.sign(MESSAGE), address: account.address },
+        reverting,
+      ),
     ).resolves.toBe(false);
   });
 
   it('treats empty return data from a codeless address as a refusal', async () => {
     const eoaLike: EthCaller = { ethCall: async () => '0x' };
     await expect(
-      verifySiweFull({ message: MESSAGE, signature: account.sign(MESSAGE), address: account.address }, eoaLike),
+      verifySiweFull(
+        { message: MESSAGE, signature: account.sign(MESSAGE), address: account.address },
+        eoaLike,
+      ),
     ).resolves.toBe(false);
   });
 
@@ -211,7 +231,10 @@ describe('contract-account verification', () => {
       },
     };
     await expect(
-      verifySiweFull({ message: MESSAGE, signature: wallet.sign(MESSAGE), address: wallet.address }, counting),
+      verifySiweFull(
+        { message: MESSAGE, signature: wallet.sign(MESSAGE), address: wallet.address },
+        counting,
+      ),
     ).resolves.toBe(true);
     // The common path must stay a local computation.
     expect(calls).toBe(0);

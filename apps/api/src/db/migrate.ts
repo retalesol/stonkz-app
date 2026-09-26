@@ -83,7 +83,10 @@ export interface MigrateResult {
 }
 
 /** Idempotent. Each migration runs inside its own transaction. */
-export async function runMigrations(db: Db, folder: string = migrationsFolder()): Promise<MigrateResult> {
+export async function runMigrations(
+  db: Db,
+  folder: string = migrationsFolder(),
+): Promise<MigrateResult> {
   await ensureTrackingTable(db);
   const already = new Set(await listAppliedMigrations(db));
   const result: MigrateResult = { applied: [], skipped: [] };

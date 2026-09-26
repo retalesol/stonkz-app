@@ -158,6 +158,7 @@ export interface TradeFields {
   feeTotal: bigint;
   feeProtocol: bigint;
   feeOps: bigint;
+  feeBurn: bigint;
   feeCreatorBucket: bigint;
   feeStakers: bigint;
   feeCreator: bigint;
@@ -182,6 +183,7 @@ export function encodeTrade(f: TradeFields): Buffer {
     .u64(f.feeTotal)
     .u64(f.feeProtocol)
     .u64(f.feeOps)
+    .u64(f.feeBurn)
     .u64(f.feeCreatorBucket)
     .u64(f.feeStakers)
     .u64(f.feeCreator)
@@ -201,6 +203,7 @@ export interface FeeAccruedFields {
   feeTotal: bigint;
   protocol: bigint;
   ops: bigint;
+  burn: bigint;
   creatorBucket: bigint;
   ts: bigint;
 }
@@ -212,6 +215,7 @@ export function encodeFeeAccrued(f: FeeAccruedFields): Buffer {
     .u64(f.feeTotal)
     .u64(f.protocol)
     .u64(f.ops)
+    .u64(f.burn)
     .u64(f.creatorBucket)
     .i64(f.ts)
     .done();
@@ -221,12 +225,14 @@ export function encodeTreasuryCredit(f: {
   baseMint: string;
   protocolDelta: bigint;
   opsDelta: bigint;
+  burnDelta: bigint;
   ts: bigint;
 }): Buffer {
   return new BorshWriter()
     .pubkey(f.baseMint)
     .u64(f.protocolDelta)
     .u64(f.opsDelta)
+    .u64(f.burnDelta)
     .i64(f.ts)
     .done();
 }
@@ -259,22 +265,22 @@ export function encodeLiquidityMigrated(f: {
   mint: string;
   baseMint: string;
   pool: string;
-  lpMint: string;
+  position: string;
   baseDeposited: bigint;
   tokenDeposited: bigint;
-  lpMinted: bigint;
-  lpBurned: bigint;
+  lockReleasePoint: bigint;
+  positionLocked: bigint;
   ts: bigint;
 }): Buffer {
   return new BorshWriter()
     .pubkey(f.mint)
     .pubkey(f.baseMint)
     .pubkey(f.pool)
-    .pubkey(f.lpMint)
+    .pubkey(f.position)
     .u64(f.baseDeposited)
     .u64(f.tokenDeposited)
-    .u64(f.lpMinted)
-    .u64(f.lpBurned)
+    .u64(f.lockReleasePoint)
+    .u64(f.positionLocked)
     .i64(f.ts)
     .done();
 }

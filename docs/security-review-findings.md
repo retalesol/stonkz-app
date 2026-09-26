@@ -47,54 +47,22 @@ fee bucket overdraw another, and no unauthenticated write path was found.
 
 ### H1. Solana graduation's "LP burn" is not implemented on-chain or anywhere in this repo — it is a fully trusted, unconstrained hand-off — **RESOLVED**
 
-**Resolution (post-review fix, `programs/solana`):** `migrate_liquidity` no
-longer hands the graduated reserves to caller-supplied token accounts. It now
-CPIs into the real Raydium CPMM program to create a pool seeded with the
-curve's `real_base`/`lp_reserve`, then issues a genuine SPL `burn` of 100% of
-the LP that pool mints — reducing `lp_mint.supply` to zero, not merely sending
-tokens to an address nobody uses. This mirrors `UniswapV2Migrator.sol`'s
-guarantee (real pool, atomic, pre-seeded-pool protection) with two chain-shape
-differences, both strictly at least as strong:
+**Resolution (post-review fix, updated 2026-09):** Solana graduation now CPIs
+into **Meteora DLMM** (`lb_clmm`) via two instructions — `migrate_create_pool`
+then `migrate_seed_liquidity` — rather than handing reserves to caller-named
+accounts. DLMM has no fungible LP mint; permanence is a PositionV2 with
+`lock_release_point = u64::MAX` and operator cleared to the Solana incinerator
+so nobody can `remove_liquidity`. An escrow PDA (`SEED_METEORA_ESCROW`) signs
+as funder / position base / liquidity sender; `migration_authority` only funds
+rent. Pool creation uses admin-chosen `PresetParameter2` (`global.dex_config`)
+and opens at the curve close price. CPI is hand-built from the published IDL
+(no foreign Anchor CPI crate), matching SPEC §6. (An earlier fix used Raydium
+CPMM + SPL LP burn; replaced per product decision.)
 
-- **Pre-seeded-pool protection is structural, not a price check.**
-  `UniswapV2Migrator` defends a *canonical, guessable* pair address by
-  comparing the pool's existing reserve ratio to the deposit and reverting on
-  a large deviation. On Solana, `pool_state` is this program's own PDA
-  (`SEED_RAYDIUM_POOL`, one per mint), passed to Raydium's `Initialize` via
-  the "non-canonical pool" path its own instruction supports for exactly this
-  front-running class. Nobody but this program can ever produce a valid
-  signature for that address, so nobody can occupy or fund it ahead of a
-  graduation — there is no reserve ratio to check because there is no way for
-  the pool to exist first. A `require!` still asserts the account is
-  untouched immediately before the CPI, as defence in depth, and is covered
-  by a dedicated test that forces the "already exists" precondition directly.
-- **The burn is a real supply reduction, not a dead-address transfer.** SPL
-  tokens have no analogue of `0xdead` that is simultaneously "unusable" and
-  "still counted in `totalSupply`" the way EVM's burn-address convention is.
-  `migrate_liquidity` calls the SPL `Burn` instruction on 100% of the LP a
-  dedicated escrow PDA receives, so `lp_mint.supply` is verifiably `0`
-  afterward — strictly stronger than "sent to an address nobody controls."
-
-The escrow PDA that stands in as Raydium's `creator` (funds-source, rent
-payer, LP recipient in Raydium's account model) is itself a second
-program-derived account nothing but this program can ever sign for again, so
-neither `migration_authority` nor any other signer ever holds the tokens, the
-pool, or the LP at any point — `migration_authority` only funds the SOL the
-pool creation and Raydium's `create_pool_fee` cost.
-
-Covered by `programs/solana/tests/launchpad.ts`'s "graduation liquidity
-migration (Raydium CPMM)" suite, which clones the actual Raydium CPMM devnet
-program plus its default fee-tier config onto the local validator (rather
-than mocking it) and asserts: a successful migration burns 100% of the
-minted LP (mint supply reads exactly zero afterward) against a pool
-confirmed real and Raydium-owned on chain; a second migration attempt is
-rejected (`AlreadyMigrated`); a forced pre-existing `pool_state` is rejected
-(`PoolAlreadyExists`); and the instruction's account list no longer accepts
-any caller-named destination. See `programs/solana/programs/launchpad/src/
-instructions/graduate.rs`'s `MigrateLiquidity` doc comment for the full
-design rationale, including why the integration is a hand-built CPI
-(`invoke_signed` against a manually constructed `Instruction`) rather than a
-dependency on the `raydium-cp-swap` crate.
+Covered by unit/CPI path in `graduate.rs`; the legacy Raydium local-validator
+suite in `tests/launchpad.ts` is skipped pending `lb_clmm` clones in
+`Anchor.toml`. Integration verify asserts lock + dead operator on graduated
+positions.
 
 <details>
 <summary>Original finding (pre-fix), left for the record</summary>
@@ -114,13 +82,14 @@ sniper, and emits `liquidityBurned`. A user can verify all of it from a block
 explorer, per that contract's own header comment.
 
 **On Solana, none of this exists.** `MigrateLiquidity` is the entire seam:
+
 - It hands `real_base` and `lp_reserve` to `destination_base`/
   `destination_token` — two token accounts supplied by the caller at call
   time, constrained only by `token::mint`, **not** to any program-owned PDA,
   a specific Raydium/Meteora pool, or a burn address.
 - The only gate is `migration_authority`'s signature
   (`global.migration_authority`, an admin-set key — `admin.rs::
-  set_withdraw_authorities`/`initialize`).
+set_withdraw_authorities`/`initialize`).
 - Nothing forces that authority to ever create a pool, and nothing forces it
   to burn the resulting LP tokens. `programs/README.md` and `SPEC.md` §5 both
   say "the Raydium/Meteora pool CPI itself is **not** implemented here" —
@@ -133,18 +102,19 @@ explorer, per that contract's own header comment.
 every Solana graduation, redirect the entire graduated base+token reserve
 anywhere — there is no on-chain constraint that it goes into a pool at all,
 let alone that any LP position is burned. Even absent malice, there is
-currently no code in this repo that *would* do the right thing if invoked
+currently no code in this repo that _would_ do the right thing if invoked
 today; `migrate_liquidity` on its own leaves funds sitting in whatever
 accounts the authority named.
 
 **Suggested fix:** Before this claim is made to users on Solana:
+
 1. Either implement the Raydium/Meteora CPI + LP-burn inside
    `migrate_liquidity` itself (mirroring `UniswapV2Migrator`'s pattern: create
    pool if needed, price-manipulation guard, mint LP to a burn destination,
    all inside one instruction so it's atomic and auditable), or
 2. If an off-chain crank is kept, constrain `destination_base`/
    `destination_token` to program-derived, single-purpose accounts (e.g. a
-   PDA the *next* instruction in the same flow is required to consume before
+   PDA the _next_ instruction in the same flow is required to consume before
    anyone can withdraw from it) so the money can't silently stop at "sent to
    the authority" — and make the LP-burn step provable on-chain (a follow-up
    instruction that reads the pool's LP mint balance at the burn address and
@@ -205,14 +175,14 @@ every request — defeating the per-IP limiter on every unauthenticated route:
 **Impact:** Medium rather than high because every route that actually moves
 money or credits a reward is also gated on server-side facts that don't trust
 the client at all (chain-verified events, cooldown upserts, tip RPC
-verification) — this is a rate-limit *bypass*, not a way to forge a result.
+verification) — this is a rate-limit _bypass_, not a way to forge a result.
 But it does mean the auth-nonce/login endpoints, the quote cache, and the
 launch-attempt-per-IP ceiling can all be trivially hammered by spoofing a
 different `X-Forwarded-For` value per request, which is exactly the kind of
 brute-force/DoS surface rate limiting exists to close.
 
 **Suggested fix:** Make the trusted-hop count explicit config (Railway's edge
-is one hop) and take the entry at that fixed depth from the *right*, never
+is one hop) and take the entry at that fixed depth from the _right_, never
 the client-controllable left end; or prefer a header the edge is known to set
 itself and that a client cannot inject (confirm with the hosting provider
 which header that is — Railway's own docs should say). Until then, treat
@@ -226,7 +196,7 @@ comment lines 70–98).
 **Description:** The crate roll is `HMAC-SHA256(CRATE_HMAC_SECRET,
 net|wallet|tier|nonce)`, with the nonce generated server-side
 (`randomBytes(16)`) and never supplied by the client. This is genuinely
-server-authoritative and not manipulable *by a client* — there's no path for
+server-authoritative and not manipulable _by a client_ — there's no path for
 a client to bias, predict, or pre-see a roll, and the cooldown upsert
 (`crateState`'s conditional `onConflictDoUpdate` with `setWhere: readyAt <=
 now`) closes the double-open race correctly (verified: two concurrent opens
@@ -235,7 +205,7 @@ clause matches nothing once the first has advanced `readyAt`).
 
 What HMAC does **not** give is public verifiability: only the party holding
 `CRATE_HMAC_SECRET` can confirm a historical roll was computed honestly,
-which means a dishonest *operator* (not a client) could in principle try
+which means a dishonest _operator_ (not a client) could in principle try
 several nonces before committing one — the code as written doesn't do this
 (one nonce, one roll, persisted immediately), but nothing forces that
 discipline the way a commit-then-reveal scheme would. The code's own header
@@ -354,7 +324,7 @@ them from scratch — each was checked against the specific attack class in
 the brief.
 
 - **Fee-split math (Solana + EVM), both chains:** `protocol + stonkz_ops +
-  creator_bucket == fee` is asserted **on every fill**, not just in tests
+creator_bucket == fee` is asserted **on every fill**, not just in tests
   (`trade.rs` buy/sell, `StonkzLaunchpad.sol` buy/sell) — `require!`/
   `require` on the identity, so a future edit that breaks it fails the
   transaction rather than silently mis-paying. The creator bucket is defined
@@ -377,7 +347,7 @@ the brief.
   balance worth reentering for even absent the guard.
 - **Access control / signer checks (Solana):** every privileged instruction
   constrains its signer via `has_one` or `address = global.<field> @
-  Unauthorized` (withdraw authorities, migration authority, oracle
+Unauthorized` (withdraw authorities, migration authority, oracle
   authority, admin) rather than trusting an unconstrained `Signer<'info>`;
   `WithdrawTreasury` additionally re-derives the expected vault PDA from
   seeds and asserts the passed account matches, closing the "point the
@@ -414,7 +384,7 @@ the brief.
   increments `nonces[owner]` inside the struct hash itself, so a signature is
   single-use by construction; the domain separator rebuilds itself if
   `block.chainid` ever changes (fork replay protection); `StonkzRouter.
-  sellViaAggregator`'s permit branch (`permitData.deadline != 0`) calls
+sellViaAggregator`'s permit branch (`permitData.deadline != 0`) calls
   `permit` and the pull inside the same transaction, so there's no window
   where an approval exists without an accompanying trade. The
   standing-allowance branch (`deadline == 0`) is the `_noPermit()` shape
@@ -422,17 +392,17 @@ the brief.
 - **Game ledger server authority:** every reward path was traced from its
   route handler down to the DB write. No route accepts a client-supplied
   XP/SP/Optionz amount, crate tier outcome, or RNG seed; `CHAIN_VERIFIED_
-  REASONS` refuses trade/launch/fee-claim/stake/most-achievement awards
+REASONS` refuses trade/launch/fee-claim/stake/most-achievement awards
   without a matching `chain_events` row, and `xp_events`' unique constraint
   on `(wallet, tx_sig, reason)` makes replaying a signature a no-op rather
   than a second payout (confirmed: the catch path on a unique-violation
   returns `awarded: false` and pays nothing).
 - **Double-claim / race conditions in crates and achievements:** the crate
   cooldown is one conditional `INSERT … ON CONFLICT DO UPDATE … WHERE
-  readyAt <= now`, so two concurrent opens for the same wallet/tier/net
+readyAt <= now`, so two concurrent opens for the same wallet/tier/net
   cannot both succeed — the loser's `WHERE` matches nothing and it falls
   into the `cooling_down` branch. Achievement unlocks use `onConflictDoNothing`
-  on the primary key as the "claimed" gate, checked *before* the XP award
+  on the primary key as the "claimed" gate, checked _before_ the XP award
   runs, with an explicit rollback (`DELETE` the claim row) if the award
   itself throws — so a failed award can't leave an achievement marked
   unlocked-but-unpaid, and a retry after a genuine failure can still succeed
@@ -459,7 +429,7 @@ the brief.
   session cannot be replayed as if it were an RH session or vice versa.
 - **ERC-1271 smart-account fallback:** only attempted after a plain ECDSA
   recovery has already failed (so an EOA login never pays an RPC round
-  trip), calls `isValidSignature` on the *claimed* address specifically (an
+  trip), calls `isValidSignature` on the _claimed_ address specifically (an
   impostor's valid signature over the same message, from a different
   address, cannot be substituted in — confirmed there is no code path that
   calls `ethCall` against anything other than `address` from the login
@@ -520,7 +490,7 @@ addition.
 - **M4** — `programs/evm/src/SafeErc20.sol`, applied at every foreign-token
   call site (launchpad `_pull`/`_send`, router base approve/transfer, migrator
   pool deposits). Investigating the finding changed its shape: the return
-  values were *already* checked with `require`, so the exposure was not an
+  values were _already_ checked with `require`, so the exposure was not an
   unchecked `false` but the opposite — a token returning **no data** made the
   declared `bool` decode revert, meaning a no-return token (the mainnet-USDT
   shape) could be configured as a base asset and then fail every trade
@@ -546,16 +516,16 @@ so). Tracked alongside the rest of the pre-production gaps in
 
 ## Summary table
 
-| # | Severity | Area | One-line summary |
-|---|----------|------|-------------------|
-| H1 | High (fixed) | Solana graduation | LP burn/migration was an unconstrained, unverifiable trusted hand-off; now a real Raydium CPMM CPI + SPL burn, tested against the real devnet program |
-| M1 | Medium (fixed) | apps/api rate limiting | Per-IP identity trusted a client-controllable `X-Forwarded-For`; now bound to a fixed `TRUSTED_PROXY_DEPTH` read from the right, failing closed |
-| M2 | Medium | Crate RNG | HMAC RNG is auditable, not publicly verifiable — already documented in-repo as pre-marketing-odds blocker |
-| M3 | Medium (fixed) | apps/api | `GET /me` and `GET /native-price` had no rate limit — added |
-| M4 | Medium (fixed) | EVM contracts | Foreign-token calls decoded a declared `bool`, so a no-return token was unusable as a base asset; now via `SafeErc20` |
-| L1 | Low (fixed) | Tips | `blockTimeMs === null` skipped the recency check; now rejected as `unknown_age` |
-| L2 | Low (fixed) | apps/api logging | `sessions.ip` inherited M1's spoofable input; now records the same trusted-depth resolution |
-| L3 | Low (fixed) | apps/api | Whale-cut/dust constants moved to `packages/shared` so the sim and server cannot drift |
+| #   | Severity       | Area                   | One-line summary                                                                                                                                      |
+| --- | -------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1  | High (fixed)   | Solana graduation      | LP burn/migration was an unconstrained, unverifiable trusted hand-off; now a real Raydium CPMM CPI + SPL burn, tested against the real devnet program |
+| M1  | Medium (fixed) | apps/api rate limiting | Per-IP identity trusted a client-controllable `X-Forwarded-For`; now bound to a fixed `TRUSTED_PROXY_DEPTH` read from the right, failing closed       |
+| M2  | Medium         | Crate RNG              | HMAC RNG is auditable, not publicly verifiable — already documented in-repo as pre-marketing-odds blocker                                             |
+| M3  | Medium (fixed) | apps/api               | `GET /me` and `GET /native-price` had no rate limit — added                                                                                           |
+| M4  | Medium (fixed) | EVM contracts          | Foreign-token calls decoded a declared `bool`, so a no-return token was unusable as a base asset; now via `SafeErc20`                                 |
+| L1  | Low (fixed)    | Tips                   | `blockTimeMs === null` skipped the recency check; now rejected as `unknown_age`                                                                       |
+| L2  | Low (fixed)    | apps/api logging       | `sessions.ip` inherited M1's spoofable input; now records the same trusted-depth resolution                                                           |
+| L3  | Low (fixed)    | apps/api               | Whale-cut/dust constants moved to `packages/shared` so the sim and server cannot drift                                                                |
 
 No critical findings. Everything else checked — fee-split math on both
 chains, overflow/underflow handling, EVM reentrancy guards, Solana signer/PDA

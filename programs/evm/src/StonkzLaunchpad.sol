@@ -81,6 +81,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 poolDustToken;
         uint256 stakerAccruedBase;
         uint256 stakerAccruedToken;
+        /// Appended last (UUPS storage): the burn leg accrued by this coin.
+        uint256 burnAccrued;
     }
 
     struct Position {
@@ -100,7 +102,10 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     /// Treasury balances per base token. Not claimable by any user path.
     mapping(address => uint256) public protocolRevenue;
+    /// Stonkz Game buyback vault (historical name).
     mapping(address => uint256) public stonkzOps;
+    /// Buyback-and-burn vault, per base token. Not claimable by any user path.
+    mapping(address => uint256) public stonkzBurn;
 
     address public admin;
     address public pendingAdmin;
@@ -171,6 +176,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 feeTotal,
         uint256 feeProtocol,
         uint256 feeOps,
+        uint256 feeBurn,
         uint256 feeCreatorBucket,
         uint256 feeStakers,
         uint256 feeCreator,
@@ -187,9 +193,12 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 feeTotal,
         uint256 protocol,
         uint256 ops,
+        uint256 burn,
         uint256 creatorBucket
     );
-    event TreasuryCredit(address indexed baseToken, uint256 protocolDelta, uint256 opsDelta);
+    event TreasuryCredit(
+        address indexed baseToken, uint256 protocolDelta, uint256 opsDelta, uint256 burnDelta
+    );
     event TreasuryWithdrawn(address indexed baseToken, uint8 which, uint256 amount, address to);
     event Graduated(
         address indexed token,
@@ -202,7 +211,14 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     );
     event LiquidityMigrated(address indexed token, address pool, uint256 liquidityBurned);
     event CreatorFeesClaimed(address indexed token, address indexed creator, uint256 base, uint256 tokens);
-    event Staked(address indexed token, address indexed owner, uint256 amount, uint16 lockDays, uint256 weight, uint64 lockUntil);
+    event Staked(
+        address indexed token,
+        address indexed owner,
+        uint256 amount,
+        uint16 lockDays,
+        uint256 weight,
+        uint64 lockUntil
+    );
     event Unstaked(address indexed token, address indexed owner, uint256 amount);
     event StakeClaimed(address indexed token, address indexed owner, uint256 base, uint256 tokens);
 
@@ -326,25 +342,64 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     /* ------------------------------------------------------------ treasuries */
 
+    function _checkFill(uint256 out, uint256 minOut, CurveMath.FeeShares memory s, uint256 fee) private pure {
+        require(out >= minOut, "slippage");
+        require(CurveMath.feeOf(s) == fee, "split");
+    }
+
+    function _notGraduated(Coin storage c) private view {
+        require(!c.graduated, "graduated");
+    }
+
+    function _positive(uint256 amount) private pure {
+        require(amount > 0, "amount");
+    }
+
+    function _known(Coin storage c) private view {
+        require(c.token != address(0), "unknown token");
+    }
+
+    function _something(uint256 base, uint256 tokens) private pure {
+        require(base > 0 || tokens > 0, "nothing");
+    }
+
+    function _gateWithdraw(address authority, bool paused, uint256 balance, uint256 amount) private view {
+        require(msg.sender == authority, "not authority");
+        require(!paused, "withdrawals paused");
+        require(balance >= amount, "balance");
+    }
+
+    /// @dev One revert site for every token hand-out; the string is part of the API surface.
+    function _payTokens(address token, address to, uint256 amount) private {
+        require(StonkzToken(token).transfer(to, amount), "transfer");
+    }
+
+    function _pullTokens(address token, uint256 amount) private {
+        require(StonkzToken(token).transferFrom(msg.sender, address(this), amount), "transferFrom");
+    }
+
     /// @notice Neither treasury has a user-facing claim path. `claimCreatorFees`
     /// and `claimStake` read entirely different ledgers and cannot reach these.
     function withdrawTreasury(uint8 which, address baseToken, uint256 amount, address to)
         external
         nonReentrant
     {
-        require(amount > 0, "amount");
+        _positive(amount);
         require(to != address(0), "to zero");
         if (which == 0) {
-            require(msg.sender == protocolWithdrawAuthority, "not authority");
-            require(!protocolWithdrawalsPaused, "withdrawals paused");
-            require(protocolRevenue[baseToken] >= amount, "balance");
+            _gateWithdraw(
+                protocolWithdrawAuthority, protocolWithdrawalsPaused, protocolRevenue[baseToken], amount
+            );
             protocolRevenue[baseToken] -= amount;
-        } else {
-            require(which == 1, "which");
-            require(msg.sender == opsWithdrawAuthority, "not authority");
-            require(!opsWithdrawalsPaused, "withdrawals paused");
-            require(stonkzOps[baseToken] >= amount, "balance");
+        } else if (which == 1) {
+            _gateWithdraw(opsWithdrawAuthority, opsWithdrawalsPaused, stonkzOps[baseToken], amount);
             stonkzOps[baseToken] -= amount;
+        } else {
+            // The burn vault is swept by the same ops authority: the keeper
+            // buys $STONKZ with it and burns what it bought.
+            require(which == 2, "which");
+            _gateWithdraw(opsWithdrawAuthority, opsWithdrawalsPaused, stonkzBurn[baseToken], amount);
+            stonkzBurn[baseToken] -= amount;
         }
         _send(baseToken, to, amount);
         emit TreasuryWithdrawn(baseToken, which, amount, to);
@@ -398,8 +453,20 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         c.creationPrice1e6 = price;
 
         emit TokenCreated(
-            token, baseToken, msg.sender, ticker, supplyAtoms, feeBps, cashback, c.cbStart,
-            p.virtualBase, p.virtualToken, p.tokensForSale, p.lpReserve, p.gradMcapBase, price
+            token,
+            baseToken,
+            msg.sender,
+            ticker,
+            supplyAtoms,
+            feeBps,
+            cashback,
+            c.cbStart,
+            p.virtualBase,
+            p.virtualToken,
+            p.tokensForSale,
+            p.lpReserve,
+            p.gradMcapBase,
+            price
         );
     }
 
@@ -414,23 +481,22 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     {
         Coin storage c = coins[token];
         _tradeGuard(c);
-        require(amountBase > 0, "amount");
+        _positive(amountBase);
 
         uint16 bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
         bool inCashback = bps > c.feeBps;
 
         CurveMath.BuyFill memory f = CurveMath.buyQuote(_state(c), bps, amountBase);
-        require(f.tokensOut >= minOut, "slippage");
-
         CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee);
-        // The identity the fee model rests on, asserted on every fill.
-        require(s.protocol + s.stonkzOps + s.creatorBucket == f.fee, "split");
+        // Slippage, then the identity the fee model rests on, asserted on every fill.
+        _checkFill(f.tokensOut, minOut, s, f.fee);
 
         // Pull the whole gross once; routing happens in storage from here.
         _pull(c.baseToken, msg.sender, f.grossBase);
 
         protocolRevenue[c.baseToken] += s.protocol;
         stonkzOps[c.baseToken] += s.stonkzOps;
+        stonkzBurn[c.baseToken] += s.burn;
 
         c.virtualBase += f.netBase;
         c.virtualToken -= f.tokensOut;
@@ -467,12 +533,25 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         c.protocolAccrued += s.protocol;
         c.opsAccrued += s.stonkzOps;
+        c.burnAccrued += s.burn;
         c.creatorBucketAccrued += s.creatorBucket;
         if (c.realToken == 0) c.complete = true;
 
-        require(StonkzToken(token).transfer(msg.sender, f.tokensOut), "transfer");
+        _payTokens(token, msg.sender, f.tokensOut);
 
-        _emitFill(c, msg.sender, true, f.grossBase, f.tokensOut, bps, inCashback, s, toCreator, toStakers, cashbackTokens);
+        _emitFill(
+            c,
+            msg.sender,
+            true,
+            f.grossBase,
+            f.tokensOut,
+            bps,
+            inCashback,
+            s,
+            toCreator,
+            toStakers,
+            cashbackTokens
+        );
         return f.tokensOut;
     }
 
@@ -485,18 +564,16 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     {
         Coin storage c = coins[token];
         _tradeGuard(c);
-        require(amountToken > 0, "amount");
+        _positive(amountToken);
 
         uint16 bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
         bool inCashback = bps > c.feeBps;
 
         CurveMath.SellFill memory f = CurveMath.sellQuote(_state(c), bps, amountToken);
-        require(f.netBase >= minOut, "slippage");
-
         CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee);
-        require(s.protocol + s.stonkzOps + s.creatorBucket == f.fee, "split");
+        _checkFill(f.netBase, minOut, s, f.fee);
 
-        require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "transferFrom");
+        _pullTokens(token, amountToken);
 
         c.virtualBase -= f.grossBase;
         c.virtualToken += amountToken;
@@ -505,6 +582,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         protocolRevenue[c.baseToken] += s.protocol;
         stonkzOps[c.baseToken] += s.stonkzOps;
+        stonkzBurn[c.baseToken] += s.burn;
         // A sell inside the cashback window pays the elevated fee, but its
         // bucket accrues in base: converting it would be buy pressure the
         // seller never asked for. See SPEC.md §3.
@@ -516,6 +594,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         c.protocolAccrued += s.protocol;
         c.opsAccrued += s.stonkzOps;
+        c.burnAccrued += s.burn;
         c.creatorBucketAccrued += s.creatorBucket;
 
         _send(c.baseToken, msg.sender, f.netBase);
@@ -533,22 +612,22 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         require(msg.sender == c.creator, "not creator");
         uint256 base = c.creatorClaimableBase;
         uint256 tokens = c.creatorClaimableToken;
-        require(base > 0 || tokens > 0, "nothing");
+        _something(base, tokens);
         c.creatorClaimableBase = 0;
         c.creatorClaimableToken = 0;
         c.bucketBase -= base;
         c.bucketToken -= tokens;
         if (base > 0) _send(c.baseToken, msg.sender, base);
-        if (tokens > 0) require(StonkzToken(token).transfer(msg.sender, tokens), "transfer");
+        if (tokens > 0) _payTokens(token, msg.sender, tokens);
         emit CreatorFeesClaimed(token, msg.sender, base, tokens);
     }
 
     /* -------------------------------------------------------------- staking */
 
     function stake(address token, uint256 amount, uint16 lockDays) external nonReentrant {
-        require(amount > 0, "amount");
+        _positive(amount);
         Coin storage c = coins[token];
-        require(c.token != address(0), "unknown token");
+        _known(c);
         Position storage p = positions[token][msg.sender];
 
         // Validate the argument before comparing it against stored state, so a
@@ -566,7 +645,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 oldAmount = p.amount;
         uint256 oldWeight = p.weight;
 
-        require(StonkzToken(token).transferFrom(msg.sender, address(this), amount), "transferFrom");
+        _pullTokens(token, amount);
         p.amount = oldAmount + amount;
         // Topping up restarts the clock rather than letting an old position
         // carry a nearly-expired lock for new tokens.
@@ -577,7 +656,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     }
 
     function unstake(address token, uint256 amount) external nonReentrant {
-        require(amount > 0, "amount");
+        _positive(amount);
         Coin storage c = coins[token];
         Position storage p = positions[token][msg.sender];
         require(p.amount >= amount, "insufficient");
@@ -591,7 +670,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         p.amount = oldAmount - amount;
         _reweigh(c, p, oldAmount, oldWeight);
 
-        require(StonkzToken(token).transfer(msg.sender, amount), "transfer");
+        _payTokens(token, msg.sender, amount);
         emit Unstaked(token, msg.sender, amount);
     }
 
@@ -601,13 +680,13 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         _settle(c, p);
         uint256 base = p.unclaimedBase;
         uint256 tokens = p.unclaimedToken;
-        require(base > 0 || tokens > 0, "nothing");
+        _something(base, tokens);
         p.unclaimedBase = 0;
         p.unclaimedToken = 0;
         c.bucketBase -= base;
         c.bucketToken -= tokens;
         if (base > 0) _send(c.baseToken, msg.sender, base);
-        if (tokens > 0) require(StonkzToken(token).transfer(msg.sender, tokens), "transfer");
+        if (tokens > 0) _payTokens(token, msg.sender, tokens);
         emit StakeClaimed(token, msg.sender, base, tokens);
     }
 
@@ -618,8 +697,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// early trigger — never block an exhausted curve from graduating.
     function graduate(address token) external nonReentrant {
         Coin storage c = coins[token];
-        require(c.token != address(0), "unknown token");
-        require(!c.graduated, "graduated");
+        _known(c);
+        _notGraduated(c);
 
         uint256 mcap = CurveMath.mcapBase(_state(c), c.supply);
         uint256 usd;
@@ -670,13 +749,13 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         uint256 base = c.realBase;
         uint256 tokens = c.lpReserve;
-        require(base > 0 || tokens > 0, "nothing");
+        _something(base, tokens);
         // Zeroed before the external call so the release cannot be repeated.
         c.realBase = 0;
         c.lpReserve = 0;
 
         if (base > 0) _send(c.baseToken, address(migrator), base);
-        if (tokens > 0) require(StonkzToken(token).transfer(address(migrator), tokens), "transfer");
+        if (tokens > 0) _payTokens(token, address(migrator), tokens);
 
         (address pool, uint256 burned) = migrator.migrate(token, c.baseToken, tokens, base);
         emit LiquidityMigrated(token, pool, burned);
@@ -746,9 +825,9 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     }
 
     function _tradeGuard(Coin storage c) internal view {
-        require(c.token != address(0), "unknown token");
+        _known(c);
         require(!tradingPaused, "trading paused");
-        require(!c.graduated, "graduated");
+        _notGraduated(c);
         // `graduate` is permissionless, so this is seconds, not a lockup.
         require(!c.complete, "curve complete");
     }
@@ -793,9 +872,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         p.tokenDebt = c.accTokenPerWeight;
     }
 
-    function _reweigh(Coin storage c, Position storage p, uint256 oldAmount, uint256 oldWeight)
-        internal
-    {
+    function _reweigh(Coin storage c, Position storage p, uint256 oldAmount, uint256 oldWeight) internal {
         uint256 newWeight = CurveMath.stakeWeight(p.amount, p.lockDays);
         p.weight = newWeight;
         c.totalWeight = c.totalWeight - oldWeight + newWeight;
@@ -847,13 +924,29 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 toStakers,
         uint256 cashbackTokens
     ) internal {
-        uint256 fee = s.protocol + s.stonkzOps + s.creatorBucket;
+        uint256 fee = CurveMath.feeOf(s);
         emit Trade(
-            c.token, trader, isBuy, baseAmount, tokenAmount, bps, inCashback,
-            fee, s.protocol, s.stonkzOps, s.creatorBucket, toStakers, toCreator, cashbackTokens,
-            c.virtualBase, c.virtualToken, c.realBase, c.realToken
+            c.token,
+            trader,
+            isBuy,
+            baseAmount,
+            tokenAmount,
+            bps,
+            inCashback,
+            fee,
+            s.protocol,
+            s.stonkzOps,
+            s.burn,
+            s.creatorBucket,
+            toStakers,
+            toCreator,
+            cashbackTokens,
+            c.virtualBase,
+            c.virtualToken,
+            c.realBase,
+            c.realToken
         );
-        emit FeeAccrued(c.token, c.baseToken, fee, s.protocol, s.stonkzOps, s.creatorBucket);
-        emit TreasuryCredit(c.baseToken, s.protocol, s.stonkzOps);
+        emit FeeAccrued(c.token, c.baseToken, fee, s.protocol, s.stonkzOps, s.burn, s.creatorBucket);
+        emit TreasuryCredit(c.baseToken, s.protocol, s.stonkzOps, s.burn);
     }
 }

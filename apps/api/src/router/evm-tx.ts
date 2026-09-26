@@ -6,7 +6,9 @@ import type { UniswapClient, UniswapQuoteResponseRaw } from './uniswap.js';
 /** Mirrors `solana-tx.ts`'s `asSolanaBlockhashSource` — narrows a `ChainRpc` to the receipt-lookup capability only the real `EvmRpc` (and `FakeChainRpc`) implement. */
 export function asEvmTransactionSource(rpc: ChainRpc): EvmTransactionSource | undefined {
   const candidate = rpc as Partial<EvmTransactionSource>;
-  return typeof candidate.getTransactionReceipt === 'function' ? (candidate as EvmTransactionSource) : undefined;
+  return typeof candidate.getTransactionReceipt === 'function'
+    ? (candidate as EvmTransactionSource)
+    : undefined;
 }
 
 /**

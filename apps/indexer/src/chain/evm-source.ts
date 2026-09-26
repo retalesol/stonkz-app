@@ -1,6 +1,6 @@
 import type { BaseMintRegistry } from '@stonkz/api/router/base-mints';
 import type { Logger } from '@stonkz/api/observability/logger';
-import type { EvmNet, Net } from '@stonkz/shared';
+import { isEvmNet, type EvmNet, type Net } from '@stonkz/shared';
 import type { ChainEvent } from '../events.js';
 import { compareEvents } from '../events.js';
 import type { EventSource, PollResult } from '../source.js';
@@ -99,7 +99,11 @@ export class EvmChainSource implements EventSource {
     const from = fromExclusive + 1;
     const to = Math.min(toInclusive, from + this.logWindow - 1);
 
-    const raw = await this.opts.rpc.getLogs({ fromBlock: from, toBlock: to, addresses: this.addresses });
+    const raw = await this.opts.rpc.getLogs({
+      fromBlock: from,
+      toBlock: to,
+      addresses: this.addresses,
+    });
     const groups = groupByTransaction(raw, this.opts.logger);
     if (groups.length === 0) return { events: [], coveredTo: to };
 
@@ -110,7 +114,7 @@ export class EvmChainSource implements EventSource {
     for (const group of groups) {
       events.push(
         ...(await mapEvmTransaction(group.logs, {
-          net: this.net === 'BASE' ? 'BASE' : 'RH',
+          net: isEvmNet(this.net) ? this.net : 'RH',
           txHash: group.txHash,
           blockNumber: group.blockNumber,
           blockTimeMs: await this.blockTimeMs(group.blockNumber, blockTimes),
@@ -151,10 +155,13 @@ export class EvmChainSource implements EventSource {
     } catch (err) {
       // See `solana-source.ts`: only non-native-base fills need this, and 0
       // records an honest zero rather than a figure from a stale price.
-      this.opts.logger.warn('native price unavailable; non-native-base fills will record 0 native', {
-        net: 'RH',
-        err: err instanceof Error ? err.message : String(err),
-      });
+      this.opts.logger.warn(
+        'native price unavailable; non-native-base fills will record 0 native',
+        {
+          net: 'RH',
+          err: err instanceof Error ? err.message : String(err),
+        },
+      );
       return 0;
     }
   }

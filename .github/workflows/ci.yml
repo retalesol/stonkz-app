@@ -45,8 +45,8 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: The oracle must not drift
-        run: diff index.html legacy/index.html
+      - name: chains.json matches the deployment records
+        run: node scripts/emit-chains.mjs --check
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -54,3 +54,39 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 7
+
+  evm-programs:
+    name: forge test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build
+        working-directory: programs/evm
+        run: forge build --sizes
+
+      - name: Test
+        working-directory: programs/evm
+        run: forge test -vv
+
+  solana-program:
+    name: cargo test (launchpad)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: programs/solana
+
+      - name: Unit tests
+        working-directory: programs/solana
+        run: cargo test -p launchpad --lib

@@ -35,7 +35,12 @@ describe('XProfileCacheService', () => {
         status: 'ok',
       });
       let now = 1_000_000;
-      const cache = new XProfileCacheService({ db: db.db, provider, ttlSeconds: 3600, now: () => now });
+      const cache = new XProfileCacheService({
+        db: db.db,
+        provider,
+        ttlSeconds: 3600,
+        now: () => now,
+      });
 
       await cache.get('@degen');
       await cache.get('degen'); // same handle, different casing/@ — still one cache row

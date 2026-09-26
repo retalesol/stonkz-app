@@ -1,11 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
-import {
-  SOCIAL_DAILY_CAP,
-  XP_COMMENT,
-  XP_DAILY_CHECKIN,
-  XP_LIKE,
-  type Net,
-} from '@stonkz/shared';
+import { SOCIAL_DAILY_CAP, XP_COMMENT, XP_DAILY_CHECKIN, XP_LIKE, type Net } from '@stonkz/shared';
 import type { Db } from '../db/client.js';
 import { socialDaily } from '../db/schema.js';
 import type { Ledger } from './ledger.js';
@@ -39,20 +33,27 @@ export class SocialCapsService {
   }
 
   private async row(net: Net, wallet: string, dayUtc: string) {
-    await this.db
-      .insert(socialDaily)
-      .values({ net, wallet, dayUtc })
-      .onConflictDoNothing();
+    await this.db.insert(socialDaily).values({ net, wallet, dayUtc }).onConflictDoNothing();
     const [r] = await this.db
       .select()
       .from(socialDaily)
-      .where(and(eq(socialDaily.net, net), eq(socialDaily.wallet, wallet), eq(socialDaily.dayUtc, dayUtc)))
+      .where(
+        and(
+          eq(socialDaily.net, net),
+          eq(socialDaily.wallet, wallet),
+          eq(socialDaily.dayUtc, dayUtc),
+        ),
+      )
       .limit(1);
     return r!;
   }
 
   /** Award comment XP if under the daily cap. Returns awarded XP (0 or 1). */
-  async tryComment(net: Net, wallet: string, tipSig: string): Promise<{ xp: number; remaining: number }> {
+  async tryComment(
+    net: Net,
+    wallet: string,
+    tipSig: string,
+  ): Promise<{ xp: number; remaining: number }> {
     const dayUtc = utcDayKey(this.now());
     const before = await this.row(net, wallet, dayUtc);
     if (before.comments >= SOCIAL_DAILY_CAP) {
@@ -86,7 +87,13 @@ export class SocialCapsService {
       await this.db
         .update(socialDaily)
         .set({ comments: sql`greatest(0, ${socialDaily.comments} - 1)` })
-        .where(and(eq(socialDaily.net, net), eq(socialDaily.wallet, wallet), eq(socialDaily.dayUtc, dayUtc)));
+        .where(
+          and(
+            eq(socialDaily.net, net),
+            eq(socialDaily.wallet, wallet),
+            eq(socialDaily.dayUtc, dayUtc),
+          ),
+        );
       return { xp: 0, remaining: Math.max(0, SOCIAL_DAILY_CAP - before.comments) };
     }
 
@@ -95,7 +102,11 @@ export class SocialCapsService {
   }
 
   /** Award like XP if under the daily cap. */
-  async tryLike(net: Net, wallet: string, postId: number): Promise<{ xp: number; remaining: number }> {
+  async tryLike(
+    net: Net,
+    wallet: string,
+    postId: number,
+  ): Promise<{ xp: number; remaining: number }> {
     const dayUtc = utcDayKey(this.now());
     const before = await this.row(net, wallet, dayUtc);
     if (before.likes >= SOCIAL_DAILY_CAP) {
@@ -129,7 +140,13 @@ export class SocialCapsService {
       await this.db
         .update(socialDaily)
         .set({ likes: sql`greatest(0, ${socialDaily.likes} - 1)` })
-        .where(and(eq(socialDaily.net, net), eq(socialDaily.wallet, wallet), eq(socialDaily.dayUtc, dayUtc)));
+        .where(
+          and(
+            eq(socialDaily.net, net),
+            eq(socialDaily.wallet, wallet),
+            eq(socialDaily.dayUtc, dayUtc),
+          ),
+        );
       return { xp: 0, remaining: Math.max(0, SOCIAL_DAILY_CAP - before.likes) };
     }
 
@@ -169,7 +186,13 @@ export class SocialCapsService {
       await this.db
         .update(socialDaily)
         .set({ checkinClaimed: false })
-        .where(and(eq(socialDaily.net, net), eq(socialDaily.wallet, wallet), eq(socialDaily.dayUtc, dayUtc)));
+        .where(
+          and(
+            eq(socialDaily.net, net),
+            eq(socialDaily.wallet, wallet),
+            eq(socialDaily.dayUtc, dayUtc),
+          ),
+        );
       return { claimed: false, sp: 0 };
     }
     return { claimed: true, sp: award.sp };

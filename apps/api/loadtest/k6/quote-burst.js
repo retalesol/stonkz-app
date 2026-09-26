@@ -17,7 +17,8 @@ import { BASE_URL, NET, netManifest, jsonHeaders } from './lib/config.js';
 
 const board = netManifest(NET);
 const HOT = board.hotSymbols.length > 0 ? board.hotSymbols : board.tradeableSymbols.slice(0, 5);
-if (HOT.length === 0) throw new Error('quote-burst needs at least one native-paired token; run loadtest/seed.ts first');
+if (HOT.length === 0)
+  throw new Error('quote-burst needs at least one native-paired token; run loadtest/seed.ts first');
 
 const AMOUNTS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
 
@@ -70,10 +71,16 @@ export function quote() {
   // hit (`redis/quote-cache.ts`); varying it is a cache miss that recomputes
   // the curve. Tag both so the results can be split.
   const cacheLikely = Math.random() < 0.4;
-  const res = http.get(`${BASE_URL}/tokens/${sym}/quote?net=${NET}&side=${side}&amount=${cacheLikely ? AMOUNTS[0] : amount}`, {
-    headers,
-    tags: { name: 'GET /tokens/:sym/quote', cache: cacheLikely ? 'hit-likely' : 'miss-likely' },
+  const res = http.get(
+    `${BASE_URL}/tokens/${sym}/quote?net=${NET}&side=${side}&amount=${cacheLikely ? AMOUNTS[0] : amount}`,
+    {
+      headers,
+      tags: { name: 'GET /tokens/:sym/quote', cache: cacheLikely ? 'hit-likely' : 'miss-likely' },
+    },
+  );
+  check(res, {
+    'quote 200': (r) => r.status === 200,
+    'quote has hops': (r) => !!r.json('hops') || r.status !== 200,
   });
-  check(res, { 'quote 200': (r) => r.status === 200, 'quote has hops': (r) => !!r.json('hops') || r.status !== 200 });
   sleep(Math.random() * 0.3);
 }

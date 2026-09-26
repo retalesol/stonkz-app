@@ -74,13 +74,22 @@ pub mod launchpad {
         instructions::admin::set_max_oracle_staleness(ctx, secs)
     }
 
-    /// Which Raydium CPMM program and fee tier `migrate_liquidity` CPIs into.
+    /// Which Meteora DLMM program and `PresetParameter2` migration CPIs into.
+    pub fn set_meteora_config(
+        ctx: Context<AdminOnly>,
+        program: Pubkey,
+        preset: Pubkey,
+    ) -> Result<()> {
+        instructions::admin::set_meteora_config(ctx, program, preset)
+    }
+
+    /// Deprecated alias — same Global slots as `set_meteora_config`.
     pub fn set_raydium_config(
         ctx: Context<AdminOnly>,
         program: Pubkey,
         amm_config: Pubkey,
     ) -> Result<()> {
-        instructions::admin::set_raydium_config(ctx, program, amm_config)
+        instructions::admin::set_meteora_config(ctx, program, amm_config)
     }
 
     pub fn set_withdraw_authorities(
@@ -147,8 +156,14 @@ pub mod launchpad {
         instructions::graduate::graduate(ctx)
     }
 
-    pub fn migrate_liquidity(ctx: Context<MigrateLiquidity>) -> Result<()> {
-        instructions::graduate::migrate_liquidity(ctx)
+    /// Step 1 of migration: create the Meteora DLMM LB pair at curve close price.
+    pub fn migrate_create_pool(ctx: Context<MigrateCreatePool>) -> Result<()> {
+        instructions::graduate::migrate_create_pool(ctx)
+    }
+
+    /// Step 2 of migration: seed liquidity, lock the position permanently.
+    pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> {
+        instructions::graduate::migrate_seed_liquidity(ctx)
     }
 
     /// Creator bucket only. Cannot reach the protocol or ops vaults.

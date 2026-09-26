@@ -51,10 +51,14 @@ if (env.nodeEnv !== 'production') await runMigrations(deps.db);
 const lockHandle = config.singleReplicaLock
   ? createDb({ url: env.databaseUrl, singleConnection: true })
   : null;
-const lock = lockHandle ? new ReplicaLock({ db: lockHandle.db, key: config.lockKey, logger }) : null;
+const lock = lockHandle
+  ? new ReplicaLock({ db: lockHandle.db, key: config.lockKey, logger })
+  : null;
 
 if (lock && !(await lock.acquire())) {
-  logger.error('refusing to start: another replica is already indexing', { lockKey: config.lockKey });
+  logger.error('refusing to start: another replica is already indexing', {
+    lockKey: config.lockKey,
+  });
   await lockHandle?.close();
   await close();
   process.exit(1);
@@ -86,11 +90,12 @@ let forgetCaches: (net: Net) => void = () => {};
 if (config.mode === 'chain') {
   const built = buildChainSources({ config, env, db: deps.db, oracle: deps.oracle, logger });
   sources = {
-    SOL: config.chainNets.includes('SOL')
-      ? built.sources.SOL
-      : new FixtureEventSource('SOL', []),
+    SOL: config.chainNets.includes('SOL') ? built.sources.SOL : new FixtureEventSource('SOL', []),
     RH: config.chainNets.includes('RH') ? built.sources.RH : new FixtureEventSource('RH', []),
-    BASE: config.chainNets.includes('BASE') ? built.sources.BASE : new FixtureEventSource('BASE', []),
+    BASE: config.chainNets.includes('BASE')
+      ? built.sources.BASE
+      : new FixtureEventSource('BASE', []),
+    ARC: config.chainNets.includes('ARC') ? built.sources.ARC : new FixtureEventSource('ARC', []),
   };
   rollback = new ReorgRollback({ db: deps.db, logger, now: deps.now });
   // A rollback can delete the `tokens` row a launch created, so the registry's
@@ -122,6 +127,7 @@ if (config.mode === 'chain') {
     SOL: new FixtureEventSource('SOL', scenario.events),
     RH: new FixtureEventSource('RH', scenario.events),
     BASE: new FixtureEventSource('BASE', scenario.events),
+    ARC: new FixtureEventSource('ARC', scenario.events),
   };
   // Safe precisely because ingest is idempotent, and only correct because
   // there is no chain: in chain mode this would re-walk history from genesis.
@@ -159,7 +165,9 @@ const http = startIndexerHttp({
 let stopping = false;
 
 const sweep = setInterval(() => {
-  void runner.sweepAchievements().catch((err: unknown) => logger.error('sweep failed', { err: String(err) }));
+  void runner
+    .sweepAchievements()
+    .catch((err: unknown) => logger.error('sweep failed', { err: String(err) }));
 }, config.sweepMs);
 sweep.unref?.();
 
@@ -177,7 +185,11 @@ const shutdown = async (signal: string): Promise<void> => {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
-logger.info('indexer started', { mode: config.mode, pollMs: config.pollMs, httpPort: config.httpPort });
+logger.info('indexer started', {
+  mode: config.mode,
+  pollMs: config.pollMs,
+  httpPort: config.httpPort,
+});
 while (!stopping) {
   // `drain` already isolates the two chains from each other and never
   // rejects; this catch is for anything outside them (a lost database

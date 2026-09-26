@@ -95,6 +95,11 @@ export class SquareCropper {
     return this.scale / this.minScale;
   }
 
+  /** Zoom relative to cover-min (1 = just covers the square). */
+  setRelativeZoom(factor: number): void {
+    this.setZoom(this.minScale * Math.max(1, factor));
+  }
+
   async export(): Promise<SquareCropResult> {
     if (!this.img) throw new Error('no image loaded');
     const out = document.createElement('canvas');
@@ -104,7 +109,13 @@ export class SquareCropper {
     if (!ctx) throw new Error('2d context unavailable');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(this.img, this.ox, this.oy, this.img.naturalWidth * this.scale, this.img.naturalHeight * this.scale);
+    ctx.drawImage(
+      this.img,
+      this.ox,
+      this.oy,
+      this.img.naturalWidth * this.scale,
+      this.img.naturalHeight * this.scale,
+    );
     const blob = await new Promise<Blob>((resolve, reject) => {
       out.toBlob(
         (b) => (b ? resolve(b) : reject(new Error('crop export failed'))),
@@ -120,7 +131,13 @@ export class SquareCropper {
     if (!ctx || !this.img) return;
     ctx.fillStyle = '#0a0c10';
     ctx.fillRect(0, 0, this.size, this.size);
-    ctx.drawImage(this.img, this.ox, this.oy, this.img.naturalWidth * this.scale, this.img.naturalHeight * this.scale);
+    ctx.drawImage(
+      this.img,
+      this.ox,
+      this.oy,
+      this.img.naturalWidth * this.scale,
+      this.img.naturalHeight * this.scale,
+    );
     // Soft vignette frame
     ctx.strokeStyle = 'rgba(242,174,75,.55)';
     ctx.lineWidth = 2;
@@ -174,4 +191,21 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error('could not load image'));
     img.src = url;
   });
+}
+
+/** Natural pixel size of a File / Blob image. */
+export async function imageNaturalSize(file: Blob): Promise<{ w: number; h: number }> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    return { w: img.naturalWidth, h: img.naturalHeight };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** True when the image is already a square (within `tol` relative difference). */
+export function isSquareAspect(w: number, h: number, tol = 0.02): boolean {
+  if (!(w > 0 && h > 0)) return false;
+  return Math.abs(w - h) / Math.max(w, h) <= tol;
 }

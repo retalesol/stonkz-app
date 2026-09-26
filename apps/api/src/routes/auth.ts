@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
-import { isEvm, parseNet, type Net } from '@stonkz/shared';
+import { ALL_NETS, isEvm, parseNet, type Net } from '@stonkz/shared';
 import { parseSignInMessage } from '../auth/message.js';
 import { AuthError } from '../auth/service.js';
 import { authNonces } from '../db/schema.js';
@@ -41,7 +41,12 @@ export function authRoutes(): Hono<AppEnv> {
 
   app.get('/auth/nonce', async (c) => {
     const net = parseNet(c.req.query('net'));
-    if (!net) return c.json({ error: 'bad_request', detail: 'net must be SOL, RH, or BASE' }, 400);
+    if (!net) {
+      return c.json(
+        { error: 'bad_request', detail: `net must be one of ${ALL_NETS.join(', ')}` },
+        400,
+      );
+    }
     const address = c.req.query('address');
     const challenge = await c.get('deps').auth.issueNonce(net, address);
     return c.json(challenge);
@@ -60,8 +65,15 @@ export function authRoutes(): Hono<AppEnv> {
       }
     }
     const { address, message, signature } = body;
-    if (typeof address !== 'string' || typeof message !== 'string' || typeof signature !== 'string') {
-      return c.json({ error: 'bad_request', detail: 'address, message and signature are required' }, 400);
+    if (
+      typeof address !== 'string' ||
+      typeof message !== 'string' ||
+      typeof signature !== 'string'
+    ) {
+      return c.json(
+        { error: 'bad_request', detail: 'address, message and signature are required' },
+        400,
+      );
     }
 
     try {
@@ -73,7 +85,8 @@ export function authRoutes(): Hono<AppEnv> {
         userAgent: c.req.header('User-Agent'),
         // Only the trusted-proxy-depth hop, never the client-controllable
         // left end of the header — see M1 in docs/security-review-findings.md.
-        ip: resolveClientIp(c.req.header('X-Forwarded-For'), deps.env.trustedProxyDepth) ?? undefined,
+        ip:
+          resolveClientIp(c.req.header('X-Forwarded-For'), deps.env.trustedProxyDepth) ?? undefined,
       });
       // First sight of a wallet still starts its streak, so the multiplier is
       // right on the very first trade of the session.
@@ -111,9 +124,14 @@ export function authRoutes(): Hono<AppEnv> {
       return c.json({ error: 'bad_request', detail: 'message is required' }, 400);
     }
     const parsed = parseSignInMessage(body.message);
-    if (!parsed) return c.json({ error: 'bad_request', detail: 'unparseable sign-in message' }, 400);
+    if (!parsed)
+      return c.json({ error: 'bad_request', detail: 'unparseable sign-in message' }, 400);
     const deps = c.get('deps');
-    const [nonceRow] = await deps.db.select().from(authNonces).where(eq(authNonces.nonce, parsed.nonce)).limit(1);
+    const [nonceRow] = await deps.db
+      .select()
+      .from(authNonces)
+      .where(eq(authNonces.nonce, parsed.nonce))
+      .limit(1);
     const nonceNet = parseNet(nonceRow?.net);
     if (!nonceRow || !nonceNet || !isEvm(nonceNet)) {
       return c.json({ error: 'bad_nonce', detail: 'unknown or non-EVM nonce' }, 400);
@@ -143,7 +161,8 @@ export function authRoutes(): Hono<AppEnv> {
         refreshExpiresAt: result.refreshExpiresAt,
       });
     } catch (err) {
-      if (err instanceof AuthError) return c.json({ error: err.code, detail: err.message }, STATUS[err.code]);
+      if (err instanceof AuthError)
+        return c.json({ error: err.code, detail: err.message }, STATUS[err.code]);
       throw err;
     }
   });
