@@ -147,3 +147,23 @@ both proxies were abandoned and fresh stacks deployed: RH launchpad
 the chain-derived rows, Railway and Vercel point at the new addresses, and
 the indexer walks both chains from the new deploy blocks with no dead letters.
 Solana devnet was upgraded in place (slot 504567336) with the burn vault seeded.
+
+## Router redeploy, 2026-09-27 (pre-smoke audit)
+
+The audit found two router bugs, fixed in `StonkzRouter.sol` and covered by
+`test_ACurveCappingEthBuyRefundsTheRemainder`,
+`test_ACurveCappingAggregatorBuyRefundsTheBase` and
+`test_AFrontRunPermitStillSellsOnTheAllowance`:
+
+- a buy larger than the curve's remaining allocation left the unspent base
+  stranded in the router (it has no rescue function by design);
+- a permit replayed by a front-runner made the sell revert instead of
+  falling through to the allowance it had just granted.
+
+The router is immutable, so the fix is a new router bound to the same
+launchpad: `script/DeployRouter.s.sol` (now chain-generic) with
+`LAUNCHPAD_ADDRESS` and `EXPECT_CHAIN_ID`, then `RH_ROUTER_ADDRESS` /
+`BASE_ROUTER_ADDRESS` on both Railway services, the `StonkzRouter` entry in
+`deployments/<chainId>.json`, `node scripts/emit-chains.mjs`, and a roll of
+indexer, API and web. Until that lands, keep smoke-test buys small relative
+to what the curve has left.
