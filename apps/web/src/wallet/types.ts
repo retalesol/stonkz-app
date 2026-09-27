@@ -94,4 +94,11 @@ export interface ConnectedWallet {
    * wallet locked or disconnected on its own.
    */
   onAccountChange(cb: (address: string | null) => void): () => void;
+
+  /**
+   * The wallet moved to another chain mid-session (EVM `chainChanged`). The
+   * session stays up; the app warns and `enforceEvmChain` still guards every
+   * transaction. Absent on wallets that pin their chain (Solana, WalletConnect).
+   */
+  onChainChange?(cb: (chainId: number) => void): () => void;
 }

@@ -382,6 +382,8 @@ export async function enforceRhChain(request: ChainRequest): Promise<void> {
 class EvmWallet implements ConnectedWallet {
   readonly practice = false;
   private listeners = new Set<(address: string | null) => void>();
+  private chainListeners = new Set<(chainId: number) => void>();
+  private chainBound = false;
   private bound = false;
 
   constructor(
@@ -568,6 +570,18 @@ class EvmWallet implements ConnectedWallet {
       }) as (...args: never[]) => void);
     }
     return () => this.listeners.delete(cb);
+  }
+
+  onChainChange(cb: (chainId: number) => void): () => void {
+    this.chainListeners.add(cb);
+    if (!this.chainBound && this.provider.on) {
+      this.chainBound = true;
+      this.provider.on('chainChanged', ((hex: unknown) => {
+        const id = toChainId(hex);
+        for (const l of this.chainListeners) l(id);
+      }) as (...args: never[]) => void);
+    }
+    return () => this.chainListeners.delete(cb);
   }
 }
 

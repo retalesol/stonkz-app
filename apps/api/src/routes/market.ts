@@ -3,6 +3,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { MAJORS, STOCKS, RH_STOCKS, nativeUnit, parseNet, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
+import { basePriceFor } from '../router/base-price.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
@@ -93,17 +94,36 @@ export function marketRoutes(): Hono<AppEnv> {
    * Plan step 60 — majors per net, plus tokenized stocks.
    * Solana uses `STOCKS` (xStock tickers); Robinhood uses `RH_STOCKS`.
    */
-  app.get('/base-tokens', (c) => {
+  app.get('/base-tokens', async (c) => {
+    const deps = c.get('deps');
     const net = parseNet(c.req.query('network')) ?? parseNet(c.req.query('net')) ?? 'SOL';
-    const majors = MAJORS[net].map(([symbol, name]) => ({ symbol, name, kind: 'major' as const }));
+    // `available` is what /launch/prepare will accept: a pinned mint on this
+    // env and a price source. The stepper greys out the rest up front instead
+    // of letting a tester fill three steps and fail on the fourth.
+    const available = async (symbol: string): Promise<boolean> => {
+      if (!deps.baseMints.mintFor(net, symbol)) return false;
+      const price = await basePriceFor(net, symbol, deps.oracle).catch(() => null);
+      return price !== null;
+    };
+    const majors = await Promise.all(
+      MAJORS[net].map(async ([symbol, name]) => ({
+        symbol,
+        name,
+        kind: 'major' as const,
+        available: await available(symbol),
+      })),
+    );
     // Base has no stock bases (see MAJORS.BASE): advertising RH_STOCKS there
     // would offer symbols /launch/prepare then refuses with base_mint_not_allowed.
-    const stocks =
-      net === 'SOL'
-        ? STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }))
-        : net === 'RH'
-          ? RH_STOCKS.map(([symbol, name]) => ({ symbol, name, kind: 'stock' as const }))
-          : [];
+    const stockList = net === 'SOL' ? STOCKS : net === 'RH' ? RH_STOCKS : [];
+    const stocks = await Promise.all(
+      stockList.map(async ([symbol, name]) => ({
+        symbol,
+        name,
+        kind: 'stock' as const,
+        available: await available(symbol),
+      })),
+    );
 
     return c.json({
       net,

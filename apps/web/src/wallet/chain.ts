@@ -1,4 +1,4 @@
-import { EVM_NETS, NET_INFO, type EvmNet, type Net } from '@stonkz/shared';
+import { EVM_NETS, NET_INFO, isEvmNet, type EvmNet, type Net } from '@stonkz/shared';
 
 /**
  * Chain identity, as the wallet layer needs it.
@@ -199,6 +199,26 @@ export function solanaWalletStandardChain(cluster: string = SOLANA_CLUSTER): str
 }
 
 /** Human label for the chain a `net` settles on, for error copy. */
+/** Explorer page for a transaction on `net`. Solana's explorer takes the cluster as a query. */
+export function explorerTxUrl(net: Net, sig: string): string {
+  if (isEvmNet(net)) return EVM_CHAINS[net].explorerUrl + '/tx/' + sig;
+  const cluster = solanaWalletStandardChain().slice('solana:'.length);
+  return (
+    'https://explorer.solana.com/tx/' + sig + (cluster === 'mainnet' ? '' : '?cluster=' + cluster)
+  );
+}
+
+/** Explorer page for an address (a mint, a pool, a wallet) on `net`. */
+export function explorerAddressUrl(net: Net, address: string): string {
+  if (isEvmNet(net)) return EVM_CHAINS[net].explorerUrl + '/address/' + address;
+  const cluster = solanaWalletStandardChain().slice('solana:'.length);
+  return (
+    'https://explorer.solana.com/address/' +
+    address +
+    (cluster === 'mainnet' ? '' : '?cluster=' + cluster)
+  );
+}
+
 export function chainLabel(net: Net): string {
   if (net === 'SOL') return 'SOLANA ' + SOLANA_CLUSTER.toUpperCase();
   return NET_INFO[net].name + ' (' + EVM_CHAINS[net].chainId + ')';

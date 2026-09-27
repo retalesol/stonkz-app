@@ -121,7 +121,13 @@ function removeBubble(id: number): void {
   layoutBubbles();
 }
 
-function pushBubble(text: string, kind?: ToastKind): void {
+/** A bubble can carry one link (an explorer page for the fill it announces). */
+export interface ToastAction {
+  href: string;
+  label: string;
+}
+
+function pushBubble(text: string, kind?: ToastKind, action?: ToastAction): void {
   const id = ++seq;
   const el = document.createElement('button');
   el.type = 'button';
@@ -132,11 +138,20 @@ function pushBubble(text: string, kind?: ToastKind): void {
   spike.setAttribute('aria-hidden', 'true');
   const body = document.createElement('span');
   body.className = 'mm-bubble-txt';
-  body.textContent = text;
+  body.textContent = action ? text + ' \u00b7 ' + action.label + ' \u2197' : text;
   el.appendChild(body);
   el.appendChild(spike);
+  if (action) {
+    el.classList.add('mm-link');
+    el.setAttribute('aria-label', text + '. ' + action.label);
+  }
   el.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (action) {
+      // A bubble with a link is the link: open it, leave the stack alone.
+      window.open(action.href, '_blank', 'noopener');
+      return;
+    }
     // Clicking any bubble toggles the stack expand/collapse.
     expanded = !expanded;
     syncAgentClass();
@@ -161,13 +176,13 @@ function pushBubble(text: string, kind?: ToastKind): void {
 /**
  * Bottom-right Mememan toast. Same call sites as before — he speaks them.
  */
-export function toast(msg: string, kind?: ToastKind): void {
+export function toast(msg: string, kind?: ToastKind, action?: ToastAction): void {
   if (!document.getElementById('mmAgent')) {
     // Extremely early boot / tests — fall back to console so nothing throws.
     console.info('[toast]', msg);
     return;
   }
-  pushBubble(flavor(msg, kind), kind);
+  pushBubble(flavor(msg, kind), kind, action);
   if (quiet) syncAgentClass();
 }
 

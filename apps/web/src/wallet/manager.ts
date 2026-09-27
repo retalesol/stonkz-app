@@ -105,8 +105,21 @@ function announce(): void {
   for (const cb of changeListeners) cb();
 }
 
+const chainListeners = new Set<(chainId: number) => void>();
+let unbindChainChange: (() => void) | undefined;
+
+/** Fires when the active EVM wallet switches chain on its own; the app decides what to say. */
+export function onChainChange(cb: (chainId: number) => void): () => void {
+  chainListeners.add(cb);
+  return () => chainListeners.delete(cb);
+}
+
 function adopt(wallet: ConnectedWallet): ConnectedWallet {
   unbindAccountChange?.();
+  unbindChainChange?.();
+  unbindChainChange = wallet.onChainChange?.((chainId) => {
+    for (const cb of chainListeners) cb(chainId);
+  });
   active = wallet;
   unbindAccountChange = wallet.onAccountChange((address) => {
     if (address === null) {

@@ -12,7 +12,7 @@ import {
   px,
   usd,
 } from '@stonkz/shared';
-import { NET_INFO } from '@stonkz/shared';
+import { NET_INFO, type Net } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { LiveApiError } from '../api/live.js';
 import { SocialApiError, uploadImage } from '../api/social.js';
@@ -24,7 +24,7 @@ import { paintCoinArt } from '../canvas/pix.js';
 import { toast } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
 import { DOT, MID, fmtSupply } from '../lib/fmt.js';
-import { type Html, attr, html, render } from '../lib/html.js';
+import { type Html, attr, html, raw, render } from '../lib/html.js';
 import { SquareCropper, imageNaturalSize, isSquareAspect } from '../lib/crop.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, netOf } from '../state/wallet.js';
 import { COINS } from '../state/coins.js';
@@ -182,9 +182,30 @@ ${NEW.desc}</textarea>
     </p>`;
 }
 
+/** Bases `/base-tokens` says this env can pair; `null` until known (or when everything is fine). */
+let liveBases: ReadonlySet<string> | null = null;
+let liveBasesNet: Net | null = null;
+function ensureLiveBases(): void {
+  const net = WALLET.net;
+  if (!api.availableBases || liveBasesNet === net) return;
+  liveBasesNet = net;
+  liveBases = null;
+  void api.availableBases(net).then((set) => {
+    if (WALLET.net !== net) return;
+    liveBases = set;
+    if (NEW.step === 1 && $('#baseList')) renderNew();
+  });
+}
+
+function baseAvailable(sym: string): boolean {
+  return liveBases === null || liveBases.has(sym.toUpperCase());
+}
+
 function ncStep2(): Html {
   const n = netOf();
+  ensureLiveBases();
   const list = baseList();
+  const greyed = list.filter((t) => !baseAvailable(t[0])).length;
   return html`<div>
       <div class="base-hd">
         <span class="lbl" style="margin:0">BASE TOKEN</span
@@ -219,8 +240,9 @@ function ncStep2(): Html {
                 (t) =>
                   html`<button
                     type="button"
-                    class="base-opt${NEW.base === t[0] ? ' on' : ''}"
+                    class="base-opt${NEW.base === t[0] ? ' on' : ''}${baseAvailable(t[0]) ? '' : ' off'}"
                     data-base="${attr(t[0])}"
+                    ${baseAvailable(t[0]) ? '' : raw(' disabled title="NOT AVAILABLE ON THIS NET YET"')}
                   >
                     <span class="bs">${t[0]}</span><span class="bn">${t[1]}</span>
                   </button>`,
@@ -228,6 +250,13 @@ function ncStep2(): Html {
             : html`<div class="base-empty">NO MATCH ${DOT} CLEAR THE FILTER</div>`
         }
       </div>
+      ${
+        greyed > 0
+          ? html`<p class="hint" style="margin-top:4px">
+              ${greyed} GREYED OUT ${DOT} NO PINNED MINT OR PRICE FOR THEM ON ${n.name} YET.
+            </p>`
+          : ''
+      }
       <p class="hint" style="margin-top:4px">
         PAIRS AGAINST ${NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'} ON
         ${n.name}${

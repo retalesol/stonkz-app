@@ -16,6 +16,8 @@
 .base-opt{background:var(--pnl2);padding:5px 7px;text-align:left;border:1px solid transparent;min-width:0}
 .base-opt:hover{background:#151b27}
 .base-opt.on{border-color:var(--amber);background:#211703}
+.base-opt.off{opacity:.38;cursor:not-allowed}
+.base-opt.off:hover{background:var(--pnl2)}
 .base-opt .bs{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:12px;letter-spacing:.04em;
   color:var(--gold);display:block;line-height:1.15}
 .base-opt.on .bs{color:var(--amber)}

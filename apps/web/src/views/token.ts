@@ -22,7 +22,8 @@ import {
 import { NET_INFO, fmtNative, isEvm, nativeUnit as nativeUnitOf, type Net } from '@stonkz/shared';
 import { fetchChatHistory, fetchXProfile, sendChatMessage, SocialApiError } from '../api/social.js';
 import { api } from '../api/index.js';
-import { LiveApiError, subscribeChatRoom, type LiveChatFrame } from '../api/live.js';
+import { LiveApiError, lastTxLink, subscribeChatRoom, type LiveChatFrame } from '../api/live.js';
+import { explorerAddressUrl, explorerTxUrl } from '../wallet/chain.js';
 import { navigate, retitle } from '../app/route.js';
 import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isPracticeSession, isRejection } from '../wallet/index.js';
@@ -615,7 +616,20 @@ function tradesHTML(c: SimCoin): Html {
               aria-expanded="${open ? 'true' : 'false'}"`
             : '';
           return html`<tr class="${attr(rowClass)}" ${hopAttrs}>
-              <td class="dm">${clockSec(t.t)}</td>
+              <td class="dm">
+                ${
+                  t.sig && api.mode === 'live'
+                    ? html`<a
+                        class="txlink"
+                        href="${attr(explorerTxUrl(c.net ?? 'SOL', t.sig))}"
+                        target="_blank"
+                        rel="noopener"
+                        title="View transaction"
+                        >${clockSec(t.t)}</a
+                      >`
+                    : clockSec(t.t)
+                }
+              </td>
               <td class="${t.buy ? 'up' : 'dn'}">${t.buy ? 'BUY' : 'SELL'}</td>
               <td class="r">${t.sol.toFixed(2)}</td>
               <td class="r">${num(t.tok)}</td>
@@ -1130,8 +1144,23 @@ function updateCurveNote(): void {
   if (!n) return;
   if (c.lane === 'grad') {
     const net = c.net ?? 'SOL';
-    n.textContent =
-      'GRADUATED ' + MID + ' LIQUIDITY MIGRATED TO ' + NET_INFO[net].dex + ' AND ' + NET_INFO[net].lpNote + '.';
+    // The pool address is not on the API yet, so the honest link is the mint
+    // on the chain's explorer, where the DEX pair is one click away.
+    render(
+      n,
+      html`GRADUATED ${MID} LIQUIDITY MIGRATED TO ${NET_INFO[net].dex} AND ${NET_INFO[net].lpNote}.
+        ${
+          c.mint && api.mode === 'live'
+            ? html` <a
+                class="txlink"
+                href="${attr(explorerAddressUrl(net, c.mint))}"
+                target="_blank"
+                rel="noopener"
+                >VIEW TOKEN ON EXPLORER \u2197</a
+              >`
+            : ''
+        }`,
+    );
   } else {
     const net = c.net ?? 'SOL';
     render(
@@ -1446,6 +1475,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
   go.textContent = restoreLabel;
 
   const simSuffix = api.mode !== 'live' || isPracticeSession() ? ' ' + DOT + ' SIMULATED' : '';
+  const tx = api.mode === 'live' && !isPracticeSession() ? lastTxLink() : null;
   toast(
     (buy ? 'Your buy order for ' : 'Your sell order for ') +
       amount.toFixed(2) +
@@ -1455,6 +1485,8 @@ async function submitTrade(c: SimCoin): Promise<void> {
       c.sym +
       ' was successful' +
       simSuffix,
+    undefined,
+    tx ? { href: tx.url, label: 'VIEW TX' } : undefined,
   );
   if (realized !== null) {
     toast(

@@ -138,4 +138,10 @@ export interface StonkzApi {
 
   /** The Fees tab: lifetime split for one coin. Sim estimates it from volume. */
   tokenFees?(coin: SimCoin): Promise<TokenFees>;
+  /**
+   * Base symbols the API can actually pair a launch against on `net` (pinned
+   * mint + price source), or `null` when everything the registry lists is
+   * fine (sim). The stepper greys out the rest instead of failing at step 3.
+   */
+  availableBases?(net: Net): Promise<ReadonlySet<string> | null>;
 }

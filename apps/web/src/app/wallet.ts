@@ -22,9 +22,11 @@ import {
   isPracticeSession,
   loadLastWallet,
   onActiveWalletChange,
+  onChainChange,
   waitForWalletChoice,
 } from '../wallet/index.js';
 import { clearSession, logoutSession } from './session.js';
+import { evmChainIdForNet } from '../wallet/chain.js';
 
 const API_BASE = (import.meta.env['VITE_API_URL'] as string | undefined) ?? '';
 
@@ -218,6 +220,21 @@ export function initWalletChip(opts: {
   onDisconnect: () => void;
 }): void {
   afterChange = opts.onChange;
+
+  // MetaMask can move to another chain behind our back; the session stays
+  // valid (SIWE bound the address, not the chain) but every transaction would
+  // be refused by enforceEvmChain, so say it now rather than at the ticket.
+  onChainChange((chainId) => {
+    if (!WALLET.on || !isEvm(WALLET.net)) return;
+    const want = evmChainIdForNet(WALLET.net);
+    const name = NETS[WALLET.net]?.name ?? WALLET.net;
+    if (chainId === want) toast('WALLET BACK ON ' + name);
+    else
+      toast(
+        'WALLET LEFT ' + name + ' \u00b7 SWITCH BACK BEFORE TRADING, OR RECONNECT ON THE OTHER NET',
+        'red',
+      );
+  });
 
   onActiveWalletChange(() => {
     const wallet = activeWallet();

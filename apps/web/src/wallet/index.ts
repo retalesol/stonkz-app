@@ -32,6 +32,7 @@ export {
   initWalletDiscovery,
   isPracticeSession,
   onActiveWalletChange,
+  onChainChange,
   onAvailableWalletsChange,
   preferRealWallet,
   requireWallet,

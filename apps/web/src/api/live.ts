@@ -26,6 +26,8 @@ import {
 } from '../app/session.js';
 import { signAndConfirm, signPermit, type SellPermit, type SignPayload } from '../app/signer.js';
 import { emit } from '../lib/bus.js';
+import { toast } from '../fx/toast.js';
+import { explorerTxUrl } from '../wallet/chain.js';
 import { clock, shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
 import {
@@ -656,13 +658,21 @@ function boardScope(): BoardScope {
   return WALLET.on ? WALLET.net : 'ALL';
 }
 
-async function fetchTokens(net: BoardScope): Promise<ApiToken[]> {
+/** `null` when the API could not be reached at all (as opposed to an empty board). */
+async function fetchTokens(net: BoardScope): Promise<ApiToken[] | null> {
   try {
     const res = await getJson<ApiTokensResponse>('/tokens?net=' + net + '&limit=500');
     return Array.isArray(res.tokens) ? res.tokens.filter(isApiToken) : [];
   } catch {
-    return [];
+    return null;
   }
+}
+
+let apiDownToasted = false;
+function noteApiDown(): void {
+  if (apiDownToasted) return;
+  apiDownToasted = true;
+  toast('API UNREACHABLE \u2014 THE BOARD STAYS EMPTY UNTIL IT IS BACK. RETRYING.', 'red');
 }
 
 /** Footer SOL + ETH marks from `GET /native-price`. */
@@ -952,12 +962,9 @@ function onTokenEvent(sym: string, data: Record<string, unknown>): void {
 
 async function refreshBoard(): Promise<void> {
   const scope = boardScope();
-  let list: ApiToken[];
-  try {
-    list = await fetchTokens(scope);
-  } catch {
-    return; // A transient poll failure is not worth surfacing mid-session.
-  }
+  const fetched = await fetchTokens(scope);
+  if (fetched === null) return; // A transient poll failure is not worth surfacing mid-session.
+  const list: ApiToken[] = fetched;
   if (scope !== boardScope()) return; // Connect/disconnect (or net switch) while in flight.
 
   let grew = false;
@@ -980,17 +987,29 @@ async function refreshBoard(): Promise<void> {
   else emit('tick');
 }
 
+function onVisible(): void {
+  if (!document.hidden && streaming) void refreshBoard();
+}
+
 function startPolling(): void {
   stopPolling();
   let n = 0;
+  document.addEventListener('visibilitychange', onVisible);
   pollTimer = window.setInterval(() => {
-    void refreshBoard();
+    // A hidden tab has nothing to paint; catch up on the next visibilitychange.
+    if (document.hidden) return;
+    n++;
+    // With the socket up the board arrives as lane/koth/trade frames; the
+    // poll is only a 30s safety net then. Without it, every 5s.
+    const wsUp = socket !== null && socket.readyState === WebSocket.OPEN;
+    if (!wsUp || n % 6 === 0) void refreshBoard();
     // Native marks change slowly — refresh every ~30s with the board poll.
-    if (++n % 6 === 0) void refreshNativePrices();
+    if (n % 6 === 0) void refreshNativePrices();
   }, 5000);
 }
 
 function stopPolling(): void {
+  document.removeEventListener('visibilitychange', onVisible);
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = 0;
@@ -1012,12 +1031,9 @@ async function seedTape(net: BoardScope): Promise<void> {
 
 /** Full reload for connect / disconnect / net switch: new board + tape seed. */
 async function reloadBoard(scope: BoardScope): Promise<void> {
-  let list: ApiToken[];
-  try {
-    list = await fetchTokens(scope);
-  } catch {
-    list = [];
-  }
+  const fetched = await fetchTokens(scope);
+  if (fetched === null) noteApiDown();
+  const list: ApiToken[] = fetched ?? [];
   if (scope !== boardScope()) return;
   COINS.length = 0;
   for (const t of list) COINS.push(toSimCoin(t));
@@ -1083,7 +1099,7 @@ async function signTradePlan(
   title: string,
   sym: string,
   body: Record<string, unknown>,
-): Promise<{ quote: Quote; signature: string | null }> {
+): Promise<{ quote: Quote; signature: string | null; explorerUrl?: string | undefined }> {
   if (!prep.atomic) {
     throw new LiveApiError(
       'rh_router_required',
@@ -1134,11 +1150,20 @@ async function signTradePlan(
     );
     return { quote: confirmed.quote, signature: last.signature };
   }
-  const { signature } = await signAndConfirm(
+  const { signature, explorerUrl } = await signAndConfirm(
     net,
     prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
   );
-  return { quote: prep.quote, signature };
+  return { quote: prep.quote, signature, explorerUrl };
+}
+
+/** `/base-tokens` per net: which majors a launch can pair against on this env. */
+const BASES_BY_NET = new Map<Net, ReadonlySet<string>>();
+
+/** The explorer page of the fill `trade()` last settled, for the success toast. */
+let lastTx: { signature: string; url: string } | null = null;
+export function lastTxLink(): { signature: string; url: string } | null {
+  return lastTx;
 }
 
 /** Apply a confirmed trade to local state from the exact numbers `/trade/prepare` composed. */
@@ -1230,7 +1255,12 @@ async function liveTrade(quote: Quote): Promise<Fill> {
     (quote.side === 'buy' ? 'BUY ' : 'SELL ') +
     c.sym +
     (isEvm(net) ? ' \u00b7 ' + NET_INFO[net].name : '');
-  const { quote: confirmedQuote, signature } = await signTradePlan(net, prep, title, c.sym, body);
+  const {
+    quote: confirmedQuote,
+    signature,
+    explorerUrl,
+  } = await signTradePlan(net, prep, title, c.sym, body);
+  lastTx = signature ? { signature, url: explorerUrl ?? explorerTxUrl(net, signature) } : null;
   // Re-sync curve reserves from chain so the next sell quote is not stuck on
   // empty DB reserves if the indexer lags.
   if (signature) {
@@ -1726,8 +1756,9 @@ export const liveApi: StonkzApi = {
     // Guests land on both chains; connect() narrows to the wallet's net.
     await refreshNativePrices();
     const list = await fetchTokens(boardScope());
+    if (list === null) noteApiDown();
     COINS.length = 0;
-    for (const t of list) COINS.push(toSimCoin(t));
+    for (const t of list ?? []) COINS.push(toSimCoin(t));
   },
 
   startStream(): void {
@@ -1899,6 +1930,23 @@ export const liveApi: StonkzApi = {
   async claimableFees(): Promise<FeeVault[]> {
     return liveClaimableFees();
   },
+  async availableBases(net: Net): Promise<ReadonlySet<string> | null> {
+    const hit = BASES_BY_NET.get(net);
+    if (hit) return hit;
+    try {
+      const res = await getJson<{ baseTokens: { symbol: string; available?: boolean }[] }>(
+        '/base-tokens?net=' + net,
+      );
+      const set = new Set(
+        res.baseTokens.filter((b) => b.available !== false).map((b) => b.symbol.toUpperCase()),
+      );
+      BASES_BY_NET.set(net, set);
+      return set;
+    } catch {
+      return null; // Unknown is not "nothing": let the stepper offer the registry list.
+    }
+  },
+
   async tokenFees(c: SimCoin): Promise<TokenFees> {
     const net = c.net ?? WALLET.net;
     return getJson<TokenFees>(
