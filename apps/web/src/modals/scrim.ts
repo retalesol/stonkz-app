@@ -31,25 +31,49 @@ export function isOpen(id: ScrimId): boolean {
   return must(id).classList.contains('open');
 }
 
+const ALL_SCRIMS: readonly ScrimId[] = [
+  '#cropScrim',
+  '#stakeScrim',
+  '#wizScrim',
+  '#claimScrim',
+  '#setScrim',
+  '#newScrim',
+  '#editScrim',
+  '#txScrim',
+  '#walletScrim',
+  '#legalScrim',
+];
+
 export function anyOpen(): boolean {
-  return (
-    [
-      '#cropScrim',
-      '#stakeScrim',
-      '#wizScrim',
-      '#claimScrim',
-      '#setScrim',
-      '#newScrim',
-      '#editScrim',
-      '#txScrim',
-      '#walletScrim',
-      '#legalScrim',
-    ] as ScrimId[]
-  ).some(isOpen);
+  return ALL_SCRIMS.some(isOpen);
+}
+
+const wired = new Set<ScrimId>();
+
+/**
+ * The floor under every dialog: its × and its backdrop always close it, even
+ * when the owning module forgot to `wireBackdrop` (the stake dialog shipped
+ * that way). A module's own close handler, if wired, runs first and does its
+ * cleanup; this one then finds the scrim already closed and does nothing.
+ */
+function ensureWired(id: ScrimId): void {
+  if (wired.has(id)) return;
+  wired.add(id);
+  const el = must(id);
+  el.addEventListener('mousedown', (e) => {
+    if (e.target === el) closeScrim(id);
+  });
+  $('.win-hd .x', el)?.addEventListener('click', () => closeScrim(id));
+}
+
+/** Close every open dialog; the Escape fallback when no module claims the key. */
+export function closeAll(): void {
+  for (const id of ALL_SCRIMS) closeScrim(id);
 }
 
 export function openScrim(id: ScrimId, opener?: Element | null): void {
   const el = must(id);
+  ensureWired(id);
   if (el.classList.contains('open')) {
     traps.get(id)?.refresh();
     return;

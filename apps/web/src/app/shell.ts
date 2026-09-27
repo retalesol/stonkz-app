@@ -20,7 +20,8 @@ import { dismissSplash } from './splash.js';
 import { closeLegal, initLegal, isLegalOpen } from '../modals/legal.js';
 import { initNetPicker, isNetOpen, netOpen } from '../modals/netpicker.js';
 import { initSettings, isSetOpen, openSet } from '../modals/settings.js';
-import { closeStake, isStakeOpen } from '../modals/stake.js';
+import { closeStake, initStake, isStakeOpen } from '../modals/stake.js';
+import { anyOpen, closeAll } from '../modals/scrim.js';
 import { closeSteps, initSteps, isStepsOpen } from '../modals/steps.js';
 import { cancelPicker, initWalletPicker, isWalletPickerOpen } from '../modals/walletpicker.js';
 import { closeWiz, initWizard, isWizOpen, openWiz } from '../modals/wizard.js';
@@ -33,7 +34,7 @@ import { chatOpen, chatRender, initChat, isChatOpen } from '../views/chat.js';
 import { initProfileView, openProfile, renderProfile } from '../views/profile.js';
 import { openRewards, updateCrates } from '../views/rewards.js';
 import { initTape } from '../views/tape.js';
-import { TV, closeToken, drawTChart, openToken } from '../views/token.js';
+import { TV, closeToken, drawTChart, openToken, renderTab } from '../views/token.js';
 import { startLoop } from './loop.js';
 import { renderRank } from './rank.js';
 import { type Route, back, current, navigate, onRoute, startRouting } from './route.js';
@@ -122,6 +123,8 @@ function onEscape(): void {
   else if (isNetOpen()) netOpen(false);
   else if (isWmenuOpen()) wmenu(false);
   else if (isChatOpen()) chatOpen(false);
+  // Any dialog no module above claimed: never leave the user stuck behind a scrim.
+  else if (anyOpen()) closeAll();
   else if (currentView() === 'rewards' || currentView() === 'profile') back();
   else if (TV.c) navigate({ view: 'board' });
 }
@@ -169,6 +172,11 @@ export async function boot(): Promise<void> {
   });
   initLegal();
   initClaim(() => renderWallet());
+  // Wires the stake dialog's × and backdrop; a stake / unstake / claim
+  // repaints the open token tab so the position and Fees numbers move.
+  initStake(() => {
+    if (TV.c) renderTab();
+  });
 
   initNetPicker((net) => void connectWallet(net));
   setNetSwitchHandler((net) => void connectWallet(net));
