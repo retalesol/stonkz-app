@@ -59,6 +59,8 @@ export interface EvmLog {
 
 export interface EvmTransactionReceipt {
   status: 'success' | 'reverted';
+  /** Sender. `/launch/confirm` binds a confirmation to the signed-in wallet through it. */
+  from?: string | null;
   to: string | null;
   input: string;
   logs: EvmLog[];

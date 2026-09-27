@@ -16,6 +16,8 @@ export type FakeEthCallHandler = (data: string) => Promise<string> | string;
 
 export interface FakeEvmReceipt {
   status: 'success' | 'reverted';
+  /** Sender; `/launch/confirm` refuses a receipt another wallet sent. */
+  from?: string | null;
   to: string | null;
   input: string;
   logs: { address: string; topics: string[]; data: string }[];

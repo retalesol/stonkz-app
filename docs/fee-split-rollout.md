@@ -135,9 +135,10 @@ then has the admin restore the protocol authority and clear `pendingAdmin`.
 `test/fork/RecoverLayout.t.sol` replays it on a fork of either proxy.
 
 Rule going forward, pinned by `test_StorageLayoutIsAppendOnly`: new state on
-`StonkzLaunchpad` goes after `tokenCount`, never next to its siblings, and
-`forge inspect StonkzLaunchpad storage-layout` is diffed against the deployed
-source before any `upgradeToAndCall`.
+`StonkzLaunchpad` goes after the last declared variable, `_lock` (slot 15, the
+reentrancy guard; a variable inserted above it freezes every entry point),
+never next to its siblings, and `forge inspect StonkzLaunchpad storage-layout`
+is diffed against the deployed source before any `upgradeToAndCall`.
 
 **Outcome (2026-09-27).** The protocol withdraw authority key was not held, so
 both proxies were abandoned and fresh stacks deployed: RH launchpad

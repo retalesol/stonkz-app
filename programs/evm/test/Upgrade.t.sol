@@ -27,7 +27,7 @@ contract UpgradeTest is Test {
 
     /// @notice Pins the live storage layout behind the RH 46630 and Base 84532
     /// proxies. Every slot here is already written on chain; a new state
-    /// variable may only ever land after the last one. The 2026-09-27 upgrade
+    /// variable may only ever land after the last one (`_lock`). The 2026-09-27 upgrade
     /// put `stonkzBurn` before `admin` and shifted every later slot by one.
     function test_StorageLayoutIsAppendOnly() public {
         vm.warp(1_800_000_000);
@@ -59,6 +59,12 @@ contract UpgradeTest is Test {
         assertEq(uint256(vm.load(p, where)), 0);
         vm.store(p, where, bytes32(uint256(77)));
         assertEq(pad.stonkzBurn(key), 77, "stonkzBurn base slot is 14");
+
+        // `_lock` is the LAST declared variable (slot 15) and the reentrancy
+        // guard reads it on every entry point: a new variable declared before
+        // it would shift it to an empty slot and freeze the whole launchpad.
+        // New state goes after `_lock`, and this pin moves with it.
+        assertEq(uint256(vm.load(p, bytes32(uint256(15)))), 1, "slot 15 = _lock, unlocked");
     }
 
     function test_LaunchpadUpgradePreservesState() public {

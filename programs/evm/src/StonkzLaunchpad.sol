@@ -143,11 +143,15 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     uint256 public tokenCount;
 
     /// Buyback-and-burn vault, per base token. Not claimable by any user path.
-    /// Appended after `tokenCount` (storage slot 15): every earlier slot is
-    /// already live behind the RH and Base proxies, so new state goes at the
-    /// end of the layout, never next to its siblings.
+    /// Storage slot 14: every earlier slot is already live behind the RH and
+    /// Base proxies, so new state goes at the END of the layout (after
+    /// `_lock`, below), never next to its siblings.
     mapping(address => uint256) public stonkzBurn;
 
+    /// Reentrancy guard, slot 15. Keep this the LAST declared variable: a
+    /// variable inserted above it shifts it to an empty slot and every
+    /// `nonReentrant` entry point reverts. `test_StorageLayoutIsAppendOnly`
+    /// pins the slot; move the pin when appending after it.
     uint256 private _lock;
 
     /* -------------------------------------------------------------- events */

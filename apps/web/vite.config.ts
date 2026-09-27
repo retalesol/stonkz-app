@@ -48,6 +48,22 @@ export default defineConfig(({ mode }) => {
       // The terminal is one document; keep the CSS in one file so the CSP
       // style-src stays a single hash-able entry later.
       cssCodeSplit: false,
+      rollupOptions: {
+        output: {
+          // The wallet SDKs are most of the bundle and only matter once a
+          // wallet is in play; keep them out of the entry chunk so the board
+          // paints before viem and web3.js finish parsing. Same-origin chunks
+          // stay inside the CSP's script-src 'self'.
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+            if (/[\\/]node_modules[\\/](viem|ox|abitype|@noble|@scure)[\\/]/.test(id)) return 'evm';
+            if (/[\\/]node_modules[\\/]@solana[\\/]/.test(id)) return 'solana';
+            if (/[\\/]node_modules[\\/](@walletconnect|@reown)[\\/]/.test(id))
+              return 'walletconnect';
+            return undefined;
+          },
+        },
+      },
     },
   };
 });

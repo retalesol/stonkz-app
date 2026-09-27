@@ -4,7 +4,8 @@ import WebSocket from 'ws';
 import { CHANNELS } from '../redis/channels.js';
 import { createTestApp, type TestApp } from '../test/app.js';
 import { solanaWallet } from '../test/wallets.js';
-import { WsHub } from './hub.js';
+import { MAX_CHANNELS_PER_SOCKET, WsHub } from './hub.js';
+import { blacklistToken } from '../redis/blacklist.js';
 
 let h: TestApp;
 let server: Server;
@@ -395,5 +396,34 @@ describe('lifecycle', () => {
     const client = await connect();
     await client.next();
     expect(h.deps.metrics.snapshot().ws.messagesSent).toBeGreaterThan(before);
+  });
+});
+
+describe('hardening', () => {
+  it('refuses an access token that was logged out, like the HTTP routes do', async () => {
+    const wallet = solanaWallet('ws-revoked');
+    const { token } = await h.login('SOL', wallet);
+    const claims = await h.deps.jwt.verify(token, 'access');
+    await blacklistToken(h.redis, claims.jti, 60);
+
+    const client = await connect();
+    await client.next();
+    client.send({ type: 'auth', token });
+    expect(await client.next()).toMatchObject({ type: 'auth', ok: false });
+  });
+
+  it('caps the channels one socket may hold, and frees a slot on unsubscribe', async () => {
+    const client = await connect();
+    await client.next();
+    for (let i = 0; i < MAX_CHANNELS_PER_SOCKET; i++) {
+      expect(await subscribe(client, `token:CAP${i}`)).toMatchObject({ type: 'subscribed' });
+    }
+    expect(await subscribe(client, 'token:ONEMORE')).toMatchObject({
+      type: 'error',
+      error: 'too_many_channels',
+    });
+    client.send({ type: 'unsubscribe', channel: 'token:CAP0' });
+    expect(await client.next()).toMatchObject({ type: 'unsubscribed' });
+    expect(await subscribe(client, 'token:ONEMORE')).toMatchObject({ type: 'subscribed' });
   });
 });

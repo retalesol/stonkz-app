@@ -39,16 +39,17 @@ describe('migration history', () => {
       // 0015 widens every net CHECK to Circle's Arc and seeds its cursor + vaults.
       '0015_net_arc',
       '0016_burn_vault',
+      '0017_hot_path_indexes',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(17);
+    expect(second.skipped).toHaveLength(18);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
     expect(files.map((f) => f.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
     ]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });

@@ -595,6 +595,17 @@ export function tradeRoutes(): Hono<AppEnv> {
     if (!sym || !proof) {
       return c.json({ error: 'bad_request', detail: 'sym and signature|txHash are required' }, 400);
     }
+    // The proof goes straight to an RPC and gates a resync write; only a
+    // transaction id shape gets that far.
+    const proofOk = isEvm(net)
+      ? /^0x[0-9a-fA-F]{64}$/.test(proof)
+      : /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(proof);
+    if (!proofOk) {
+      return c.json(
+        { error: 'bad_proof', detail: 'signature|txHash is not a transaction id' },
+        400,
+      );
+    }
 
     const mintBody =
       typeof (body as { mint?: unknown }).mint === 'string'

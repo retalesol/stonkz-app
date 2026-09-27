@@ -35,7 +35,10 @@ interface ISwapRouter02 {
         uint160 sqrtPriceLimitX96;
     }
 
-    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+    function exactInputSingle(ExactInputSingleParams calldata params)
+        external
+        payable
+        returns (uint256 amountOut);
 }
 
 /// @title Atomic native-in / native-out trading for Robinhood Chain.
@@ -236,11 +239,13 @@ contract StonkzRouter {
 
         weth.deposit{value: msg.value}();
         SafeErc20.safeApprove(address(weth), address(launchpad), msg.value);
-        tokensOut = launchpad.buy(token, msg.value, minTokenOut);
+        uint256 spent;
+        (spent, tokensOut) = _buyMeasured(address(weth), token, msg.value, minTokenOut);
         SafeErc20.safeApprove(address(weth), address(launchpad), 0);
 
         require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
-        emit AtomicBuy(msg.sender, token, msg.value, msg.value, tokensOut);
+        _refundBase(address(weth), msg.value - spent);
+        emit AtomicBuy(msg.sender, token, msg.value, spent, tokensOut);
     }
 
     /// @notice Native ETH → local WETH → SwapRouter02 V3 → curve buy.
@@ -274,10 +279,12 @@ contract StonkzRouter {
         _requireQuoteHonouredValues(quotedBaseOut, maxSlippageBps, delivered);
 
         SafeErc20.safeApprove(base, address(launchpad), delivered);
-        tokensOut = launchpad.buy(token, delivered, minTokenOut);
+        uint256 spent;
+        (spent, tokensOut) = _buyMeasured(base, token, delivered, minTokenOut);
         SafeErc20.safeApprove(base, address(launchpad), 0);
 
         require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
+        _refundBase(base, delivered - spent);
         if (address(this).balance > 0) _sendEth(msg.sender, address(this).balance);
         emit AtomicBuy(msg.sender, token, msg.value, delivered, tokensOut);
     }
@@ -298,17 +305,7 @@ contract StonkzRouter {
         if (amountToken == 0) revert NothingIn();
         address base = _baseOf(token);
 
-        if (permitData.deadline != 0) {
-            StonkzToken(token).permit(
-                msg.sender,
-                address(this),
-                permitData.value,
-                permitData.deadline,
-                permitData.v,
-                permitData.r,
-                permitData.s
-            );
-        }
+        if (permitData.deadline != 0) _permitOrFallThrough(token, permitData);
         require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "token pull");
         require(StonkzToken(token).approve(address(launchpad), amountToken), "approve");
         uint256 baseOut = launchpad.sell(token, amountToken, minBaseOut);
@@ -351,17 +348,7 @@ contract StonkzRouter {
         address base = _baseOf(token);
         require(base == address(weth), "not weth pair");
 
-        if (permitData.deadline != 0) {
-            StonkzToken(token).permit(
-                msg.sender,
-                address(this),
-                permitData.value,
-                permitData.deadline,
-                permitData.v,
-                permitData.r,
-                permitData.s
-            );
-        }
+        if (permitData.deadline != 0) _permitOrFallThrough(token, permitData);
         require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "token pull");
         require(StonkzToken(token).approve(address(launchpad), amountToken), "approve");
         uint256 baseOut = launchpad.sell(token, amountToken, minBaseOut);
@@ -422,13 +409,15 @@ contract StonkzRouter {
         // of it. A standing allowance on a contract that anyone can call is an
         // unnecessary standing risk.
         SafeErc20.safeApprove(base, address(launchpad), delivered);
-        tokensOut = launchpad.buy(token, delivered, minTokenOut);
+        uint256 spent;
+        (spent, tokensOut) = _buyMeasured(base, token, delivered, minTokenOut);
         SafeErc20.safeApprove(base, address(launchpad), 0);
 
         require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
 
         // The router may not have spent every wei — return the remainder rather
         // than stranding it here.
+        _refundBase(base, delivered - spent);
         if (address(this).balance > 0) _sendEth(msg.sender, address(this).balance);
 
         emit AtomicBuy(msg.sender, token, msg.value, delivered, tokensOut);
@@ -468,18 +457,7 @@ contract StonkzRouter {
         // One signature: the permit authorises the pull that follows, in the
         // same transaction, so there is no window in which the user has
         // approved this contract but not yet traded.
-        if (permitData.deadline != 0) {
-            StonkzToken(token)
-                .permit(
-                    msg.sender,
-                    address(this),
-                    permitData.value,
-                    permitData.deadline,
-                    permitData.v,
-                    permitData.r,
-                    permitData.s
-                );
-        }
+        if (permitData.deadline != 0) _permitOrFallThrough(token, permitData);
         require(StonkzToken(token).transferFrom(msg.sender, address(this), amountToken), "token pull");
 
         require(StonkzToken(token).approve(address(launchpad), amountToken), "approve");
@@ -531,9 +509,59 @@ contract StonkzRouter {
         _requireQuoteHonouredValues(leg.quotedOut, leg.maxSlippageBps, received);
     }
 
-    function _requireQuoteHonouredValues(uint256 quotedOut, uint256 maxSlippageBps, uint256 received) private pure {
+    function _requireQuoteHonouredValues(uint256 quotedOut, uint256 maxSlippageBps, uint256 received)
+        private
+        pure
+    {
         uint256 floor_ = shortfallFloor(quotedOut, maxSlippageBps);
         if (received < floor_) revert AggregatorShortfall(quotedOut, floor_, received);
+    }
+
+    /// @dev Buy on the curve and measure what it really took. A buy that would
+    /// overshoot the curve's remaining allocation is capped by the launchpad,
+    /// which pulls only `f.grossBase`; handing it `amountBase` and assuming
+    /// it spent all of it strands the rest in this contract, which has no
+    /// rescue function by design.
+    function _buyMeasured(address base, address token, uint256 amountBase, uint256 minTokenOut)
+        private
+        returns (uint256 spent, uint256 tokensOut)
+    {
+        uint256 before = IERC20(base).balanceOf(address(this));
+        tokensOut = launchpad.buy(token, amountBase, minTokenOut);
+        spent = before - IERC20(base).balanceOf(address(this));
+        require(spent <= amountBase, "curve overdraw");
+    }
+
+    /// @dev Return unspent base to the trader: as ETH when the base is the
+    /// chain's WETH (so `receive` only ever sees WETH's own unwrap), as the
+    /// token otherwise.
+    function _refundBase(address base, uint256 amount) private {
+        if (amount == 0) return;
+        if (base == address(weth)) {
+            weth.withdraw(amount);
+            _sendEth(msg.sender, amount);
+        } else {
+            SafeErc20.safeTransfer(base, msg.sender, amount);
+        }
+    }
+
+    /// @dev A permit is a public signature: anyone can front-run the sell and
+    /// submit it first, consuming the nonce. The allowance it grants is the
+    /// one this contract needs either way, so a failed permit falls through
+    /// to the `transferFrom`, which then succeeds on that allowance or reverts
+    /// with the honest reason.
+    function _permitOrFallThrough(address token, PermitData calldata permitData) private {
+        try StonkzToken(token)
+            .permit(
+                msg.sender,
+                address(this),
+                permitData.value,
+                permitData.deadline,
+                permitData.v,
+                permitData.r,
+                permitData.s
+            ) {}
+            catch {}
     }
 
     function _baseOf(address token) private view returns (address base) {

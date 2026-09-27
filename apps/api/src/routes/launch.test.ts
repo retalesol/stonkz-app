@@ -389,6 +389,7 @@ describe('POST /launch/prepare + /launch/confirm', () => {
     const sig = '0xdeadbeef';
     h.rpcs.RH.setEvmReceipt(sig, {
       status: 'success',
+      from: address,
       to: h.deps.env.rhLaunchpadAddress,
       input: body.data!,
       logs: [
@@ -403,6 +404,32 @@ describe('POST /launch/prepare + /launch/confirm', () => {
 
     const row = await loadToken('RH', 'RHMOON');
     expect(row?.mint.toLowerCase()).toBe(tokenAddr.toLowerCase());
+  });
+
+  it('refuses to confirm a Robinhood transaction another wallet sent', async () => {
+    // Once an intent expires anyone can rebuild the same calldata; the
+    // receipt's sender is what ties a confirmation to the signed-in wallet.
+    const { token } = await h.login('RH');
+    const { status, body } = await prepare(token, {
+      ticker: 'rhthief',
+      name: 'RH Thief',
+      supply: 1e9,
+      feePct: 3,
+      cashback: false,
+      baseSymbol: 'ETH',
+    });
+    expect(status).toBe(200);
+    const sig = '0xfeedface';
+    h.rpcs.RH.setEvmReceipt(sig, {
+      status: 'success',
+      from: '0x000000000000000000000000000000000000dEaD',
+      to: h.deps.env.rhLaunchpadAddress,
+      input: body.data!,
+      logs: [],
+    });
+    const confirmed = await confirm(token, body.intentId, sig);
+    expect(confirmed.status).toBe(403);
+    expect(confirmed.body.error).toBe('tx_sender_mismatch');
   });
 
   it('refuses to confirm a transaction whose payload does not match what was prepared', async () => {

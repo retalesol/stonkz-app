@@ -102,6 +102,15 @@ async function seed(): Promise<void> {
   `);
 
   await h.db.execute(sql`
+    INSERT INTO treasury_credits (net, kind, sym, amount, tx_sig, log_index, block_time, chain_position)
+    SELECT CASE WHEN i % 2 = 0 THEN 'SOL' ELSE 'RH' END,
+           CASE WHEN i % 3 = 0 THEN 'protocol' WHEN i % 3 = 1 THEN 'stonkz_ops' ELSE 'burn' END,
+           'T' || (i % 200), 0.01, 'tcsig' || i, 0,
+           now() - (i || ' seconds')::interval, 250000000 + i
+    FROM generate_series(1, ${ROWS}) AS s(i)
+  `);
+
+  await h.db.execute(sql`
     INSERT INTO chain_events (net, kind, sym, tx_sig, log_index, chain_position, block_time, payload)
     SELECT 'SOL', 'Trade', 'T' || (i % 200), 'cesig' || i, 0, 250000000 + i,
            now() - (i || ' seconds')::interval, '{}'::jsonb
@@ -190,6 +199,26 @@ const QUERIES: { name: string; sql: string; expectIndex: string }[] = [
     name: 'GET /rewards drop log',
     sql: `SELECT * FROM crate_opens WHERE wallet = 'wallet7' AND net = 'SOL' ORDER BY opened_at DESC LIMIT 14`,
     expectIndex: 'crate_opens_log_idx',
+  },
+  {
+    name: 'board GAINERS sort',
+    sql: `SELECT * FROM tokens WHERE net = 'SOL' ORDER BY chg DESC LIMIT 100`,
+    expectIndex: 'tokens_chg_idx',
+  },
+  {
+    name: 'board MOST REPLIES sort',
+    sql: `SELECT * FROM tokens WHERE net = 'SOL' ORDER BY replies DESC LIMIT 100`,
+    expectIndex: 'tokens_replies_idx',
+  },
+  {
+    name: 'fees tab aggregation',
+    sql: `SELECT kind, sum(amount) FROM treasury_credits WHERE net = 'SOL' AND sym = 'T4' GROUP BY kind`,
+    expectIndex: 'treasury_credits_token_kind_idx',
+  },
+  {
+    name: 'recent trades by mint',
+    sql: `SELECT * FROM trades WHERE net = 'SOL' AND mint = 'mint2' ORDER BY id DESC LIMIT 50`,
+    expectIndex: 'trades_mint_id_idx',
   },
   {
     name: 'indexer replay window',

@@ -293,7 +293,7 @@ describe('launchpad event decoding', () => {
       ),
       'Program consumed 12345 of 200000 compute units',
     ];
-    const payloads = programDataPayloads(logs);
+    const payloads = programDataPayloads(logs, DOGGO_MINT);
     expect(payloads).toHaveLength(2);
     expect(payloads.map((p) => launchpadEventCoder.decode(p)?.name)).toEqual([
       'Trade',
@@ -302,11 +302,63 @@ describe('launchpad event decoding', () => {
   });
 
   it('is not fooled by a log line that merely contains the words', () => {
-    expect(programDataPayloads(['Program log: writing Program data: to disk'])).toEqual([
-      'to disk',
-    ]);
-    // …which then fails the discriminator check rather than decoding.
-    expect(launchpadEventCoder.decode('to disk')).toBeNull();
+    expect(
+      programDataPayloads(
+        [`Program ${DOGGO_MINT} invoke [1]`, 'Program log: writing Program data: to disk'],
+        DOGGO_MINT,
+      ),
+    ).toEqual([]);
+  });
+
+  describe('attributes Program data lines to the program on top of the invoke stack', () => {
+    const trade = programDataLine('Trade', encodeTrade(TRADE));
+    const OTHER = 'Fake11111111111111111111111111111111111111111';
+    const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+    it('rejects the same bytes when another program in the transaction emitted them', () => {
+      const logs = [
+        `Program ${OTHER} invoke [1]`,
+        'Program log: Instruction: Forge',
+        trade,
+        `Program ${OTHER} success`,
+        `Program ${DOGGO_MINT} invoke [1]`,
+        'Program log: Instruction: Noop',
+        `Program ${DOGGO_MINT} success`,
+      ];
+      expect(programDataPayloads(logs, DOGGO_MINT)).toEqual([]);
+      expect(programDataPayloads(logs, OTHER)).toHaveLength(1);
+    });
+
+    it('accepts an event emitted after a nested CPI returns, not one written by the callee', () => {
+      const logs = [
+        `Program ${DOGGO_MINT} invoke [1]`,
+        `Program ${TOKEN_PROGRAM} invoke [2]`,
+        'Program log: Instruction: Transfer',
+        trade, // written while the callee is on top: not the launchpad's
+        `Program ${TOKEN_PROGRAM} consumed 4645 of 180000 compute units`,
+        `Program ${TOKEN_PROGRAM} success`,
+        trade, // the launchpad's own emit, after the CPI returned
+        `Program ${DOGGO_MINT} consumed 60000 of 200000 compute units`,
+        `Program ${DOGGO_MINT} success`,
+      ];
+      expect(programDataPayloads(logs, DOGGO_MINT)).toHaveLength(1);
+    });
+
+    it('keeps the stack straight across a failed inner program', () => {
+      const logs = [
+        `Program ${DOGGO_MINT} invoke [1]`,
+        `Program ${OTHER} invoke [2]`,
+        `Program ${OTHER} failed: custom program error: 0x1`,
+        trade,
+        `Program ${DOGGO_MINT} success`,
+      ];
+      expect(programDataPayloads(logs, DOGGO_MINT)).toHaveLength(1);
+    });
+
+    it('rejects data with no launchpad frame at all', () => {
+      expect(programDataPayloads([trade], DOGGO_MINT)).toEqual([]);
+      expect(programDataPayloads([`Program ${OTHER} invoke [1]`, trade], DOGGO_MINT)).toEqual([]);
+    });
   });
 });
 

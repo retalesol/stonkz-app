@@ -395,6 +395,17 @@ export interface FakeTx {
  * honoured. `SolanaChainSource`'s paging is only correct if it respects those,
  * so the fake has to be strict about them.
  */
+/**
+ * A real RPC wraps a program's log lines in its `invoke [1]` / `success`
+ * frame, and the indexer only trusts `Program data:` written inside the
+ * launchpad's own frame. Fixtures that hand over bare data lines get that
+ * frame here; a fixture that builds its own frames is left alone.
+ */
+function framedLogs(logs: string[]): string[] {
+  if (logs.some((l) => / invoke \[\d+\]$/.test(l))) return logs;
+  return [`Program ${PROGRAM_ID} invoke [1]`, ...logs, `Program ${PROGRAM_ID} success`];
+}
+
 export class FakeSolanaRpc implements SolanaIndexRpc {
   finalizedSlot: number;
   calls: { method: string; params: unknown }[] = [];
@@ -453,7 +464,7 @@ export class FakeSolanaRpc implements SolanaIndexRpc {
       blockTime: tx.blockTimeSecs,
       meta: {
         err: tx.err ?? null,
-        logMessages: tx.logs,
+        logMessages: framedLogs(tx.logs),
         innerInstructions: tx.cpiData
           ? [
               {

@@ -183,7 +183,7 @@ export class SolanaChainSource implements EventSource {
   private decodeTransaction(tx: SolanaTransaction): SolanaLaunchpadEvent[] {
     const out: SolanaLaunchpadEvent[] = [];
 
-    for (const payload of programDataPayloads(tx.meta?.logMessages ?? [])) {
+    for (const payload of programDataPayloads(tx.meta?.logMessages ?? [], this.opts.programId)) {
       const decoded = launchpadEventCoder.decode(payload);
       if (decoded) out.push(decoded.data);
     }

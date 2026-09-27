@@ -60,7 +60,10 @@ contract RouterTest is Test {
         ur = new MockUniversalRouter(weth, base, RATE);
         MockSwapRouter02 sr02 = new MockSwapRouter02(weth, base, RATE);
         router = new StonkzRouter(
-            IUniversalRouter(address(ur)), pad, IWETH9(address(weth)), ISwapRouter02(address(sr02)),
+            IUniversalRouter(address(ur)),
+            pad,
+            IWETH9(address(weth)),
+            ISwapRouter02(address(sr02)),
             0 // no per-buy cap
         );
 
@@ -222,10 +225,34 @@ contract RouterTest is Test {
         vm.prank(trader);
         router.sellViaAggregator(token, toSell, p, 0, leg, 0, block.timestamp + 600);
 
+        // The replayed permit is swallowed (see `_permitOrFallThrough`), so the
+        // sell fails one step later, on the allowance the first sell consumed.
         StonkzRouter.AggregatorLeg memory leg2 = _sellLeg(_quoteSellNet(toSell));
         vm.prank(trader);
-        vm.expectRevert(bytes("bad signature"));
+        vm.expectRevert();
         router.sellViaAggregator(token, toSell, p, 0, leg2, 0, block.timestamp + 600);
+    }
+
+    /// Anyone can submit a permit they saw in the mempool. The nonce is spent
+    /// before the sell lands, but the allowance it grants is the one the router
+    /// needs, so the sell still goes through instead of reverting.
+    function test_AFrontRunPermitStillSellsOnTheAllowance() public {
+        vm.prank(trader);
+        uint256 held =
+            router.buyViaAggregator{value: 2 ether}(token, _buyLeg(2 ether), 0, block.timestamp + 600);
+
+        uint256 toSell = held / 4;
+        uint256 deadline = block.timestamp + 600;
+        StonkzRouter.PermitData memory p = _permit(toSell, deadline);
+        vm.prank(address(0xBAD));
+        StonkzToken(token).permit(trader, address(router), toSell, deadline, p.v, p.r, p.s);
+        assertEq(StonkzToken(token).allowance(trader, address(router)), toSell, "front-runner granted it");
+
+        StonkzRouter.AggregatorLeg memory leg = _sellLeg(_quoteSellNet(toSell));
+        vm.prank(trader);
+        uint256 ethOut = router.sellViaAggregator(token, toSell, p, 0, leg, 0, deadline);
+        assertGt(ethOut, 0, "the sell settled on the allowance");
+        assertEq(StonkzToken(token).balanceOf(trader), held - toSell);
     }
 
     /// A smart-contract account, or anyone who approved beforehand, skips the
@@ -516,11 +543,64 @@ contract RouterTest is Test {
 
         // At the cap: allowed.
         vm.prank(trader);
-        uint256 out = capped.buyViaAggregator{value: 1 ether}(token, _buyLeg(1 ether), 0, block.timestamp + 60);
+        uint256 out =
+            capped.buyViaAggregator{value: 1 ether}(token, _buyLeg(1 ether), 0, block.timestamp + 60);
         assertGt(out, 0);
     }
 
     function test_UncappedRouterHasNoCeiling() public view {
         assertEq(router.maxBuyNative(), 0);
+    }
+
+    /* --------------------------------------------------------- capped buys */
+
+    /// A buy larger than what the curve has left is capped by the launchpad,
+    /// which pulls only the base it needs. The rest goes back to the trader
+    /// as ETH; nothing stays in a router that has no rescue function.
+    function test_ACurveCappingEthBuyRefundsTheRemainder() public {
+        vm.prank(oracleAuth);
+        oracle.pushPrice(address(weth), 3_000_000_000, 0);
+        vm.prank(creator);
+        address ethCoin = pad.createToken("Eth Coin", "ETHC", "u", 1_000_000_000, address(weth), 250, false);
+
+        uint256 padBefore = weth.balanceOf(address(pad));
+        uint256 traderBefore = trader.balance;
+        vm.prank(trader);
+        uint256 out = router.buyWithEth{value: 60 ether}(ethCoin, 0, block.timestamp + 600);
+        uint256 spent = weth.balanceOf(address(pad)) - padBefore;
+
+        assertGt(out, 0, "tokens delivered");
+        assertLt(spent, 60 ether, "the curve could not absorb the whole buy");
+        assertEq(trader.balance, traderBefore - spent, "only what the curve took left the trader");
+        assertEq(weth.balanceOf(address(router)), 0, "router holds no weth");
+        assertEq(address(router).balance, 0, "router holds no eth");
+    }
+
+    /// Same cap on the aggregator path: the base the curve did not take is a
+    /// token here, and it is handed back as that token.
+    function test_ACurveCappingAggregatorBuyRefundsTheBase() public {
+        uint256 delivered = (60 ether * RATE) / 1 ether;
+        uint256 traderBase = base.balanceOf(trader);
+        uint256 padBefore = base.balanceOf(address(pad));
+
+        vm.prank(trader);
+        uint256 out =
+            router.buyViaAggregator{value: 60 ether}(token, _buyLeg(60 ether), 0, block.timestamp + 600);
+        uint256 spent = base.balanceOf(address(pad)) - padBefore;
+
+        assertGt(out, 0, "tokens delivered");
+        assertLt(spent, delivered, "the curve could not absorb the whole buy");
+        assertEq(base.balanceOf(trader), traderBase + delivered - spent, "unspent base refunded");
+        assertEq(base.balanceOf(address(router)), 0, "router holds no base");
+        assertEq(address(router).balance, 0, "router holds no eth");
+    }
+
+    /// A buy that fits entirely on the curve refunds nothing and behaves as before.
+    function test_AnUncappedBuyRefundsNothing() public {
+        uint256 traderBefore = trader.balance;
+        vm.prank(trader);
+        router.buyViaAggregator{value: 1 ether}(token, _buyLeg(1 ether), 0, block.timestamp + 600);
+        assertEq(trader.balance, traderBefore - 1 ether);
+        assertEq(base.balanceOf(trader), 0, "nothing came back on a full fill");
     }
 }

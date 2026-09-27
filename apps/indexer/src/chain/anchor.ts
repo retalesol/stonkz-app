@@ -104,23 +104,47 @@ export class AnchorEventCoder<T> {
   }
 }
 
+const INVOKE_LINE = /^Program (\S+) invoke \[(\d+)\]$/;
+const SUCCESS_LINE = /^Program (\S+) success$/;
+const FAILED_LINE = /^Program (\S+) failed(?::|$)/;
+
 /**
- * Every `Program data:` payload in a transaction's logs, in log order.
+ * The `Program data:` payloads that `programId` itself emitted, in log order.
  *
- * Log lines are not attributed to a program by the RPC, so this returns all of
- * them and leaves identity to the discriminator check in
- * {@link AnchorEventCoder.decode}. That is the correct order of trust: a
- * `Program <id> invoke` line can be produced by any program in the
- * transaction, whereas a discriminator match plus an exhaustive Borsh decode
- * cannot be forged by an unrelated program without colliding a `sha256`
- * prefix *and* matching the field layout exactly.
+ * Log lines are not attributed to a program by the RPC, but the log stream is
+ * structured: `Program <id> invoke [depth]` pushes a frame, `Program <id>
+ * success` / `failed` pops it, and a `Program data:` line belongs to whichever
+ * program is on top of that stack when it is written. A discriminator match
+ * alone is NOT proof of origin: discriminators and Borsh layouts are public,
+ * so any program can `sol_log_data` a byte-exact `Trade` in a transaction
+ * that merely references the launchpad. Only data written while the
+ * launchpad's own frame is on top counts.
+ *
+ * Nested CPIs (the launchpad calling the token program) push and pop their
+ * own frames, so a data line written while a callee is on top is rejected,
+ * and one written after the callee returns is accepted again. A `failed`
+ * frame pops like `success` does. Truncated logs simply end the walk.
  */
-export function programDataPayloads(logs: readonly string[]): string[] {
+export function programDataPayloads(logs: readonly string[], programId: string): string[] {
   const out: string[] = [];
+  const stack: string[] = [];
   for (const line of logs) {
-    const at = line.indexOf(PROGRAM_DATA_PREFIX);
-    if (at === -1) continue;
-    const payload = line.slice(at + PROGRAM_DATA_PREFIX.length).trim();
+    const invoke = INVOKE_LINE.exec(line);
+    if (invoke) {
+      stack.push(invoke[1] as string);
+      continue;
+    }
+    const done = SUCCESS_LINE.exec(line) ?? FAILED_LINE.exec(line);
+    if (done) {
+      // Pop to the matching frame rather than blindly: a malformed or
+      // interleaved log must not leave a stale launchpad frame on top.
+      const at = stack.lastIndexOf(done[1] as string);
+      if (at !== -1) stack.length = at;
+      continue;
+    }
+    if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
+    if (stack[stack.length - 1] !== programId) continue;
+    const payload = line.slice(PROGRAM_DATA_PREFIX.length).trim();
     if (payload) out.push(payload);
   }
   return out;

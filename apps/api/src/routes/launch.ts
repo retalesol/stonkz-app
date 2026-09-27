@@ -552,6 +552,17 @@ export function launchRoutes(): Hono<AppEnv> {
       const receipt = await txSource.getTransactionReceipt(signature);
       if (!receipt) return c.json({ error: 'transaction_not_found' }, 404);
       if (receipt.status !== 'success') return c.json({ error: 'transaction_reverted' }, 422);
+      // Calldata is reproducible by anyone once an intent expires, so the
+      // sender is what binds the confirmation to this wallet.
+      if (!receipt.from || receipt.from.toLowerCase() !== wallet.toLowerCase()) {
+        return c.json(
+          {
+            error: 'tx_sender_mismatch',
+            detail: 'the confirmed transaction was not sent by this wallet',
+          },
+          403,
+        );
+      }
       if (
         !receipt.to ||
         receipt.to.toLowerCase() !== launchpadAddr.toLowerCase() ||

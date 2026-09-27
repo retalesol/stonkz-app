@@ -118,6 +118,7 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
   /** `routes/launch.ts`'s `/launch/confirm` — status + calldata + logs, to verify and to find the `TokenCreated` address. */
   async getTransactionReceipt(hash: string): Promise<{
     status: 'success' | 'reverted';
+    from: string | null;
     to: string | null;
     input: string;
     logs: { address: string; topics: string[]; data: string }[];
@@ -125,6 +126,7 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
     const [receipt, tx] = await Promise.all([
       this.call<{
         status: string;
+        from?: string | null;
         to: string | null;
         logs: { address: string; topics: string[]; data: string }[];
       } | null>('eth_getTransactionReceipt', [hash]),
@@ -133,6 +135,7 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
     if (!receipt || !tx) return null;
     return {
       status: receipt.status === '0x1' ? 'success' : 'reverted',
+      from: receipt.from ?? null,
       to: receipt.to,
       // `input` on older nodes, `data` is the ethers-style alias some RPCs use.
       input: tx.input ?? tx.data ?? '0x',

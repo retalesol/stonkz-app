@@ -730,3 +730,26 @@ describe('POST /trade/prepare', () => {
     h.jupiter.forcePlatformFeeBps(0);
   });
 });
+
+describe('POST /trade/confirm', () => {
+  it('refuses a proof that is not a transaction id before touching an RPC', async () => {
+    const { token } = await h.login('SOL');
+    const res = await h.app.request('/trade/confirm', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sym: 'DOGGO', signature: 'not-a-signature; drop table trades' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('bad_proof');
+  });
+
+  it('accepts a base58 signature shape and only then looks the coin up', async () => {
+    const { token } = await h.login('SOL');
+    const res = await h.app.request('/trade/confirm', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sym: 'NOSUCHCOIN', signature: '5'.repeat(64) }),
+    });
+    expect(res.status).toBe(404);
+  });
+});

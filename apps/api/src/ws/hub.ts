@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Net } from '@stonkz/shared';
 import { CHANNELS, CHANNEL_PATTERNS } from '../redis/channels.js';
 import type { RedisLike, RedisUnsubscribe } from '../redis/types.js';
+import { isTokenBlacklisted } from '../redis/blacklist.js';
 import type { JwtService } from '../auth/jwt.js';
 import type { Logger } from '../observability/logger.js';
 import type { Metrics } from '../observability/metrics.js';
@@ -11,6 +12,9 @@ import type { Db } from '../db/client.js';
 import { users } from '../db/schema.js';
 import type { ChatService } from '../social/chat.js';
 import type { Publisher } from './publisher.js';
+
+/** Enough for a board, the tape, a user channel and a long browsing session of token rooms. */
+export const MAX_CHANNELS_PER_SOCKET = 64;
 
 export interface HubOptions {
   redis: RedisLike;
@@ -131,6 +135,12 @@ export class WsHub {
       case 'auth': {
         try {
           const claims = await this.opts.jwt.verify(msg.token, 'access');
+          // Same deny-list HTTP consults: a logged-out token must not keep a
+          // live socket on the user channel until it expires.
+          if (await isTokenBlacklisted(this.opts.redis, claims.jti)) {
+            this.send(client, { type: 'auth', ok: false });
+            return;
+          }
           client.identity = { net: claims.net, wallet: claims.sub };
           this.send(client, { type: 'auth', ok: true, net: claims.net, wallet: claims.sub });
         } catch {
@@ -146,6 +156,10 @@ export class WsHub {
           return;
         }
         if (client.channels.has(channel)) return;
+        if (client.channels.size >= MAX_CHANNELS_PER_SOCKET) {
+          this.send(client, { type: 'error', error: 'too_many_channels', channel });
+          return;
+        }
         client.channels.add(channel);
         let set = this.subscribers.get(channel);
         if (!set) {
@@ -160,7 +174,7 @@ export class WsHub {
 
       case 'unsubscribe': {
         if (!client.channels.delete(msg.channel)) return;
-        this.subscribers.get(msg.channel)?.delete(client.socket);
+        this.leaveRoom(msg.channel, client.socket);
         this.opts.metrics.wsSubscriptionsChanged(-1);
         this.send(client, { type: 'unsubscribed', channel: msg.channel });
         return;
@@ -230,6 +244,14 @@ export class WsHub {
     return false;
   }
 
+  /** Drop an empty room: `token:*` / `chat:*` names are unbounded and would otherwise accumulate forever. */
+  private leaveRoom(channel: string, socket: WebSocket): void {
+    const set = this.subscribers.get(channel);
+    if (!set) return;
+    set.delete(socket);
+    if (set.size === 0) this.subscribers.delete(channel);
+  }
+
   private deliver(channel: string, message: string): void {
     const sockets = this.subscribers.get(channel);
     if (!sockets || sockets.size === 0) return;
@@ -281,7 +303,7 @@ export class WsHub {
   private onClose(client: Client): void {
     if (!this.clients.delete(client.socket)) return;
     for (const channel of client.channels) {
-      this.subscribers.get(channel)?.delete(client.socket);
+      this.leaveRoom(channel, client.socket);
       this.opts.metrics.wsSubscriptionsChanged(-1);
     }
     client.channels.clear();
