@@ -173,7 +173,8 @@ function applyFilters(): void {
       (!v ||
         c.sym.indexOf(v) > -1 ||
         c.name.toUpperCase().indexOf(v) > -1 ||
-        c.dev.toUpperCase().indexOf(v) > -1);
+        c.dev.toUpperCase().indexOf(v) > -1 ||
+        (c.mint ?? '').toUpperCase() === v);
     if (c.el) c.el.style.display = hit ? '' : 'none';
     if (hit) n++;
   }
@@ -188,7 +189,10 @@ function applyFilters(): void {
 export function setNetFilter(net: NetFilter): void {
   netFilter = net;
   renderNetChips();
-  if (LANES) applyFilters();
+  if (LANES) {
+    applyFilters();
+    king();
+  }
 }
 
 export function currentNetFilter(): NetFilter {
@@ -226,7 +230,9 @@ export function counts(): void {
   must('#n-new').textContent = n.new + ' LIVE';
   must('#n-soon').textContent = n.soon + ' CLOSE';
   must('#n-grad').textContent = n.grad + ' ON DEX';
-  must('#count').textContent = COINS.length + ' COINS';
+  // `#count` belongs to the filter: a lane event must not flip a filtered
+  // "3 MATCH" back to the unfiltered total.
+  applyFilters();
 }
 
 export function renderBoard(): void {
@@ -292,15 +298,18 @@ export function landIn(c: SimCoin, lane: Lane): void {
 
 let kothId: number | null = null;
 /** Net the crown was last painted for — reset on chain switch so a foreign king cannot stick. */
-let kothNet: Net | null = null;
+let kothNet: Net | 'ALL' | null = null;
 
-/** Only the selected / connected chain crowns the hill — never a cross-net guest board. */
-function kothCandidates(net: Net): SimCoin[] {
-  return COINS.filter((c) => (c.net ?? 'SOL') === net && c.lane !== 'grad');
+/**
+ * The connected chain crowns the hill; a guest's crown follows the chip
+ * filter, and `ALL` crowns the biggest live curve across nets.
+ */
+function kothCandidates(net: Net | 'ALL'): SimCoin[] {
+  return COINS.filter((c) => (net === 'ALL' || (c.net ?? 'SOL') === net) && c.lane !== 'grad');
 }
 
 export function king(): void {
-  const net = WALLET.net;
+  const net: Net | 'ALL' = WALLET.on ? WALLET.net : netFilter;
   if (kothNet !== net) {
     kothId = null;
     kothNet = net;

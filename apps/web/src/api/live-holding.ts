@@ -1,14 +1,18 @@
 import { createPublicClient, formatUnits, http, type PublicClient } from 'viem';
-import { RH_RPC_URL } from '../wallet/chain.js';
+import { isEvmNet, type EvmNet } from '@stonkz/shared';
+import { EVM_CHAINS } from '../wallet/chain.js';
 import type { SimCoin } from '../state/coins.js';
 import { setHoldingTokens } from '../state/holdings.js';
 
-let rhClient: PublicClient | null = null;
-function rhRpc(): PublicClient {
-  if (!rhClient) {
-    rhClient = createPublicClient({ transport: http(RH_RPC_URL) });
+/** One read client per EVM net: a Base coin's balance lives on Base, not RH. */
+const clients = new Map<EvmNet, PublicClient>();
+function rpcFor(net: EvmNet): PublicClient {
+  let c = clients.get(net);
+  if (!c) {
+    c = createPublicClient({ transport: http(EVM_CHAINS[net].rpcUrl) }) as PublicClient;
+    clients.set(net, c);
   }
-  return rhClient;
+  return c;
 }
 
 const ERC20_BALANCE_ABI = [
@@ -39,9 +43,10 @@ export function safeSellAmountInput(atoms: bigint, decimals = 18): string {
 
 /** Pull the wallet's ERC-20 balance into HOLD so the position bar matches MetaMask. */
 export async function syncHoldingFromChain(c: SimCoin, wallet: string): Promise<number | null> {
-  if (!c.mint || !wallet || !wallet.startsWith('0x')) return null;
+  const net = c.net ?? 'SOL';
+  if (!c.mint || !wallet || !wallet.startsWith('0x') || !isEvmNet(net)) return null;
   try {
-    const raw = await rhRpc().readContract({
+    const raw = await rpcFor(net).readContract({
       address: c.mint as `0x${string}`,
       abi: ERC20_BALANCE_ABI,
       functionName: 'balanceOf',

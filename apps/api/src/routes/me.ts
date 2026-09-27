@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { and, eq } from 'drizzle-orm';
-import { nativeUnit } from '@stonkz/shared';
+import { MAX_TRADE_CAP, DEFAULT_TRADE_CAP, nativeUnit } from '@stonkz/shared';
 import { settings, users } from '../db/schema.js';
 import { limit, requireAuth } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
@@ -103,6 +103,7 @@ export function meRoutes(): Hono<AppEnv> {
             mev: settingsRow.mev,
             mevTip: settingsRow.mevTip,
             cap: settingsRow.cap,
+            capUnit: nativeUnit(net),
             defBuy: settingsRow.defBuy,
             confirm: settingsRow.confirm,
           }
@@ -123,7 +124,10 @@ export function meRoutes(): Hono<AppEnv> {
     const slip = clampSetting(body['slip'], 0.1, 50, 2.5);
     const prio = clampSetting(body['prio'], 0, 1, 0.0012);
     const mevTip = clampSetting(body['mevTip'], 0, 1, 0.0009);
-    const cap = clampSetting(body['cap'], 0.001, 50, 5);
+    // The row is per (net, wallet), so the cap is in that net's gas unit:
+    // 50 ETH is a sane ceiling, 50 USDC on Arc is not.
+    const unit = nativeUnit(user.net);
+    const cap = clampSetting(body['cap'], 0.001, MAX_TRADE_CAP[unit], DEFAULT_TRADE_CAP[unit]);
     const defBuy = clampSetting(body['defBuy'], 0.01, 999, 0.5);
     const mevRaw = typeof body['mev'] === 'string' ? body['mev'].toUpperCase() : 'SHIELD';
     const mev = mevRaw === 'OFF' || mevRaw === 'RELAY' || mevRaw === 'SHIELD' ? mevRaw : 'SHIELD';

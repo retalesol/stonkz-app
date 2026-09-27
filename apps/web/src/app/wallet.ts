@@ -100,6 +100,10 @@ export function renderPracticeBadge(): void {
 
 export async function connectWallet(netKey: Net): Promise<void> {
   const n = NETS[netKey] ?? NETS.SOL;
+  // Selecting first lets the picker read the target net's env block, but a
+  // cancelled or failed pick must not leave the app relabelled to a chain the
+  // session is not on (units, cap, cross-chain banners all key off WALLET.net).
+  const prev = WALLET.net;
   selectNet(n.k);
   netOpen(false);
   const b = must('#connectBtn');
@@ -108,6 +112,7 @@ export async function connectWallet(netKey: Net): Promise<void> {
     try {
       await openWalletPicker(n.k, b);
     } catch (err) {
+      if (prev !== n.k) selectNet(prev);
       if (err instanceof WalletPickerCancelledError) {
         toast('CONNECT CANCELLED');
         return;

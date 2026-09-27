@@ -14,6 +14,7 @@ import {
   type Net,
 } from '@stonkz/shared';
 import { evmLaunchpadAddress } from '../chain/evm-net.js';
+import { ZERO_EVM_ADDRESS } from '../env.js';
 import { buyQuote, freshState, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
 import { launchIntents, tokens } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
@@ -404,8 +405,15 @@ export function launchRoutes(): Hono<AppEnv> {
       });
     }
 
-    // EVM (Robinhood or Base).
+    // EVM (Robinhood, Base or Arc). A net with no launchpad pinned in this
+    // environment must refuse here, not hand back a createToken call to 0x0.
     const launchpad = evmLaunchpadAddress(deps.env, net) as Address;
+    if (launchpad === ZERO_EVM_ADDRESS) {
+      return c.json(
+        { error: 'launchpad_not_configured', detail: `${net} has no launchpad on this env` },
+        422,
+      );
+    }
     const data = encodeCreateTokenCall({
       name,
       ticker,

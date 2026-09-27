@@ -715,10 +715,13 @@ function unsubscribeChannel(channel: string): void {
   wsSend({ type: 'unsubscribe', channel });
 }
 
+let reconnectAttempt = 0;
+
 function connectWs(): void {
   if (!streaming || socket) return;
   socket = new WebSocket(WS_URL);
   socket.addEventListener('open', () => {
+    reconnectAttempt = 0;
     for (const channel of subscribed) wsSend({ type: 'subscribe', channel });
   });
   socket.addEventListener('message', (ev) => {
@@ -730,9 +733,19 @@ function connectWs(): void {
       // A malformed frame is a server bug, not a reason to drop the socket.
     }
   });
+  // `error` and `close` both fire on a failed connect; one timer, backing off
+  // 1.5s → 30s with jitter so a down API is not hammered by every open tab.
   const drop = (): void => {
     socket = null;
-    if (streaming) reconnectTimer = window.setTimeout(connectWs, 1500);
+    if (!streaming || reconnectTimer !== 0) return;
+    const base = Math.min(30_000, 1500 * 2 ** Math.min(reconnectAttempt++, 5));
+    reconnectTimer = window.setTimeout(
+      () => {
+        reconnectTimer = 0;
+        connectWs();
+      },
+      base + Math.random() * 500,
+    );
   };
   socket.addEventListener('close', drop);
   socket.addEventListener('error', drop);
@@ -1269,11 +1282,25 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
     net,
     prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
   );
-  const confirmed = await postJson<ApiLaunchConfirm>(
-    '/launch/confirm',
-    { intentId: prep.intentId, signature },
-    net,
-  );
+  // The wallet confirms against its own RPC, the API reads from another; a
+  // 404 here usually means the API is a block behind, not that the launch
+  // failed. Retrying keeps a minted token from going unrecorded (which would
+  // also let the same ticker mint twice, since the cooldown never saw it).
+  let confirmed: ApiLaunchConfirm | null = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      confirmed = await postJson<ApiLaunchConfirm>(
+        '/launch/confirm',
+        { intentId: prep.intentId, signature },
+        net,
+      );
+      break;
+    } catch (err) {
+      const notFound = err instanceof LiveApiError && err.code === 'transaction_not_found';
+      if (!notFound || attempt >= 6) throw err;
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
 
   const mc = confirmed.mc;
   const c: SimCoin = {
@@ -1288,7 +1315,7 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
     hold: 0,
     age: 0,
     seed: (Math.random() * 1e6) | 0,
-    dev: shortAddr(sessionWallet(net)),
+    dev: sessionWallet(net),
     lane: 'new',
     lastMc: mc,
     el: null,

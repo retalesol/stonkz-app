@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { and, desc, eq, gt, ilike, or, sql, type SQL } from 'drizzle-orm';
 import {
   FEE_SPLIT,
+  effFee,
   isEvm,
   laneOf,
   nativeUnit,
@@ -15,6 +16,7 @@ import {
   candles,
   creatorVaults,
   holdersSnapshot,
+  referralFeeEvents,
   tokens,
   trades,
   treasuryCredits,
@@ -70,7 +72,9 @@ export function tokenRoutes(): Hono<AppEnv> {
     if (q) {
       const like = `${q}%`;
       const contains = `%${q}%`;
-      const clause = or(ilike(tokens.sym, like), ilike(tokens.name, contains));
+      // The placeholder promises ticker, name or contract: a pasted mint
+      // matches exactly (case-sensitive base58 / checksummed hex).
+      const clause = or(ilike(tokens.sym, like), ilike(tokens.name, contains), eq(tokens.mint, q));
       if (clause) filters.push(clause);
     }
 
@@ -245,13 +249,32 @@ export function tokenRoutes(): Hono<AppEnv> {
     const protocol = leg('protocol');
     const game = leg('stonkz_ops');
     const burn = leg('burn');
+    // Referral payouts are settled off the protocol leg per fill; the ledger
+    // is keyed by tx, so scope it to this coin through its trades.
+    const [ref] = await deps.db
+      .select({ total: sql<number>`coalesce(sum(${referralFeeEvents.payoutNative}), 0)` })
+      .from(referralFeeEvents)
+      .innerJoin(
+        trades,
+        and(eq(trades.net, referralFeeEvents.net), eq(trades.txSig, referralFeeEvents.txSig)),
+      )
+      .where(and(eq(trades.net, net), eq(trades.mint, token.mint ?? '')));
+    const referrals = Number(ref?.total ?? 0);
     const feeBps = token.feeBps ?? 100;
+    // What a fill pays right now: the creator fee plus the decaying cashback
+    // premium while that window is open (the same curve the ticket shows).
+    const effFeeBps = Math.round(
+      effFee(
+        { tfee: feeBps / 100, cashback: token.cashback, cbStart: token.cbStartMs ?? undefined },
+        deps.now(),
+      ) * 100,
+    );
     const body: TokenFees = {
       sym: token.sym,
       net,
       unit: nativeUnit(net),
       feeBps,
-      effFeeBps: feeBps,
+      effFeeBps,
       split: { ...FEE_SPLIT },
       totals: {
         gross: protocol + game + burn + creatorBucket,
@@ -261,7 +284,7 @@ export function tokenRoutes(): Hono<AppEnv> {
         creatorBucket,
         creator: Math.max(0, creatorBucket - stakers),
         stakers,
-        referrals: 0,
+        referrals,
       },
       source: 'chain',
     };

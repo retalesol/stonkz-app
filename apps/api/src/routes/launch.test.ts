@@ -10,7 +10,10 @@ import { solanaWallet } from '../test/wallets.js';
 let h: TestApp;
 
 beforeAll(async () => {
-  h = await createTestApp();
+  // The EVM prepare path now refuses a net with no launchpad pinned.
+  h = await createTestApp({
+    env: { RH_LAUNCHPAD_ADDRESS: '0x000000000000000000000000000000000000dec0' },
+  });
 });
 afterAll(async () => {
   await h.close();

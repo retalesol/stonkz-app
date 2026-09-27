@@ -278,7 +278,7 @@ function ncStep3(): Html {
   const buyVal = NEW.buy > 0 ? Number(NEW.buy).toFixed(2) : '';
   return html`<div><canvas class="nc-chart" id="nc-chart"></canvas></div>
     <div class="fee-row">
-      <span class="lbl" style="margin:0;flex:0 0 88px">DEV BUY (${NEW.base})</span
+      <span class="lbl" style="margin:0;flex:0 0 88px">DEV BUY (${nativeUnit()})</span
       ><input
         class="fld r"
         id="f-buy"

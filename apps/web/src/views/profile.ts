@@ -489,7 +489,11 @@ export function renderProfile(addr?: string): void {
   // Live: hydrate from the API after first paint so we never flash RNG flavour.
   if (live && PF.addr && !LIVE_HYDRATED.has(PF.addr) && !(liveMem && LIVE_HYDRATED.has(liveMem.addr))) {
     const target = PF.addr;
-    const profileNet = inferNetFromAddress(target, isEvm(WALLET.net) ? WALLET.net : 'RH');
+    // An 0x address could be on RH, Base or Arc; prefer the net of a coin this
+    // wallet created, then the session's net, then RH.
+    const created = coinsBy(target)[0];
+    const evmHint = created?.net && isEvm(created.net) ? created.net : isEvm(WALLET.net) ? WALLET.net : 'RH';
+    const profileNet = inferNetFromAddress(target, evmHint);
     void Promise.all([
       fetchMember(profileNet, target).catch(() => null),
       fetchWall(profileNet, target).catch(() => null),

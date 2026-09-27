@@ -19,7 +19,7 @@ import {
   usd,
   vol24,
 } from '@stonkz/shared';
-import { NET_INFO, isEvm, nativeUnit as nativeUnitOf, type Net } from '@stonkz/shared';
+import { NET_INFO, fmtNative, isEvm, nativeUnit as nativeUnitOf, type Net } from '@stonkz/shared';
 import { fetchChatHistory, fetchXProfile, sendChatMessage, SocialApiError } from '../api/social.js';
 import { api } from '../api/index.js';
 import { LiveApiError, subscribeChatRoom, type LiveChatFrame } from '../api/live.js';
@@ -423,6 +423,21 @@ function fmtNativeAmt(v: number): string {
   return v.toFixed(6).replace(/\.?0+$/, '');
 }
 
+/** Buy quick picks in the coin's gas unit: fractions of SOL/ETH, whole USDC under the Arc cap. */
+function quickPicks(c: SimCoin): number[] {
+  const info = NET_INFO[c.net ?? 'SOL'];
+  if (info.unit === 'USDC') return [1, 5, 10, Math.min(25, info.maxTradeUsd ?? 25)];
+  return info.unit === 'ETH' ? [0.01, 0.05, 0.1, 0.5] : [0.1, 0.5, 1, 5];
+}
+
+function quoteErrorText(err: unknown): string {
+  if (err instanceof LiveApiError) {
+    if (err.code === 'rate_limited') return 'TOO MANY QUOTES — HOLD ON A SECOND';
+    return (err.message || err.code).toUpperCase();
+  }
+  return err instanceof Error ? err.message.toUpperCase() : String(err);
+}
+
 export function renderQuote(): void {
   const c = TV.c;
   if (!c) return;
@@ -439,12 +454,24 @@ export function renderQuote(): void {
     if (api.mode === 'live') go.disabled = !c.tradeable || c.lane === 'grad';
   }
 
+  const cap = NET_INFO[c.net ?? 'SOL'].maxTradeUsd;
+  const capUsd = buy && cap !== undefined ? amount * NATIVE_PRICE.usd : 0;
   if (!(amount > 0)) {
     render(
       $('#t-quote'),
       html`<div class="qrow"><span>QUOTE</span><b class="dm">ENTER AN AMOUNT</b></div>`,
     );
     if (go && api.mode === 'live') go.disabled = true;
+  } else if (cap !== undefined && capUsd > cap) {
+    // Arc is real money: the same $25 ceiling the API and the router enforce,
+    // shown before a quote is even asked for.
+    render(
+      $('#t-quote'),
+      html`<div class="qrow">
+        <span>QUOTE</span><b class="dn">MAX $${cap} PER TRADE ON ${NET_INFO[c.net ?? 'SOL'].short}</b>
+      </div>`,
+    );
+    if (go) go.disabled = true;
   } else {
     void api
       .quote({ coin: c, side: buy ? 'buy' : 'sell', amountIn: amount })
@@ -465,7 +492,7 @@ export function renderQuote(): void {
       .catch((err: unknown) => {
         render(
           $('#t-quote'),
-          html`<div class="qrow"><span>QUOTE</span><b class="dn">${String(err)}</b></div>`,
+          html`<div class="qrow"><span>QUOTE</span><b class="dn">${quoteErrorText(err)}</b></div>`,
         );
       });
   }
@@ -479,7 +506,7 @@ export function renderQuote(): void {
     if (buy) {
       render(
         quick,
-        html`${[0.1, 0.5, 1, 5].map((x) => html`<button type="button" class="qa" data-a="${attr(x)}">${x}</button>`)}<button
+        html`${quickPicks(c).map((x) => html`<button type="button" class="qa" data-a="${attr(x)}">${x}</button>`)}<button
             type="button"
             class="qa"
             data-a="max"
@@ -537,7 +564,7 @@ function paintPosition(c: SimCoin): void {
     render(
       bal,
       WALLET.on
-        ? html`<span>BALANCE <b class="am">${WALLET.sol.toFixed(2)} ${nativeUnit()}</b></span
+        ? html`<span>BALANCE <b class="am">${fmtNative(WALLET.net, WALLET.sol)} ${nativeUnit()}</b></span
             ><span>PAIR ${c.base || nativeUnit()} ${DOT} ${WALLET.addr}</span>`
         : html`<span class="dm">NO WALLET CONNECTED</span
             ><span class="dm"
@@ -1356,7 +1383,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
   let realized: number | null = null;
   if (!buy && hb && hb.tok > 0) {
     const avg = hb.cost / hb.tok;
-    const sold = Math.min(hb.tok, (amount * NATIVE_PRICE.usd) / price(c));
+    const sold = Math.min(hb.tok, amount);
     realized = sold * (price(c) - avg);
   }
 
@@ -1394,6 +1421,16 @@ async function submitTrade(c: SimCoin): Promise<void> {
         toast('JUPITER ROUTE NEEDS ADDRESS LOOKUP TABLES — NOT SUPPORTED ON STAGING YET.', 'red');
       } else if (code === 'graduated_not_supported' || msg.includes('graduated_not_supported')) {
         toast('GRADUATED — TRADE ON THE DEX; STONKZ CURVE PREPARE IS CLOSED.', 'red');
+      } else if (code === 'max_trade_usd_exceeded') {
+        toast('OVER THE $25 PER-TRADE CAP ON ARC — TRY A SMALLER AMOUNT.', 'red');
+      } else if (code === 'cap_exceeded') {
+        toast('OVER YOUR TRADE CAP — RAISE IT IN SETTINGS OR TRADE LESS.', 'red');
+      } else if (code === 'insufficient_native' || code === 'insufficient_balance') {
+        toast('NOT ENOUGH ' + nativeUnit() + ' FOR THIS ORDER PLUS GAS.', 'red');
+      } else if (code === 'slippage_exceeded' || code === 'quote_expired') {
+        toast('PRICE MOVED PAST YOUR SLIPPAGE — REQUOTE AND TRY AGAIN.', 'red');
+      } else if (code === 'no_route') {
+        toast('NO ROUTE FOR THAT PAIR RIGHT NOW — TRY THE NATIVE PAIR.', 'red');
       } else if (code === 'rh_router_required' || msg.includes('rh_router_required')) {
         toast(
           'ATOMIC ROUTER REQUIRED — PIN RH_ROUTER / V3 FEE TIER. NON-ATOMIC TRADES DISABLED.',
