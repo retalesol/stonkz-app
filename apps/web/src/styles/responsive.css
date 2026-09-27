@@ -28,7 +28,7 @@
 @media (max-width:430px){
   .top{gap:6px}
   .brand{font-size:14px}
-  .koth{padding:8px}
+  .koth{padding:24px 8px 8px}
   .foot{font-size:10px;padding-inline:8px}
   .drawer{width:100vw}
   .board{gap:8px}

@@ -1245,7 +1245,7 @@ export function openToken(c: SimCoin): void {
   const v = must('#tokenView');
   render(v, tokenHTML(c));
   showView('token');
-  paintCoinArt($<HTMLCanvasElement>('.tk-bar canvas'), c.seed, c.image);
+  paintCoinArt($<HTMLCanvasElement>('.tk-bar canvas'), c.seed, c.image, 46);
   updateCurveNote();
   render(
     must('#t-quick'),

@@ -88,7 +88,7 @@ function card(c: SimCoin): HTMLElement {
       </div>
       <i class="cbar" data-f="bar" style="width:${attr(curve(c))}%"></i>`,
   );
-  paintCoinArt(b.querySelector('canvas'), c.seed, c.image);
+  paintCoinArt(b.querySelector('canvas'), c.seed, c.image, 52);
   b.addEventListener('click', (e) => {
     // The creator link is a nested control; let the board delegate handle it.
     if ((e.target as Element | null)?.closest('.addrlink')) return;
@@ -362,7 +362,7 @@ export function king(): void {
         </div>
         <canvas class="ksp" width="300" height="88"></canvas>`,
     );
-    paintCoinArt($<HTMLCanvasElement>('#koth canvas'), best.seed, best.image);
+    paintCoinArt($<HTMLCanvasElement>('#koth canvas'), best.seed, best.image, 74);
     spark($<HTMLCanvasElement>('#koth .ksp'), histOf(best, 48));
     if (!first && !reducedMotion()) {
       koth.classList.remove('crowned');

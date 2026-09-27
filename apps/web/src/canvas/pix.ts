@@ -75,9 +75,14 @@ export function paintCoinArt(
   cv: HTMLCanvasElement | null | undefined,
   seed: number,
   imageUrl?: string | null,
+  displaySize?: number,
 ): void {
   if (!cv) return;
-  const size = cv.clientWidth || Number(cv.getAttribute('width')) || 64;
+  // `paintAvatar` writes the size back as inline CSS, so a canvas painted
+  // before it is in the DOM (a fresh board card) must be told its CSS size:
+  // `clientWidth` is 0 there and the 96px backing-store attribute would win
+  // over the stylesheet's 52px and overflow the card.
+  const size = displaySize || cv.clientWidth || Number(cv.getAttribute('width')) || 64;
   if (imageUrl?.trim()) {
     paintAvatar(cv, { seed, avatarUrl: imageUrl.trim(), size });
     return;

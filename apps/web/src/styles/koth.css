@@ -1,10 +1,10 @@
 /* ---------- king of the hill ---------- */
 .koth{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;
-  background:linear-gradient(90deg,#1a1204,#0a0b0e 55%);border:1px solid var(--amber2);padding:10px 12px;position:relative;
+  background:linear-gradient(90deg,#1a1204,#0a0b0e 55%);border:1px solid var(--amber2);padding:26px 12px 10px;position:relative;
   cursor:pointer}
 .koth:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .koth .crown{font-family:"Silkscreen",monospace;font-size:10px;color:#150d00;background:var(--amber);
-  padding:2px 7px;position:absolute;top:-1px;left:-1px;letter-spacing:.04em}
+  padding:2px 7px;position:absolute;top:-1px;left:-1px;bottom:auto;height:16px;line-height:12px;letter-spacing:.04em}
 .koth canvas{image-rendering:pixelated;border:1px solid var(--line2);display:block}
 .koth .kn{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:20px;letter-spacing:.03em;color:var(--gold)}
 .koth .kn small{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--txt2);font-weight:400;letter-spacing:0;margin-left:8px}
