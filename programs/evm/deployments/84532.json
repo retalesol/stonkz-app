@@ -10,7 +10,7 @@
     "StonkzLaunchpad": "0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35",
     "StonkzV2Factory": "0x7c7eDfF0e0EFb7d82e8790aDaa4a72b4D36A3Cc0",
     "UniswapV2Migrator": "0xFfFDfc7DEfbfaF64c232897452Aa6E6F92809426",
-    "StonkzRouter": "0xEeE3db8e58a0b371ed1CAA16bc4a25D296E57276"
+    "StonkzRouter": "0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d"
   },
   "tokens": {
     "WETH9": "0x4200000000000000000000000000000000000006",
@@ -29,7 +29,8 @@
     "Pin BASE_V3_FEE_TIER_OVERRIDES=USDC:3000 for ETH\u2194USDC hops (pools exist at 100/500/3000/10000).",
     "No RH stock tokens on Base \u2014 ETH/WETH/USDC majors only.",
     "Deployer is the same testnet key used for RH 46630 \u2014 burned for mainnet.",
-    "2026-09-27: full redeploy at block 47348724 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`."
+    "2026-09-27: full redeploy at block 47348724 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`.",
+    "2026-09-27: StonkzRouter redeployed at 0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d (block 47352362) with the capped-buy refund and permit fall-through; previous router 0xEeE3db8e58a0b371ed1CAA16bc4a25D296E57276 is unreferenced."
   ],
   "previous": [
     {
@@ -58,11 +59,12 @@
   "deployTxs": {
     "launchpadProxy": "0x30aaebe43229641a7aa6c30a1dfc0b6137ad090ceefe54c81bc7e4d2ad06d4ff",
     "launchpadImpl": "0x8a264cb3ec8406461cdd2b5b5e4f6a90d32682d19caaa980762bfb00938280b8",
-    "router": "0x7ac39e245b248e42606642f808f5b1d2eccf679bbf517832c799358353b2b7ec"
+    "router": "0xca70d475fa8e26518329facac75ebed9b7bc095957fc119602db1d0902d568a4"
   },
   "authorities": {
     "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
     "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
     "opsWithdraw": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca"
-  }
+  },
+  "routerDeployBlock": 47352362
 }

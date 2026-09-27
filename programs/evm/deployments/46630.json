@@ -10,7 +10,7 @@
     "StonkzLaunchpad": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
     "StonkzV2Factory": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
     "UniswapV2Migrator": "0x5CD47DBA6F6a7dA8785E74CD1602743712fe7888",
-    "StonkzRouter": "0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa"
+    "StonkzRouter": "0xC98F8214999220CE06E04ca8739A34Cb8AF5779c"
   },
   "tokens": {
     "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
@@ -37,7 +37,8 @@
     "Pin RH_V3_FEE_TIER_OVERRIDES=USDG:3000 and RH_V3_QUOTER_ADDRESS for executable ETH\u2194USDG hops.",
     "BASE_MINT_OVERRIDES_RH maps USDG to TestnetUsdg for COPIUM staging (real USDG not faucetable).",
     "2026-09-13: upgraded StonkzLaunchpad impl to 0xe729089137ee7Af2495F3C55cf1538121fBea68d (duplicate ticker/name allowed on-chain).",
-    "2026-09-27: full redeploy at block 124871527 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`."
+    "2026-09-27: full redeploy at block 124871527 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`.",
+    "2026-09-27: StonkzRouter redeployed at 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c (block 124911291) with the capped-buy refund and permit fall-through; previous router 0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa is unreferenced."
   ],
   "implementation": {
     "StonkzLaunchpad": "0xc762a0e8659596a19989E75a5E349f0B6b413dd7",
@@ -88,11 +89,12 @@
   "deployTxs": {
     "launchpadProxy": "0x41a02a5e70db3beebbdd03ad87aafa2c5a0a54e47df79e05e7fb7519f72a6667",
     "launchpadImpl": "0xdb2c3a01d63cc2a41333abad90d8ea01bdc6f2102e6d76da7bf4da839aa0b424",
-    "router": "0x351c06f87c1bbaa40a92ca5ce0ae10af565c9e8f80b5ac94ca48a3ba25e66742"
+    "router": "0x0020249233cd89f53233738fe26c6b92fb86c4585a841279224defab2e5d37f3"
   },
   "authorities": {
     "admin": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
     "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
     "opsWithdraw": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca"
-  }
+  },
+  "routerDeployBlock": 124911291
 }
