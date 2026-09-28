@@ -10,6 +10,7 @@
 #   EVM_PK        oracle authority key for RH + Base (omit to skip EVM)
 #   SOL_KEYPAIR   path to the Solana oracle authority keypair (omit to skip)
 #   SOL_MAX_STALENESS  optional: also set global.max_oracle_staleness (admin)
+#   NETS          which chains to push (default "RH BASE SOL")
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,14 +22,31 @@ push_evm() { # net rpc launchpad weth stable...
   local net=$1 rpc=$2 lp=$3; shift 3
   local src; src=$(cast call "$lp" 'priceSource()(address)' -r "$rpc")
   echo "== $net priceSource $src"
+  local me; me=$(cast wallet address --private-key "$EVM_PK")
   while [ $# -gt 0 ]; do
-    cast send "$src" 'pushPrice(address,uint256,uint256)' "$1" "$2" 0 \
-      --private-key "$EVM_PK" -r "$rpc" --json | python3 -c 'import json,sys;t=json.load(sys.stdin);print(" ",t["transactionHash"],"ok" if t["status"]=="0x1" else "REVERTED")'
+    # Public RPCs are load-balanced: a node a block behind hands out a stale
+    # nonce ("replacement transaction underpriced"). Use the pending nonce and
+    # retry instead of aborting the whole run.
+    local ok=0
+    for attempt in 1 2 3 4; do
+      local nonce out
+      nonce=$(cast nonce "$me" --block pending -r "$rpc")
+      if out=$(cast send "$src" 'pushPrice(address,uint256,uint256)' "$1" "$2" 0 \
+        --nonce "$nonce" --private-key "$EVM_PK" -r "$rpc" --json 2>&1); then
+        echo "$out" | python3 -c 'import json,sys;t=json.load(sys.stdin);print(" ",t["transactionHash"],"ok" if t["status"]=="0x1" else "REVERTED")'
+        ok=1; break
+      fi
+      echo "  retry $attempt for $1: $(echo "$out" | tail -1 | cut -c1-100)"; sleep 4
+    done
+    [ "$ok" = 1 ] || { echo "  FAILED $1"; FAILED=1; }
     shift 2
   done
 }
+FAILED=0
+NETS=${NETS:-RH BASE SOL}
+want() { case " $NETS " in *" $1 "*) return 0;; *) return 1;; esac; }
 
-if [ -n "${EVM_PK:-}" ]; then
+if [ -n "${EVM_PK:-}" ] && want RH; then
   push_evm RH https://rpc.testnet.chain.robinhood.com 0xe308287C9A85E2B53F1027a1c589B5e3969928e8 \
     0x7943e237c7F95DA44E0301572D358911207852Fa "$ETH" \
     0x7E955252E15c84f5768B83c41a71F9eba181802F 1000000 \
@@ -37,12 +55,14 @@ if [ -n "${EVM_PK:-}" ]; then
     0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0 40000000 \
     0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93 700000000 \
     0x71178BAc73cBeb415514eB542a8995b82669778d 160000000
+fi
+if [ -n "${EVM_PK:-}" ] && want BASE; then
   push_evm BASE https://sepolia.base.org 0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 \
     0x4200000000000000000000000000000000000006 "$ETH" \
     0x036CbD53842c5426634e7929541eC2318f3dCF7e 1000000
 fi
 
-if [ -n "${SOL_KEYPAIR:-}" ]; then
+if [ -n "${SOL_KEYPAIR:-}" ] && want SOL; then
   echo "== SOL"
   (cd apps/api && SOL_PRICE="$SOL" node --input-type=module -e '
 import { createHash } from "node:crypto";
@@ -73,3 +93,4 @@ tx.add(new TransactionInstruction({ programId: program, data: d, keys: [
 console.log("  ", await sendAndConfirmTransaction(conn, tx, [signer]), "ok");
 ')
 fi
+exit "$FAILED"
