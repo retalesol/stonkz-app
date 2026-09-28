@@ -95,7 +95,9 @@ function paintLaunchAvatar(): void {
   const cv = $<HTMLCanvasElement>('#nc-av');
   if (!cv) return;
   cv.classList.toggle('has-img', !!NEW.uri);
-  paintCoinArt(cv, NEW.seed, NEW.uri || null);
+  // Painted before layout: pass the stylesheet's 64px (modal.css `.det
+  // canvas.av`), or the 128px backing store becomes the display size.
+  paintCoinArt(cv, NEW.seed, NEW.uri || null, 64);
 }
 
 /* --------------------------------- steps ---------------------------------- */

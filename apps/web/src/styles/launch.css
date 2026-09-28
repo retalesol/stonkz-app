@@ -51,5 +51,8 @@
 .crop-zoom-row{display:flex;align-items:center;gap:10px}
 .crop-zoom-row .lbl{margin:0;flex:0 0 40px}
 .crop-zoom-row input[type=range]{flex:1;accent-color:var(--amber)}
-
-
+/* The avatar column never grows past its 64px art, whatever inline size a paint leaves behind. */
+.det .nc-av-col{min-width:0}
+.det canvas.av{max-width:64px;max-height:64px}
+.det .rowf,.nc-grid,.nc-field{min-width:0}
+.nc-field .fld{width:100%;min-width:0;box-sizing:border-box}

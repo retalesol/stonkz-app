@@ -57,7 +57,7 @@ export function cors(allowed: readonly string[]): MiddlewareHandler {
 
     if (c.req.method === 'OPTIONS') {
       if (!permitted) return c.body(null, 403);
-      c.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       c.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
       c.header('Access-Control-Max-Age', '600');
       return c.body(null, 204);

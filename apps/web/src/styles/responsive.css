@@ -14,6 +14,8 @@
   .search input{max-width:none}
   .tk-bar{flex-wrap:wrap}
   .rowf{grid-template-columns:1fr}
+  .nc-grid{grid-template-columns:1fr}
+  .nc-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .drawer{width:88vw;max-height:100dvh;overflow:auto}
   .chartbox{height:220px}
   .koth{grid-template-columns:1fr;gap:8px}
@@ -26,6 +28,8 @@
   }
 }
 @media (max-width:430px){
+  .det{grid-template-columns:1fr}
+  .det .nc-av-col{flex-direction:row;align-items:center;gap:10px}
   .top{gap:6px}
   .brand{font-size:14px}
   .koth{padding:24px 8px 8px}

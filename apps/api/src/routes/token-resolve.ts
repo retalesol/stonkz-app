@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { tokens } from '../db/schema.js';
 import type { TokenRow } from './serialise.js';
@@ -69,7 +69,9 @@ export async function findLaunchCooldown(
       launchedAt: tokens.launchedAt,
     })
     .from(tokens)
-    .where(and(eq(tokens.net, net), or(...clauses), sql`${tokens.launchedAt} > ${cutoff}`))
+    // `gt` maps the Date through the column's driver encoder; a raw `${cutoff}`
+    // reaches postgres.js as Date#toString() and Postgres rejects it.
+    .where(and(eq(tokens.net, net), or(...clauses), gt(tokens.launchedAt, cutoff)))
     .orderBy(desc(tokens.launchedAt))
     .limit(1);
 

@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, lte, sql } from 'drizzle-orm';
 import {
   CRATES,
   HOUR,
@@ -170,7 +170,9 @@ export class CrateService {
       .onConflictDoUpdate({
         target: [crateCooldown.wallet, crateCooldown.net],
         set: { readyAt, lastTier: tier, updatedAt: nowDate },
-        setWhere: sql`${crateCooldown.readyAt} <= ${nowDate}`,
+        // Typed comparison, not a raw `${Date}`: postgres.js would send the
+        // Date's toString() form, which Postgres cannot parse.
+        setWhere: lte(crateCooldown.readyAt, nowDate),
       })
       .returning({ readyAt: crateCooldown.readyAt });
 

@@ -201,6 +201,8 @@ describe('security headers and CORS', () => {
     const ok = await h.app.request('/me', { method: 'OPTIONS', headers: { origin: TEST_ORIGIN } });
     expect(ok.status).toBe(204);
     expect(ok.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+    // PUT /me/settings is a credentialed cross-origin write; the preflight must name it.
+    expect(ok.headers.get('Access-Control-Allow-Methods')).toContain('PUT');
 
     const evil = await h.app.request('/me', {
       method: 'OPTIONS',
