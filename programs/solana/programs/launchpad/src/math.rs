@@ -30,8 +30,9 @@ fn mul_div_floor(a: u128, b: u128, d: u128) -> Option<u128> {
 /* Fee split                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/// The four destinations of one curve fee: 20% protocol, 10% Stonkz Game
-/// buyback (`stonkz_ops`), 10% buyback-and-burn, 60% creator bucket.
+/// The four destinations of one curve fee: 15% platform (`protocol`), 10%
+/// `$STONKZ` buyback (`stonkz_ops`; half of what it buys goes into crates,
+/// half is burned), 6% RWA crate fund (`burn`), 69% creator bucket.
 ///
 /// `protocol`, `stonkz_ops` and `burn` are floors of their nominal shares;
 /// `creator_bucket` is the **remainder**, so the identity
@@ -66,9 +67,10 @@ pub fn split_fee(fee: u64) -> FeeShares {
     }
 }
 
-/// How the 60% creator bucket divides between the creator and that coin's
-/// stakers. This runs *after* `split_fee`, on the creator bucket alone —
-/// protocol and ops are already in other accounts and cannot reach here.
+/// How the 69% creator bucket divides between the creator and that coin's
+/// stakers (stakers take at most half: 34.5% of the fee). This runs *after*
+/// `split_fee`, on the creator bucket alone — protocol, ops and burn are
+/// already in other accounts and cannot reach here.
 ///
 /// `stakers = floor(bucket · eligible_staked / (2 · circulating))`, clamped to
 /// half the bucket. That is `poolFrac = min(0.5, 0.5·staked/circulating)` from

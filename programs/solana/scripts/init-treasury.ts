@@ -1,5 +1,6 @@
 /**
- * Create (or confirm) the protocol / ops / burn treasury vaults for one or
+ * Create (or confirm) the protocol (platform) / ops ($STONKZ buyback) / burn
+ * (RWA crate fund; historical name) treasury vaults for one or
  * more base mints. `init_treasury` is `init_if_needed`, so re-running it after
  * the four-leg fee split upgrade adds the missing `burn_vault` PDA next to the
  * two that already exist, without touching them. Trades revert until every

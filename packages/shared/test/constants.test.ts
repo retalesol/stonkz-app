@@ -15,7 +15,7 @@ import {
   SUPPLIES,
   SUPPLY,
 } from '../src/constants.js';
-import { FEE_SPLIT, OPS_SPLIT } from '../src/fees.js';
+import { BUYBACK_SPLIT, FEE_SPLIT } from '../src/fees.js';
 
 /**
  * Review gate 0.B: changing a crate odds row or one of the 20/70/10 constants
@@ -34,12 +34,12 @@ describe('scalar constants', () => {
 });
 
 describe('fee constants', () => {
-  it('snapshots the 20 / 60 / 10 / 10 curve split', () => {
+  it('snapshots the 69 / 15 / 10 / 6 curve split', () => {
     expect(FEE_SPLIT).toMatchSnapshot();
   });
 
-  it('snapshots the $STONKZ vault sweep recipe', () => {
-    expect(OPS_SPLIT).toMatchSnapshot();
+  it('snapshots the $STONKZ buyback sweep recipe', () => {
+    expect(BUYBACK_SPLIT).toMatchSnapshot();
   });
 });
 

@@ -12,8 +12,9 @@ import type { ChainEvent } from '../events.js';
  *
  * Two properties matter for the review gates:
  *
- *  - fee legs are produced with `splitFee()`, so the 20/60/10/10 assertion in
- *    `assertFeeSplit` is checking real arithmetic rather than a copy of itself;
+ *  - fee legs are produced with `splitFee()` (the v2 15/69/10/6 split), so the
+ *    assertion in `assertFeeSplit` is checking real arithmetic rather than a
+ *    copy of itself;
  *  - amounts straddle the dust floor and the whale cut deliberately, so a
  *    replay exercises the zero-award and achievement paths, not just the happy
  *    middle.
@@ -194,8 +195,9 @@ export class FixtureProducer {
       feeAmount,
       protocol: legs.protocol,
       creatorBucket: legs.creatorBucket,
-      stonkzOps: legs.stonkzOps,
-      burn: legs.burn,
+      // Chain leg names: `stonkzOps` is the buyback leg, `burn` the RWA leg.
+      stonkzOps: legs.buyback,
+      burn: legs.rwa,
       stakerShare,
       // In a cashback window the creator's cut arrives as tokens, not native.
       creatorTokens: (input.cashback ?? false) ? legs.creatorBucket * nativeUsd : 0,
@@ -285,7 +287,7 @@ export class FixtureProducer {
   }
 
   treasuryCredit(input: {
-    vault: 'protocol' | 'stonkz_ops';
+    vault: 'protocol' | 'buyback' | 'rwa';
     amount: number;
     sym?: string;
   }): ChainEvent {
@@ -399,7 +401,7 @@ export function canonicalScenario(seed = 0xc0ffee): ScenarioResult {
   // Push DOGGO through graduation with the whale still holding.
   sol.trade({ sym: 'DOGGO', trader: actors.solWhale, side: 'buy', nativeAmount: 9, mc: 69_500 });
   sol.graduate('DOGGO', 69_500);
-  sol.treasuryCredit({ vault: 'stonkz_ops', amount: 0.01 });
+  sol.treasuryCredit({ vault: 'buyback', amount: 0.01 });
 
   // --- Robinhood ----------------------------------------------------------
   rh.launch({ sym: 'RHDOG', name: 'RH Doggo', creator: actors.rhCreator, feeBps: 200 });

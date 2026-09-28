@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { CRATES, HOUR, RAR, crateXp } from '@stonkz/shared';
-import { crateOpens, crateState, itemFlags } from '../db/schema.js';
+import { CRATES, HOUR, RAR, crateXp, rollDrop, type CrateDrop } from '@stonkz/shared';
+import { crateInventory, crateOpens, crateState, itemFlags, rwaRewards } from '../db/schema.js';
 import { CrateService, itemExpiry } from './crates.js';
 import { authed, createTestApp, FROZEN_NOW, type TestApp } from '../test/app.js';
 import { solanaWallet } from '../test/wallets.js';
@@ -99,16 +99,85 @@ describe('crate opens', () => {
     expect(row?.rollCommit).toBe(result.roll.rollCommit);
     expect(row?.xpAwarded).toBe(result.xp);
 
+    // Bronze has no `R` row: it pays `$STONKZ` credits or an item.
+    expect(result.asset).toBeNull();
+    expect(result.units).toBe(0);
     if (result.item === null) {
-      // `S` rows pay Stonk Optionz, never $STONKZ.
-      expect(result.label).toContain('STONK OPTIONZ');
-      expect(result.optionz).toBeGreaterThan(0);
-      expect((await h.deps.ledger.readBalance('SOL', W)).optionz).toBe(result.optionzTotal);
+      expect(result.kind).toBe('S');
+      expect(result.label).toContain('$STONKZ');
+      expect(result.stonkz).toBeGreaterThan(0);
+      expect(result.amount).toBe(result.stonkz);
+      expect(row?.stonkzAwarded).toBe(result.stonkz);
+      expect((await h.deps.ledger.readBalance('SOL', W)).stonkz).toBe(result.stonkzTotal);
     } else {
-      expect(result.optionz).toBe(0);
+      expect(result.kind).toBe('I');
+      expect(result.stonkz).toBe(0);
       const flags = await h.deps.db.select().from(itemFlags).where(eq(itemFlags.wallet, W));
       expect(flags.map((f) => f.item)).toContain(result.item);
     }
+  });
+
+  it('credits an RWA position for an `R` drop', async () => {
+    const tier = 'SILVER' as const;
+    const silver = CRATES.find((c) => c.k === tier);
+    const rIndex = silver?.drops.findIndex((d) => d[1] === 'R') ?? -1;
+    expect(rIndex).toBeGreaterThanOrEqual(0);
+    const rDrop = silver?.drops[rIndex] as Extract<CrateDrop, readonly [number, 'R', ...unknown[]]>;
+
+    // Search for a nonce whose provable roll lands on the `R` row, then pin it.
+    let nonce = '';
+    const secret = 'rwa-drop-test-secret-0000000000000000000000';
+    const probe = new CrateService({
+      db: h.deps.db,
+      ledger: h.deps.ledger,
+      publisher: h.deps.publisher,
+      spLevels: h.deps.spLevels,
+      secret,
+      now: h.now,
+    });
+    for (let i = 0; i < 5_000 && !nonce; i++) {
+      const roll = probe.roll('SOL', W, tier, `rwa-${i}`);
+      if (silver && rollDrop(silver, () => roll.rollValue / 100) === rIndex) nonce = `rwa-${i}`;
+    }
+    expect(nonce).not.toBe('');
+    const crates = new CrateService({
+      db: h.deps.db,
+      ledger: h.deps.ledger,
+      publisher: h.deps.publisher,
+      spLevels: h.deps.spLevels,
+      secret,
+      now: h.now,
+      nonceSource: () => nonce,
+    });
+    await h.deps.db.insert(crateInventory).values({ wallet: W, net: 'SOL', tier, count: 1 });
+
+    const before = h.userEvents.length;
+    const result = await crates.open('SOL', W, tier);
+
+    expect(result.kind).toBe('R');
+    expect(result.dropIndex).toBe(rIndex);
+    expect(result.asset).toBe(rDrop[2]);
+    expect(result.units).toBeGreaterThanOrEqual(rDrop[3]);
+    expect(result.units).toBeLessThanOrEqual(rDrop[4]);
+    expect(result.amount).toBe(0);
+    expect(result.stonkz).toBe(0);
+    expect(result.item).toBeNull();
+    expect(result.label).toBe(`${result.units.toFixed(4)} ${rDrop[2]}`);
+    expect(result.rwa).toEqual([{ asset: rDrop[2], units: result.units }]);
+
+    const held = await h.deps.db.select().from(rwaRewards).where(eq(rwaRewards.wallet, W));
+    expect(held).toEqual([
+      expect.objectContaining({ net: 'SOL', wallet: W, asset: rDrop[2], units: result.units }),
+    ]);
+    const [row] = await h.deps.db.select().from(crateOpens).where(eq(crateOpens.wallet, W));
+    expect(row?.stonkzAwarded).toBe(0);
+    expect(row?.payloadJson).toMatchObject({ kind: 'R', asset: rDrop[2], units: result.units });
+
+    const rwaEvents = h.userEvents.slice(before).filter((e) => e.event.type === 'rwa');
+    expect(rwaEvents.map((e) => e.event)).toEqual([
+      expect.objectContaining({ asset: rDrop[2], units: result.units, total: result.units }),
+    ]);
+    expect((await h.deps.ledger.snapshot('SOL', W)).rwa).toEqual(result.rwa);
   });
 
   it('unlocks the crate achievement on the first open', async () => {
@@ -285,8 +354,13 @@ describe('POST /rewards/crates/:tier/open', () => {
     const res = await h.app.request('/rewards', { headers: authed(token) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      optionz: number;
-      crates: { tier: string; ready: boolean; drops: unknown[] }[];
+      stonkz: number;
+      rwa: unknown[];
+      crates: {
+        tier: string;
+        ready: boolean;
+        drops: { kind: string; asset: string | null; min: number | null; max: number | null }[];
+      }[];
       dropLog: { tier: string; rarity: string }[];
     };
     expect(body.crates).toHaveLength(CRATES.length);
@@ -295,11 +369,20 @@ describe('POST /rewards/crates/:tier/open', () => {
     expect(body.crates.find((c) => c.tier === 'IRON')?.ready).toBe(false);
     expect(body.crates.every((c) => c.ready === false)).toBe(true);
     expect(body.crates[0]?.drops).toHaveLength(5);
+    expect(typeof body.stonkz).toBe('number');
+    expect(body.rwa).toEqual([]);
+    const silverR = body.crates
+      .find((c) => c.tier === 'SILVER')
+      ?.drops.find((d) => d.kind === 'RWA');
+    expect(silverR).toMatchObject({ asset: 'PAXG', min: 0.002, max: 0.01 });
+    expect(new Set(body.crates.flatMap((c) => c.drops.map((d) => d.kind)))).toEqual(
+      new Set(['STONKZ', 'RWA', 'ITEM']),
+    );
     expect(body.dropLog).toHaveLength(1);
     expect(body.dropLog[0]?.tier).toBe('BRONZE');
   });
 
-  it('publishes optionz and xp on the user channel', async () => {
+  it('publishes xp and the crate achievement on the user channel', async () => {
     const wallet = solanaWallet('crate-http-ws');
     const { token } = await h.login('SOL', wallet);
     const before = h.userEvents.length;

@@ -1,7 +1,7 @@
 /**
  * Referral fee + SP kickback rates.
  *
- * Fee shares are taken from the **protocol** leg of each curve fill (20% of
+ * Fee shares are taken from the **platform** (protocol) leg of each curve fill (15% of
  * the curve fee), never from the creator bucket. If T1+T2+T3 would exceed the
  * protocol leg, payouts scale down proportionally so the vault never goes
  * negative.
@@ -16,11 +16,11 @@ export const REFERRAL_FEE_RATES = [0.15, 0.1, 0.05] as const;
 export const REFERRAL_SP_KICKBACK = 0.05;
 
 /**
- * Pending referral fee native → Stonk Optionz when claimed.
- * 1 SOL of accrued affiliate fees → 10,000 Optionz (claimable off-chain until
+ * Pending referral fee native → `$STONKZ` reward credits when claimed.
+ * 1 SOL of accrued affiliate fees → 10,000 credits (claimable off-chain until
  * a native withdraw vault ships).
  */
-export const REFERRAL_OPTIONZ_PER_NATIVE = 10_000;
+export const REFERRAL_STONKZ_PER_NATIVE = 10_000;
 
 export type ReferralTier = 1 | 2 | 3;
 

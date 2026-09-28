@@ -296,7 +296,7 @@ export async function mapEvmTransaction(
         const token = addr(args, 'token');
         const meta = await need(token);
         const feeTotal = big(args, 'feeTotal');
-        assertOnChainFeeSplit(
+        const splitVersion = assertOnChainFeeSplit(
           `RH FeeAccrued ${ctx.txHash}`,
           feeTotal,
           big(args, 'protocol'),
@@ -323,6 +323,7 @@ export async function mapEvmTransaction(
             ),
             trade ? big(trade.args, 'feeStakers') : 0n,
             big(args, 'creatorBucket'),
+            splitVersion,
           ),
           creatorTokens: toWhole(
             trade ? big(trade.args, 'cashbackTokens') : 0n,

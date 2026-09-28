@@ -14,11 +14,14 @@ pragma solidity ^0.8.24;
 library CurveMath {
     uint256 internal constant BPS_DEN = 10_000;
 
-    uint256 internal constant FEE_PROTOCOL_BPS = 2_000;
-    /// Stonkz Game buyback leg (the vault keeps its historical `ops` name).
+    /// Platform revenue leg (15%).
+    uint256 internal constant FEE_PROTOCOL_BPS = 1_500;
+    /// $STONKZ buyback leg (10%): half of what it buys goes into crates, half is
+    /// burned. The vault keeps its historical `ops` name.
     uint256 internal constant FEE_OPS_BPS = 1_000;
-    /// Buyback-and-burn leg.
-    uint256 internal constant FEE_BURN_BPS = 1_000;
+    /// RWA crate fund leg (6%): buys real-world assets for crates. The former
+    /// burn vault; it keeps its historical `burn` name.
+    uint256 internal constant FEE_BURN_BPS = 600;
 
     uint16 internal constant MIN_FEE_BPS = 100;
     uint16 internal constant MAX_FEE_BPS = 500;
@@ -99,15 +102,23 @@ library CurveMath {
 
     /* ------------------------------------------------------------ fee split */
 
-    /// @notice 20% protocol, 10% game buyback (ops), 10% burn, remainder (60%) to the creator bucket.
+    /// @notice 15% platform (protocol), 10% $STONKZ buyback (ops), 6% RWA crate fund (burn),
+    /// remainder (69%) to the creator bucket.
     /// @dev The bucket is the remainder rather than a fourth floor, which is
     /// exactly why the four shares reconstruct the fee for every input. At
     /// most 3 wei of floor dust lands in the bucket; none is ever lost.
+    /// Only the largest product is overflow-checked: FEE_PROTOCOL_BPS is the
+    /// biggest of the three legs, so if it fits the other two do, and the three
+    /// legs sum to 31% of the fee, so the remainder cannot underflow. Same
+    /// results and same revert condition as fully checked arithmetic, fewer bytes.
     function splitFee(uint256 fee) internal pure returns (FeeShares memory s) {
-        s.protocol = (fee * FEE_PROTOCOL_BPS) / BPS_DEN;
-        s.stonkzOps = (fee * FEE_OPS_BPS) / BPS_DEN;
-        s.burn = (fee * FEE_BURN_BPS) / BPS_DEN;
-        s.creatorBucket = fee - s.protocol - s.stonkzOps - s.burn;
+        uint256 p = fee * FEE_PROTOCOL_BPS;
+        unchecked {
+            s.protocol = p / BPS_DEN;
+            s.stonkzOps = (fee * FEE_OPS_BPS) / BPS_DEN;
+            s.burn = (fee * FEE_BURN_BPS) / BPS_DEN;
+            s.creatorBucket = fee - s.protocol - s.stonkzOps - s.burn;
+        }
     }
 
     /// @notice The fee a split came from.
@@ -116,8 +127,9 @@ library CurveMath {
     }
 
     /// @notice Split the creator bucket between the creator and that token's stakers.
-    /// @dev Runs after `splitFee`, on the bucket alone. Protocol and ops have
-    /// already been routed elsewhere and are structurally unable to reach here.
+    /// @dev Runs after `splitFee`, on the bucket alone. Stakers take at most half
+    /// of it (34.5% of the fee). Protocol, ops and burn have already been routed
+    /// elsewhere and are structurally unable to reach here.
     /// `eligibleStaked` excludes zero-weight FLEX positions.
     function splitCreatorBucket(uint256 bucket, uint256 eligibleStaked, uint256 circulatingSupply)
         internal

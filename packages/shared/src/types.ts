@@ -101,15 +101,23 @@ export interface Coin {
   cbStart?: number;
 }
 
+/** A real-world-asset position won from a crate. */
+export interface RwaReward {
+  /** Catalog key, e.g. `PAXG`, `TSLA` (see `RWA_ASSETS`). */
+  asset: string;
+  /** Units held, fractional. */
+  units: number;
+}
+
 /** §5.2 — the local/ledger user record. */
 export interface User {
   xp: number;
-  /** Legacy sim balance. Phase 3 splits this into SP + Stonk Optionz. */
+  /** `$STONKZ` reward credits: what crate `S` drops pay, claimable on chain once the token is live on the net. */
   stonkz: number;
-  /** Stonk Pointz (Phase 3 server ledger). */
+  /** Stonk Pointz (server ledger). Levels and crates key off this. */
   sp?: number;
-  /** Stonk Optionz (Phase 3 server ledger; crate `S` drops pay this). */
-  optionz?: number;
+  /** RWA positions won from crates, per asset, claimable once the fund keeper ships. */
+  rwa?: RwaReward[];
   /** Tier -> epoch ms the global crate cooldown ends (same value on every tier). */
   crates: Partial<Record<CrateTier, number>>;
   /** Unopened crates earned from SP levels. */
@@ -165,15 +173,17 @@ export interface TokenFees {
   /** Effective tax right now (cashback decay), bps. */
   effFeeBps: number;
   /** The nominal split the programs assert on every fill. */
-  split: { protocol: number; creatorBucket: number; stonkzOps: number; burn: number };
+  split: { protocol: number; creatorBucket: number; buyback: number; rwa: number };
   totals: {
     /** Everything taken in fees since launch. */
     gross: number;
+    /** Platform revenue (on-chain "protocol" vault). */
     protocol: number;
-    /** Stonkz Game buyback vault (`stonkz_ops`). */
-    game: number;
-    burn: number;
-    /** The 60% bucket before the staker peel. */
+    /** `$STONKZ` buyback vault (`stonkz_ops` on the wire): half to crates, half burned. */
+    buyback: number;
+    /** RWA crate fund (the former `burn` vault on the wire). */
+    rwa: number;
+    /** The 69% bucket before the staker peel. */
     creatorBucket: number;
     /** What the creator kept (claimed + unclaimed). */
     creator: number;

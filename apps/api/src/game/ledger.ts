@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import {
   ACH,
   achOf,
@@ -9,6 +9,7 @@ import {
   type CrateTier,
   type Net,
   type RankInfo,
+  type RwaReward,
 } from '@stonkz/shared';
 import type { Db } from '../db/client.js';
 import { isUniqueViolation } from '../db/errors.js';
@@ -20,6 +21,7 @@ import {
   crateOpens,
   crateState,
   itemFlags,
+  rwaRewards,
   streaks,
   xpEvents,
 } from '../db/schema.js';
@@ -41,7 +43,7 @@ export class UnverifiedEventError extends Error {
   }
 }
 
-export type Asset = 'XP' | 'SP' | 'OPTIONZ';
+export type Asset = 'XP' | 'SP' | 'STONKZ';
 
 export interface LedgerOptions {
   db: Db;
@@ -105,7 +107,10 @@ export interface RewardsSnapshot {
   wallet: string;
   xp: number;
   sp: number;
-  optionz: number;
+  /** `$STONKZ` reward credits. */
+  stonkz: number;
+  /** RWA positions won from crates, per asset. */
+  rwa: RwaReward[];
   rank: RankInfo;
   streak: number;
   streakMult: number;
@@ -117,7 +122,7 @@ export interface RewardsSnapshot {
     tier: string;
     rarity: string;
     label: string;
-    optionz: number;
+    stonkz: number;
     item: string | null;
   }[];
 }
@@ -471,16 +476,13 @@ export class Ledger {
 
   /* --------------------------------------------------------------- balances */
 
-  async readBalance(
-    net: Net,
-    wallet: string,
-  ): Promise<{ xp: number; sp: number; optionz: number }> {
+  async readBalance(net: Net, wallet: string): Promise<{ xp: number; sp: number; stonkz: number }> {
     const [row] = await this.db
       .select()
       .from(balances)
       .where(and(eq(balances.wallet, wallet), eq(balances.net, net)))
       .limit(1);
-    return { xp: row?.xp ?? 0, sp: row?.sp ?? 0, optionz: row?.optionz ?? 0 };
+    return { xp: row?.xp ?? 0, sp: row?.sp ?? 0, stonkz: row?.stonkz ?? 0 };
   }
 
   private async applyBalanceDeltas(
@@ -491,32 +493,31 @@ export class Ledger {
     refType: string,
     refId: string | null,
     deltas: Partial<Record<Asset, number>>,
-  ): Promise<{ xp: number; sp: number; optionz: number }> {
+  ): Promise<{ xp: number; sp: number; stonkz: number }> {
     const xp = deltas.XP ?? 0;
     const sp = deltas.SP ?? 0;
-    const optionz = deltas.OPTIONZ ?? 0;
+    const stonkz = deltas.STONKZ ?? 0;
 
     const [row] = await this.db
       .insert(balances)
-      .values({ wallet, net, xp, sp, optionz, updatedAt: new Date(this.now()) })
+      .values({ wallet, net, xp, sp, stonkz, updatedAt: new Date(this.now()) })
       .onConflictDoUpdate({
         target: [balances.wallet, balances.net],
         set: {
           xp: sql`${balances.xp} + ${xp}`,
           sp: sql`${balances.sp} + ${sp}`,
-          optionz: sql`${balances.optionz} + ${optionz}`,
+          stonkz: sql`${balances.stonkz} + ${stonkz}`,
           updatedAt: new Date(this.now()),
         },
       })
-      .returning({ xp: balances.xp, sp: balances.sp, optionz: balances.optionz });
+      .returning({ xp: balances.xp, sp: balances.sp, stonkz: balances.stonkz });
 
-    const totals = { xp: row?.xp ?? xp, sp: row?.sp ?? sp, optionz: row?.optionz ?? optionz };
+    const totals = { xp: row?.xp ?? xp, sp: row?.sp ?? sp, stonkz: row?.stonkz ?? stonkz };
 
     const entries: { asset: Asset; delta: number; balanceAfter: number }[] = [];
     if (xp !== 0) entries.push({ asset: 'XP', delta: xp, balanceAfter: totals.xp });
     if (sp !== 0) entries.push({ asset: 'SP', delta: sp, balanceAfter: totals.sp });
-    if (optionz !== 0)
-      entries.push({ asset: 'OPTIONZ', delta: optionz, balanceAfter: totals.optionz });
+    if (stonkz !== 0) entries.push({ asset: 'STONKZ', delta: stonkz, balanceAfter: totals.stonkz });
 
     if (entries.length > 0) {
       await this.db.insert(balanceLedger).values(
@@ -612,34 +613,86 @@ export class Ledger {
   }
 
   /**
-   * Crate `S` drops pay Stonk Optionz (plan step 107) — never `$STONKZ`, which
-   * does not exist yet. `refId` makes the credit idempotent per crate open.
+   * `$STONKZ` reward credits (plan step 107): what crate `S` drops and claimed
+   * referral fees pay. Off-chain until the token is live on the net, then
+   * claimable. `refId` makes the credit idempotent per crate open / claim.
    */
-  async creditOptionz(
+  async creditStonkz(
     net: Net,
     wallet: string,
     amount: number,
     reason: string,
     refId: string,
+    refType = 'crate_open',
   ): Promise<number> {
-    if (amount <= 0) return (await this.readBalance(net, wallet)).optionz;
+    if (amount <= 0) return (await this.readBalance(net, wallet)).stonkz;
     const totals = await this.applyBalanceDeltas(
       net,
       wallet,
       utcDayKey(this.now()),
       reason,
-      'crate_open',
+      refType,
       refId,
-      { OPTIONZ: amount },
+      { STONKZ: amount },
     );
     await this.opts.publisher.user(net, wallet, {
-      type: 'optionz',
+      type: 'stonkz',
       net,
       wallet,
       delta: amount,
-      total: totals.optionz,
+      total: totals.stonkz,
     });
-    return totals.optionz;
+    return totals.stonkz;
+  }
+
+  /** Every RWA position this wallet holds on `net`, ordered by asset key. */
+  async readRwa(net: Net, wallet: string): Promise<RwaReward[]> {
+    const rows = await this.db
+      .select({ asset: rwaRewards.asset, units: rwaRewards.units })
+      .from(rwaRewards)
+      .where(and(eq(rwaRewards.net, net), eq(rwaRewards.wallet, wallet)))
+      .orderBy(asc(rwaRewards.asset));
+    return rows.map((r) => ({ asset: r.asset, units: r.units }));
+  }
+
+  /**
+   * Crate `R` drops: a fractional real-world-asset position funded by the 6%
+   * RWA leg. Upserts `rwa_rewards` and publishes the `rwa` event. There is no
+   * per-credit ledger row: the crate open row (unique on its roll commitment,
+   * with asset and units in `payload_json`) is both the idempotency guard and
+   * the audit trail, so callers credit only after that row is written.
+   * `reason` / `refId` mirror `creditStonkz` for call-site symmetry.
+   */
+  async creditRwa(
+    net: Net,
+    wallet: string,
+    asset: string,
+    units: number,
+    _reason: string,
+    _refId: string,
+  ): Promise<number> {
+    if (!(units > 0)) {
+      const held = (await this.readRwa(net, wallet)).find((r) => r.asset === asset);
+      return held?.units ?? 0;
+    }
+    const [row] = await this.db
+      .insert(rwaRewards)
+      .values({ net, wallet, asset, units, updatedAt: new Date(this.now()) })
+      .onConflictDoUpdate({
+        target: [rwaRewards.net, rwaRewards.wallet, rwaRewards.asset],
+        set: { units: sql`${rwaRewards.units} + ${units}`, updatedAt: new Date(this.now()) },
+      })
+      .returning({ units: rwaRewards.units });
+    const total = row?.units ?? units;
+    await this.opts.publisher.user(net, wallet, {
+      type: 'rwa',
+      net,
+      wallet,
+      asset,
+      units,
+      total,
+    });
+    return total;
   }
 
   async grantItem(net: Net, wallet: string, item: string, expiresAt: Date | null): Promise<void> {
@@ -656,8 +709,9 @@ export class Ledger {
 
   /** Backs `GET /rewards` and the rewards half of `GET /me`. */
   async snapshot(net: Net, wallet: string): Promise<RewardsSnapshot> {
-    const [bal, achRows, crateRows, itemRows, logRows, streak] = await Promise.all([
+    const [bal, rwa, achRows, crateRows, itemRows, logRows, streak] = await Promise.all([
       this.readBalance(net, wallet),
+      this.readRwa(net, wallet),
       this.db
         .select()
         .from(achievements)
@@ -686,7 +740,8 @@ export class Ledger {
       wallet,
       xp: bal.xp,
       sp: bal.sp,
-      optionz: bal.optionz,
+      stonkz: bal.stonkz,
+      rwa,
       rank: rankOf(bal.xp),
       streak,
       streakMult: xpMult(streak),
@@ -712,7 +767,7 @@ export class Ledger {
           tier: r.tier,
           rarity: r.rarity,
           label: payload.label ?? '',
-          optionz: r.optionzAwarded,
+          stonkz: r.stonkzAwarded,
           item: r.itemKey,
         };
       }),

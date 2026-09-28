@@ -11,7 +11,7 @@ import {
 } from '@stonkz/curve-sim';
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type FeeAccruedEvent, type TradeEvent } from '../events.js';
-import { FeeSplitMismatchError } from './market.js';
+import { FeeSplitMismatchError, splitFeeLegacyV1 } from './market.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
 import { EvmChainSource, groupByTransaction } from './evm-source.js';
 import type { RawEvmLog } from './evm-events.js';
@@ -329,6 +329,9 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     expect(fee?.creator).toBe(CREATOR);
     expect(fee?.feeAmount).toBeCloseTo(0.012, 12); // 3% of 0.4 ETH
     expect(fee?.protocol).toBeCloseTo(splitFee(0.012).protocol, 12);
+    // Chain leg names: `stonkzOps` is the buyback leg, `burn` the RWA leg.
+    expect(fee?.stonkzOps).toBeCloseTo(splitFee(0.012).buyback, 12);
+    expect(fee?.burn).toBeCloseTo(splitFee(0.012).rwa, 12);
     expect(fee?.stakerShare).toBeCloseTo(splitFee(0.012).creatorBucket / 4, 9);
     if (fee) expect(() => assertEventIntegrity(fee)).not.toThrow();
   });
@@ -438,13 +441,43 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     await expect(source.pollRange(1_000, 1_001)).rejects.toThrow(UnknownMintError);
   });
 
-  it('rejects a fee split the contract did not settle 20/60/10/10', async () => {
+  it('still accepts a fill the contract settled under the legacy v1 split', async () => {
+    const v1 = splitFeeLegacyV1(FILL.fee);
+    expect(v1.protocol).not.toBe(LEGS.protocol);
+    const { source } = makeSource([
+      launchLog(),
+      tradeLog({
+        feeProtocol: v1.protocol,
+        feeOps: v1.stonkzOps,
+        feeBurn: v1.burn,
+        feeCreatorBucket: v1.creatorBucket,
+        feeStakers: v1.creatorBucket / 4n,
+        feeCreator: v1.creatorBucket - v1.creatorBucket / 4n,
+      }),
+      feeLog({
+        protocol: v1.protocol,
+        ops: v1.stonkzOps,
+        burn: v1.burn,
+        creatorBucket: v1.creatorBucket,
+      }),
+    ]);
+    const { events } = await source.pollRange(999, 1_001);
+    const fee = events.find((e): e is FeeAccruedEvent => e.kind === 'FeeAccrued');
+    expect(fee?.protocol).toBeCloseTo(0.012 * 0.2, 12);
+    expect(fee?.stonkzOps).toBeCloseTo(0.012 * 0.1, 12);
+    expect(fee?.burn).toBeCloseTo(0.012 * 0.1, 12);
+    expect(fee?.creatorBucket).toBeCloseTo(0.012 * 0.6, 12);
+    for (const event of events) expect(() => assertEventIntegrity(event)).not.toThrow();
+  });
+
+  it('rejects a fee split the contract settled under neither v2 nor legacy v1', async () => {
     const { source } = makeSource([
       launchLog(),
       tradeLog(),
       feeLog({ protocol: LEGS.protocol + 1n, creatorBucket: LEGS.creatorBucket - 1n }),
     ]);
     await expect(source.pollRange(999, 1_001)).rejects.toThrow(FeeSplitMismatchError);
+    await expect(source.pollRange(999, 1_001)).rejects.toThrow(/match neither/);
   });
 
   it('weights a stake against circulating supply, not against total staked', async () => {

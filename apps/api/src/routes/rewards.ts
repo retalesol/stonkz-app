@@ -45,7 +45,8 @@ export function rewardsRoutes(): Hono<AppEnv> {
       xp: snapshot.xp,
       rank: snapshot.rank,
       sp: snapshot.sp,
-      optionz: snapshot.optionz,
+      stonkz: snapshot.stonkz,
+      rwa: snapshot.rwa,
       streak: snapshot.streak,
       streakMult: snapshot.streakMult,
       achievementCount: snapshot.achievements.length,
@@ -75,9 +76,16 @@ export function rewardsRoutes(): Hono<AppEnv> {
             rarity: (RAR[i] as (typeof RAR)[number])[0],
             rarityClass: (RAR[i] as (typeof RAR)[number])[1],
             odds: d[0],
-            kind: d[1] === 'S' ? ('OPTIONZ' as const) : ('ITEM' as const),
-            min: d[1] === 'S' ? d[2] : null,
-            max: d[1] === 'S' ? d[3] : null,
+            kind:
+              d[1] === 'S'
+                ? ('STONKZ' as const)
+                : d[1] === 'R'
+                  ? ('RWA' as const)
+                  : ('ITEM' as const),
+            // `S` rows range over `$STONKZ`, `R` rows over asset units.
+            min: d[1] === 'S' ? d[2] : d[1] === 'R' ? d[3] : null,
+            max: d[1] === 'S' ? d[3] : d[1] === 'R' ? d[4] : null,
+            asset: d[1] === 'R' ? d[2] : null,
             item: d[1] === 'I' ? d[2] : null,
           })),
         };
@@ -99,11 +107,17 @@ export function rewardsRoutes(): Hono<AppEnv> {
       const result = await deps.crates.open(user.net, user.wallet, tier);
       return c.json({
         tier: result.tier,
+        kind: result.kind,
+        amount: result.amount,
+        asset: result.asset,
+        units: result.units,
+        item: result.item,
         rarity: result.rarity,
         label: result.label,
-        optionz: result.optionz,
-        optionzTotal: result.optionzTotal,
-        item: result.item,
+        dropIndex: result.dropIndex,
+        stonkz: result.stonkz,
+        stonkzTotal: result.stonkzTotal,
+        rwa: result.rwa,
         xp: result.xp,
         rankedUp: result.rankedUp,
         readyAt: result.readyAt,

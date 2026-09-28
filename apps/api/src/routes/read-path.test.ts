@@ -428,7 +428,7 @@ describe('GET /tokens/:sym/holders', () => {
 describe('GET /tokens/:sym/fees', () => {
   it('reads the four-leg ledger back from the indexer tables', async () => {
     // Two fills' worth of vault credits plus the creator vault they fed.
-    const credit = (kind: 'protocol' | 'stonkz_ops' | 'burn', amount: number, sig: string) => ({
+    const credit = (kind: 'protocol' | 'buyback' | 'rwa', amount: number, sig: string) => ({
       net: 'SOL' as const,
       kind,
       sym: 'DOGE2',
@@ -441,12 +441,12 @@ describe('GET /tokens/:sym/fees', () => {
     await h.deps.db
       .insert(treasuryCredits)
       .values([
-        credit('protocol', 0.2, 'f1'),
-        credit('stonkz_ops', 0.1, 'f1'),
-        credit('burn', 0.1, 'f1'),
-        credit('protocol', 0.2, 'f2'),
-        credit('stonkz_ops', 0.1, 'f2'),
-        credit('burn', 0.1, 'f2'),
+        credit('protocol', 0.15, 'f1'),
+        credit('buyback', 0.1, 'f1'),
+        credit('rwa', 0.06, 'f1'),
+        credit('protocol', 0.15, 'f2'),
+        credit('buyback', 0.1, 'f2'),
+        credit('rwa', 0.06, 'f2'),
       ]);
     await h.deps.db.insert(creatorVaults).values({
       net: 'SOL',
@@ -462,21 +462,33 @@ describe('GET /tokens/:sym/fees', () => {
     const { status, body } = await get<{
       unit: string;
       feeBps: number;
-      split: { protocol: number; creatorBucket: number; stonkzOps: number; burn: number };
+      split: { protocol: number; creatorBucket: number; buyback: number; rwa: number };
       totals: Record<string, number>;
       source: string;
     }>('/tokens/DOGE2/fees?net=SOL');
     expect(status).toBe(200);
     expect(body.unit).toBe('SOL');
     expect(body.feeBps).toBe(250);
-    expect(body.split).toEqual({ protocol: 0.2, creatorBucket: 0.6, stonkzOps: 0.1, burn: 0.1 });
-    expect(body.totals['protocol']).toBeCloseTo(0.4, 9);
-    expect(body.totals['game']).toBeCloseTo(0.2, 9);
-    expect(body.totals['burn']).toBeCloseTo(0.2, 9);
+    expect(body.split).toEqual({ protocol: 0.15, creatorBucket: 0.69, buyback: 0.1, rwa: 0.06 });
+    expect(Object.keys(body.totals).sort()).toEqual(
+      [
+        'buyback',
+        'creator',
+        'creatorBucket',
+        'gross',
+        'protocol',
+        'referrals',
+        'rwa',
+        'stakers',
+      ].sort(),
+    );
+    expect(body.totals['protocol']).toBeCloseTo(0.3, 9);
+    expect(body.totals['buyback']).toBeCloseTo(0.2, 9);
+    expect(body.totals['rwa']).toBeCloseTo(0.12, 9);
     expect(body.totals['creatorBucket']).toBeCloseTo(1.2, 9);
     expect(body.totals['stakers']).toBeCloseTo(0.3, 9);
     expect(body.totals['creator']).toBeCloseTo(0.9, 9);
-    expect(body.totals['gross']).toBeCloseTo(2.0, 9);
+    expect(body.totals['gross']).toBeCloseTo(1.82, 9);
     expect(body.source).toBe('chain');
   });
 
@@ -593,11 +605,15 @@ describe('GET /treasuries', () => {
     expect(status).toBe(200);
     expect(body.claimable).toBe(false);
     // SOL + RH from 0001, BASE from 0014, ARC from 0015.
-    // Three vaults per net: protocol, Stonkz Game buyback (stonkz_ops), burn.
+    // Three vaults per net: protocol, $STONKZ buyback, RWA crate fund.
     expect(body.vaults).toHaveLength(12);
     expect(body.vaults.filter((v) => v.kind === 'protocol')).toHaveLength(4);
-    expect(body.vaults.filter((v) => v.kind === 'stonkz_ops')).toHaveLength(4);
-    expect(body.vaults.filter((v) => v.kind === 'burn')).toHaveLength(4);
+    expect(body.vaults.filter((v) => v.kind === 'buyback')).toHaveLength(4);
+    expect(body.vaults.filter((v) => v.kind === 'rwa')).toHaveLength(4);
+    expect(new Set(body.vaults.map((v) => v.kind))).toEqual(
+      new Set(['protocol', 'buyback', 'rwa']),
+    );
+    expect(body.note).not.toMatch(/game/i);
     expect(body.vaults.find((v) => v.net === 'RH')?.nativeUnit).toBe('ETH');
     expect(body.vaults.find((v) => v.net === 'BASE')?.nativeUnit).toBe('ETH');
     // Arc's gas token is USDC, so its vaults are USDC-denominated.

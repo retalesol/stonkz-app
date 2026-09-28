@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import {
   REFERRAL_FEE_RATES,
-  REFERRAL_OPTIONZ_PER_NATIVE,
+  REFERRAL_STONKZ_PER_NATIVE,
   referralFeePayouts,
   referralSpKickback,
   type Net,
@@ -260,13 +260,13 @@ export class ReferralService {
   }
 
   /**
-   * Claim all pending referral fee native as Stonk Optionz.
-   * Returns 0 optionz when nothing is pending.
+   * Claim all pending referral fee native as `$STONKZ` reward credits.
+   * Returns 0 stonkz when nothing is pending.
    */
   async claimFees(
     net: Net,
     wallet: string,
-  ): Promise<{ claimedNative: number; optionz: number; optionzTotal: number }> {
+  ): Promise<{ claimedNative: number; stonkz: number; stonkzTotal: number }> {
     const [row] = await this.db
       .select()
       .from(referralFeeBalances)
@@ -275,7 +275,7 @@ export class ReferralService {
     const pending = row?.pendingNative ?? 0;
     if (!(pending > 0)) {
       const bal = await this.ledger.readBalance(net, wallet);
-      return { claimedNative: 0, optionz: 0, optionzTotal: bal.optionz };
+      return { claimedNative: 0, stonkz: 0, stonkzTotal: bal.stonkz };
     }
 
     const nowDate = new Date(this.now());
@@ -294,18 +294,19 @@ export class ReferralService {
 
     if (drained.length === 0) {
       const bal = await this.ledger.readBalance(net, wallet);
-      return { claimedNative: 0, optionz: 0, optionzTotal: bal.optionz };
+      return { claimedNative: 0, stonkz: 0, stonkzTotal: bal.stonkz };
     }
 
-    const optionz = Math.max(1, Math.floor(pending * REFERRAL_OPTIONZ_PER_NATIVE));
+    const stonkz = Math.max(1, Math.floor(pending * REFERRAL_STONKZ_PER_NATIVE));
     const refId = `refclaim:${net}:${wallet}:${Math.floor(pending * 1e9)}:${nowDate.getTime()}`;
-    const optionzTotal = await this.ledger.creditOptionz(
+    const stonkzTotal = await this.ledger.creditStonkz(
       net,
       wallet,
-      optionz,
+      stonkz,
       'referral_fee_claim',
       refId,
+      'referral_claim',
     );
-    return { claimedNative: pending, optionz, optionzTotal };
+    return { claimedNative: pending, stonkz, stonkzTotal };
   }
 }

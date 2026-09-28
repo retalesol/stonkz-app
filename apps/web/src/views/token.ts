@@ -1,4 +1,5 @@
 import {
+  BUYBACK_SPLIT,
   CB_MS,
   GRAD,
   SUPPLY,
@@ -863,6 +864,7 @@ function feesHTML(f: TokenFees): Html {
       <td class="dm">${note}</td>
     </tr>`;
   const stakerShare = f.totals.creatorBucket > 0 ? f.totals.stakers / f.totals.creatorBucket : 0;
+  const toCrates = f.totals.buyback * BUYBACK_SPLIT.crates + f.totals.rwa;
   return html`<div class="pnl-bd">
     <div class="quad" style="margin:0">
       <div>
@@ -887,9 +889,9 @@ function feesHTML(f: TokenFees): Html {
         <span class="hint">${nat(f.totals.creator)}</span>
       </div>
       <div>
-        <div class="lbl">TO STONKZ GAME</div>
-        <div class="val gd">${usdOf(f.totals.game)}</div>
-        <span class="hint">$STONKZ BUYBACK FOR THE DAILY POT</span>
+        <div class="lbl">TO CRATES</div>
+        <div class="val gd">${usdOf(toCrates)}</div>
+        <span class="hint">HALF THE $STONKZ BUYBACK + THE RWA FUND</span>
       </div>
     </div>
     <div class="scrolly">
@@ -906,16 +908,17 @@ function feesHTML(f: TokenFees): Html {
         <tbody>
           ${row('CREATOR', pctOf(f.totals.creator), f.totals.creator, (f.split.creatorBucket * 100).toFixed(0) + '% BUCKET, LESS THE STAKING CUT', 'gd')}
           ${row('STAKERS', pctOf(f.totals.stakers), f.totals.stakers, (stakerShare * 100).toFixed(1) + '% OF THE CREATOR BUCKET ' + DOT + ' UP TO HALF', 'am')}
-          ${row('PROTOCOL REVENUE', pctOf(f.totals.protocol), f.totals.protocol, (f.split.protocol * 100).toFixed(0) + '% OF EVERY TAX')}
-          ${row('STONKZ GAME BUYBACK', pctOf(f.totals.game), f.totals.game, (f.split.stonkzOps * 100).toFixed(0) + '% ' + DOT + ' BUYS $STONKZ FOR THE DAILY POT', 'gd')}
-          ${row('BUYBACK AND BURN', pctOf(f.totals.burn), f.totals.burn, (f.split.burn * 100).toFixed(0) + '% ' + DOT + ' BUYS $STONKZ AND BURNS IT', 'dn')}
+          ${row('PLATFORM', pctOf(f.totals.protocol), f.totals.protocol, (f.split.protocol * 100).toFixed(0) + '% OF EVERY TAX')}
+          ${row('$STONKZ BUYBACK', pctOf(f.totals.buyback), f.totals.buyback, (f.split.buyback * 100).toFixed(0) + '% ' + DOT + ' HALF TO CRATES, HALF BURNED', 'gd')}
+          ${row('RWA CRATE FUND', pctOf(f.totals.rwa), f.totals.rwa, (f.split.rwa * 100).toFixed(0) + '% ' + DOT + ' BUYS REAL-WORLD ASSETS FOR CRATES', 'up')}
+          ${f.totals.referrals > 0 ? row('REFERRALS', pctOf(f.totals.referrals), f.totals.referrals, 'PAID FROM THE PLATFORM LEG ' + DOT + ' 15 / 10 / 5%', 'dm') : ''}
         </tbody>
       </table>
     </div>
     <p class="hint">
       ${
         f.source === 'chain'
-          ? 'SETTLED ON CHAIN ON EVERY FILL AND READ BACK FROM THE INDEXER. REFERRAL COMMISSIONS (15 / 10 / 5%) ARE PAID FROM THE PROTOCOL LEG.'
+          ? 'SETTLED ON CHAIN ON EVERY FILL AND READ BACK FROM THE INDEXER. REFERRAL COMMISSIONS (15 / 10 / 5%) ARE PAID FROM THE PLATFORM LEG.'
           : 'SANDBOX ESTIMATE FROM 24H VOLUME AND AGE, SPLIT EXACTLY THE WAY THE PROGRAMS DO IT.'
       }
     </p>

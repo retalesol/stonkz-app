@@ -125,7 +125,7 @@ function quadHTML(own: boolean, m: SimMember | null, liveMem?: LiveMember): Html
       ><div><div class="lbl">PORTFOLIO</div><div class="val am">${usd(pfValue())}</div></div
       ><div><div class="lbl">CREATOR FEES</div><div class="val up" id="pfEarn">${feeTotal().toFixed(3)}</div
         ><span class="hint" id="pfEarnSub">${usd(feeTotal() * NATIVE_PRICE.usd)} UNCLAIMED</span></div
-      ><div><div class="lbl">STONK OPTIONZ</div><div class="val gd">${num(USER.optionz ?? 0)}</div></div
+      ><div><div class="lbl">$STONKZ</div><div class="val gd">${num(USER.stonkz)}</div></div
       ><div><div class="lbl">TOTAL XP</div><div class="val">${num(USER.xp)}<span class="hint"> ${DOT} LV ${r.i + 1}</span></div></div>
     </div>`;
   }

@@ -12,7 +12,7 @@ use crate::state::*;
 ///
 /// There is no account in this context that can reach `protocol_vault` or
 /// `ops_vault`, and the amounts paid out come from `creator_claimable_*`, which
-/// only ever grows by the creator's slice of the 70% bucket. The staker pool's
+/// only ever grows by the creator's slice of the 69% bucket. The staker pool's
 /// share sits in the same vault but under a different counter, and this
 /// instruction cannot read it.
 #[derive(Accounts)]

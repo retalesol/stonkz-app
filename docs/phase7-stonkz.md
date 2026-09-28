@@ -1,4 +1,10 @@
-# Phase 7 — `$STONKZ` ops-vault sweep, POL, and staker fee claims
+# Phase 7 — `$STONKZ` buyback sweep, RWA crate fund, and staker fee claims
+
+> **v2 fee schedule (2026-09-28).** The recipe below is superseded by the
+> master brief: the 10% buyback vault (`stonkz_ops` on chain) buys `$STONKZ`,
+> half of it goes into the crate reward pool and half is burned; the 6% RWA
+> vault (the former `burn` vault) buys real-world assets for crates. The
+> Stonkz Game no longer exists. The gate and keeper design below still apply.
 
 **Status: designed, deliberately not implemented.** The `$STONKZ` token does
 not exist, so there is nothing to buy, burn, or pair. Writing and shipping the
@@ -6,7 +12,7 @@ executor now would mean untested contracts against a nonexistent token and
 unpinned pools, which is the one failure mode this build has consistently
 avoided.
 
-What is implemented today: the **10% accrual only**. Both chains route 10% of
+What is implemented today: the **accrual only** (10% buyback, 6% RWA fund). Both chains route 10% of
 every curve fee into an ops vault that is withdrawable solely by the ops
 withdraw authority (`stonkzOps[baseToken]` on EVM; the `SEED_OPS_VAULT` PDA on
 Solana). `programs/SPEC.md` states plainly that no `$STONKZ` buy/LP/burn logic

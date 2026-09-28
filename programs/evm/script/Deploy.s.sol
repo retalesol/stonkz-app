@@ -64,7 +64,7 @@ contract Deploy is Script {
         require(opsWithdrawAuthority != address(0), "Deploy: zero ops authority");
         require(migrationAuthority != address(0), "Deploy: zero migration authority");
 
-        // The protocol treasury (20%) and the $STONKZ ops vault (10%) must not
+        // The platform treasury (15%) and the $STONKZ buyback (ops) vault (10%) must not
         // share a key. They are structurally separate vaults on-chain
         // specifically so ops spend cannot reach protocol revenue; giving them
         // one signer throws that away off-chain.

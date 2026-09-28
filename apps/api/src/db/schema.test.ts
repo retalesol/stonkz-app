@@ -40,40 +40,43 @@ describe('migration history', () => {
       '0015_net_arc',
       '0016_burn_vault',
       '0017_hot_path_indexes',
+      // 0018 renames the vault kinds to buyback / rwa and adds rwa_rewards.
+      '0018_fee_v2_rwa_crates',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(18);
+    expect(second.skipped).toHaveLength(19);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
     expect(files.map((f) => f.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
     ]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });
 
   it('seeds four replay cursors and twelve treasury vaults', async () => {
     // 0001 seeds SOL + RH; 0013 adds the BASE cursor (284ae9a); 0014 adds the
-    // BASE vaults so Base fees have somewhere to land; 0015 does both for ARC.
+    // BASE vaults so Base fees have somewhere to land; 0015 does both for ARC;
+    // 0016 adds the burn vaults and 0018 renames the kinds to buyback / rwa.
     const cursors = await h.db.select().from(schema.indexerCursors);
     expect(cursors.map((c) => c.net).sort()).toEqual(['ARC', 'BASE', 'RH', 'SOL']);
 
     const vaults = await h.db.select().from(schema.treasuries);
     expect(vaults.map((v) => `${v.net}:${v.kind}`).sort()).toEqual([
-      'ARC:burn',
+      'ARC:buyback',
       'ARC:protocol',
-      'ARC:stonkz_ops',
-      'BASE:burn',
+      'ARC:rwa',
+      'BASE:buyback',
       'BASE:protocol',
-      'BASE:stonkz_ops',
-      'RH:burn',
+      'BASE:rwa',
+      'RH:buyback',
       'RH:protocol',
-      'RH:stonkz_ops',
-      'SOL:burn',
+      'RH:rwa',
+      'SOL:buyback',
       'SOL:protocol',
-      'SOL:stonkz_ops',
+      'SOL:rwa',
     ]);
   });
 });

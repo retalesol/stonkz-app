@@ -112,11 +112,34 @@ export const RANKS = [
   ['STONK LORD', 55000],
 ] as const satisfies readonly (readonly [name: string, xp: number])[];
 
-/** A token payout row: `[oddsPct, 'S', minAmount, maxAmount]`. */
+/** A `$STONKZ` payout row: `[oddsPct, 'S', minAmount, maxAmount]`, funded by the buyback leg. */
 export type CrateTokenDrop = readonly [odds: number, kind: 'S', min: number, max: number];
-/** An item payout row: `[oddsPct, 'I', label]`. */
+/** A utility item row: `[oddsPct, 'I', label]`. Costs the fund nothing. */
 export type CrateItemDrop = readonly [odds: number, kind: 'I', item: string];
-export type CrateDrop = CrateTokenDrop | CrateItemDrop;
+/** An RWA row: `[oddsPct, 'R', asset, minUnits, maxUnits]`, funded by the 6% RWA leg. */
+export type CrateRwaDrop = readonly [
+  odds: number,
+  kind: 'R',
+  asset: string,
+  min: number,
+  max: number,
+];
+export type CrateDrop = CrateTokenDrop | CrateItemDrop | CrateRwaDrop;
+
+/**
+ * The RWA catalog crates can pay out of. Tokenized stocks exist on Robinhood
+ * Chain today; tokenized gold is the chain-agnostic fallback. What the fund
+ * actually holds per net is an operator table on the API; this is the label
+ * set the drop tables reference.
+ */
+export const RWA_ASSETS = [
+  ['PAXG', 'TOKENIZED GOLD'],
+  ['TSLA', 'TESLA'],
+  ['AMZN', 'AMAZON'],
+  ['PLTR', 'PALANTIR'],
+  ['NFLX', 'NETFLIX'],
+  ['AMD', 'AMD'],
+] as const satisfies readonly (readonly [asset: string, name: string])[];
 
 export interface Crate {
   readonly k: CrateTier;
@@ -127,7 +150,11 @@ export interface Crate {
   readonly drops: readonly [CrateDrop, CrateDrop, CrateDrop, CrateDrop, CrateDrop];
 }
 
-/** All eight tiers with full drop tables. `index.html:2077-2086` */
+/**
+ * All eight tiers with full drop tables. `S` rows pay `$STONKZ`, `R` rows pay
+ * a real-world-asset position (Silver and up), `I` rows are utility items.
+ * Odds per tier sum to 100 and index maps onto `RAR`. `index.html:2077-2086`
+ */
 export const CRATES = [
   {
     k: 'BRONZE',
@@ -161,7 +188,7 @@ export const CRATES = [
       [48, 'S', 400, 1000],
       [30, 'S', 1000, 2500],
       [15, 'S', 2500, 6000],
-      [6, 'S', 6000, 12000],
+      [6, 'R', 'PAXG', 0.002, 0.01],
       [1, 'I', 'PRIORITY LANE PASS'],
     ],
   },
@@ -173,7 +200,7 @@ export const CRATES = [
       [44, 'S', 1000, 3000],
       [31, 'S', 3000, 7000],
       [17, 'S', 7000, 15000],
-      [7, 'S', 15000, 30000],
+      [7, 'R', 'TSLA', 0.01, 0.05],
       [1, 'I', 'SNIPER ALERT PASS 7D'],
     ],
   },
@@ -185,7 +212,7 @@ export const CRATES = [
       [40, 'S', 3000, 8000],
       [32, 'S', 8000, 18000],
       [19, 'S', 18000, 40000],
-      [8, 'S', 40000, 80000],
+      [8, 'R', 'AMZN', 0.02, 0.1],
       [1, 'I', 'EARLY MINT ACCESS'],
     ],
   },
@@ -197,7 +224,7 @@ export const CRATES = [
       [36, 'S', 8000, 20000],
       [33, 'S', 20000, 45000],
       [21, 'S', 45000, 100000],
-      [9, 'S', 100000, 200000],
+      [9, 'R', 'PLTR', 0.1, 0.5],
       [1, 'I', 'IRIDIUM TICKER BADGE'],
     ],
   },
@@ -209,7 +236,7 @@ export const CRATES = [
       [32, 'S', 25000, 60000],
       [34, 'S', 60000, 140000],
       [23, 'S', 140000, 300000],
-      [10, 'S', 300000, 650000],
+      [10, 'R', 'NFLX', 0.05, 0.3],
       [1, 'I', 'FEE FREE WEEK'],
     ],
   },
@@ -221,7 +248,7 @@ export const CRATES = [
       [28, 'S', 80000, 200000],
       [33, 'S', 200000, 500000],
       [25, 'S', 500000, 1200000],
-      [12, 'S', 1200000, 3000000],
+      [12, 'R', 'PAXG', 0.05, 0.25],
       [2, 'I', 'RHODIUM KEY \u00B7 INSTANT CRATE'],
     ],
   },

@@ -227,7 +227,7 @@ pub fn buy(ctx: Context<TradeCtx>, amount_base: u64, min_out: u64) -> Result<()>
     // on every fill rather than trusting the unit tests alone.
     require!(shares.total() == fill.fee, LaunchpadError::MathOverflow);
 
-    // Move the trader's base: pool, protocol, game (ops), burn. The bucket is
+    // Move the trader's base: pool, protocol, buyback (ops), RWA fund (burn). The bucket is
     // routed below, because during cashback it goes back through the curve.
     ctx.accounts
         .pull_base(&ctx.accounts.curve_base_vault, fill.net_base)?;

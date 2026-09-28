@@ -36,7 +36,7 @@ export function referralRoutes(): Hono<AppEnv> {
     return c.json({ ok: true, referrer: result.referrer });
   });
 
-  /** Convert pending referral fee native → Stonk Optionz. */
+  /** Convert pending referral fee native → `$STONKZ` reward credits. */
   app.post('/referrals/claim', requireAuth(), limit(RATE_LIMITS.social), async (c) => {
     const deps = c.get('deps');
     const user = c.get('user');
@@ -45,8 +45,8 @@ export function referralRoutes(): Hono<AppEnv> {
     return c.json({
       ok: true,
       claimedNative: result.claimedNative,
-      optionz: result.optionz,
-      optionzTotal: result.optionzTotal,
+      stonkz: result.stonkz,
+      stonkzTotal: result.stonkzTotal,
     });
   });
 

@@ -108,16 +108,17 @@ export async function createTestDb(): Promise<TestDb> {
       const names = rows.map((r) => `"${r.tablename}"`).join(', ');
       if (names) await pg.exec(`TRUNCATE ${names} RESTART IDENTITY CASCADE`);
       // The seed rows in 0001 (SOL, RH), 0013 (BASE cursor), 0014 (BASE
-      // vaults) and 0015 (ARC cursor + vaults) are part of the schema
-      // contract, not test data.
+      // vaults), 0015 (ARC cursor + vaults), 0016 (burn vaults) and 0018
+      // (kinds renamed to buyback / rwa) are part of the schema contract,
+      // not test data.
       await pg.exec(
         `INSERT INTO "indexer_cursors" ("net") VALUES ('SOL'), ('RH'), ('BASE'), ('ARC')`,
       );
       await pg.exec(
         `INSERT INTO "treasuries" ("net", "kind") VALUES
-           ('SOL','protocol'), ('SOL','stonkz_ops'), ('RH','protocol'), ('RH','stonkz_ops'),
-           ('BASE','protocol'), ('BASE','stonkz_ops'), ('ARC','protocol'), ('ARC','stonkz_ops'),
-           ('SOL','burn'), ('RH','burn'), ('BASE','burn'), ('ARC','burn')`,
+           ('SOL','protocol'), ('SOL','buyback'), ('RH','protocol'), ('RH','buyback'),
+           ('BASE','protocol'), ('BASE','buyback'), ('ARC','protocol'), ('ARC','buyback'),
+           ('SOL','rwa'), ('RH','rwa'), ('BASE','rwa'), ('ARC','rwa')`,
       );
     },
   };

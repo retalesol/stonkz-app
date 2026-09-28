@@ -1,4 +1,8 @@
-# Rolling out the four-leg fee split (Phase 3)
+# Rolling out the four-leg fee split
+
+> **Current schedule: v2, 69 / 15 / 10 / 6** (creator / platform / `$STONKZ`
+> buyback / RWA crate fund). See "v2 rollout" at the end of this file. The
+> sections below document the v1 (20 / 10 / 10 / 60) rollout for history.
 
 The deployed testnets still settle 20 / 70 / 10. The code on
 `phase1/net-registry` settles **20% protocol / 10% Stonkz Game buyback
@@ -167,3 +171,41 @@ launchpad: `script/DeployRouter.s.sol` (now chain-generic) with
 `deployments/<chainId>.json`, `node scripts/emit-chains.mjs`, and a roll of
 indexer, API and web. Until that lands, keep smoke-test buys small relative
 to what the curve has left.
+
+## v2 rollout: 69 / 15 / 10 / 6 (2026-09-28)
+
+| Leg            | v1 bps            | v2 bps            | On-chain name (unchanged)                | v2 meaning                                  |
+| -------------- | ----------------- | ----------------- | ---------------------------------------- | ------------------------------------------- |
+| Creator bucket | remainder (6,000) | remainder (6,900) | `creator_bucket`                         | creator, stakers up to half (34.5% of fee)  |
+| Platform       | 2,000             | 1,500             | `protocol` / protocol vault              | platform revenue                            |
+| Buyback        | 1,000             | 1,000             | `stonkz_ops` / `ops_vault` / `stonkzOps` | buys `$STONKZ`: half to crates, half burned |
+| RWA crate fund | 1,000             | 600               | `burn` / `burn_vault` / `stonkzBurn`     | buys real-world assets for crates           |
+
+The Stonkz Game is removed; the vault that funded it is the buyback vault.
+Vault accounts, seeds and event field names do not change, so no new PDAs,
+no storage-layout change on the EVM proxies, and no ABI change for the
+indexer. The database renames the kinds (`stonkz_ops` to `buyback`, `burn`
+to `rwa`) in migration 0018, which also retires Stonk Optionz in favour of
+`$STONKZ` reward credits and adds `rwa_rewards`.
+
+Order, and why it is safe in any order this time: the indexer accepts a fill
+that matches **either** the v1 or the v2 split (`LEGACY_V1_SPLIT_BPS` in
+`apps/indexer/src/chain/market.ts`) while the programs are upgraded, so web,
+API, migration and indexer ship first and the programs follow.
+
+1. Web, API (runs migration 0018), indexer: `railway up` both services, `vercel --prod`.
+2. EVM, per chain (admin key):
+
+```
+cd programs/evm
+LAUNCHPAD_ADDRESS=0xe308287C9A85E2B53F1027a1c589B5e3969928e8 EXPECT_CHAIN_ID=46630 \
+  forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+LAUNCHPAD_ADDRESS=0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 EXPECT_CHAIN_ID=84532 \
+  forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad --rpc-url https://sepolia.base.org --broadcast -vvv
+```
+
+Before broadcasting, `forge inspect StonkzLaunchpad storage-layout` must be
+identical to the deployed source (v2 changes constants only). 3. Solana devnet (upgrade authority wallet): `anchor build` then
+`solana program deploy target/deploy/launchpad.so --program-id FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg -u devnet`.
+No `init-treasury` run: the vaults already exist. 4. Verify one buy per chain lands 69 / 15 / 10 / 6 in the Fees tab, then
+remove `LEGACY_V1_SPLIT_BPS` from the indexer and redeploy it.

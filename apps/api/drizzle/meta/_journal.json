@@ -127,6 +127,13 @@
       "when": 1789900000000,
       "tag": "0017_hot_path_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789970000000,
+      "tag": "0018_fee_v2_rwa_crates",
+      "breakpoints": true
     }
   ]
 }

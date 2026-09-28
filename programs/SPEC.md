@@ -128,26 +128,36 @@ On every curve fill, on the **base** amount:
 
 ```
 fee            = floor(gross_base · eff_fee_bps / 10_000)
-protocol       = floor(fee · 2_000 / 10_000)      → protocol_revenue vault
-stonkz_ops     = floor(fee · 1_000 / 10_000)      → stonkz_ops vault (Stonkz Game buyback)
-burn           = floor(fee · 1_000 / 10_000)      → burn vault (buyback-and-burn)
-creator_bucket = fee − protocol − stonkz_ops − burn → creator bucket vault (60% nominal)
+protocol       = floor(fee · 1_500 / 10_000)      → protocol_revenue vault (platform, 15%)
+stonkz_ops     = floor(fee · 1_000 / 10_000)      → stonkz_ops vault ($STONKZ buyback, 10%)
+burn           = floor(fee ·   600 / 10_000)      → burn vault (RWA crate fund, 6%)
+creator_bucket = fee − protocol − stonkz_ops − burn → creator bucket vault (69% nominal)
 ```
 
 `protocol + stonkz_ops + burn + creator_bucket == fee` **exactly, always** —
 the creator bucket is defined as the remainder, so the ≤3 atoms of floor dust
-land there. Dust never accumulates in the program and is never lost. The
-`stonkz_ops` vault keeps its historical name on chain; it is swept into
-`$STONKZ` for the daily Stonkz Game pot. The burn vault is swept into
-`$STONKZ` and burned.
+land there. Dust never accumulates in the program and is never lost.
+
+The on-chain names are historical and deliberately unchanged — live vault
+accounts, PDA seeds (`ops_vault`, `burn_vault`), the EVM `stonkzOps` /
+`stonkzBurn` mappings and the event field names (`fee_ops`, `fee_burn`, …) are
+all load-bearing for deployed proxies and the indexer ABI. Only the numbers and
+their meaning changed:
+
+| Leg            | Share | On-chain name                        | What it funds                                                                  |
+| -------------- | ----- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| Platform       | 15%   | `protocol` / `protocol_revenue`      | Platform revenue.                                                              |
+| Buyback        | 10%   | `stonkz_ops` / `stonkzOps` / `ops`   | Swept into `$STONKZ`; half of what it buys goes into crates, half is burned.   |
+| RWA crate fund | 6%    | `burn` / `stonkzBurn`                | The former burn vault. Buys real-world assets for crates.                      |
+| Creator bucket | 69%   | `creator_bucket`                     | The creator, and (up to half of it) that coin's stakers — see below.           |
 
 The client never computes this for settlement. `packages/shared`'s `splitFee`
 is the float mirror used for previews only.
 
-### The staker peel lives *inside* the 60%
+### The staker peel lives *inside* the 69%
 
 Phase 4.B is an additive split of the creator bucket, applied after the
-20/10/10 have already been moved to their own vaults:
+15/10/6 have already been moved to their own vaults:
 
 ```
 circulating = tokens_for_sale − real_token_reserves        (tokens actually sold)
@@ -158,10 +168,12 @@ creator     = creator_bucket − stakers
 
 `eligible_staked / (2·circulating)` is `poolFrac` from `packages/shared`
 (`0.5 × staked/circulating`), and the clamp is the `min(0.5, …)` in
-`creatorVsStakers`. Fully staked ⟹ stakers take 30% of the curve fee and the
-creator floors at 30%. Protocol 20%, game 10% and burn 10% are already in different
-accounts by the time this runs and are structurally unable to enter the stake
-pool.
+`creatorVsStakers`. Fully staked ⟹ stakers take at most **34.5%** of the curve
+fee (half of the 69% bucket; `maxStakerShareOfCurveFee` in `curve.json`) and the
+creator floors at **34.5%** (`minCreatorShareOfCurveFee`). Floor dust can move
+either side by at most 2 atoms. Platform 15%, buyback 10% and the RWA crate fund
+6% are already in different accounts by the time this runs and are structurally
+unable to enter the stake pool.
 
 **`eligible_staked` excludes FLEX.** A 0-day position is escrow only: it earns
 zero pool weight (anti-wash, plan step 134) and is also excluded from the
@@ -179,9 +191,9 @@ decaying from 5000 bps (50%) to the creator's own `fee_bps`. `cb_start` is set
 once, by the program, from `Clock` at `create_token`; there is no instruction
 that can move it, so no client can extend the window.
 
-The 20/10/70 split runs **first and unchanged** — protocol and ops always stay
-in the base mint. Only the 60% creator bucket is then swapped, through the same
-curve at **zero fee**, into the launched token and credited to the creator (and,
+The 15/10/6/69 split runs **first and unchanged** — platform, buyback and RWA
+crate fund always stay in the base mint. Only the 69% creator bucket is then
+swapped, through the same curve at **zero fee**, into the launched token and credited to the creator (and,
 if a stake pool exists, split by the same `poolFrac` on the token side).
 
 The swap runs on **buys only**. Sells inside the window pay the same elevated
@@ -193,17 +205,18 @@ back to accruing in base. It never partially fills.
 
 ## 4. Treasuries (Phase 4.C)
 
-`protocol_revenue` and `stonkz_ops` are one vault per (treasury, base mint),
-owned by the `global` PDA. There is **no user-facing claim path to either**;
-`claim_creator_fees` can only touch the creator bucket vault.
+`protocol_revenue`, `stonkz_ops` and `burn` are one vault per (treasury, base
+mint), owned by the `global` PDA. There is **no user-facing claim path to any of
+them**; `claim_creator_fees` can only touch the creator bucket vault.
 
 Withdrawals are gated on `global.protocol_withdraw_authority` and
 `global.ops_withdraw_authority`, which are separate keys from `global.admin` and
-are documented to be multisig/cold. The API server holds none of the three.
+are documented to be multisig/cold. The `burn` vault (RWA crate fund) is swept
+by the ops authority. The API server holds none of the three keys.
 
 `ops_withdrawals_paused` is the runbook switch from plan step 141: it stops
 funds leaving the ops vault while **trading continues** and accrual continues.
-Halting accrual is deliberately *not* offered — diverting the 10% mid-flight
+Halting accrual is deliberately *not* offered — diverting the ops leg mid-flight
 would put protocol and ops money in one account and break the 4.C review gate.
 
 No `$STONKZ` buy / LP / burn logic exists anywhere in these programs. That is

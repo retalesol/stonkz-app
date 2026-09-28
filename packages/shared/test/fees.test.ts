@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { CB_MS, CB_START_FEE } from '../src/constants.js';
 import {
   FEE_SPLIT,
-  OPS_SPLIT,
+  BUYBACK_SPLIT,
   cbLeft,
   creatorVsStakers,
   effFee,
   feePie,
   inCashback,
-  opsSplit,
+  buybackSplit,
   splitFee,
 } from '../src/fees.js';
 
@@ -85,39 +85,39 @@ describe('effFee', () => {
 
 describe('splitFee — GOLDEN', () => {
   it('pins the four ratios', () => {
-    expect(FEE_SPLIT).toEqual({ protocol: 0.2, creatorBucket: 0.6, stonkzOps: 0.1, burn: 0.1 });
+    expect(FEE_SPLIT).toEqual({ creatorBucket: 0.69, protocol: 0.15, buyback: 0.1, rwa: 0.06 });
     expect(
-      FEE_SPLIT.protocol + FEE_SPLIT.creatorBucket + FEE_SPLIT.stonkzOps + FEE_SPLIT.burn,
+      FEE_SPLIT.protocol + FEE_SPLIT.creatorBucket + FEE_SPLIT.buyback + FEE_SPLIT.rwa,
     ).toBeCloseTo(1, 12);
   });
 
-  it('splits a unit fee into 0.20 / 0.60 / 0.10 / 0.10', () => {
-    expect(splitFee(1)).toEqual({ protocol: 0.2, creatorBucket: 0.6, stonkzOps: 0.1, burn: 0.1 });
+  it('splits a unit fee into 0.69 / 0.15 / 0.10 / 0.06', () => {
+    expect(splitFee(1)).toEqual({ protocol: 0.15, creatorBucket: 0.69, buyback: 0.1, rwa: 0.06 });
   });
 
   it('splits a 2% curve fee on a 1 SOL fill', () => {
     // 2.0% of 1 SOL = 0.02 SOL of fee.
     const s = splitFee(0.02);
-    expect(s.protocol).toBeCloseTo(0.004, 12); // 0.40% of notional
-    expect(s.stonkzOps).toBeCloseTo(0.002, 12); // 0.20% of notional
-    expect(s.burn).toBeCloseTo(0.002, 12); // 0.20% of notional
-    expect(s.creatorBucket).toBeCloseTo(0.012, 12); // 1.20% of notional
+    expect(s.protocol).toBeCloseTo(0.003, 12); // 0.30% of notional
+    expect(s.buyback).toBeCloseTo(0.002, 12); // 0.20% of notional
+    expect(s.rwa).toBeCloseTo(0.0012, 12); // 0.12% of notional
+    expect(s.creatorBucket).toBeCloseTo(0.0138, 12); // 1.38% of notional
   });
 
   it('conserves the fee', () => {
     for (const fee of [0, 1e-9, 0.0001, 1, 12.345, 1e6]) {
       const s = splitFee(fee);
-      expect(s.protocol + s.creatorBucket + s.stonkzOps + s.burn).toBeCloseTo(fee, 9);
+      expect(s.protocol + s.creatorBucket + s.buyback + s.rwa).toBeCloseTo(fee, 9);
     }
   });
 
   it('snapshots the split so drift fails CI', () => {
     expect(splitFee(100)).toMatchInlineSnapshot(`
       {
-        "burn": 10,
-        "creatorBucket": 60,
-        "protocol": 20,
-        "stonkzOps": 10,
+        "buyback": 10,
+        "creatorBucket": 69,
+        "protocol": 15,
+        "rwa": 6,
       }
     `);
   });
@@ -125,14 +125,14 @@ describe('splitFee — GOLDEN', () => {
 
 describe('creatorVsStakers — GOLDEN', () => {
   it('gives the creator everything when nothing is staked', () => {
-    expect(creatorVsStakers(0.6, 0)).toEqual({ creator: 0.6, stakers: 0 });
+    expect(creatorVsStakers(0.69, 0)).toEqual({ creator: 0.69, stakers: 0 });
   });
 
   it('splits the bucket in half when the coin is fully staked', () => {
-    // poolFrac maxes out at 0.5 -> stakers take half of the 60% bucket.
-    const r = creatorVsStakers(0.6, 0.5);
-    expect(r.creator).toBeCloseTo(0.3, 12);
-    expect(r.stakers).toBeCloseTo(0.3, 12);
+    // poolFrac maxes out at 0.5 -> stakers take half of the 69% bucket.
+    const r = creatorVsStakers(0.69, 0.5);
+    expect(r.creator).toBeCloseTo(0.345, 12);
+    expect(r.stakers).toBeCloseTo(0.345, 12);
   });
 
   it('never lets stakers exceed half the bucket, however large poolFrac is', () => {
@@ -161,69 +161,62 @@ describe('creatorVsStakers — GOLDEN', () => {
   });
 });
 
-describe('opsSplit — GOLDEN', () => {
-  it('pins the burn-vault recipe: everything buys $STONKZ and burns it', () => {
-    expect(OPS_SPLIT).toEqual({ burnBuy: 1, lpTokenBuy: 0, lpNative: 0 });
+describe('buybackSplit — GOLDEN', () => {
+  it('pins the recipe: half of the bought $STONKZ to crates, half burned', () => {
+    expect(BUYBACK_SPLIT).toEqual({ crates: 0.5, burn: 0.5 });
   });
 
-  it('splits the accrued burn 10% for the sweep', () => {
-    expect(opsSplit(1)).toEqual({ burnBuy: 1, lpTokenBuy: 0, lpNative: 0 });
-    expect(opsSplit(0.002)).toEqual({ burnBuy: 0.002, lpTokenBuy: 0, lpNative: 0 });
+  it('splits the accrued 10% for the sweep', () => {
+    expect(buybackSplit(1)).toEqual({ crates: 0.5, burn: 0.5 });
+    expect(buybackSplit(0.002)).toEqual({ crates: 0.001, burn: 0.001 });
   });
 
   it('conserves the sweep', () => {
     for (const v of [0, 0.5, 3.7, 1e5]) {
-      const s = opsSplit(v);
-      expect(s.burnBuy + s.lpTokenBuy + s.lpNative).toBeCloseTo(v, 9);
+      const s = buybackSplit(v);
+      expect(s.crates + s.burn).toBeCloseTo(v, 9);
     }
   });
 
-  it('has no LP legs in the current recipe', () => {
-    const s = opsSplit(9);
-    expect(s.lpTokenBuy).toBe(0);
-    expect(s.lpNative).toBe(0);
-    expect(s.burnBuy).toBe(9);
-  });
-
   it('snapshots the recipe so drift fails CI', () => {
-    expect(opsSplit(100)).toMatchInlineSnapshot(`
+    expect(buybackSplit(100)).toMatchInlineSnapshot(`
       {
-        "burnBuy": 100,
-        "lpNative": 0,
-        "lpTokenBuy": 0,
+        "burn": 50,
+        "crates": 50,
       }
     `);
   });
 });
 
 describe('feePie — GOLDEN', () => {
-  it('reproduces the worked example from the plan', () => {
+  it('reproduces the worked example from the brief', () => {
     // 2.0% curve fee on a 1 SOL notional, coin fully staked.
     const pie = feePie(0.02, 0.5);
-    expect(pie.protocol).toBeCloseTo(0.004, 12); // 0.40% of notional
-    expect(pie.stonkzOps).toBeCloseTo(0.002, 12); // 0.20% of notional
-    expect(pie.burn).toBeCloseTo(0.002, 12); // 0.20% of notional
-    expect(pie.creator).toBeCloseTo(0.006, 12); // 0.60% of notional
-    expect(pie.stakers).toBeCloseTo(0.006, 12); // 0.60% of notional
+    expect(pie.protocol).toBeCloseTo(0.003, 12); // 0.30% of notional
+    expect(pie.buyback).toBeCloseTo(0.002, 12); // 0.20% of notional
+    expect(pie.rwa).toBeCloseTo(0.0012, 12); // 0.12% of notional
+    expect(pie.creator).toBeCloseTo(0.0069, 12); // 0.69% of notional
+    expect(pie.stakers).toBeCloseTo(0.0069, 12); // 0.69% of notional
   });
 
-  it('gives the creator the whole 60% when nothing is staked', () => {
+  it('gives the creator the whole 69% when nothing is staked', () => {
     const pie = feePie(1, 0);
-    expect(pie).toEqual({ protocol: 0.2, stonkzOps: 0.1, burn: 0.1, creator: 0.6, stakers: 0 });
+    expect(pie).toEqual({ protocol: 0.15, buyback: 0.1, rwa: 0.06, creator: 0.69, stakers: 0 });
   });
 
-  it('never leaks protocol or ops into the staker slice', () => {
+  it('never leaks platform, buyback or RWA into the staker slice', () => {
     for (const f of [0, 0.2, 0.5, 5]) {
       const pie = feePie(1, f);
-      expect(pie.protocol).toBeCloseTo(0.2, 12);
-      expect(pie.stonkzOps).toBeCloseTo(0.1, 12);
-      expect(pie.stakers).toBeLessThanOrEqual(0.3 + 1e-12);
-      expect(pie.creator).toBeGreaterThanOrEqual(0.3 - 1e-12);
+      expect(pie.protocol).toBeCloseTo(0.15, 12);
+      expect(pie.buyback).toBeCloseTo(0.1, 12);
+      expect(pie.rwa).toBeCloseTo(0.06, 12);
+      expect(pie.stakers).toBeLessThanOrEqual(0.345 + 1e-12);
+      expect(pie.creator).toBeGreaterThanOrEqual(0.345 - 1e-12);
     }
   });
 
   it('conserves the whole fee', () => {
     const pie = feePie(3.3, 0.4);
-    expect(pie.protocol + pie.stonkzOps + pie.burn + pie.creator + pie.stakers).toBeCloseTo(3.3, 9);
+    expect(pie.protocol + pie.buyback + pie.rwa + pie.creator + pie.stakers).toBeCloseTo(3.3, 9);
   });
 });

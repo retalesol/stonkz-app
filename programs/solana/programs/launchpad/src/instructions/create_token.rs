@@ -77,7 +77,7 @@ pub struct CreateToken<'info> {
     )]
     pub curve_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// The 70% bucket, in base. Creator claim and staker pool share it; the
+    /// The 69% bucket, in base. Creator claim and staker pool share it; the
     /// ledger on `Curve` says how much of the balance belongs to which.
     #[account(
         init, payer = creator,
@@ -86,7 +86,7 @@ pub struct CreateToken<'info> {
     )]
     pub bucket_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// The 70% bucket after a cashback swap, in the launched token.
+    /// The 69% bucket after a cashback swap, in the launched token.
     #[account(
         init, payer = creator,
         seeds = [SEED_BUCKET_TOKEN_VAULT, mint.key().as_ref()], bump,

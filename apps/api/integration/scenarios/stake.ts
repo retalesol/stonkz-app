@@ -270,16 +270,12 @@ export const creatorFeesAndReferrals: Scenario = {
     });
 
     if (refs.pendingNative > 0) {
-      const claimed = await api<{ optionz: number; optionzTotal: number }>(
-        cfg,
-        '/referrals/claim',
-        {
-          method: 'POST',
-          token: session.accessToken,
-          body: '{}',
-        },
-      );
-      expect(claimed.optionz > 0, 'referral claim minted Optionz', claimed);
+      const claimed = await api<{ stonkz: number; stonkzTotal: number }>(cfg, '/referrals/claim', {
+        method: 'POST',
+        token: session.accessToken,
+        body: '{}',
+      });
+      expect(claimed.stonkz > 0, 'referral claim credited $STONKZ', claimed);
     } else {
       log('no pending referral fees — code + zero-pending path verified');
     }

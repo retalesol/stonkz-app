@@ -81,10 +81,14 @@ export interface StakeClaim {
 
 export interface CrateResult {
   tier: CrateTier;
-  /** `S` = Stonk Optionz, `I` = item. */
-  kind: 'S' | 'I';
-  /** Optionz credited, when `kind` is `S`. */
+  /** `S` = `$STONKZ` reward credits, `R` = real-world asset, `I` = item. */
+  kind: 'S' | 'I' | 'R';
+  /** `$STONKZ` credits paid, when `kind` is `S`. */
   amount: number;
+  /** RWA catalog key (e.g. `TSLA`), when `kind` is `R`. */
+  asset?: string;
+  /** RWA units paid, when `kind` is `R`. */
+  units?: number;
   /** Item label, when `kind` is `I`. */
   item: string;
   /** Rendered reward label for the drop log. */

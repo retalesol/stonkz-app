@@ -1,4 +1,5 @@
-import { FEE_SPLIT, splitFee, type Net } from '@stonkz/shared';
+import { FEE_SPLIT, type Net } from '@stonkz/shared';
+import { LEGACY_V1_FEE_SPLIT } from './chain/market.js';
 
 /**
  * The chain event schema (plan step 55).
@@ -111,9 +112,13 @@ export interface GraduatedEvent extends EventBase {
 }
 
 /**
- * The fee split, as the program settled it. Carries all three legs
- * (20% protocol / 60% creator bucket / 10% Stonkz Game buyback (`stonkz_ops`) / 10% burn) so the indexer can
- * check the on-chain arithmetic rather than recomputing and trusting itself.
+ * The fee split, as the program settled it. Carries all four legs (15%
+ * protocol / 69% creator bucket / 10% `$STONKZ` buyback / 6% RWA crate fund)
+ * so the indexer can check the on-chain arithmetic rather than recomputing
+ * and trusting itself. Leg names mirror the on-chain event fields, which kept
+ * their v1 names: `stonkzOps` is the buyback leg, `burn` the RWA leg. Until the
+ * programs are upgraded a fill may still carry the legacy v1 split
+ * (20 / 60 / 10 / 10); see `chain/market.ts` `LEGACY_V1_SPLIT_BPS`.
  */
 export interface FeeAccruedEvent extends EventBase {
   kind: 'FeeAccrued';
@@ -124,12 +129,13 @@ export interface FeeAccruedEvent extends EventBase {
   feeAmount: number;
   protocol: number;
   creatorBucket: number;
+  /** `$STONKZ` buyback leg (10%), credited to the `buyback` vault. */
   stonkzOps: number;
-  /** Buyback-and-burn leg (10%). */
+  /** RWA crate-fund leg (6%), credited to the `rwa` vault. */
   burn: number;
   /** Portion of the creator bucket peeled to that coin's stakers (Phase 4). */
   stakerShare: number;
-  /** During a cashback window the creator's 60% arrives as tokens. */
+  /** During a cashback window the creator's 69% arrives as tokens. */
   creatorTokens: number;
 }
 
@@ -175,12 +181,12 @@ export interface CashbackWindowEvent extends EventBase {
 }
 
 /**
- * A credit into a protocol or ops vault that did not come from a curve fill
- * (or a periodic reconciliation of one that did).
+ * A credit into the protocol, buyback or RWA vault that did not come from a
+ * curve fill (or a periodic reconciliation of one that did).
  */
 export interface TreasuryCreditEvent extends EventBase {
   kind: 'TreasuryCredit';
-  vault: 'protocol' | 'stonkz_ops' | 'burn';
+  vault: 'protocol' | 'buyback' | 'rwa';
   sym: string | null;
   amount: number;
 }
@@ -246,34 +252,56 @@ export class EventIntegrityError extends Error {
 /** Rounding tolerance for the split check, in native units. */
 const SPLIT_EPSILON = 1e-9;
 
-/**
- * Rejects a `FeeAccrued` whose legs do not add up to the 20/60/10/10 split.
- *
- * The programs settle the split on-chain and the client never computes it, so
- * a mismatch here means either a program bug or a decoder bug — both of which
- * must stop ingest rather than quietly skew the treasuries.
- */
-export function assertFeeSplit(event: FeeAccruedEvent): void {
-  const expected = splitFee(event.feeAmount);
-  const legs: [keyof typeof expected, number][] = [
+/** The v2 split in the chain event's leg names. */
+const V2_FEE_SPLIT = {
+  protocol: FEE_SPLIT.protocol,
+  creatorBucket: FEE_SPLIT.creatorBucket,
+  stonkzOps: FEE_SPLIT.buyback,
+  burn: FEE_SPLIT.rwa,
+} as const;
+
+type FeeLeg = keyof typeof V2_FEE_SPLIT;
+
+/** The first leg that is off `ratios` of the total, or null when all match. */
+function splitMismatch(
+  event: FeeAccruedEvent,
+  ratios: Record<FeeLeg, number>,
+): { leg: FeeLeg; actual: number; expected: number } | null {
+  const legs: [FeeLeg, number][] = [
     ['protocol', event.protocol],
     ['creatorBucket', event.creatorBucket],
     ['stonkzOps', event.stonkzOps],
     ['burn', event.burn],
   ];
   for (const [leg, actual] of legs) {
-    if (Math.abs(actual - expected[leg]) > SPLIT_EPSILON) {
-      throw new EventIntegrityError(
-        event,
-        `${leg} is ${actual}, expected ${expected[leg]} (${FEE_SPLIT[leg] * 100}% of ${event.feeAmount})`,
-      );
-    }
+    const expected = event.feeAmount * ratios[leg];
+    if (Math.abs(actual - expected) > SPLIT_EPSILON) return { leg, actual, expected };
+  }
+  return null;
+}
+
+/**
+ * Rejects a `FeeAccrued` whose legs do not add up to the 15/69/10/6 split —
+ * or, during the program-upgrade window only, the legacy 20/60/10/10 split
+ * (`LEGACY_V1_FEE_SPLIT`; remove that branch after the upgrade).
+ *
+ * The programs settle the split on-chain and the client never computes it, so
+ * a mismatch here means either a program bug or a decoder bug — both of which
+ * must stop ingest rather than quietly skew the treasuries.
+ */
+export function assertFeeSplit(event: FeeAccruedEvent): void {
+  const v2 = splitMismatch(event, V2_FEE_SPLIT);
+  if (v2 && splitMismatch(event, LEGACY_V1_FEE_SPLIT)) {
+    throw new EventIntegrityError(
+      event,
+      `${v2.leg} is ${v2.actual}, expected ${v2.expected} (${V2_FEE_SPLIT[v2.leg] * 100}% of ${event.feeAmount})`,
+    );
   }
   const sum = event.protocol + event.creatorBucket + event.stonkzOps + event.burn;
   if (Math.abs(sum - event.feeAmount) > SPLIT_EPSILON) {
     throw new EventIntegrityError(event, `legs sum to ${sum}, not ${event.feeAmount}`);
   }
-  // Stakers take at most half the creator bucket — 30% of the whole fee.
+  // Stakers take at most half the creator bucket.
   if (event.stakerShare < 0 || event.stakerShare > event.creatorBucket / 2 + SPLIT_EPSILON) {
     throw new EventIntegrityError(
       event,

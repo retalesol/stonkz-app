@@ -25,7 +25,7 @@ interface IGraduationMigrator {
 }
 
 /// @title Stonkz bonding-curve launchpad, EVM mirror.
-/// @notice Same interface, same 20/10/70 split, same $69K graduation and the
+/// @notice Same interface, same 15/10/6/69 split, same $69K graduation and the
 /// same vault layout in spirit as `programs/solana`. The differences that are
 /// real rather than incidental are catalogued in `ASSUMPTIONS.md`.
 ///
@@ -68,7 +68,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 creatorBucketAccrued;
         uint256 creatorClaimableBase;
         uint256 creatorClaimableToken;
-        // the 70% bucket, held here, split by ledger between creator and pool
+        // the 69% bucket, held here, split by ledger between creator and pool
         uint256 bucketBase;
         uint256 bucketToken;
         // stake pool
@@ -81,7 +81,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 poolDustToken;
         uint256 stakerAccruedBase;
         uint256 stakerAccruedToken;
-        /// Appended last (UUPS storage): the burn leg accrued by this coin.
+        /// Appended last (UUPS storage): the burn leg (RWA crate fund) accrued by this coin.
         uint256 burnAccrued;
     }
 
@@ -102,7 +102,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     /// Treasury balances per base token. Not claimable by any user path.
     mapping(address => uint256) public protocolRevenue;
-    /// Stonkz Game buyback vault (historical name).
+    /// $STONKZ buyback vault (historical `ops` name): half of what it buys goes
+    /// into crates, half is burned.
     mapping(address => uint256) public stonkzOps;
 
     address public admin;
@@ -142,7 +143,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     uint64 public maxOracleStaleness;
     uint256 public tokenCount;
 
-    /// Buyback-and-burn vault, per base token. Not claimable by any user path.
+    /// RWA crate fund, per base token (the former burn vault; historical name).
+    /// Buys real-world assets for crates. Not claimable by any user path.
     /// Storage slot 14: every earlier slot is already live behind the RH and
     /// Base proxies, so new state goes at the END of the layout (after
     /// `_lock`, below), never next to its siblings.
@@ -403,8 +405,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
             _gateWithdraw(opsWithdrawAuthority, opsWithdrawalsPaused, stonkzOps[baseToken], amount);
             stonkzOps[baseToken] -= amount;
         } else {
-            // The burn vault is swept by the same ops authority: the keeper
-            // buys $STONKZ with it and burns what it bought.
+            // The RWA crate fund (historical `burn` vault) is swept by the same
+            // ops authority, which buys real-world assets for crates with it.
             require(which == 2, "which");
             _gateWithdraw(opsWithdrawAuthority, opsWithdrawalsPaused, stonkzBurn[baseToken], amount);
             stonkzBurn[baseToken] -= amount;
@@ -520,7 +522,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
         if (inCashback && s.creatorBucket > 0) {
             // Convert the bucket, and only the bucket, through this same curve
-            // at zero fee. Protocol and ops stay in the base token.
+            // at zero fee. Protocol, ops and burn stay in the base token.
             uint256 out = CurveMath.zeroFeeBuy(_state(c), s.creatorBucket);
             if (out > 0) {
                 cashbackTokens = out;

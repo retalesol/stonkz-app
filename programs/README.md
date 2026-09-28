@@ -63,17 +63,20 @@ forge test                                # 52 tests                        (fro
 
 ## Fee split is settled on-chain, not by the client
 
-Every curve fill splits `fee_bps` of the base amount three ways:
+Every curve fill splits `fee_bps` of the base amount four ways (on-chain names
+are historical and unchanged):
 
-| Share | Destination                                 |
-| ----- | ------------------------------------------- |
-| 20%   | `protocol_revenue` vault (native SOL / ETH) |
-| 70%   | `creator_vault` for that token              |
-| 10%   | `stonkz_ops` vault (native SOL / ETH)       |
+| Share | Destination                                                                 |
+| ----- | --------------------------------------------------------------------------- |
+| 15%   | `protocol_revenue` vault — platform revenue                                 |
+| 10%   | `stonkz_ops` vault — `$STONKZ` buyback (half into crates, half burned)      |
+| 6%    | `burn` vault — RWA crate fund (buys real-world assets for crates)           |
+| 69%   | creator bucket for that token                                               |
 
-Phase 4.B adds an additive split _inside_ the 70%: `poolFrac` of the creator
-bucket peels off to that memecoin's stakers, capped at half the bucket. That is
-not a rewrite of the 20/10 — those two never enter the stake pool.
+Phase 4.B adds an additive split _inside_ the 69%: `poolFrac` of the creator
+bucket peels off to that memecoin's stakers, capped at half the bucket (34.5% of
+the fee). That is not a rewrite of the 15/10/6 — those three never enter the
+stake pool.
 
 `packages/shared` holds the mirror of this arithmetic (`splitFee`,
 `creatorVsStakers`, `opsSplit`) for previews and accounting. The chain is the

@@ -6,6 +6,7 @@ import {
   crateReadyAt,
   crateXp,
   rollCrateAmount,
+  rollRwaUnits,
   rollDrop,
 } from '../src/crates.js';
 import type { CrateTier } from '../src/types.js';
@@ -148,5 +149,33 @@ describe('crate cooldowns', () => {
 
   it('defaults to the current clock', () => {
     expect(crateReady(Date.now() + 60_000)).toBe(false);
+  });
+});
+
+describe('rollRwaUnits', () => {
+  it('draws fractional units inside the row bounds, to four decimals', () => {
+    const drop = [6, 'R', 'PAXG', 0.002, 0.01] as const;
+    expect(rollRwaUnits(drop, fixed(0))).toBe(0.002);
+    expect(rollRwaUnits(drop, fixed(1))).toBe(0.01);
+    expect(rollRwaUnits(drop, fixed(0.5))).toBe(0.006);
+    expect(rollRwaUnits(drop, fixed(0.33333))).toBe(0.0047);
+  });
+
+  it('is zero for token and item rows', () => {
+    expect(rollRwaUnits([58, 'S', 50, 150] as const, fixed(0.5))).toBe(0);
+    expect(rollRwaUnits([1, 'I', 'FEE REBATE 24H'] as const, fixed(0.5))).toBe(0);
+  });
+
+  it('defaults to Math.random', () => {
+    const u = rollRwaUnits([6, 'R', 'PAXG', 0.002, 0.01] as const);
+    expect(u).toBeGreaterThanOrEqual(0.002);
+    expect(u).toBeLessThanOrEqual(0.01);
+  });
+
+  it('every tier from Silver up carries exactly one RWA row and Bronze / Iron none', () => {
+    for (const c of CRATES) {
+      const rwaRows = c.drops.filter((d) => d[1] === 'R').length;
+      expect(rwaRows, c.k).toBe(c.k === 'BRONZE' || c.k === 'IRON' ? 0 : 1);
+    }
   });
 });

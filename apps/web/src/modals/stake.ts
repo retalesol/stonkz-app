@@ -17,9 +17,9 @@ import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scr
  *
  * The donut is the one substantive change from the oracle: it used to show a
  * two-slice picture against the old 1%-to-protocol model. It now shows where a
- * curve fee actually goes — protocol 20, `$STONKZ` ops 10, and the creator's 70
- * bucket split with this coin's stakers by `poolFrac`. Stakers top out at 35%
- * of the fee. `index.html:3054`
+ * curve fee actually goes — platform 15, `$STONKZ` buyback 10, RWA crate fund
+ * 6, and the creator's 69 bucket split with this coin's stakers by `poolFrac`.
+ * Stakers top out at 34.5% of the fee. `index.html:3054`
  */
 
 export const STK: { c: SimCoin | null; lock: number } = { c: null, lock: 0 };
@@ -96,18 +96,18 @@ export function renderStake(c: SimCoin): void {
               >
             </div>
             <div>
-              <i style="background:${attr(PIE_COLOURS.protocol)}"></i>PROTOCOL<b
+              <i style="background:${attr(PIE_COLOURS.protocol)}"></i>PLATFORM<b
                 >${(FEE_SPLIT.protocol * 100).toFixed(0)}%</b
               >
             </div>
             <div>
-              <i style="background:${attr(PIE_COLOURS.stonkzOps)}"></i>STONKZ GAME<b
-                >${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}%</b
+              <i style="background:${attr(PIE_COLOURS.buyback)}"></i>$STONKZ BUYBACK<b
+                >${(FEE_SPLIT.buyback * 100).toFixed(0)}%</b
               >
             </div>
             <div>
-              <i style="background:${attr(PIE_COLOURS.burn)}"></i>BURN<b
-                >${(FEE_SPLIT.burn * 100).toFixed(0)}%</b
+              <i style="background:${attr(PIE_COLOURS.rwa)}"></i>RWA CRATES<b
+                >${(FEE_SPLIT.rwa * 100).toFixed(0)}%</b
               >
             </div>
             <div>
@@ -158,8 +158,8 @@ export function renderStake(c: SimCoin): void {
       </div>
       <p class="hint">
         STAKE WEIGHT = AMOUNT x LOCK MULTIPLIER. THE POOL TAKES HALF THE CREATOR BUCKET WHEN ALL
-        CIRCULATING TOKENS ARE STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS
-        ${(FEE_SPLIT.creatorBucket * 50).toFixed(0)}% OF EVERY CURVE FEE AT
+        CIRCULATING SUPPLY IS STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS
+        ${(FEE_SPLIT.creatorBucket * 50).toFixed(1)}% OF EVERY CURVE FEE AT
         MOST${cb ? '. DURING CASHBACK, REWARDS PAY IN ' + c.sym + '.' : '.'}
       </p>`,
   );

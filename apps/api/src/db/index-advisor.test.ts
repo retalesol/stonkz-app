@@ -104,7 +104,7 @@ async function seed(): Promise<void> {
   await h.db.execute(sql`
     INSERT INTO treasury_credits (net, kind, sym, amount, tx_sig, log_index, block_time, chain_position)
     SELECT CASE WHEN i % 2 = 0 THEN 'SOL' ELSE 'RH' END,
-           CASE WHEN i % 3 = 0 THEN 'protocol' WHEN i % 3 = 1 THEN 'stonkz_ops' ELSE 'burn' END,
+           CASE WHEN i % 3 = 0 THEN 'protocol' WHEN i % 3 = 1 THEN 'buyback' ELSE 'rwa' END,
            'T' || (i % 200), 0.01, 'tcsig' || i, 0,
            now() - (i || ' seconds')::interval, 250000000 + i
     FROM generate_series(1, ${ROWS}) AS s(i)

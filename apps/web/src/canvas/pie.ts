@@ -6,15 +6,15 @@ import { fitCanvas } from './pix.js';
  * drift apart.
  */
 export const PIE_COLOURS = {
-  /** Stonkz protocol revenue vault. */
+  /** Platform revenue vault (on-chain "protocol"). */
   protocol: '#4d9bff',
-  /** Stonkz Game buyback vault (`$STONKZ` for the daily pot). */
-  stonkzOps: '#26d0c4',
-  /** Buyback-and-burn vault. */
-  burn: '#ff4c3b',
-  /** The creator's remainder of their 60% bucket. */
+  /** `$STONKZ` buyback vault: half of what it buys goes into crates, half is burned. */
+  buyback: '#ffd23f',
+  /** RWA crate fund: buys real-world assets that go into crates. */
+  rwa: '#26d0c4',
+  /** The creator's remainder of their 69% bucket. */
   creator: '#a273ff',
-  /** This memecoin's stakers, out of the same 60% bucket. */
+  /** This memecoin's stakers, out of the same 69% bucket. */
   stakers: '#ffa22b',
 } as const;
 
@@ -22,10 +22,10 @@ export const PIE_COLOURS = {
  * The stake modal donut.
  *
  * The oracle drew a two-slice pie against the old 1%-to-protocol model. It now
- * shows the real split of a curve fee: protocol 20, Stonkz Game buyback 10,
- * burn 10, and the 60 creator bucket divided between the creator and this
- * coin's stakers by `poolFrac`. Stakers top out at 30% of the fee, creator
- * floors at 30%.
+ * shows the real split of a curve fee: platform 15, `$STONKZ` buyback 10, RWA
+ * crate fund 6, and the 69 creator bucket divided between the creator and this
+ * coin's stakers by `poolFrac`. Stakers top out at 34.5% of the fee, creator
+ * floors at 34.5%.
  *
  * @see plan step 23, "Fee pie"
  */
@@ -50,8 +50,8 @@ export function drawPie(cv: HTMLCanvasElement | null, poolFraction: number): voi
     [pie.stakers, PIE_COLOURS.stakers],
     [pie.creator, PIE_COLOURS.creator],
     [pie.protocol, PIE_COLOURS.protocol],
-    [pie.stonkzOps, PIE_COLOURS.stonkzOps],
-    [pie.burn, PIE_COLOURS.burn],
+    [pie.buyback, PIE_COLOURS.buyback],
+    [pie.rwa, PIE_COLOURS.rwa],
   ];
   let a0 = -Math.PI / 2;
   for (const [frac, col] of parts) {

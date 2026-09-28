@@ -185,15 +185,15 @@ contract LaunchpadTest is Test {
         uint256 fee = dProtocol + dOps + dBurn + dBucket;
 
         CurveMath.FeeShares memory want = CurveMath.splitFee(fee);
-        assertEq(dProtocol, want.protocol, "protocol is exactly 20%");
-        assertEq(dOps, want.stonkzOps, "game (ops) is exactly 10%");
-        assertEq(dBurn, want.burn, "burn is exactly 10%");
+        assertEq(dProtocol, want.protocol, "platform (protocol) is exactly 15%");
+        assertEq(dOps, want.stonkzOps, "buyback (ops) is exactly 10%");
+        assertEq(dBurn, want.burn, "RWA fund (burn) is exactly 6%");
         assertEq(dBucket, want.creatorBucket, "creator bucket is the remainder");
         assertEq(dProtocol + dOps + dBurn + dBucket, fee, "the four reconstruct the fee");
         // The three floors can only ever lose to the bucket, never to the fee.
-        assertLe(dProtocol * 10_000, fee * 2_000);
+        assertLe(dProtocol * 10_000, fee * 1_500);
         assertLe(dOps * 10_000, fee * 1_000);
-        assertLe(dBurn * 10_000, fee * 1_000);
+        assertLe(dBurn * 10_000, fee * 600);
         return fee;
     }
 
@@ -262,17 +262,22 @@ contract LaunchpadTest is Test {
         uint256 p0 = pad.protocolRevenue(address(base));
         uint256 o0 = pad.stonkzOps(address(base));
         uint256 b0 = pad.stonkzBurn(address(base));
+        StonkzLaunchpad.Coin memory c0 = pad.coinInfo(token);
         _buy(token, trader, FILL / 4);
 
-        // The elevated fee still splits 20/10/10/60 — cashback changes the size
+        // The elevated fee still splits 15/10/6/69 — cashback changes the size
         // of the fee, never its division.
+        uint256 fee = _assertSplit(token, c0);
+        CurveMath.FeeShares memory want = CurveMath.splitFee(fee);
         uint256 dProtocol = pad.protocolRevenue(address(base)) - p0;
         uint256 dOps = pad.stonkzOps(address(base)) - o0;
         uint256 dBurn = pad.stonkzBurn(address(base)) - b0;
-        assertEq(dOps * 2, dProtocol, "ops is half of protocol at any fee level");
-        assertEq(dBurn, dOps, "burn matches the game leg at any fee level");
+        assertGt(fee, 0, "the cashback fill charged a fee");
+        assertEq(dProtocol, want.protocol, "platform vault keeps its 15% during cashback");
+        assertEq(dOps, want.stonkzOps, "buyback (ops) vault keeps its 10% during cashback");
+        assertEq(dBurn, want.burn, "RWA fund (burn) vault keeps its 6% during cashback");
 
-        // Protocol, game and burn stayed in the base token; only the bucket converted.
+        // Platform, buyback and RWA fund stayed in the base token; only the bucket converted.
         assertGt(pad.coinInfo(token).creatorClaimableToken, 0, "the bucket came back as the token");
 
         // Halfway through: 1% + 49% * 150/300 = 2550 bps.
@@ -405,10 +410,13 @@ contract LaunchpadTest is Test {
         assertEq(dProtocol, want.protocol, "the peel does not touch protocol");
         assertEq(dOps, want.stonkzOps, "the peel does not touch ops");
         assertEq(dBurn, want.burn, "the peel does not touch burn");
-        assertEq(dCreator + dStakers, want.creatorBucket, "stakers are paid from the 60% only");
+        assertEq(dCreator + dStakers, want.creatorBucket, "stakers are paid from the 69% only");
         assertLe(dStakers, want.creatorBucket / 2, "capped at half the bucket");
-        // Which is 30% of the fee at the cap, and never more.
-        assertLe(dStakers * 100, fee * 30 + 200);
+        // Which is 34.5% of the fee at the cap, and never more. The bucket
+        // carries up to 3 wei of floor dust, so half of it can overshoot by 2.
+        assertLe(dStakers * 1000, fee * 345 + 2000);
+        // And the creator never drops below 34.5% of the fee.
+        assertGe(dCreator * 1000 + 2000, fee * 345);
 
         // And it is really withdrawable, not just an accrual.
         uint256 held = base.balanceOf(staker);

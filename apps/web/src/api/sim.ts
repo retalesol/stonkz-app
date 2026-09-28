@@ -24,6 +24,7 @@ import {
   price,
   rollCrateAmount,
   rollDrop,
+  rollRwaUnits,
   stakeMult,
   vol24,
   xpForFeeClaim,
@@ -48,7 +49,15 @@ import {
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
-import { USER, addXP, pushDrop, saveUser, syncSpLevelGrants, unlock } from '../state/user.js';
+import {
+  USER,
+  addXP,
+  creditRwa,
+  pushDrop,
+  saveUser,
+  syncSpLevelGrants,
+  unlock,
+} from '../state/user.js';
 import {
   NATIVE_PRICE,
   SIM_BALANCE,
@@ -57,7 +66,7 @@ import {
   nativeUsd,
   selectNet,
 } from '../state/wallet.js';
-import { clock, fakeAddr } from '../lib/fmt.js';
+import { clock, fakeAddr, fmtUnits } from '../lib/fmt.js';
 import type {
   ClaimResult,
   CrateResult,
@@ -174,8 +183,8 @@ function beat(): void {
 /**
  * Accrue this beat's creator fees and staker rewards.
  *
- * The creator only ever sees their share of the 70% bucket; the pool takes the
- * rest of it, and protocol + ops never touch either. `index.html:3605`
+ * The creator only ever sees their share of the 69% bucket; the pool takes the
+ * rest of it, and platform, buyback and the RWA fund never touch either. `index.html:3605`
  */
 function accrueFees(c: SimCoin, now: number): void {
   if (c.cashback && !inCashback(c, now)) c.cashback = false;
@@ -198,8 +207,8 @@ function accrueStake(c: SimCoin, now: number): void {
   if (!st || st.amt <= 0) return;
   const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
   const feeNative = (turnover * (effFee(c, now) / 100)) / NATIVE_PRICE.usd;
-  // Only the creator's 60% bucket funds stakers, and poolFrac splits that
-  // bucket between the creator and the pool. Protocol and ops never enter it.
+  // Only the creator's 69% bucket funds stakers, and poolFrac splits that
+  // bucket between the creator and the pool. Platform, buyback and RWA never enter it.
   const pool = feeNative * FEE_SPLIT.creatorBucket * poolFrac(c);
   const weight = totalWeight(c);
   const mine = weight > 0 ? (st.amt * stakeMult(st, now)) / weight : 0;
@@ -402,8 +411,8 @@ export const simApi: StonkzApi = {
       totals: {
         gross,
         protocol: s.protocol,
-        game: s.stonkzOps,
-        burn: s.burn,
+        buyback: s.buyback,
+        rwa: s.rwa,
         creatorBucket: s.creatorBucket,
         creator: s.creatorBucket - stakers,
         stakers,
@@ -589,22 +598,37 @@ export const simApi: StonkzApi = {
     if (!drop) throw new Error('empty drop table for ' + tier);
     const tierIndex = CRATES.findIndex((c) => c.k === tier);
     const xp = crateXp(tierIndex);
-    const res: CrateResult =
-      drop[1] === 'S'
-        ? (() => {
-            const amount = rollCrateAmount(drop);
-            USER.optionz = (USER.optionz ?? 0) + amount;
-            return {
-              tier,
-              kind: 'S' as const,
-              amount,
-              item: '',
-              label: num(amount) + ' OPTIONZ',
-              dropIndex: i,
-              xp,
-            };
-          })()
-        : { tier, kind: 'I' as const, amount: 0, item: drop[2], label: drop[2], dropIndex: i, xp };
+    let res: CrateResult;
+    if (drop[1] === 'S') {
+      const amount = rollCrateAmount(drop);
+      USER.stonkz = (USER.stonkz ?? 0) + amount;
+      res = {
+        tier,
+        kind: 'S',
+        amount,
+        item: '',
+        label: num(amount) + ' $STONKZ',
+        dropIndex: i,
+        xp,
+      };
+    } else if (drop[1] === 'R') {
+      const asset = drop[2];
+      const units = rollRwaUnits(drop);
+      creditRwa(asset, units);
+      res = {
+        tier,
+        kind: 'R',
+        amount: 0,
+        asset,
+        units,
+        item: '',
+        label: fmtUnits(units) + ' ' + asset,
+        dropIndex: i,
+        xp,
+      };
+    } else {
+      res = { tier, kind: 'I', amount: 0, item: drop[2], label: drop[2], dropIndex: i, xp };
+    }
 
     // Global cooldown — stamp every tier with this crate's lock window.
     const ready = crateReadyAt(crate, now);

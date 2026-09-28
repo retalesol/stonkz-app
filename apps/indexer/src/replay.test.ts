@@ -140,7 +140,7 @@ describe('fixture replay: read path', () => {
     expect(byNet.get('RH')?.sym).toBe('RHDOG');
   });
 
-  it('splits fees 20/60/10/10 into the treasuries and the creator vault', async () => {
+  it('splits fees 15/69/10/6 into the treasuries and the creator vault', async () => {
     const feeEvents = scenario.events.filter((e) => e.kind === 'FeeAccrued');
     const expectSum = (net: Net, leg: 'protocol' | 'stonkzOps' | 'burn'): number =>
       feeEvents
@@ -153,29 +153,30 @@ describe('fixture replay: read path', () => {
 
     expect(find('SOL', 'protocol')).toBeCloseTo(expectSum('SOL', 'protocol'), 9);
     // The standalone TreasuryCredit of 0.01 rides on top of the accruals.
-    expect(find('SOL', 'stonkz_ops')).toBeCloseTo(expectSum('SOL', 'stonkzOps') + 0.01, 9);
+    // Chain leg names: `stonkzOps` lands in `buyback`, `burn` in `rwa`.
+    expect(find('SOL', 'buyback')).toBeCloseTo(expectSum('SOL', 'stonkzOps') + 0.01, 9);
     expect(find('RH', 'protocol')).toBeCloseTo(expectSum('RH', 'protocol'), 9);
-    expect(find('SOL', 'burn')).toBeCloseTo(expectSum('SOL', 'burn'), 9);
-    expect(find('RH', 'burn')).toBeCloseTo(expectSum('RH', 'burn'), 9);
+    expect(find('SOL', 'rwa')).toBeCloseTo(expectSum('SOL', 'burn'), 9);
+    expect(find('RH', 'rwa')).toBeCloseTo(expectSum('RH', 'burn'), 9);
 
-    // The invariant behind those sums: 20 / 10 / 10 means protocol is exactly
-    // twice ops, and burn equals ops, on every accrual, on both chains.
+    // The invariant behind those sums: 15 / 10 / 6 means protocol is exactly
+    // 1.5x buyback, and rwa is 0.6x buyback, on every accrual, on both chains.
     // Verified net of the standalone credit, which is not a fee split.
     for (const net of ['SOL', 'RH'] as const) {
       const standalone = net === 'SOL' ? 0.01 : 0;
-      const ops = find(net, 'stonkz_ops') - standalone;
-      expect(ops).toBeGreaterThan(0);
-      expect(find(net, 'protocol') / ops).toBeCloseTo(2, 6);
-      expect(find(net, 'burn') / ops).toBeCloseTo(1, 6);
+      const buyback = find(net, 'buyback') - standalone;
+      expect(buyback).toBeGreaterThan(0);
+      expect(find(net, 'protocol') / buyback).toBeCloseTo(1.5, 6);
+      expect(find(net, 'rwa') / buyback).toBeCloseTo(0.6, 6);
     }
 
-    // And the 60% creator bucket is the remainder, never touching any vault.
+    // And the 69% creator bucket is the remainder, never touching any vault.
     for (const event of feeEvents) {
       if (event.kind !== 'FeeAccrued') continue;
-      expect(event.protocol / event.feeAmount).toBeCloseTo(0.2, 9);
+      expect(event.protocol / event.feeAmount).toBeCloseTo(0.15, 9);
       expect(event.stonkzOps / event.feeAmount).toBeCloseTo(0.1, 9);
-      expect(event.burn / event.feeAmount).toBeCloseTo(0.1, 9);
-      expect(event.creatorBucket / event.feeAmount).toBeCloseTo(0.6, 9);
+      expect(event.burn / event.feeAmount).toBeCloseTo(0.06, 9);
+      expect(event.creatorBucket / event.feeAmount).toBeCloseTo(0.69, 9);
       // The four legs account for the whole fee, with nothing unallocated.
       expect(event.protocol + event.stonkzOps + event.burn + event.creatorBucket).toBeCloseTo(
         event.feeAmount,

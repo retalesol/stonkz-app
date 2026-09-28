@@ -1,12 +1,20 @@
 {
-  "$comment": "Published CPMM parameters for the Stonkz bonding curve. Consumed by apps/api (quote), apps/web (Step-3 launch preview) and both on-chain programs. Every number here is an exact rational — do not round these before feeding them to integer math.",
+  "$comment": "Published CPMM parameters for the Stonkz bonding curve. Consumed by apps/api (quote), apps/web (Step-3 launch preview) and both on-chain programs. Every number here is an exact rational \u2014 do not round these before feeding them to integer math.",
   "version": 1,
   "model": "constant-product-with-virtual-reserves",
   "gradMcapUsd": 69000,
   "gradMcapUsd1e6": 69000000000,
   "supplyFractions": {
-    "tokensForSale": { "num": 4, "den": 5, "note": "80% of fixed supply is sellable on the curve" },
-    "lpReserve": { "num": 1, "den": 5, "note": "20% of fixed supply is escrowed for the graduation pool" }
+    "tokensForSale": {
+      "num": 4,
+      "den": 5,
+      "note": "80% of fixed supply is sellable on the curve"
+    },
+    "lpReserve": {
+      "num": 1,
+      "den": 5,
+      "note": "20% of fixed supply is escrowed for the graduation pool"
+    }
   },
   "virtualReserves": {
     "virtualTokenReserves0": {
@@ -26,7 +34,10 @@
       "formula": "floor(69000 * 1e6 * 10^baseDecimals / baseUsdPrice1e6)",
       "note": "Snapshotted once at create_token from a fresh oracle read. The curve is base-denominated from then on."
     },
-    "k": { "formula": "VB0 * VT0", "note": "u128, held constant across fills" }
+    "k": {
+      "formula": "VB0 * VT0",
+      "note": "u128, held constant across fills"
+    }
   },
   "derived": {
     "priceMultipleToGraduation": 16,
@@ -39,19 +50,19 @@
     "lpOpenPriceEqualsFinalCurvePrice": true
   },
   "feeSplitBps": {
-    "protocol": 2000,
+    "protocol": 1500,
     "stonkzOps": 1000,
-    "burn": 1000,
+    "burn": 600,
     "creatorBucket": "remainder",
-    "note": "protocol, stonkzOps (the Stonkz Game buyback vault, historical name) and burn (buyback-and-burn) are floor(fee*bps/10000); the creator bucket takes fee - protocol - ops - burn so the four always sum to the fee exactly. Dust (<= 3 atoms) lands in the creator bucket. Referral commissions are settled off the protocol leg until the on-chain referrer arg lands."
+    "note": "protocol (platform revenue), stonkzOps (the $STONKZ buyback vault, historical name; half of what it buys goes to crates, half is burned) and burn (the RWA crate fund, historical name) are floor(fee*bps/10000); the creator bucket takes fee - protocol - ops - burn so the four always sum to the fee exactly (69% nominal). Dust (<= 3 atoms) lands in the creator bucket. Referral commissions are settled off the protocol leg until the on-chain referrer arg lands."
   },
   "creatorBucketSplit": {
     "poolFracFormula": "min(1/2, eligibleStaked / (2 * circulating))",
     "stakersFormula": "floor(creatorBucket * eligibleStaked / (2 * circulating)), clamped to floor(creatorBucket / 2)",
     "creatorFormula": "creatorBucket - stakers",
     "circulatingFormula": "tokensForSale - realTokenReserves",
-    "maxStakerShareOfCurveFee": 0.3,
-    "minCreatorShareOfCurveFee": 0.3
+    "maxStakerShareOfCurveFee": 0.345,
+    "minCreatorShareOfCurveFee": 0.345
   },
   "lockWeightsBps": {
     "0": 0,
@@ -69,7 +80,15 @@
     "effFeeFormula": "baseBps + floor((5000 - baseBps) * remainingSecs / 300)",
     "note": "On-chain granularity is whole seconds (Solana Clock / EVM block.timestamp). Clients must floor cbLeft to seconds before mirroring this."
   },
-  "feeBpsBounds": { "min": 100, "max": 500 },
+  "feeBpsBounds": {
+    "min": 100,
+    "max": 500
+  },
   "tokenDecimals": 6,
-  "allowedSupplies": [1000000, 500000000, 1000000000, 1000000000000]
+  "allowedSupplies": [
+    1000000,
+    500000000,
+    1000000000,
+    1000000000000
+  ]
 }

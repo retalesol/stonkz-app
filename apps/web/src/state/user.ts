@@ -6,6 +6,7 @@ import {
   type AchievementKey,
   type CrateTier,
   type DropLogEntry,
+  type RwaReward,
   type User,
   achOf,
   applyXpMult,
@@ -18,14 +19,14 @@ import {
   xpMult as xpMultOf,
 } from '@stonkz/shared';
 import { $ } from '../lib/dom.js';
-import { DOT, clock } from '../lib/fmt.js';
+import { DOT, MID, clock, fmtUnits } from '../lib/fmt.js';
 import { emit } from '../lib/bus.js';
 import { burst } from '../fx/debris.js';
 import { rankUp } from '../fx/rankUp.js';
 import { toast } from '../fx/toast.js';
 
 /**
- * The local game ledger.
+ * The local rewards ledger.
  *
  * In `sim` mode this is the source of truth, seeded so the sandbox looks
  * lived-in, and persisted under `stonkz.rewards.v1`.
@@ -48,9 +49,8 @@ function storageKey(): string {
   return isLiveMode() ? LIVE_KEY : SIM_KEY;
 }
 
-/** Legacy field: the pre-SP/Optionz `$STONKZ` balance. */
+/** The persisted ledger: `User` plus a few client-only fields. */
 interface StoredUser extends User {
-  stonkz: number;
   /** Pinata (or other) HTTPS avatar override. */
   avatarUrl?: string;
   /** Sim-only: which SP levels have already granted crates. */
@@ -65,7 +65,7 @@ export function emptyUser(): StoredUser {
     xp: 0,
     stonkz: 0,
     sp: 0,
-    optionz: 0,
+    rwa: [],
     crates: {},
     log: [],
   };
@@ -77,7 +77,7 @@ export function defaultUser(): StoredUser {
     xp: 1840,
     stonkz: 128400,
     sp: 1840,
-    optionz: 128400,
+    rwa: [{ asset: 'PAXG', units: 0.0042 }],
     // Global cooldown clear — inventory gates which tiers can open.
     crates: {
       BRONZE: 0,
@@ -103,8 +103,8 @@ export function defaultUser(): StoredUser {
     // Seed inventory already reflects early levels; don't re-grant on first addXP.
     spLevelClaims: { 1: true, 2: true, 3: true, 4: true },
     log: [
-      { t: '09:14', k: 'SILVER', r: '3,120 OPTIONZ', col: '#d7dde3' },
-      { t: '08:02', k: 'BRONZE', r: '180 OPTIONZ', col: '#c07434' },
+      { t: '09:14', k: 'SILVER', r: '0.0042 PAXG', col: '#d7dde3' },
+      { t: '08:02', k: 'BRONZE', r: '180 $STONKZ', col: '#c07434' },
       { t: '22:41', k: 'GOLD', r: 'FEE REBATE 24H', col: '#ffd23f' },
     ],
   };
@@ -142,7 +142,7 @@ export function loadUser(): void {
   }
   if (!USER.crates) USER.crates = {};
   if (!USER.log) USER.log = [];
-  if (typeof USER.optionz !== 'number') USER.optionz = USER.stonkz || 0;
+  migrateLegacyBalances(USER);
   if (typeof USER.sp !== 'number') USER.sp = USER.xp || 0;
   // Legacy sim blobs predate inventory — grant any SP levels not yet claimed.
   if (!isLiveMode()) {
@@ -150,6 +150,45 @@ export function loadUser(): void {
     syncSpLevelGrants();
     saveUser();
   }
+}
+
+/**
+ * Pre-crate-rework blobs carried `optionz` (Stonk Optionz, the reward credits
+ * crates paid) next to a stale `stonkz`. Optionz are retired and `stonkz` is
+ * the reward-credit balance again, so fold the up-to-date credits into it and
+ * drop the old field.
+ */
+function migrateLegacyBalances(u: StoredUser & { optionz?: unknown }): void {
+  if (typeof u.optionz === 'number') u.stonkz = u.optionz;
+  delete u.optionz;
+  if (typeof u.stonkz !== 'number') u.stonkz = 0;
+  if (!Array.isArray(u.rwa)) u.rwa = [];
+}
+
+/** `0.0042 PAXG · 0.03 TSLA`, or a dash when no RWA has dropped yet. */
+export function rwaSummary(): string {
+  const held = (USER.rwa ?? []).filter((r) => r.units > 0);
+  return held.length
+    ? held.map((r) => fmtUnits(r.units) + ' ' + r.asset).join(' ' + DOT + ' ')
+    : MID;
+}
+
+/** Units of `asset` held, 0 when none. */
+export function rwaUnits(asset: string): number {
+  return USER.rwa?.find((r) => r.asset === asset)?.units ?? 0;
+}
+
+/** Set one asset's holding to an absolute total (WS `rwa` event). */
+export function setRwaUnits(asset: string, total: number): void {
+  const list = (USER.rwa ??= []);
+  const row = list.find((r) => r.asset === asset);
+  if (row) row.units = total;
+  else list.push({ asset, units: total });
+}
+
+/** Add units to one asset's holding (sim crate open). */
+export function creditRwa(asset: string, units: number): void {
+  setRwaUnits(asset, Math.round((rwaUnits(asset) + units) * 10_000) / 10_000);
 }
 
 export function saveUser(): void {
@@ -164,7 +203,10 @@ export function saveUser(): void {
 export interface RewardsHydration {
   xp: number;
   sp: number;
-  optionz: number;
+  /** `$STONKZ` reward credits. */
+  stonkz: number;
+  /** RWA positions won from crates. Absent leaves the cached list alone. */
+  rwa?: RwaReward[];
   streak?: number;
   achievements?: { key: AchievementKey; unlockedAt: number }[];
   crates?: { tier: CrateTier; readyAt: number; inventory?: number }[];
@@ -177,7 +219,8 @@ export function hydrateRewards(snap: RewardsHydration): void {
   const before = rankOf(USER.xp).i;
   USER.xp = snap.xp;
   USER.sp = snap.sp;
-  USER.optionz = snap.optionz;
+  USER.stonkz = snap.stonkz;
+  if (snap.rwa) USER.rwa = snap.rwa.map((r) => ({ asset: r.asset, units: r.units }));
   if (typeof snap.streak === 'number') USER.streak = snap.streak;
   if (snap.spLevel) USER.spLevel = snap.spLevel;
 

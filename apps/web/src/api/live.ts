@@ -51,6 +51,7 @@ import {
   pushDrop,
   resetLiveRewards,
   saveUser,
+  setRwaUnits,
   unlock,
 } from '../state/user.js';
 import { applySettings, saveSettings, settingsPayload } from '../state/settings.js';
@@ -781,6 +782,34 @@ function onWsFrame(frame: { channel: string; data: Record<string, unknown> }): v
   if (channel === 'tape') return onTapeEvent(data);
   if (channel.startsWith('token:')) return onTokenEvent(channel.slice('token:'.length), data);
   if (channel.startsWith('chat:')) return onChatFrame(channel, data);
+  if (channel.startsWith('user:')) return onUserEvent(data);
+}
+
+/**
+ * `user:{net}:{wallet}` frames. Only reward balances that the rewards strip
+ * and rank tooltip show are applied here; XP/rank ceremonies re-hydrate from
+ * `GET /rewards` instead.
+ */
+function onUserEvent(data: Record<string, unknown>): void {
+  switch (data['type']) {
+    case 'stonkz': {
+      const total = Number(data['total']);
+      if (!Number.isFinite(total)) return;
+      USER.stonkz = total;
+      break;
+    }
+    case 'rwa': {
+      const asset = data['asset'];
+      const total = Number(data['total']);
+      if (typeof asset !== 'string' || !Number.isFinite(total)) return;
+      setRwaUnits(asset, total);
+      break;
+    }
+    default:
+      return;
+  }
+  saveUser();
+  emit('rank');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1498,7 +1527,8 @@ function applyRewardsSnap(snap: LiveRewardsSnapshot): void {
   hydrateRewards({
     xp: snap.xp,
     sp: snap.sp,
-    optionz: snap.optionz,
+    stonkz: snap.stonkz,
+    ...(snap.rwa ? { rwa: snap.rwa } : {}),
     streak: snap.streak,
     crates: snap.crates.map((c) => ({
       tier: c.tier as CrateTier,
@@ -1536,21 +1566,25 @@ async function liveOpenCrate(tier: CrateTier): Promise<CrateResult> {
   const net = WALLET.net;
   const res = await openCrateLive(net, tier);
   const crate = crateBy(tier);
-  const dropIndex = Math.max(
-    0,
-    RAR.findIndex((r) => r[0] === res.rarity),
-  );
-  const kind: 'S' | 'I' = res.item ? 'I' : 'S';
+  const dropIndex =
+    res.dropIndex >= 0
+      ? res.dropIndex
+      : Math.max(
+          0,
+          RAR.findIndex((r) => r[0] === res.rarity),
+        );
   const out: CrateResult = {
     tier,
-    kind,
-    amount: res.optionz,
+    kind: res.kind,
+    amount: res.amount,
+    ...(res.kind === 'R' && res.asset ? { asset: res.asset, units: res.units } : {}),
     item: res.item ?? '',
     label: res.label,
-    dropIndex: dropIndex < 0 ? 0 : dropIndex,
+    dropIndex,
     xp: res.xp,
   };
-  USER.optionz = res.optionzTotal;
+  USER.stonkz = res.stonkzTotal;
+  USER.rwa = res.rwa.map((r) => ({ asset: r.asset, units: r.units }));
   // Global cooldown — stamp every tier before hydrate in case re-fetch fails.
   if (!USER.crates) USER.crates = {};
   for (const c of CRATES) USER.crates[c.k] = res.readyAt;

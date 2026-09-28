@@ -80,3 +80,8 @@ export function cdText(ms: number): string {
         ? m + 'm ' + String(ss).padStart(2, '0') + 's'
         : ss + 's';
 }
+
+/** RWA units (fractional shares / ounces): up to four decimals, trailing zeros trimmed. */
+export function fmtUnits(units: number): string {
+  return String(Math.round(units * 10_000) / 10_000);
+}

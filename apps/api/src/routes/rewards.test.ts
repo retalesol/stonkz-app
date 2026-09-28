@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ACH, CRATES, RANKS } from '@stonkz/shared';
+import { ACH, CRATES, RANKS, RWA_ASSETS } from '@stonkz/shared';
 import { authed, createTestApp, FROZEN_NOW, type TestApp } from '../test/app.js';
 import { solanaWallet } from '../test/wallets.js';
 
@@ -29,7 +29,8 @@ interface MeBody {
   xp: number;
   rank: { i: number; name: string; next: number | null };
   sp: number;
-  optionz: number;
+  stonkz: number;
+  rwa: { asset: string; units: number }[];
   streak: number;
   streakMult: number;
   achievements: { key: string; unlockedAt: number }[];
@@ -40,14 +41,15 @@ interface MeBody {
 
 /** Plan step 120 — `GET /me` hydrates the whole rewards strip in one trip. */
 describe('GET /me rewards payload', () => {
-  it('carries xp, rank, sp, optionz, crates, streak and achievements', async () => {
+  it('carries xp, rank, sp, stonkz, rwa, crates, streak and achievements', async () => {
     const { token } = await h.login('SOL', solanaWallet('me-rewards'));
     const res = await h.app.request('/me', { headers: authed(token) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as MeBody;
 
     // Daily check-in pays 10 SP/XP on first visit of the UTC day.
-    expect(body).toMatchObject({ net: 'SOL', xp: 10, sp: 10, optionz: 0 });
+    expect(body).toMatchObject({ net: 'SOL', xp: 10, sp: 10, stonkz: 0, rwa: [] });
+    expect(body).not.toHaveProperty('optionz');
     expect(body.rank).toMatchObject({ i: 0, name: RANKS[0]?.[0] });
     expect(body.achievements).toEqual([]);
     expect(body.items).toEqual([]);
@@ -124,7 +126,7 @@ describe('GET /me rewards payload', () => {
   it('does not leak $STONKZ as a spendable balance before Phase 7', async () => {
     const { token } = await h.login('SOL', solanaWallet('me-no-stonkz'));
     const raw = await (await h.app.request('/me', { headers: authed(token) })).text();
-    // SP and Optionz are the only reward currencies until the token exists.
+    // `$STONKZ` crate payouts are off-chain reward credits (`stonkz`), not a token balance.
     expect(raw).not.toMatch(/stonkzBalance|"\$STONKZ"/);
   });
 });
@@ -144,6 +146,8 @@ describe('GET /rewards', () => {
           odds: number;
           kind: string;
           min: number | null;
+          max: number | null;
+          asset: string | null;
           item: string | null;
         }[];
       }[];
@@ -164,24 +168,43 @@ describe('GET /rewards', () => {
       expect(crate.drops).toHaveLength(5);
       expect(crate.drops.reduce((sum, d) => sum + d.odds, 0)).toBeCloseTo(100, 6);
       for (const drop of crate.drops) {
-        // Every row is one kind or the other, never both, never neither.
-        if (drop.kind === 'OPTIONZ') {
+        // Every row is exactly one kind and carries only that kind's fields.
+        if (drop.kind === 'STONKZ') {
           expect(drop.min).not.toBeNull();
+          expect(drop.max).not.toBeNull();
+          expect(drop.asset).toBeNull();
+          expect(drop.item).toBeNull();
+        } else if (drop.kind === 'RWA') {
+          expect(drop.asset).not.toBeNull();
+          expect(drop.min).toBeGreaterThan(0);
+          expect(drop.max).toBeGreaterThanOrEqual(drop.min as number);
           expect(drop.item).toBeNull();
         } else {
           expect(drop.kind).toBe('ITEM');
           expect(drop.item).not.toBeNull();
           expect(drop.min).toBeNull();
+          expect(drop.asset).toBeNull();
         }
       }
     }
   });
 
-  it('never labels a payout as $STONKZ', async () => {
-    const { token } = await h.login('SOL', solanaWallet('rewards-optionz'));
-    const raw = await (await h.app.request('/rewards', { headers: authed(token) })).text();
-    expect(raw).not.toContain('$STONKZ');
-    expect(raw).toContain('OPTIONZ');
+  it('pays $STONKZ credits and catalog RWA assets only', async () => {
+    const { token } = await h.login('SOL', solanaWallet('rewards-stonkz'));
+    const res = await h.app.request('/rewards', { headers: authed(token) });
+    const raw = await res.clone().text();
+    expect(raw).not.toMatch(/optionz/i);
+    const body = (await res.json()) as {
+      stonkz: number;
+      rwa: unknown[];
+      crates: { drops: { kind: string; asset: string | null }[] }[];
+    };
+    expect(body.stonkz).toBe(0);
+    expect(body.rwa).toEqual([]);
+    const catalog = new Set<string>(RWA_ASSETS.map((a) => a[0]));
+    const rwaRows = body.crates.flatMap((c) => c.drops.filter((d) => d.kind === 'RWA'));
+    expect(rwaRows.length).toBeGreaterThan(0);
+    for (const row of rwaRows) expect(catalog.has(row.asset as string)).toBe(true);
   });
 
   it('requires a session', async () => {

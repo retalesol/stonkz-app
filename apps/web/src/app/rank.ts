@@ -3,14 +3,14 @@ import { must, reflow } from '../lib/dom.js';
 import { DOT, MID } from '../lib/fmt.js';
 import { html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
-import { USER, achCount, readyCount, xpMult } from '../state/user.js';
+import { USER, achCount, readyCount, rwaSummary, xpMult } from '../state/user.js';
 import { updateStrip } from '../views/rewards.js';
 
 /**
  * The header rank widget and its tooltip.
  *
- * The tooltip lists SP and Stonk Optionz separately: `$STONKZ` is a token, and
- * the oracle used its name for what was really a points balance.
+ * The tooltip lists SP and `$STONKZ` reward credits separately: SP is the
+ * score levels key off, `$STONKZ` is what crates pay (alongside RWA assets).
  * `index.html:2120`
  */
 export function renderRank(gained = false): void {
@@ -32,7 +32,8 @@ export function renderRank(gained = false): void {
       </div>
       <div class="row"><span>TOTAL XP EARNED</span><b>${num(USER.xp)} XP</b></div>
       <div class="row"><span>STONK POINTZ</span><b class="gd">${num(USER.sp ?? 0)}</b></div>
-      <div class="row"><span>STONK OPTIONZ</span><b class="gd">${num(USER.optionz ?? 0)}</b></div>
+      <div class="row"><span>$STONKZ</span><b class="gd">${num(USER.stonkz)}</b></div>
+      <div class="row"><span>RWA HOLDINGS</span><b class="up">${rwaSummary()}</b></div>
       <div class="row">
         <span>CRATES READY</span><b class="up">${readyCount()} / ${CRATES.length}</b>
       </div>

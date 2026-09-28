@@ -283,10 +283,11 @@ pub fn init_treasury(_ctx: Context<InitTreasury>) -> Result<()> {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum Treasury {
     Protocol,
-    /// Stonkz Game buyback vault (historical name).
+    /// `$STONKZ` buyback vault (historical `ops` name). The keeper buys
+    /// `$STONKZ`; half goes into crates, half is burned.
     Ops,
-    /// Buyback-and-burn vault. Swept by the same ops authority; the keeper
-    /// buys `$STONKZ` and burns it.
+    /// RWA crate fund (the former burn vault; historical `burn` name). Swept
+    /// by the same ops authority; buys real-world assets for crates.
     Burn,
 }
 

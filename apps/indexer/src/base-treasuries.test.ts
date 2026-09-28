@@ -8,11 +8,13 @@ import { createIndexerRig, type IndexerTestRig } from './test/harness.js';
 /**
  * Regression for the BASE vault gap: 0013 seeded the BASE replay cursor but
  * no `treasuries` rows, so `creditVault`'s plain UPDATE matched nothing and
- * every Base fee vanished from `/treasuries`. 0014 seeds the two vaults.
+ * every Base fee vanished from `/treasuries`. 0014 seeds the vaults (0016 adds
+ * the third, 0018 renames them to protocol / buyback / rwa).
  */
 let rig: IndexerTestRig;
 let protocolLeg = 0;
-let opsLeg = 0;
+let buybackLeg = 0;
+let rwaLeg = 0;
 
 beforeAll(async () => {
   const base = new FixtureProducer({ net: 'BASE' });
@@ -26,7 +28,9 @@ beforeAll(async () => {
   });
   if (fee?.kind !== 'FeeAccrued') throw new Error('expected a FeeAccrued leg');
   protocolLeg = fee.protocol;
-  opsLeg = fee.stonkzOps;
+  // Chain leg names: `stonkzOps` funds the buyback vault, `burn` the RWA fund.
+  buybackLeg = fee.stonkzOps;
+  rwaLeg = fee.burn;
 
   const events = base.all();
   rig = await createIndexerRig([], {
@@ -43,7 +47,7 @@ afterAll(async () => {
   await rig.close();
 });
 
-const vault = async (kind: 'protocol' | 'stonkz_ops' | 'burn') => {
+const vault = async (kind: 'protocol' | 'buyback' | 'rwa') => {
   const [row] = await rig.db.db
     .select()
     .from(treasuries)
@@ -53,24 +57,29 @@ const vault = async (kind: 'protocol' | 'stonkz_ops' | 'burn') => {
 };
 
 describe('BASE fee accrual', () => {
-  it('credits the BASE protocol and stonkz_ops vaults', async () => {
+  it('credits the BASE protocol, buyback and rwa vaults', async () => {
     expect(protocolLeg).toBeGreaterThan(0);
-    expect(opsLeg).toBeGreaterThan(0);
+    expect(buybackLeg).toBeGreaterThan(0);
+    expect(rwaLeg).toBeGreaterThan(0);
 
     const credits = await rig.db.db
       .select()
       .from(treasuryCredits)
       .where(eq(treasuryCredits.net, 'BASE'));
-    expect(credits.map((c) => c.kind).sort()).toEqual(['burn', 'protocol', 'stonkz_ops']);
+    expect(credits.map((c) => c.kind).sort()).toEqual(['buyback', 'protocol', 'rwa']);
 
     // No referral on this trade, so the whole protocol leg lands in the vault.
     const protocol = await vault('protocol');
     expect(protocol?.nativeBalance).toBeCloseTo(protocolLeg, 9);
     expect(protocol?.lifetimeCredited).toBeCloseTo(protocolLeg, 9);
 
-    const ops = await vault('stonkz_ops');
-    expect(ops?.nativeBalance).toBeCloseTo(opsLeg, 9);
-    expect(ops?.lifetimeCredited).toBeCloseTo(opsLeg, 9);
+    const buyback = await vault('buyback');
+    expect(buyback?.nativeBalance).toBeCloseTo(buybackLeg, 9);
+    expect(buyback?.lifetimeCredited).toBeCloseTo(buybackLeg, 9);
+
+    const rwa = await vault('rwa');
+    expect(rwa?.nativeBalance).toBeCloseTo(rwaLeg, 9);
+    expect(rwa?.lifetimeCredited).toBeCloseTo(rwaLeg, 9);
   });
 
   it('does not inflate the vaults on replay', async () => {

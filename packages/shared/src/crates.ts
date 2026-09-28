@@ -25,13 +25,19 @@ export function rollDrop(c: Pick<Crate, 'drops'>, random: Random = Math.random):
 }
 
 /**
- * Token payout for a drop row, rounded to the nearest 10.
- * Phase 3 remaps this payout from `$STONKZ` to Stonk Optionz.
- * `index.html:2361`
+ * `$STONKZ` payout for an `S` row, rounded to the nearest 10. Zero for the
+ * other kinds. `index.html:2361`
  */
 export function rollCrateAmount(drop: CrateDrop, random: Random = Math.random): number {
   if (drop[1] !== 'S') return 0;
   return Math.round((drop[2] + random() * (drop[3] - drop[2])) / 10) * 10;
+}
+
+/** RWA units for an `R` row, to four decimals (fractional shares / ounces). Zero for the other kinds. */
+export function rollRwaUnits(drop: CrateDrop, random: Random = Math.random): number {
+  if (drop[1] !== 'R') return 0;
+  const units = drop[3] + random() * (drop[4] - drop[3]);
+  return Math.round(units * 10_000) / 10_000;
 }
 
 /** XP for opening a crate: modest vs trade XP so trading stays the grind. */

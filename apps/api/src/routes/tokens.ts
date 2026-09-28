@@ -247,8 +247,8 @@ export function tokenRoutes(): Hono<AppEnv> {
     const creatorBucket = vault?.lifetimeNative ?? 0;
     const stakers = vault?.stakerPoolNative ?? 0;
     const protocol = leg('protocol');
-    const game = leg('stonkz_ops');
-    const burn = leg('burn');
+    const buyback = leg('buyback');
+    const rwa = leg('rwa');
     // Referral payouts are settled off the protocol leg per fill; the ledger
     // is keyed by tx, so scope it to this coin through its trades.
     const [ref] = await deps.db
@@ -277,10 +277,10 @@ export function tokenRoutes(): Hono<AppEnv> {
       effFeeBps,
       split: { ...FEE_SPLIT },
       totals: {
-        gross: protocol + game + burn + creatorBucket,
+        gross: protocol + buyback + rwa + creatorBucket,
         protocol,
-        game,
-        burn,
+        buyback,
+        rwa,
         creatorBucket,
         creator: Math.max(0, creatorBucket - stakers),
         stakers,

@@ -12,7 +12,7 @@ crates/XP/fees" gate. Scope and method, per the brief:
 2. `StonkzRouter.sol` + `apps/api`'s Universal Router command building —
    slippage/sandwich exposure, `quotedOut` vs curve-floor separation, permit
    replay.
-3. The game ledger (XP/SP/Optionz/crates/achievements) — server authority,
+3. The game ledger (XP/SP/crate rewards/crates/achievements) — server authority,
    crate RNG manipulability, double-claim races.
 4. Tips (Phase 5) — server/indexer authority, spoofability.
 5. Auth (SIWS/SIWE + ERC-1271) — replay, session handling, smart-account
@@ -38,7 +38,7 @@ finding.
 
 ## Critical
 
-None found. No path lets a client mint XP/SP/Optionz/fees, no path lets one
+None found. No path lets a client mint XP/SP/crate rewards/fees, no path lets one
 fee bucket overdraw another, and no unauthenticated write path was found.
 
 ---
@@ -391,7 +391,7 @@ sellViaAggregator`'s permit branch (`permitData.deadline != 0`) calls
   pinned against `Router.t.sol`'s own fixture.
 - **Game ledger server authority:** every reward path was traced from its
   route handler down to the DB write. No route accepts a client-supplied
-  XP/SP/Optionz amount, crate tier outcome, or RNG seed; `CHAIN_VERIFIED_
+  XP/SP/crate rewards amount, crate tier outcome, or RNG seed; `CHAIN_VERIFIED_
 REASONS` refuses trade/launch/fee-claim/stake/most-achievement awards
   without a matching `chain_events` row, and `xp_events`' unique constraint
   on `(wallet, tx_sig, reason)` makes replaying a signature a no-op rather

@@ -9,9 +9,11 @@ import {
   num,
   rollCrateAmount,
   rollDrop,
+  rollRwaUnits,
   type CrateDrop,
   type CrateTier,
   type Net,
+  type RwaReward,
 } from '@stonkz/shared';
 import type { Db } from '../db/client.js';
 import { crateCooldown, crateInventory, crateOpens, crateState } from '../db/schema.js';
@@ -58,9 +60,20 @@ export interface CrateOpenResult {
   dropIndex: number;
   rarity: string;
   label: string;
-  /** Stonk Optionz credited. Zero for an `I` row. */
-  optionz: number;
-  optionzTotal: number;
+  /** Which kind of row paid: `$STONKZ` credits, an RWA position, or an item. */
+  kind: 'S' | 'I' | 'R';
+  /** `$STONKZ` rolled for an `S` row; zero otherwise. */
+  amount: number;
+  /** RWA catalog key for an `R` row; null otherwise. */
+  asset: string | null;
+  /** RWA units credited for an `R` row; zero otherwise. */
+  units: number;
+  /** `$STONKZ` credits credited by this open. Zero unless `S`. */
+  stonkz: number;
+  /** `$STONKZ` credit balance after this open. */
+  stonkzTotal: number;
+  /** Every RWA position held after this open. */
+  rwa: RwaReward[];
   item: string | null;
   xp: number;
   rankedUp: boolean;
@@ -213,11 +226,20 @@ export class CrateService {
       const roll = this.roll(net, wallet, tier);
       const dropIndex = rollDrop(crate, () => roll.rollValue / 100);
       const drop = crate.drops[dropIndex] as CrateDrop;
-      const isToken = drop[1] === 'S';
-      const amount = isToken ? rollCrateAmount(drop, () => roll.amountRoll) : 0;
-      const item = isToken ? null : (drop[2] as string);
+      const kind = drop[1];
+      // One provable draw (`amountRoll`) positions the payout inside whichever
+      // range the row carries: `$STONKZ` for `S`, units for `R`.
+      const amount = kind === 'S' ? rollCrateAmount(drop, () => roll.amountRoll) : 0;
+      const asset = drop[1] === 'R' ? drop[2] : null;
+      const units = kind === 'R' ? rollRwaUnits(drop, () => roll.amountRoll) : 0;
+      const item = drop[1] === 'I' ? drop[2] : null;
       const rarity = (RAR[dropIndex] as (typeof RAR)[number])[0];
-      const label = isToken ? `${num(amount)} STONK OPTIONZ` : (item as string);
+      const label =
+        kind === 'S'
+          ? `${num(amount)} $STONKZ`
+          : kind === 'R'
+            ? `${units.toFixed(4)} ${asset ?? ''}`
+            : (item ?? '');
 
       const tierIndex = CRATES.findIndex((c) => c.k === tier);
       const baseXp = crateXp(tierIndex);
@@ -235,8 +257,8 @@ export class CrateService {
           amountRoll: roll.amountRoll,
           dropIndex,
           rarity,
-          payloadJson: { label, kind: drop[1], amount, item, tierIndex },
-          optionzAwarded: amount,
+          payloadJson: { label, kind, amount, asset, units, item, tierIndex },
+          stonkzAwarded: amount,
           itemKey: item,
           xpAwarded: 0,
           openedAt: nowDate,
@@ -245,9 +267,14 @@ export class CrateService {
       if (!openRow) throw new CrateError('unknown_tier', 'could not record the crate open');
 
       const refId = String(openRow.id);
-      const optionzTotal = isToken
-        ? await this.opts.ledger.creditOptionz(net, wallet, amount, REASONS.crate, refId)
-        : (await this.opts.ledger.readBalance(net, wallet)).optionz;
+      const stonkzTotal =
+        kind === 'S'
+          ? await this.opts.ledger.creditStonkz(net, wallet, amount, REASONS.crate, refId)
+          : (await this.opts.ledger.readBalance(net, wallet)).stonkz;
+      if (asset !== null) {
+        await this.opts.ledger.creditRwa(net, wallet, asset, units, REASONS.crate, refId);
+      }
+      const rwa = await this.opts.ledger.readRwa(net, wallet);
 
       if (item !== null) {
         await this.opts.ledger.grantItem(net, wallet, item, itemExpiry(item, nowMs));
@@ -272,8 +299,13 @@ export class CrateService {
         dropIndex,
         rarity,
         label,
-        optionz: amount,
-        optionzTotal,
+        kind,
+        amount,
+        asset,
+        units,
+        stonkz: amount,
+        stonkzTotal,
+        rwa,
         item,
         xp: award.xp,
         rankedUp: award.rankedUp,

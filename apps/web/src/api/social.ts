@@ -1,4 +1,4 @@
-import type { Net } from '@stonkz/shared';
+import type { Net, RwaReward } from '@stonkz/shared';
 import { authHeader, ensureSession } from '../app/session.js';
 
 /**
@@ -268,7 +268,10 @@ export interface LiveRewardsSnapshot {
   wallet: string;
   xp: number;
   sp: number;
-  optionz: number;
+  /** `$STONKZ` reward credits. */
+  stonkz: number;
+  /** RWA positions won from crates. */
+  rwa?: RwaReward[];
   streak: number;
   streakMult: number;
   cratesReady: number;
@@ -289,25 +292,50 @@ export interface LiveRewardsSnapshot {
     inventory: number;
     openable: boolean;
     cooldownHours: number;
+    /** Drop table (display only — the web renders `CRATES` from shared). */
+    drops?: LiveCrateDropRow[];
   }[];
   dropLog: {
     at: number;
     tier: string;
     rarity: string;
     label: string;
-    optionz: number;
+    stonkz?: number;
     item: string | null;
   }[];
   achievements: { key: string; unlockedAt: number }[];
 }
 
+/** One drop row of a server crate table from `GET /rewards`. */
+export interface LiveCrateDropRow {
+  rarity?: string;
+  rarityClass?: string;
+  odds: number;
+  kind: 'STONKZ' | 'RWA' | 'ITEM';
+  min: number | null;
+  max: number | null;
+  /** RWA catalog key, on `RWA` rows. */
+  asset?: string | null;
+  item: string | null;
+}
+
 export interface LiveCrateOpenResult {
   tier: string;
-  rarity: string;
-  label: string;
-  optionz: number;
-  optionzTotal: number;
+  /** `S` = `$STONKZ` credits, `I` = item, `R` = real-world asset. */
+  kind: 'S' | 'I' | 'R';
+  amount: number;
+  asset: string | null;
+  units: number;
   item: string | null;
+  label: string;
+  dropIndex: number;
+  /** `$STONKZ` credited by this open. */
+  stonkz: number;
+  /** `$STONKZ` reward credit balance after this open. */
+  stonkzTotal: number;
+  /** Full RWA holdings after this open. */
+  rwa: RwaReward[];
+  rarity?: string;
   xp: number;
   rankedUp: boolean;
   readyAt: number;
@@ -350,7 +378,7 @@ export function attachReferral(net: Net, code: string): Promise<{ ok: true; refe
 
 export function claimReferralFees(
   net: Net,
-): Promise<{ ok: true; claimedNative: number; optionz: number; optionzTotal: number }> {
+): Promise<{ ok?: true; claimedNative: number; stonkz: number; stonkzTotal: number }> {
   return authedJson(`/referrals/claim`, net, { method: 'POST', body: '{}' });
 }
 

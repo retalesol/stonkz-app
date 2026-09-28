@@ -429,9 +429,10 @@ exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
       ],
       [
         6,
-        "S",
-        6000,
-        12000,
+        "R",
+        "PAXG",
+        0.002,
+        0.01,
       ],
       [
         1,
@@ -465,9 +466,10 @@ exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
       ],
       [
         7,
-        "S",
-        15000,
-        30000,
+        "R",
+        "TSLA",
+        0.01,
+        0.05,
       ],
       [
         1,
@@ -501,9 +503,10 @@ exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
       ],
       [
         8,
-        "S",
-        40000,
-        80000,
+        "R",
+        "AMZN",
+        0.02,
+        0.1,
       ],
       [
         1,
@@ -537,9 +540,10 @@ exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
       ],
       [
         9,
-        "S",
-        100000,
-        200000,
+        "R",
+        "PLTR",
+        0.1,
+        0.5,
       ],
       [
         1,
@@ -573,9 +577,10 @@ exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
       ],
       [
         10,
-        "S",
-        300000,
-        650000,
+        "R",
+        "NFLX",
+        0.05,
+        0.3,
       ],
       [
         1,
@@ -609,9 +614,10 @@ exports[`crate tables > snapshots all eight tiers with full drop tables 1`] = `
       ],
       [
         12,
-        "S",
-        1200000,
-        3000000,
+        "R",
+        "PAXG",
+        0.05,
+        0.25,
       ],
       [
         2,
@@ -649,20 +655,19 @@ exports[`crate tables > snapshots the rarity ladder 1`] = `
 ]
 `;
 
-exports[`fee constants > snapshots the $STONKZ vault sweep recipe 1`] = `
+exports[`fee constants > snapshots the $STONKZ buyback sweep recipe 1`] = `
 {
-  "burnBuy": 1,
-  "lpNative": 0,
-  "lpTokenBuy": 0,
+  "burn": 0.5,
+  "crates": 0.5,
 }
 `;
 
-exports[`fee constants > snapshots the 20 / 60 / 10 / 10 curve split 1`] = `
+exports[`fee constants > snapshots the 69 / 15 / 10 / 6 curve split 1`] = `
 {
-  "burn": 0.1,
-  "creatorBucket": 0.6,
-  "protocol": 0.2,
-  "stonkzOps": 0.1,
+  "buyback": 0.1,
+  "creatorBucket": 0.69,
+  "protocol": 0.15,
+  "rwa": 0.06,
 }
 `;
 

@@ -23,7 +23,7 @@ import { drawCrate } from '../canvas/crate.js';
 import { burst } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, must, reflow } from '../lib/dom.js';
-import { ARR, DOT, cdText } from '../lib/fmt.js';
+import { ARR, DOT, cdText, fmtUnits } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
 import {
@@ -35,6 +35,8 @@ import {
   isReady,
   readyAt,
   readyCount,
+  rwaSummary,
+  saveUser,
 } from '../state/user.js';
 import { WALLET, nativeUnit } from '../state/wallet.js';
 import { addChat } from './chat.js';
@@ -42,9 +44,11 @@ import { addChat } from './chat.js';
 /**
  * The rewards page: rank strip, crates, achievements and the drop log.
  *
- * The two balances are Stonk Pointz and Stonk Optionz — `$STONKZ` is the token,
- * not a score, and the strip used to conflate them. Phase 3 makes both
- * server-side. `index.html:2242`
+ * The balances are Stonk Pointz (the score levels key off), `$STONKZ` reward
+ * credits (what `S` crate rows pay) and RWA holdings (what `R` rows pay,
+ * Silver and up). Crates are funded by fees: half the `$STONKZ` buyback and
+ * the whole RWA crate fund. Phase 3 makes all of it server-side.
+ * `index.html:2242`
  */
 
 let selCrate: CrateTier = 'GOLD';
@@ -108,7 +112,7 @@ function referralHTML(): Html {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button type="button" class="openbtn" id="refClaim" ${pending > 0 ? '' : ' disabled'}>
-          CLAIM AS OPTIONZ
+          CLAIM AS $STONKZ
         </button>
         <form id="refAttach" style="display:flex;gap:6px;align-items:center">
           <input
@@ -121,8 +125,8 @@ function referralHTML(): Html {
         </form>
       </div>
       <p class="hint">
-        15/10/5% OF REFERRED TRADERS&#8217; CURVE FEES (FROM THE PROTOCOL LEG) ${DOT} CLAIM ANYTIME
-        AS OPTIONZ ${DOT} NOT A NATIVE WITHDRAW.
+        15/10/5% OF REFERRED TRADERS&#8217; CURVE FEES (FROM THE PLATFORM LEG) ${DOT} CLAIM ANYTIME
+        AS $STONKZ REWARD CREDITS ${DOT} NOT A NATIVE WITHDRAW.
       </p>
     </div>
   </section>`;
@@ -155,12 +159,13 @@ function bindReferralControls(): void {
     void (async () => {
       try {
         const res = await claimReferralFees(WALLET.net);
-        if (res.optionz <= 0) {
+        if (res.stonkz <= 0) {
           toast('NOTHING TO CLAIM');
           return;
         }
-        USER.optionz = res.optionzTotal;
-        toast('CLAIMED ' + res.optionz + ' OPTIONZ FROM REFERRALS', 'gold');
+        USER.stonkz = res.stonkzTotal;
+        saveUser();
+        toast('CLAIMED ' + num(res.stonkz) + ' $STONKZ FROM REFERRALS', 'gold');
         await refreshReferralPanel();
         updateStrip();
       } catch (err) {
@@ -222,9 +227,14 @@ function stripHTML(): Html {
     <div class="rw-bal">
       <span class="lbl">SP</span>
       <div class="v" id="rw-sp">${num(USER.sp ?? 0)}</div>
-      <span class="lbl">STONK OPTIONZ</span>
-      <div class="v" id="rw-opt">${num(USER.optionz ?? 0)}</div>
+      <span class="lbl">$STONKZ</span>
+      <div class="v" id="rw-stonkz">${num(USER.stonkz)}</div>
       <span class="hint" id="rw-ready">${readyCount()} OPENABLE ${DOT} ${spSub}</span>
+    </div>
+    <div class="rw-rwa">
+      <span class="lbl">RWA HOLDINGS</span>
+      <div class="v" id="rw-rwa">${rwaSummary()}</div>
+      <span class="hint">FROM SILVER+ CRATES ${DOT} FUNDED BY FEES</span>
     </div>
   </div>`;
 }
@@ -251,7 +261,8 @@ export function updateStrip(): void {
       : num(r.toNext) + ' XP TO ' + (RANKS[r.i + 1] as (typeof RANKS)[number])[0],
   );
   set('#rw-sp', num(USER.sp ?? 0));
-  set('#rw-opt', num(USER.optionz ?? 0));
+  set('#rw-stonkz', num(USER.stonkz));
+  set('#rw-rwa', rwaSummary());
   const lv = $('.rw-badge .lv');
   if (lv) lv.textContent = String(r.i + 1);
   const spLv = USER.spLevel;
@@ -303,13 +314,15 @@ function paneHTML(k: CrateTier): Html {
   const cdOk = left <= 0;
   const rows = c.drops.map((d, i) => {
     const rar = RAR[i] as (typeof RAR)[number];
-    const label =
+    const reward =
       d[1] === 'S'
-        ? num(d[2] as number) + ' \u2013 ' + num(d[3] as number) + ' OPTIONZ'
-        : (d[2] as string);
+        ? html`${num(d[2])} – ${num(d[3])} $STONKZ`
+        : d[1] === 'R'
+          ? html`${fmtUnits(d[3])} – ${fmtUnits(d[4])} ${d[2]}<span class="rwatag">RWA</span>`
+          : html`${d[2]}`;
     return html`<tr>
       <td><span class="rar ${rar[1]}">${rar[0]}</span></td>
-      <td class="${d[1] === 'I' ? 'gd' : ''}">${label}</td>
+      <td class="${d[1] === 'I' ? 'gd' : d[1] === 'R' ? 'rw' : ''}">${reward}</td>
       <td class="r" style="width:74px">
         <b>${d[0].toFixed(0)}%</b
         ><span class="pbar"
@@ -357,6 +370,7 @@ function paneHTML(k: CrateTier): Html {
       </div>
       <div>
         <span class="lbl">DROP TABLE ${DOT} ODDS PER OPEN</span>
+        <p class="hint">$STONKZ AND RWA ASSETS ${DOT} FUNDED BY FEES</p>
         <table class="drops">
           <thead>
             <tr>
@@ -377,8 +391,8 @@ function paneHTML(k: CrateTier): Html {
         TIER&#8217;S
         COOLDOWN.${
           api.mode === 'live'
-            ? ' OPTIONZ ARE LEDGER CREDITS &#8212; NOT A TRANSFERABLE TOKEN.'
-            : ' SIMULATED &#8212; NO REAL TOKEN IS DISTRIBUTED.'
+            ? ' HALF OF EVERY $STONKZ BUYBACK AND THE WHOLE RWA CRATE FUND STOCK THESE CRATES.'
+            : ' SIMULATED \u2014 NO REAL TOKEN OR ASSET IS DISTRIBUTED.'
         }
       </p>
     </div>`;

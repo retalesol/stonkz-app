@@ -211,7 +211,7 @@ export async function mapSolanaTransaction(
 
       case 'FeeAccrued': {
         const meta = await need(record.mint);
-        assertOnChainFeeSplit(
+        const splitVersion = assertOnChainFeeSplit(
           `SOL FeeAccrued ${ctx.txSig}`,
           record.feeTotal,
           record.protocol,
@@ -237,7 +237,7 @@ export async function mapSolanaTransaction(
           // `FeeAccrued` names the mint, not the creator; the creator comes
           // from the launch, which is the same place the vault row does.
           creator: meta.creator,
-          ...nativeFeeLegs(feeNative, trade?.feeStakers ?? 0n, record.creatorBucket),
+          ...nativeFeeLegs(feeNative, trade?.feeStakers ?? 0n, record.creatorBucket, splitVersion),
           creatorTokens: toWhole(trade?.cashbackTokens ?? 0n, meta.tokenDecimals),
         });
         break;

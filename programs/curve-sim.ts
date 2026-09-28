@@ -15,11 +15,12 @@
 /* ------------------------------------------------------------------ constants */
 
 export const BPS_DEN = 10_000n;
-export const FEE_PROTOCOL_BPS = 2_000n;
-/** Stonkz Game buyback leg (the vault keeps its historical `ops` name). */
+/** Platform revenue leg (the vault keeps its historical `protocol` name). */
+export const FEE_PROTOCOL_BPS = 1_500n;
+/** `$STONKZ` buyback leg: half to crates, half burned (vault keeps its historical `ops` name). */
 export const FEE_OPS_BPS = 1_000n;
-/** Buyback-and-burn leg. */
-export const FEE_BURN_BPS = 1_000n;
+/** RWA crate-fund leg (vault keeps its historical `burn` name). */
+export const FEE_BURN_BPS = 600n;
 
 export const TOKENS_FOR_SALE_NUM = 4n;
 export const TOKENS_FOR_SALE_DEN = 5n;
@@ -59,7 +60,8 @@ export interface FeeShares {
 }
 
 /**
- * The 20 / 10 / 10 / 60 split. `creatorBucket` is the remainder rather than a
+ * The 15 / 10 / 6 / 69 split (platform / buyback / RWA fund / creator bucket).
+ * `creatorBucket` is the remainder rather than a
  * fourth floor, which is what makes the four shares reconstruct the fee
  * exactly for every input. At most 3 atoms of floor dust land in the bucket.
  */

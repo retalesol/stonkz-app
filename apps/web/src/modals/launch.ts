@@ -297,8 +297,9 @@ function ncStep2(): Html {
       <p class="hint">
         CHARGED ON EVERY BUY AND SELL ${DOT} ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% TO YOU
         AS CREATOR FEES (STAKERS TAKE UP TO HALF OF THAT), ${(FEE_SPLIT.protocol * 100).toFixed(0)}%
-        PROTOCOL, ${(FEE_SPLIT.stonkzOps * 100).toFixed(0)}% $STONKZ BUYBACK FOR THE STONKZ GAME,
-        ${(FEE_SPLIT.burn * 100).toFixed(0)}% $STONKZ BUYBACK AND BURN.
+        PLATFORM, ${(FEE_SPLIT.buyback * 100).toFixed(0)}% $STONKZ BUYBACK (HALF INTO CRATES, HALF
+        BURNED), ${(FEE_SPLIT.rwa * 100).toFixed(0)}% RWA CRATE FUND (BUYS REAL-WORLD ASSETS FOR
+        CRATES).
       </p>
     </div>`;
 }

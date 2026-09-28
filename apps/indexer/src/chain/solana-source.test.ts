@@ -12,6 +12,7 @@ import {
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type TradeEvent } from '../events.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
+import { splitFeeLegacyV1 } from './market.js';
 import {
   SolanaChainSource,
   SolanaRangeTooBusyError,
@@ -108,7 +109,8 @@ function launchLog(overrides: Partial<Parameters<typeof encodeTokenCreated>[0]> 
   );
 }
 
-function fillLogs(): string[] {
+/** A fill's logs; `legs` defaults to the v2 split the current programs are held to. */
+function fillLogs(legs: ReturnType<typeof splitFeeAtoms> = CHAIN_LEGS): string[] {
   return [
     `Program ${PROGRAM_ID} invoke [1]`,
     'Program log: Instruction: Buy',
@@ -123,12 +125,12 @@ function fillLogs(): string[] {
         effFeeBps: 250,
         inCashback: false,
         feeTotal: FILL.fee,
-        feeProtocol: CHAIN_LEGS.protocol,
-        feeOps: CHAIN_LEGS.stonkzOps,
-        feeBurn: CHAIN_LEGS.burn,
-        feeCreatorBucket: CHAIN_LEGS.creatorBucket,
+        feeProtocol: legs.protocol,
+        feeOps: legs.stonkzOps,
+        feeBurn: legs.burn,
+        feeCreatorBucket: legs.creatorBucket,
         feeStakers: FEE_STAKERS,
-        feeCreator: CHAIN_LEGS.creatorBucket - FEE_STAKERS,
+        feeCreator: legs.creatorBucket - FEE_STAKERS,
         cashbackTokens: 0n,
         virtualBase: AFTER.virtualBase,
         virtualToken: AFTER.virtualToken,
@@ -144,10 +146,10 @@ function fillLogs(): string[] {
         mint: DOGGO_MINT,
         baseMint: WSOL_MINT,
         feeTotal: FILL.fee,
-        protocol: CHAIN_LEGS.protocol,
-        ops: CHAIN_LEGS.stonkzOps,
-        burn: CHAIN_LEGS.burn,
-        creatorBucket: CHAIN_LEGS.creatorBucket,
+        protocol: legs.protocol,
+        ops: legs.stonkzOps,
+        burn: legs.burn,
+        creatorBucket: legs.creatorBucket,
         ts: 1_757_000_100n,
       }),
     ),
@@ -155,9 +157,9 @@ function fillLogs(): string[] {
       'TreasuryCredit',
       encodeTreasuryCredit({
         baseMint: WSOL_MINT,
-        protocolDelta: CHAIN_LEGS.protocol,
-        opsDelta: CHAIN_LEGS.stonkzOps,
-        burnDelta: CHAIN_LEGS.burn,
+        protocolDelta: legs.protocol,
+        opsDelta: legs.stonkzOps,
+        burnDelta: legs.burn,
         ts: 1_757_000_100n,
       }),
     ),
@@ -279,9 +281,13 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
     const fee = events.find((e) => e.kind === 'FeeAccrued');
     if (fee?.kind !== 'FeeAccrued') throw new Error('expected FeeAccrued');
     expect(fee.creator).toBe(CREATOR);
-    // 2.5% of 1.5 SOL = 0.0375 SOL of fee, split exactly 20/70/10 in native.
+    // 2.5% of 1.5 SOL = 0.0375 SOL of fee, split exactly 15/69/10/6 in native.
     expect(fee.feeAmount).toBeCloseTo(0.0375, 12);
     expect(fee.protocol).toBeCloseTo(splitFee(0.0375).protocol, 12);
+    expect(fee.creatorBucket).toBeCloseTo(splitFee(0.0375).creatorBucket, 12);
+    // Chain leg names: `stonkzOps` is the buyback leg, `burn` the RWA leg.
+    expect(fee.stonkzOps).toBeCloseTo(splitFee(0.0375).buyback, 12);
+    expect(fee.burn).toBeCloseTo(splitFee(0.0375).rwa, 12);
     // Staker peel stayed inside the bucket.
     expect(fee.stakerShare).toBeLessThanOrEqual(fee.creatorBucket / 2 + 1e-9);
     // The whole point of re-splitting the converted total: the integrity
@@ -316,7 +322,28 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
     await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(UnknownMintError);
   });
 
-  it('rejects a fee split the chain did not settle 20/60/10/10', async () => {
+  it('still accepts a fill settled under the legacy v1 split during the upgrade window', async () => {
+    const v1 = splitFeeLegacyV1(FILL.fee);
+    // Guard the fixture: v1 legs genuinely differ from v2 for this fill.
+    expect(v1.protocol).not.toBe(CHAIN_LEGS.protocol);
+    const { source } = makeSource([
+      { signature: 'sigLaunch', slot: 1_100, blockTimeSecs: 1_757_000_000, logs: [launchLog()] },
+      { signature: 'sigV1', slot: 1_150, blockTimeSecs: 1_757_000_100, logs: fillLogs(v1) },
+    ]);
+
+    const { events } = await source.pollRange(1_000, 1_200);
+    expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
+    const fee = events.find((e) => e.kind === 'FeeAccrued');
+    if (fee?.kind !== 'FeeAccrued') throw new Error('expected FeeAccrued');
+    // Rescaled by the ratios the chain actually used, not the v2 ones.
+    expect(fee.protocol).toBeCloseTo(0.0375 * 0.2, 12);
+    expect(fee.stonkzOps).toBeCloseTo(0.0375 * 0.1, 12);
+    expect(fee.burn).toBeCloseTo(0.0375 * 0.1, 12);
+    expect(fee.creatorBucket).toBeCloseTo(0.0375 * 0.6, 12);
+    for (const event of events) expect(() => assertEventIntegrity(event)).not.toThrow();
+  });
+
+  it('rejects a fee split the chain settled under neither v2 nor legacy v1', async () => {
     const bent = fillLogs();
     bent[3] = programDataLine(
       'FeeAccrued',
@@ -337,7 +364,7 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
       { signature: 'sigBent', slot: 1_150, blockTimeSecs: 1_757_000_100, logs: bent },
     ]);
     await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(
-      /do not match the integer 20\/60\/10\/10/,
+      /match neither the integer 15\/69\/10\/6 split .* nor the legacy 20\/60\/10\/10 split/,
     );
   });
 

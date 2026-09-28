@@ -47,11 +47,15 @@ async function rejects(p: Promise<unknown> | (() => Promise<unknown>), match: Re
 
 /* ------------------------------------------------------------------ helpers */
 
-/** Mirrors `split_fee` in math.rs. The creator bucket is the remainder. */
+/**
+ * Mirrors `split_fee` in math.rs: 15% platform, 10% `$STONKZ` buyback (`ops`),
+ * 6% RWA crate fund (`burn`). The creator bucket (69%) is the remainder.
+ */
 function splitFee(fee: bigint) {
-  const protocol = (fee * 2000n) / 10000n;
+  const protocol = (fee * 1500n) / 10000n;
   const ops = (fee * 1000n) / 10000n;
-  return { protocol, ops, creatorBucket: fee - protocol - ops };
+  const burn = (fee * 600n) / 10000n;
+  return { protocol, ops, burn, creatorBucket: fee - protocol - ops - burn };
 }
 
 /** Mirrors `split_creator_bucket`. */
@@ -172,6 +176,7 @@ describe('stonkz launchpad', () => {
     const before = {
       protocol: await bal(protocolVault()),
       ops: await bal(opsVault()),
+      burn: await bal(burnVault()),
       bucket: await bal(coin.bucketBaseVault),
       bucketToken: await bal(coin.bucketTokenVault),
       curveBase: await bal(coin.curveBaseVault),
@@ -205,6 +210,7 @@ describe('stonkz launchpad', () => {
     const after = {
       protocol: await bal(protocolVault()),
       ops: await bal(opsVault()),
+      burn: await bal(burnVault()),
       bucket: await bal(coin.bucketBaseVault),
       bucketToken: await bal(coin.bucketTokenVault),
       curveBase: await bal(coin.curveBaseVault),
@@ -215,6 +221,7 @@ describe('stonkz launchpad', () => {
     return {
       protocol: after.protocol - before.protocol,
       ops: after.ops - before.ops,
+      burn: after.burn - before.burn,
       bucket: after.bucket - before.bucket,
       bucketToken: after.bucketToken - before.bucketToken,
       curveBase: after.curveBase - before.curveBase,
@@ -234,6 +241,7 @@ describe('stonkz launchpad', () => {
     const before = {
       protocol: await bal(protocolVault()),
       ops: await bal(opsVault()),
+      burn: await bal(burnVault()),
       bucket: await bal(coin.bucketBaseVault),
       userBase: await bal(whoBase),
     };
@@ -264,6 +272,7 @@ describe('stonkz launchpad', () => {
     return {
       protocol: (await bal(protocolVault())) - before.protocol,
       ops: (await bal(opsVault())) - before.ops,
+      burn: (await bal(burnVault())) - before.burn,
       bucket: (await bal(coin.bucketBaseVault)) - before.bucket,
       received: (await bal(whoBase)) - before.userBase,
     };
@@ -396,11 +405,12 @@ describe('stonkz launchpad', () => {
           const want = splitFee(fee);
           assert.equal(d.protocol, want.protocol, `protocol, ${feeBps}bps size ${size}`);
           assert.equal(d.ops, want.ops, `ops, ${feeBps}bps size ${size}`);
+          assert.equal(d.burn, want.burn, `burn, ${feeBps}bps size ${size}`);
           assert.equal(d.bucket, want.creatorBucket, `bucket, ${feeBps}bps size ${size}`);
           assert.equal(
-            d.protocol + d.ops + d.bucket,
+            d.protocol + d.ops + d.burn + d.bucket,
             fee,
-            `the three vaults must reconstruct the fee exactly`,
+            `the four vaults must reconstruct the fee exactly`,
           );
           // And the fee itself is the floor of the nominal rate.
           assert.equal(fee, (d.spent * BigInt(feeBps)) / 10000n, 'fee is floor(gross*bps/1e4)');
@@ -412,10 +422,11 @@ describe('stonkz launchpad', () => {
         for (const frac of [7n, 5n, 3n]) {
           const amt = held / frac;
           const s = await sell(coin, trader, traderBase, traderToken, amt);
-          const fee = s.protocol + s.ops + s.bucket;
+          const fee = s.protocol + s.ops + s.burn + s.bucket;
           const want = splitFee(fee);
           assert.equal(s.protocol, want.protocol, `sell protocol @ ${feeBps}`);
           assert.equal(s.ops, want.ops, `sell ops @ ${feeBps}`);
+          assert.equal(s.burn, want.burn, `sell burn @ ${feeBps}`);
           assert.equal(s.bucket, want.creatorBucket, `sell bucket @ ${feeBps}`);
         }
       }
@@ -540,13 +551,16 @@ program.methods
       const protocolAccrued = BigInt(c.protocolAccrued.toString());
       const opsAccrued = BigInt(c.opsAccrued.toString());
       const bucketAccrued = BigInt(c.creatorBucketAccrued.toString());
-      const feeTotal = protocolAccrued + opsAccrued + bucketAccrued;
+      // The curve ledger has no burn counter; this is the coin's only fill, so
+      // the RWA-fund vault delta is its lifetime burn leg.
+      const feeTotal = protocolAccrued + opsAccrued + d.burn + bucketAccrued;
 
       assert.equal(d.protocol, protocolAccrued);
       assert.equal(d.ops, opsAccrued);
       const want = splitFee(feeTotal);
-      assert.equal(protocolAccrued, want.protocol, 'protocol keeps its 20% during cashback');
-      assert.equal(opsAccrued, want.ops, 'ops keeps its 10% during cashback');
+      assert.equal(protocolAccrued, want.protocol, 'platform keeps its 15% during cashback');
+      assert.equal(opsAccrued, want.ops, 'buyback (ops) keeps its 10% during cashback');
+      assert.equal(d.burn, want.burn, 'RWA fund (burn) keeps its 6% during cashback');
       assert.equal(bucketAccrued, want.creatorBucket);
 
       // ~50% of the trade was fee at t≈0. Allow a couple of seconds of decay.
@@ -570,7 +584,7 @@ program.methods
       const coin = await launch('FLAT', { feeBps: 250 });
       const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
       const d = await buy(coin, trader, traderBase, tt, 10_000_000n);
-      const fee = d.protocol + d.ops + d.bucket;
+      const fee = d.protocol + d.ops + d.burn + d.bucket;
       assert.equal(fee, (d.spent * 250n) / 10000n);
     });
   });
@@ -722,7 +736,7 @@ program.methods.stake(new BN(1), 30).accountsPartial(stakeAccounts).signers([sta
       const d = await buy(coin, trader, traderBase, tt, 80_000_000n);
       const after = await program.account.curve.fetch(coin.curve);
 
-      const fee = d.protocol + d.ops + d.bucket;
+      const fee = d.protocol + d.ops + d.burn + d.bucket;
       const want = splitFee(fee);
       const stakerDelta =
         BigInt(after.stakerAccruedBase.toString()) - BigInt(before.stakerAccruedBase.toString());
@@ -744,11 +758,13 @@ program.methods.stake(new BN(1), 30).accountsPartial(stakeAccounts).signers([sta
 
       assert.equal(stakerDelta + creatorDelta, want.creatorBucket, 'the bucket is conserved');
       assert.isTrue(stakerDelta <= want.creatorBucket / 2n, 'stakers capped at half the bucket');
-      // At the cap that is 35% of the fee, and never more.
-      assert.isTrue(stakerDelta * 100n <= fee * 35n + 100n);
-      assert.isTrue(creatorDelta * 100n + 100n >= fee * 35n);
+      // At the cap that is 34.5% of the fee (half of the 69% bucket), and never
+      // more. Floor dust in the bucket (< 3 atoms) moves either side by <= 2.
+      assert.isTrue(stakerDelta * 1000n <= fee * 345n + 2000n);
+      assert.isTrue(creatorDelta * 1000n + 2000n >= fee * 345n);
       assert.equal(d.protocol, want.protocol, 'protocol untouched by the peel');
       assert.equal(d.ops, want.ops, 'ops untouched by the peel');
+      assert.equal(d.burn, want.burn, 'burn untouched by the peel');
 
       // And the staker can actually take it out of the bucket vault.
       const beforeBase = await bal(stakerBase);

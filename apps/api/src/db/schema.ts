@@ -336,7 +336,10 @@ export const treasuries = pgTable(
   'treasuries',
   {
     net: text('net').notNull(),
-    /** `protocol` (20%), `stonkz_ops` (the Stonkz Game buyback 10%) or `burn` (10%). Never claimable by users. */
+    /**
+     * `protocol` (15%), `buyback` (10%, the on-chain `stonkz_ops` vault) or `rwa`
+     * (6%, the on-chain `burn` vault). Never claimable by users.
+     */
     kind: text('kind').notNull(),
     nativeBalance: doublePrecision('native_balance').notNull().default(0),
     lifetimeCredited: doublePrecision('lifetime_credited').notNull().default(0),
@@ -371,7 +374,7 @@ export const creatorVaults = pgTable(
     sym: text('sym').notNull(),
     mint: text('mint').notNull(),
     creator: text('creator').notNull(),
-    /** The 60% bucket, minus whatever the memecoin stakers have peeled off. */
+    /** The 69% bucket, minus whatever the memecoin stakers have peeled off. */
     unclaimedNative: doublePrecision('unclaimed_native').notNull().default(0),
     unclaimedTokens: doublePrecision('unclaimed_tokens').notNull().default(0),
     stakerPoolNative: doublePrecision('staker_pool_native').notNull().default(0),
@@ -538,8 +541,8 @@ export const balances = pgTable(
     xp: bigint('xp', { mode: 'number' }).notNull().default(0),
     /** Stonk Pointz. */
     sp: bigint('sp', { mode: 'number' }).notNull().default(0),
-    /** Stonk Optionz — what crate `S` drops pay instead of `$STONKZ`. */
-    optionz: bigint('optionz', { mode: 'number' }).notNull().default(0),
+    /** `$STONKZ` reward credits — what crate `S` drops pay, claimable once the token is live on the net. */
+    stonkz: bigint('stonkz', { mode: 'number' }).notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.wallet, t.net] })],
@@ -551,7 +554,7 @@ export const balanceLedger = pgTable(
     id: bigserial('id', { mode: 'number' }).primaryKey(),
     wallet: text('wallet').notNull(),
     net: text('net').notNull(),
-    /** XP | SP | OPTIONZ */
+    /** XP | SP | STONKZ */
     asset: text('asset').notNull(),
     delta: bigint('delta', { mode: 'number' }).notNull(),
     balanceAfter: bigint('balance_after', { mode: 'number' }).notNull(),
@@ -662,7 +665,7 @@ export const crateOpens = pgTable(
     dropIndex: integer('drop_index').notNull(),
     rarity: text('rarity').notNull(),
     payloadJson: jsonb('payload_json').notNull(),
-    optionzAwarded: bigint('optionz_awarded', { mode: 'number' }).notNull().default(0),
+    stonkzAwarded: bigint('stonkz_awarded', { mode: 'number' }).notNull().default(0),
     itemKey: text('item_key'),
     xpAwarded: integer('xp_awarded').notNull().default(0),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
@@ -671,6 +674,20 @@ export const crateOpens = pgTable(
     uniqueIndex('crate_opens_commit_uq').on(t.wallet, t.net, t.rollCommit),
     index('crate_opens_recent_idx').on(t.wallet, t.net, t.id),
   ],
+);
+
+/** RWA positions won from crate `R` drops, per asset. Off-chain identity: a net reset keeps them. */
+export const rwaRewards = pgTable(
+  'rwa_rewards',
+  {
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    /** Catalog key from `RWA_ASSETS`, e.g. `PAXG`, `TSLA`. */
+    asset: text('asset').notNull(),
+    units: doublePrecision('units').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.net, t.wallet, t.asset] })],
 );
 
 /** Crate `I` drops land here as flags rather than as a balance. */

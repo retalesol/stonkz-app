@@ -71,7 +71,7 @@ describe('referrals', () => {
     expect(bal.xp).toBe(before.xp);
   });
 
-  it('claims pending referral fees as Optionz', async () => {
+  it('claims pending referral fees as $STONKZ credits', async () => {
     const referrer = await h.login('SOL', solanaWallet('ref-claim-a'));
     const trader = await h.login('SOL', solanaWallet('ref-claim-b'));
     const { code } = (await (
@@ -97,9 +97,15 @@ describe('referrals', () => {
       headers: authed(referrer.token),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { claimedNative: number; optionz: number };
+    const body = (await res.json()) as {
+      claimedNative: number;
+      stonkz: number;
+      stonkzTotal: number;
+    };
     expect(body.claimedNative).toBeCloseTo(0.15, 10);
-    expect(body.optionz).toBe(1500); // 0.15 * 10_000
+    expect(body.stonkz).toBe(1500); // 0.15 * REFERRAL_STONKZ_PER_NATIVE (10_000)
+    expect(body.stonkzTotal).toBe(1500);
+    expect((await h.deps.ledger.readBalance('SOL', referrer.address)).stonkz).toBe(1500);
 
     const snap = await h.deps.referrals.snapshot('SOL', referrer.address);
     expect(snap.pendingNative).toBe(0);

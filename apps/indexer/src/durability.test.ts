@@ -472,7 +472,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
 
     const vaultAfter = (await rig.db.db.select().from(creatorVaults))[0];
     expect(vaultAfter?.lifetimeNative).toBeCloseTo(
-      (vaultBefore?.lifetimeNative ?? 0) - lastFee * 0.6,
+      (vaultBefore?.lifetimeNative ?? 0) - lastFee * 0.69,
       9,
     );
     const protocolAfter = (
@@ -482,7 +482,7 @@ describe('reorg rollback: derived rows disappear with the event', () => {
         .where(and(eq(treasuries.net, 'SOL'), eq(treasuries.kind, 'protocol')))
     )[0];
     expect(protocolAfter?.nativeBalance).toBeCloseTo(
-      (protocolBefore?.nativeBalance ?? 0) - lastFee * 0.2,
+      (protocolBefore?.nativeBalance ?? 0) - lastFee * 0.15,
       9,
     );
   });

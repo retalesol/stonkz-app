@@ -72,11 +72,12 @@ it is already shipped, and removing the table would break parity with the
 visual oracle in `legacy/index.html`.
 
 What makes that acceptable right now is that the payout is **simulated**: the
-view says so in the same breath, and Optionz carry no redeemable value yet.
+view says so in the same breath, and crate rewards ($STONKZ credits and RWA
+positions) are not yet claimable on chain.
 Publishing a number nobody can independently verify is fine when the number
 buys nothing.
 
-It stops being acceptable the moment Optionz become airdrop-bearing, because
+It stops being acceptable the moment crate rewards become claimable, because
 then an unverifiable server-side roll decides real value. The rolls use an
 HMAC of a server secret ([`apps/api/src/game/crates.ts`](../apps/api/src/game/crates.ts)) —
 uniform and unpredictable to the client, but entirely trust-me: nothing lets a
@@ -84,7 +85,7 @@ user check that the roll they got was the roll the server committed to.
 
 So the real gate, in order:
 
-- [ ] Before Optionz are redeemable for anything: either ship commit-reveal
+- [ ] Before $STONKZ or RWA crate rewards are claimable: either ship commit-reveal
       VRF, or replace the exact percentages with rarity tiers carrying no
       numeric claim.
 - [ ] Never describe the current rolls as "provably fair", "verifiable", or

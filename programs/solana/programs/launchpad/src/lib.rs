@@ -9,10 +9,11 @@
 //! - Virtual reserves are `16/15·supply` and `grad_mcap_base/15`, with 4/5 of
 //!   supply sellable. Those three numbers make the curve close at exactly $69K
 //!   and make the graduation pool open at the curve's closing price.
-//! - Every fee splits 20% protocol / 10% `$STONKZ` ops / remainder to the
-//!   creator bucket. The remainder form is what makes the split exact.
+//! - Every fee splits 15% platform / 10% `$STONKZ` buyback (`ops`) / 6% RWA
+//!   crate fund (`burn`) / remainder (69%) to the creator bucket. The
+//!   remainder form is what makes the split exact.
 //! - The staker peel happens strictly inside the creator bucket, after the
-//!   other two shares have already left for their own vaults.
+//!   other three shares have already left for their own vaults.
 
 use anchor_lang::prelude::*;
 

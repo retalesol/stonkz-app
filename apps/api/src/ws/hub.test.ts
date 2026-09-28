@@ -286,7 +286,7 @@ describe('user channel', () => {
     client.send({ type: 'auth', token });
     await client.next();
 
-    // The whole point of the gate: XP, SP and Optionz are private.
+    // The whole point of the gate: XP, SP, $STONKZ credits and RWA are private.
     client.send({ type: 'subscribe', channel: CHANNELS.user('SOL', victim.address) });
     expect(await client.next()).toMatchObject({ type: 'error', error: 'forbidden' });
   });
@@ -347,7 +347,15 @@ describe('user channel', () => {
         name: 'BAG HOLDER',
       },
       { type: 'sp' as const, net: 'SOL' as const, wallet: address, delta: 5, total: 5 },
-      { type: 'optionz' as const, net: 'SOL' as const, wallet: address, delta: 250, total: 250 },
+      { type: 'stonkz' as const, net: 'SOL' as const, wallet: address, delta: 250, total: 250 },
+      {
+        type: 'rwa' as const,
+        net: 'SOL' as const,
+        wallet: address,
+        asset: 'PAXG',
+        units: 0.005,
+        total: 0.005,
+      },
       { type: 'achievement' as const, net: 'SOL' as const, wallet: address, key: 'first', xp: 100 },
       { type: 'streak' as const, net: 'SOL' as const, wallet: address, count: 3, mult: 1.2 },
       { type: 'crate_ready' as const, net: 'SOL' as const, wallet: address, tier: 'BRONZE' },

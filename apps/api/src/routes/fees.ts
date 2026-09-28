@@ -16,7 +16,7 @@ import { resolveTokenRow } from './token-resolve.js';
 /**
  * `GET /fees` + `POST /fees/claim/prepare` — plan step 92, creator vault
  * only. `creator_vaults` (Phase 1's schema) already separates the creator's
- * claimable balance from `treasuries` (`protocol` / `stonkz_ops`); neither
+ * claimable balance from `treasuries` (`protocol` / `buyback` / `rwa`); neither
  * route here ever reads or writes `treasuries` — that boundary lives at the
  * query level, not just in the contracts (`StonkzLaunchpad.claimCreatorFees`
  * has the identical separation: `docs`/`ASSUMPTIONS.md` and the Solidity

@@ -11,17 +11,20 @@ pub const BPS_DEN: u64 = 10_000;
 /* Fee split — see SPEC.md §2                                                  */
 /* -------------------------------------------------------------------------- */
 
-/// Protocol revenue share of the curve fee.
-pub const FEE_PROTOCOL_BPS: u64 = 2_000;
-/// Stonkz Game share of the curve fee: buys `$STONKZ` for the daily game pot.
+/// Platform revenue share of the curve fee (15%).
+pub const FEE_PROTOCOL_BPS: u64 = 1_500;
+/// `$STONKZ` buyback share of the curve fee (10%): the keeper buys `$STONKZ`;
+/// half of what it buys goes into crates, half is burned.
 /// (The vault keeps its historical `ops` name on chain and on the wire.)
 pub const FEE_OPS_BPS: u64 = 1_000;
-/// Buyback-and-burn share of the curve fee: buys `$STONKZ` and burns it.
-pub const FEE_BURN_BPS: u64 = 1_000;
+/// RWA crate fund share of the curve fee (6%): buys real-world assets for
+/// crates. (The former burn vault; it keeps its historical `burn` name on chain
+/// and on the wire.)
+pub const FEE_BURN_BPS: u64 = 600;
 /// The creator bucket is deliberately *not* a constant: it is the remainder,
 /// so the four shares sum to the fee exactly. This value exists only so tests
-/// and the IDL can assert the nominal 60%.
-pub const FEE_CREATOR_BUCKET_BPS_NOMINAL: u64 = 6_000;
+/// and the IDL can assert the nominal 69%.
+pub const FEE_CREATOR_BUCKET_BPS_NOMINAL: u64 = 6_900;
 
 /// Creator-set curve fee bounds, matching the launch slider's 1.0–5.0%.
 pub const MIN_FEE_BPS: u16 = 100;

@@ -663,7 +663,7 @@ export class Ingestor {
   /* ------------------------------------------------------------------ fees */
 
   private async onFeeAccrued(event: FeeAccruedEvent): Promise<void> {
-    // Stakers' cut comes out of the creator's 60%, never out of the other legs.
+    // Stakers' cut comes out of the creator's 69%, never out of the other legs.
     const creatorNet = event.creatorBucket - event.stakerShare;
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
@@ -705,13 +705,15 @@ export class Ingestor {
       event.protocol,
     );
     await this.creditVault(event, 'protocol', Math.max(0, event.protocol - referralCut));
-    await this.creditVault(event, 'stonkz_ops', event.stonkzOps);
-    await this.creditVault(event, 'burn', event.burn);
+    // On-chain leg names are historical: `stonkzOps` (the ops vault) funds the
+    // `$STONKZ` buyback, `burn` (the burn vault) funds the RWA crate fund.
+    await this.creditVault(event, 'buyback', event.stonkzOps);
+    await this.creditVault(event, 'rwa', event.burn);
   }
 
   private async creditVault(
     event: FeeAccruedEvent | TreasuryCreditEvent,
-    kind: 'protocol' | 'stonkz_ops' | 'burn',
+    kind: TreasuryCreditEvent['vault'],
     amount: number,
   ): Promise<void> {
     if (amount === 0) return;

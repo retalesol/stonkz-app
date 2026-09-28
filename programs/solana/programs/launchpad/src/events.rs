@@ -34,7 +34,7 @@ pub struct Trade {
     pub fee_total: u64,
     pub fee_protocol: u64,
     pub fee_ops: u64,
-    /// Buyback-and-burn leg (10%).
+    /// RWA crate fund leg (6%). Historical `burn` name.
     pub fee_burn: u64,
     pub fee_creator_bucket: u64,
     /// The slice of the creator bucket peeled off to this coin's stakers.
@@ -51,7 +51,7 @@ pub struct Trade {
     pub ts: i64,
 }
 
-/// Matches the indexer's `FeeAccrued` — the 20/10/70 view on its own, for
+/// Matches the indexer's `FeeAccrued` — the 15/10/6/69 view on its own, for
 /// reconciliation against `Trade`.
 #[event]
 pub struct FeeAccrued {

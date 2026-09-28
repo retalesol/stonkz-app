@@ -12,7 +12,7 @@ export const CHANNELS = {
   token: (sym: string) => `token:${sym.toUpperCase()}`,
   /** Global fill feed behind the ticker tape. */
   tape: () => 'tape',
-  /** Plan step 121 — xp, rank_up, sp, optionz, achievement, streak, crate_ready. */
+  /** Plan step 121 — xp, rank_up, sp, stonkz, rwa, achievement, streak, crate_ready. */
   user: (net: Net, wallet: string) => `user:${net}:${wallet}`,
   /** Plan step 151 — `GLOBAL` or a token ticker (no `$` prefix). Tagged with `net`, like every other lane. */
   chat: (net: Net, room: string) => `chat:${net}:${room.toUpperCase()}`,
@@ -45,7 +45,8 @@ export type UserEvent =
   | { type: 'xp'; net: Net; wallet: string; amount: number; total: number; reason: string }
   | { type: 'rank_up'; net: Net; wallet: string; rankIndex: number; name: string }
   | { type: 'sp'; net: Net; wallet: string; delta: number; total: number }
-  | { type: 'optionz'; net: Net; wallet: string; delta: number; total: number }
+  | { type: 'stonkz'; net: Net; wallet: string; delta: number; total: number }
+  | { type: 'rwa'; net: Net; wallet: string; asset: string; units: number; total: number }
   | { type: 'achievement'; net: Net; wallet: string; key: string; xp: number }
   | { type: 'streak'; net: Net; wallet: string; count: number; mult: number }
   | { type: 'crate_ready'; net: Net; wallet: string; tier: string };
