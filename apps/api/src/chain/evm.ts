@@ -1,6 +1,7 @@
 import type { EvmNet, NativeUnit, Net } from '@stonkz/shared';
 import { nativeUnit as unitForNet } from '@stonkz/shared';
-import { jsonRpc } from './jsonrpc.js';
+import { decodeErrorResult, type Hex } from 'viem';
+import { JsonRpcError, jsonRpc } from './jsonrpc.js';
 import {
   RpcError,
   type ChainRpc,
@@ -34,6 +35,42 @@ const BALANCE_OF_SELECTOR = '70a08231';
 function encodeBalanceOfCall(owner: string): string {
   const addr = owner.toLowerCase().replace(/^0x/, '').padStart(64, '0');
   return `0x${BALANCE_OF_SELECTOR}${addr}`;
+}
+
+/** Codes EVM clients use for "execution reverted" on `eth_call`. */
+const REVERT_CODES = new Set([3, -32000, -32015]);
+
+function isRevert(err: JsonRpcError): boolean {
+  return (
+    err.code === 3 || (REVERT_CODES.has(err.code) && /revert|insufficient funds/i.test(err.message))
+  );
+}
+
+const ERROR_STRING_ABI = [
+  { type: 'error', name: 'Error', inputs: [{ name: 'message', type: 'string' }] },
+] as const;
+
+/** `Error(string)` text when the node sent the payload; otherwise the node's own message. */
+function revertReason(err: JsonRpcError): string {
+  const data =
+    typeof err.data === 'string'
+      ? err.data
+      : err.data &&
+          typeof err.data === 'object' &&
+          typeof (err.data as { data?: unknown }).data === 'string'
+        ? (err.data as { data: string }).data
+        : null;
+  if (data && /^0x08c379a0/i.test(data)) {
+    try {
+      const decoded = decodeErrorResult({ abi: ERROR_STRING_ABI, data: data as Hex });
+      const msg = decoded.args?.[0];
+      if (typeof msg === 'string') return `execution reverted: ${msg}`;
+    } catch {
+      // Fall through to the node's message.
+    }
+  }
+  if (data && /^0x[0-9a-f]{8}/i.test(data)) return `${err.message} (${data.slice(0, 10)})`;
+  return err.message.replace(/^-?\d+\s+/, '');
 }
 
 export interface EvmRpcOptions {
@@ -113,6 +150,48 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
     const raw = await this.ethCall(token, data);
     if (!raw || raw === '0x') return 0n;
     return BigInt(raw);
+  }
+
+  /**
+   * `eth_call` as `from`, for `/launch/prepare`'s pre-sign preflight. A node
+   * reports a revert as a JSON-RPC error (code 3 / -32000 / -32015, with the
+   * ABI-encoded `Error(string)` in `data` on most clients); that is a result
+   * here, not an exception. Anything else — timeout, HTTP failure, a
+   * malformed response — still throws `RpcError` so the caller can decide
+   * not to block on a flaky RPC.
+   */
+  async simulateCall(tx: {
+    from: string;
+    to: string;
+    data: string;
+    value?: string;
+  }): Promise<{ ok: true } | { ok: false; reason: string }> {
+    try {
+      await jsonRpc<string>(
+        this.fetchImpl,
+        this.url,
+        'eth_call',
+        [
+          { from: tx.from, to: tx.to, data: tx.data, ...(tx.value ? { value: tx.value } : {}) },
+          'latest',
+        ],
+        { timeoutMs: this.timeoutMs },
+      );
+      this.onCall(true);
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof JsonRpcError && isRevert(err)) {
+        this.onCall(true);
+        return { ok: false, reason: revertReason(err) };
+      }
+      this.onCall(false);
+      throw new RpcError(
+        this.net,
+        'eth_call',
+        err instanceof Error ? err.message : String(err),
+        err,
+      );
+    }
   }
 
   /** `routes/launch.ts`'s `/launch/confirm` — status + calldata + logs, to verify and to find the `TokenCreated` address. */

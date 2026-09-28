@@ -212,3 +212,24 @@ pub const METEORA_POSITION_OWNER_OFFSET: usize = 8 + 32; // after lb_pair pubkey
 /// Byte offset of `PositionV2.lock_release_point` — verified in graduate tests.
 pub const METEORA_POSITION_LOCK_RELEASE_OFFSET: usize = 8 + 32 + 32 + 4 + 4 + 8;
 // disc + lb_pair + owner + liquidity_shares start… layout used only in verify clients.
+
+/* -------------------------------------------------------------------------- */
+/* Metaplex Token Metadata — written once by `create_token`                   */
+/* -------------------------------------------------------------------------- */
+
+/// Metaplex Token Metadata program. `create_token` pins it with `address =`,
+/// so the CPI can never be pointed at a look-alike program.
+pub const TOKEN_METADATA_PROGRAM_ID: Pubkey =
+    pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+/// Metaplex metadata PDA seed: `["metadata", program, mint]` under the
+/// Metaplex program.
+pub const SEED_METADATA: &[u8] = b"metadata";
+/// `CreateMetadataAccountV3` — Metaplex's native (non-Anchor) one-byte
+/// instruction tag.
+pub const METAPLEX_CREATE_METADATA_V3_IX: u8 = 33;
+/// Metaplex's own field limits (`MAX_NAME_LENGTH` / `MAX_SYMBOL_LENGTH` /
+/// `MAX_URI_LENGTH`). `create_token` enforces the same bounds up front so a
+/// bad launch fails with a launchpad error rather than a Metaplex one.
+pub const METAPLEX_MAX_NAME_LEN: usize = 32;
+pub const METAPLEX_MAX_SYMBOL_LEN: usize = 10;
+pub const METAPLEX_MAX_URI_LEN: usize = 200;

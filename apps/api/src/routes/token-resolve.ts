@@ -1,7 +1,8 @@
-import { and, desc, eq, gt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { tokens } from '../db/schema.js';
 import type { TokenRow } from './serialise.js';
+import { nameSkeleton } from './launch-validate.js';
 
 /** Soft squat window for reused tickers / display names on the same net. */
 export const LAUNCH_NAME_TICKER_COOLDOWN_MS = 5 * 60 * 1000;
@@ -44,6 +45,12 @@ export type LaunchCooldownHit = {
 /**
  * Returns a cooldown hit when the same net already has this ticker or
  * display name launched inside the last {@link LAUNCH_NAME_TICKER_COOLDOWN_MS}.
+ *
+ * Names are compared on their {@link nameSkeleton} — case, accents,
+ * separators, zero-width characters and common Cyrillic/Greek look-alikes
+ * folded away — so `Pepe` cannot be re-squatted as `PEPE!`, `Pe\u200Bpe` or
+ * `Реpe` inside the window. The window is minutes long, so the candidate set
+ * is small enough to compare in process rather than in SQL.
  */
 export async function findLaunchCooldown(
   db: Db,
@@ -53,16 +60,11 @@ export async function findLaunchCooldown(
   nowMs: number,
 ): Promise<LaunchCooldownHit | null> {
   const sym = ticker.trim().toUpperCase();
-  const nameNorm = name.trim().toLowerCase();
-  if (!sym && !nameNorm) return null;
+  const skeleton = nameSkeleton(name);
+  if (!sym && !skeleton) return null;
 
   const cutoff = new Date(nowMs - LAUNCH_NAME_TICKER_COOLDOWN_MS);
-  const clauses = [];
-  if (sym) clauses.push(eq(tokens.sym, sym));
-  if (nameNorm) clauses.push(sql`lower(${tokens.name}) = ${nameNorm}`);
-  if (!clauses.length) return null;
-
-  const [row] = await db
+  const rows = await db
     .select({
       sym: tokens.sym,
       name: tokens.name,
@@ -71,18 +73,23 @@ export async function findLaunchCooldown(
     .from(tokens)
     // `gt` maps the Date through the column's driver encoder; a raw `${cutoff}`
     // reaches postgres.js as Date#toString() and Postgres rejects it.
-    .where(and(eq(tokens.net, net), or(...clauses), gt(tokens.launchedAt, cutoff)))
+    .where(and(eq(tokens.net, net), gt(tokens.launchedAt, cutoff)))
     .orderBy(desc(tokens.launchedAt))
-    .limit(1);
+    .limit(500);
 
-  if (!row?.launchedAt) return null;
-  const launchedAt = row.launchedAt instanceof Date ? row.launchedAt : new Date(row.launchedAt);
-  const elapsed = nowMs - launchedAt.getTime();
-  if (elapsed >= LAUNCH_NAME_TICKER_COOLDOWN_MS) return null;
-  const kind: 'ticker' | 'name' = sym && row.sym.toUpperCase() === sym ? 'ticker' : 'name';
-  return {
-    kind,
-    launchedAt,
-    retryAfterMs: Math.max(0, LAUNCH_NAME_TICKER_COOLDOWN_MS - elapsed),
-  };
+  for (const row of rows) {
+    if (!row.launchedAt) continue;
+    const tickerHit = !!sym && row.sym.toUpperCase() === sym;
+    const nameHit = !!skeleton && nameSkeleton(row.name) === skeleton;
+    if (!tickerHit && !nameHit) continue;
+    const launchedAt = row.launchedAt instanceof Date ? row.launchedAt : new Date(row.launchedAt);
+    const elapsed = nowMs - launchedAt.getTime();
+    if (elapsed >= LAUNCH_NAME_TICKER_COOLDOWN_MS) continue;
+    return {
+      kind: tickerHit ? 'ticker' : 'name',
+      launchedAt,
+      retryAfterMs: Math.max(0, LAUNCH_NAME_TICKER_COOLDOWN_MS - elapsed),
+    };
+  }
+  return null;
 }

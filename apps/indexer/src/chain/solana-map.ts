@@ -66,15 +66,61 @@ function baseSymbolFor(baseMints: BaseMintRegistry, baseMint: string): string {
   return baseMints.symbolFor('SOL', baseMint) ?? baseMint.slice(0, 6);
 }
 
+/**
+ * The registry entry a `TokenCreated` implies. Shared by the mapper and by
+ * `SolanaChainSource`'s batch pre-pass, which learns every launch in a batch
+ * before mapping any fill (see `learnLaunches` there).
+ */
+export function launchMetaFromCreated(
+  record: Extract<SolanaLaunchpadEvent, { kind: 'TokenCreated' }>,
+): TokenMeta {
+  const baseDecimals = inferBaseDecimals(record.gradMcapBase, record.basePrice1e6);
+  if (baseDecimals === null) {
+    throw new Error(
+      `SOL TokenCreated ${record.ticker} (${record.mint}): base decimals are not recoverable from gradMcapBase=${record.gradMcapBase} basePrice1e6=${record.basePrice1e6}`,
+    );
+  }
+  return {
+    net: 'SOL',
+    mint: record.mint,
+    sym: record.ticker,
+    creator: record.creator,
+    baseMint: record.baseMint,
+    baseDecimals,
+    tokenDecimals: TOKEN_DECIMALS.SOL,
+    basePrice1e6: record.basePrice1e6,
+    supplyAtoms: record.supply,
+    tokensForSale: record.tokensForSale,
+    feeBps: record.feeBps,
+    circulatingAtoms: 0n,
+  };
+}
+
+/**
+ * The `Trade` a `FeeAccrued` at `index` belongs to: the nearest earlier
+ * `Trade` for the same mint. `emit_fill` emits the pair back to back, so in a
+ * transaction with several fills (two `buy` instructions, a bot buying two
+ * coins) each `FeeAccrued` must read its own fill's staker peel and cashback
+ * tokens — not whichever `Trade` happens to come first in the transaction.
+ */
+function tradeFor(
+  records: readonly SolanaLaunchpadEvent[],
+  index: number,
+  mint: string,
+): Extract<SolanaLaunchpadEvent, { kind: 'Trade' }> | undefined {
+  for (let i = index - 1; i >= 0; i--) {
+    const r = records[i];
+    if (r?.kind === 'Trade' && r.mint === mint) return r;
+  }
+  return undefined;
+}
+
 export async function mapSolanaTransaction(
   records: readonly SolanaLaunchpadEvent[],
   ctx: SolanaMapContext,
 ): Promise<ChainEvent[]> {
   const out: ChainEvent[] = [];
   const hasFeeAccrued = records.some((r) => r.kind === 'FeeAccrued');
-  const trade = records.find(
-    (r): r is Extract<SolanaLaunchpadEvent, { kind: 'Trade' }> => r.kind === 'Trade',
-  );
   const migrated = records.find(
     (r): r is Extract<SolanaLaunchpadEvent, { kind: 'LiquidityMigrated' }> =>
       r.kind === 'LiquidityMigrated',
@@ -94,31 +140,19 @@ export async function mapSolanaTransaction(
     return meta;
   };
 
-  for (const record of records) {
+  for (const [index, record] of records.entries()) {
     switch (record.kind) {
       case 'TokenCreated': {
-        const baseDecimals = inferBaseDecimals(record.gradMcapBase, record.basePrice1e6);
-        if (baseDecimals === null) {
-          throw new Error(
-            `SOL TokenCreated ${record.ticker} (${record.mint}): base decimals are not recoverable from gradMcapBase=${record.gradMcapBase} basePrice1e6=${record.basePrice1e6}`,
-          );
-        }
-        const tokenDecimals = TOKEN_DECIMALS.SOL;
-        const meta: TokenMeta = {
-          net: 'SOL',
-          mint: record.mint,
-          sym: record.ticker,
-          creator: record.creator,
-          baseMint: record.baseMint,
-          baseDecimals,
-          tokenDecimals,
-          basePrice1e6: record.basePrice1e6,
-          supplyAtoms: record.supply,
-          tokensForSale: record.tokensForSale,
-          feeBps: record.feeBps,
-          circulatingAtoms: 0n,
-        };
-        ctx.registry.remember(meta);
+        const launched = launchMetaFromCreated(record);
+        const { baseDecimals, tokenDecimals } = launched;
+        // The batch pre-pass may already have learned this launch, and a fill
+        // earlier in the same slot may already have moved its float; keep that
+        // rather than resetting circulating supply to zero.
+        const known = ctx.registry.peek('SOL', record.mint);
+        ctx.registry.remember({
+          ...launched,
+          circulatingAtoms: known?.circulatingAtoms ?? 0n,
+        });
 
         out.push({
           ...base,
@@ -126,12 +160,11 @@ export async function mapSolanaTransaction(
           logIndex: logIndex++,
           mint: record.mint,
           sym: record.ticker,
-          // The program's `TokenCreated` carries the ticker but not the
-          // display name or description — those live in the off-chain
-          // metadata `uri`. `/launch/confirm` writes the richer row first for
-          // any launch made through this stack, and `onTokenCreated` inserts
-          // with `onConflictDoNothing`, so this only shows up for a launch
-          // made outside it.
+          // The event carries the ticker, not the display name, description
+          // or image. `Ingestor.writeLaunchRows` keeps what `/launch/confirm`
+          // wrote, or reads the creator's `/launch/prepare` intent when the
+          // indexer gets there first; this placeholder only survives for a
+          // launch made outside this stack.
           name: record.ticker,
           descr: '',
           creator: record.creator,
@@ -211,6 +244,7 @@ export async function mapSolanaTransaction(
 
       case 'FeeAccrued': {
         const meta = await need(record.mint);
+        const trade = tradeFor(records, index, record.mint);
         const splitVersion = assertOnChainFeeSplit(
           `SOL FeeAccrued ${ctx.txSig}`,
           record.feeTotal,

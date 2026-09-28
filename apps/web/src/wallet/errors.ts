@@ -39,14 +39,28 @@ export type WalletErrorKind =
   | 'unknown';
 
 export class WalletError extends Error {
+  /**
+   * Set only when the failure happened *after* the wallet broadcast: the
+   * confirmation poll timed out or lost the RPC. The transaction may still
+   * land, so a caller that must not double-submit (a launch) can keep
+   * checking this signature instead of offering a blind retry.
+   */
+  signature?: string;
+
   constructor(
     readonly kind: WalletErrorKind,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; signature?: string },
   ) {
-    super(message, options);
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'WalletError';
+    if (options?.signature) this.signature = options.signature;
   }
+}
+
+/** The broadcast signature a post-broadcast failure carries, or null. */
+export function pendingSignature(err: unknown): string | null {
+  return err instanceof WalletError && err.signature ? err.signature : null;
 }
 
 /** True for the one failure that is a deliberate user action, not a fault. */

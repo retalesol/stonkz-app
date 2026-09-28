@@ -124,6 +124,26 @@ export function deriveMintPda(
   );
 }
 
+/**
+ * Metaplex Token Metadata program. `create_token` pins it with an `address =`
+ * constraint (`TOKEN_METADATA_PROGRAM_ID` in `constants.rs`) and CPIs
+ * `CreateMetadataAccountV3` into it.
+ */
+export const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+);
+
+/**
+ * Metaplex metadata PDA for `mint` — seeds `["metadata", metaplex, mint]`
+ * under the Metaplex program (`create_token`'s `metadata` account).
+ */
+export function deriveMetadataPda(mint: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('metadata'), TOKEN_METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    TOKEN_METADATA_PROGRAM_ID,
+  );
+}
+
 /** Per-wallet stake position PDA — seeds `[b"stake", mint, owner]`. */
 export function deriveStakePositionPda(
   programId: PublicKey,

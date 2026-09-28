@@ -17,7 +17,7 @@ import { burst } from '../fx/debris.js';
 import { punchIn } from '../fx/punch.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, clear, must, reflow } from '../lib/dom.js';
-import { DOT, ud } from '../lib/fmt.js';
+import { DOT, fmtCurve, ud } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
 import { COINS, histOf, type SimCoin } from '../state/coins.js';
@@ -79,8 +79,7 @@ function card(c: SimCoin): HTMLElement {
         </div>
         <p class="cdesc">${c.desc}</p>
         <div class="cstats">
-          <span class="cv" data-f="cv"
-            >${curve(c) >= 100 ? 'GRADUATED' : curve(c).toFixed(0) + '%'}</span
+          <span class="cv" data-f="cv">${curve(c) >= 100 ? 'GRADUATED' : fmtCurve(curve(c))}</span
           ><span data-f="hold">HOLDERS ${num(c.hold)}</span
           ><span data-f="rep">REPLIES ${num(c.reps)}</span
           ><span class="mc" data-f="mc">${usd(c.mc)}</span>
@@ -127,7 +126,7 @@ export function paint(c: SimCoin): void {
   if (hold) hold.textContent = 'HOLDERS ' + num(c.hold);
   const cv = curve(c);
   const cvEl = $('[data-f="cv"]', e);
-  if (cvEl) cvEl.textContent = cv >= 100 ? 'GRADUATED' : cv.toFixed(0) + '%';
+  if (cvEl) cvEl.textContent = cv >= 100 ? 'GRADUATED' : fmtCurve(cv);
   const bar = $('[data-f="bar"]', e);
   if (bar) bar.style.width = cv + '%';
 }
@@ -355,7 +354,7 @@ export function king(): void {
             ><span
               ><span class="lbl">24H</span
               ><b class="${ud(best.chg)}" id="k-chg">${pct(best.chg)}</b></span
-            ><span><span class="lbl">CURVE</span><b id="k-cv">${curve(best).toFixed(1)}%</b></span
+            ><span><span class="lbl">CURVE</span><b id="k-cv">${fmtCurve(curve(best))}</b></span
             ><span><span class="lbl">HOLDERS</span><b>${num(best.hold)}</b></span
             ><span><span class="lbl">CREATED</span><b>${ago(best.age)}</b></span>
           </div>
@@ -383,7 +382,7 @@ export function king(): void {
       ce.className = ud(best.chg);
     }
     const cv = $('#k-cv');
-    if (cv) cv.textContent = curve(best).toFixed(1) + '%';
+    if (cv) cv.textContent = fmtCurve(curve(best));
   }
 }
 

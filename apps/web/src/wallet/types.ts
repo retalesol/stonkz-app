@@ -84,6 +84,13 @@ export interface ConnectedWallet {
    */
   signTypedData?(typedData: unknown): Promise<string>;
 
+  /**
+   * Move the wallet onto this connection's chain now (EVM switch / add-chain
+   * prompt), ahead of any prepare call. Optional: Solana and WalletConnect
+   * sessions are pinned to their chain and have nothing to switch.
+   */
+  ensureChain?(): Promise<void>;
+
   /** Native balance in whole units (SOL / ETH), or null if it could not be read. */
   nativeBalance(): Promise<number | null>;
 

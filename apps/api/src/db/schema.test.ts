@@ -42,16 +42,18 @@ describe('migration history', () => {
       '0017_hot_path_indexes',
       // 0018 renames the vault kinds to buyback / rwa and adds rwa_rewards.
       '0018_fee_v2_rwa_crates',
+      // 0019 carries launch socials on the intent and indexes consumed signatures.
+      '0019_launch_intent_socials',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(19);
+    expect(second.skipped).toHaveLength(20);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
     expect(files.map((f) => f.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
     ]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });

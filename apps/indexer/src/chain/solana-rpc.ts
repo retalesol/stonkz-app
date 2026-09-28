@@ -35,6 +35,8 @@ export interface SolanaTransactionMeta {
   logMessages?: string[] | null;
   innerInstructions?:
     { index: number; instructions: { programIdIndex?: number; data?: string }[] }[] | null;
+  /** Keys a v0 message loaded from address lookup tables, in index order after the static keys. */
+  loadedAddresses?: { writable?: string[]; readonly?: string[] } | null;
 }
 
 export interface SolanaTransaction {

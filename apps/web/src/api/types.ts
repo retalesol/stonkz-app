@@ -9,6 +9,7 @@ import type {
   Wallet,
 } from '@stonkz/shared';
 import type { SimCoin } from '../state/coins.js';
+import type { LaunchHooks } from './launch-errors.js';
 
 /**
  * The adapter seam.
@@ -125,7 +126,8 @@ export interface StonkzApi {
   connect(net: Net): Promise<Wallet>;
   disconnect(): void;
 
-  launch(draft: LaunchDraft): Promise<SimCoin>;
+  /** `hooks.onPhase` reports prepare → sign → confirm (→ devbuy) for the dialog's button. */
+  launch(draft: LaunchDraft, hooks?: LaunchHooks): Promise<SimCoin>;
   /** What the claim modal has to offer, before the trader commits to anything. */
   claimableFees(): Promise<FeeVault[]>;
   claimCreatorFees(sym?: string): Promise<ClaimResult>;

@@ -671,3 +671,85 @@ fn degenerate_inputs_are_rejected_not_wrapped() {
     // An empty pool has no base to pay a seller with.
     assert!(sell_quote(&st, 300, 1_000_000).is_none());
 }
+
+/* -------------------------------------------------------------------------- */
+/* Metaplex metadata CPI — create_token                                        */
+/* -------------------------------------------------------------------------- */
+
+mod metaplex_cpi {
+    use crate::constants::*;
+    use crate::instructions::create_token::{MAX_NAME_LEN, MAX_URI_LEN};
+    use crate::metaplex::*;
+    use anchor_lang::prelude::Pubkey;
+    use anchor_lang::pubkey;
+
+    #[test]
+    fn metadata_pda_matches_the_mainnet_usdc_metadata_account() {
+        // USDC's real metadata account, derived independently by web3.js
+        // (`apps/api/src/router/solana-idl.test.ts` pins the same vector).
+        let usdc = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+        assert_eq!(
+            metadata_pda(&usdc).0,
+            pubkey!("5x38Kp4hvdomTCnCrAny4UtMUt5rQBdB6px2K1Ui45Wq")
+        );
+        assert_eq!(
+            TOKEN_METADATA_PROGRAM_ID,
+            pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
+        );
+    }
+
+    #[test]
+    fn create_metadata_v3_data_is_byte_exact() {
+        let d = create_metadata_v3_data("Doggo", "DOG", "ipfs://x");
+        let mut want: Vec<u8> = vec![33];
+        want.extend_from_slice(&[5, 0, 0, 0]);
+        want.extend_from_slice(b"Doggo");
+        want.extend_from_slice(&[3, 0, 0, 0]);
+        want.extend_from_slice(b"DOG");
+        want.extend_from_slice(&[8, 0, 0, 0]);
+        want.extend_from_slice(b"ipfs://x");
+        want.extend_from_slice(&[0, 0]); // seller_fee_basis_points = 0
+        want.extend_from_slice(&[0, 0, 0]); // creators, collection, uses = None
+        want.push(0); // is_mutable = false
+        want.push(0); // collection_details = None
+        assert_eq!(d, want);
+    }
+
+    #[test]
+    fn metadata_is_immutable_royalty_free_and_curve_owned() {
+        let mint = Pubkey::new_unique();
+        let curve = Pubkey::new_unique();
+        let creator = Pubkey::new_unique();
+        let (md, _) = metadata_pda(&mint);
+        let ix = create_metadata_v3_ix(md, mint, curve, creator, curve, "N", "T", "u");
+
+        assert_eq!(ix.program_id, TOKEN_METADATA_PROGRAM_ID);
+        let a = &ix.accounts;
+        assert_eq!(a.len(), 6);
+        assert!(a[0].pubkey == md && a[0].is_writable && !a[0].is_signer);
+        assert!(a[1].pubkey == mint && !a[1].is_writable && !a[1].is_signer);
+        // The curve PDA signs as mint authority and is the update authority.
+        assert!(a[2].pubkey == curve && a[2].is_signer && !a[2].is_writable);
+        assert!(a[3].pubkey == creator && a[3].is_signer && a[3].is_writable);
+        assert!(a[4].pubkey == curve && a[4].is_signer && !a[4].is_writable);
+        assert_eq!(a[5].pubkey, anchor_lang::system_program::ID);
+
+        // Tail: seller_fee 0, no creators/collection/uses, is_mutable false,
+        // no collection details.
+        assert_eq!(&ix.data[ix.data.len() - 7..], &[0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn launch_limits_are_metaplex_limits() {
+        assert_eq!(MAX_NAME_LEN, 32);
+        assert_eq!(METAPLEX_MAX_SYMBOL_LEN, 10);
+        assert_eq!(MAX_URI_LEN, 200);
+        // Longest legal launch still encodes: 1 + 3*4 + 32 + 10 + 200 + 7.
+        let d = create_metadata_v3_data(
+            &"n".repeat(MAX_NAME_LEN),
+            &"T".repeat(METAPLEX_MAX_SYMBOL_LEN),
+            &"u".repeat(MAX_URI_LEN),
+        );
+        assert_eq!(d.len(), 1 + 12 + 32 + 10 + 200 + 7);
+    }
+}

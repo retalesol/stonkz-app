@@ -81,6 +81,16 @@ export function cdText(ms: number): string {
         : ss + 's';
 }
 
+/**
+ * Bonding-curve fill, one format everywhere (board card, KOTH, token page):
+ * one decimal under 10% so an early 0.1% never reads as "0%" on one surface
+ * and "0.1%" on another, whole numbers above, capped at 100.
+ */
+export function fmtCurve(cv: number): string {
+  const v = Number.isFinite(cv) ? Math.min(100, Math.max(0, cv)) : 0;
+  return (v < 10 ? v.toFixed(1) : v.toFixed(0)) + '%';
+}
+
 /** RWA units (fractional shares / ounces): up to four decimals, trailing zeros trimmed. */
 export function fmtUnits(units: number): string {
   return String(Math.round(units * 10_000) / 10_000);

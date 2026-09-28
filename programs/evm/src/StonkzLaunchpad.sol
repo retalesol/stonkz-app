@@ -429,6 +429,11 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         require(!launchPaused, "launch paused");
         require(_validTicker(ticker), "ticker");
         require(feeBps >= CurveMath.MIN_FEE_BPS && feeBps <= CurveMath.MAX_FEE_BPS, "fee");
+        // Ceiling of the product's supply set (1e6/5e8/1e9/1e12). Unbounded,
+        // a direct caller could launch a coin whose `mcapBase` overflows
+        // mid-curve, so `graduate` always reverts and buyers' base is frozen
+        // once the curve completes. See test/LaunchSupply.t.sol.
+        require(supply <= CurveMath.MAX_SUPPLY, "supply");
         bytes32 key = keccak256(bytes(ticker));
         // Latest-by-ticker pointer only — duplicate tickers are allowed; the
         // app enforces a short cooldown, not a permanent bind.

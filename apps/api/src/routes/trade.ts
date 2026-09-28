@@ -452,6 +452,12 @@ export function tradeRoutes(): Hono<AppEnv> {
       // on Arc either way).
       const isDirectPair = trade.aggregatorQuote === null;
       const weth = deps.baseMints.mintFor(net, 'WETH');
+      // A native-ETH base is WETH on-chain (`StonkzLaunchpad` has no 0x0
+      // base, and `buyWithEth`/`sellForEth` require `base == weth`). A row
+      // that still carries the 0x0 native marker must route as WETH, not as
+      // an ERC-20 at the zero address.
+      const pairBaseMint =
+        weth && synced.baseMint.toLowerCase() === ZERO_EVM_ADDRESS ? weth : synced.baseMint;
       const routerAddr = evmRouterAddress(deps.env, net);
       const feeOverrides = evmV3FeeTierOverrides(deps.env, net);
       const evmChainId = evmChainIdFor(deps.env, net);
@@ -464,7 +470,7 @@ export function tradeRoutes(): Hono<AppEnv> {
             net,
             routerAddr,
             isDirectPair,
-            synced.baseMint,
+            pairBaseMint,
             synced.baseSymbol,
             feeOverrides,
             quotedFee,
@@ -478,7 +484,7 @@ export function tradeRoutes(): Hono<AppEnv> {
         const deadlineUnixSeconds = Math.floor(now / 1000) + 300;
         const routerAddress = routerAddr as Address;
         const token = synced.mint as Address;
-        const baseMint = synced.baseMint as Address;
+        const baseMint = pairBaseMint as Address;
         const wethAddress = weth as Address;
 
         if (side === 'buy') {

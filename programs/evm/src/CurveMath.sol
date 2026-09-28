@@ -26,6 +26,11 @@ library CurveMath {
     uint16 internal constant MIN_FEE_BPS = 100;
     uint16 internal constant MAX_FEE_BPS = 500;
 
+    /// Largest `supply` (whole tokens) `createToken` accepts: the top of the
+    /// product's supply set. Every overflow bound in this file is sized
+    /// against it (see `ACC_PRECISION`).
+    uint256 internal constant MAX_SUPPLY = 1e12;
+
     uint256 internal constant TOKENS_FOR_SALE_NUM = 4;
     uint256 internal constant TOKENS_FOR_SALE_DEN = 5;
     uint256 internal constant VIRTUAL_TOKEN_NUM = 16;

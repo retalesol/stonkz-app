@@ -5,7 +5,7 @@ import type { ChainEvent } from '../events.js';
 import { compareEvents } from '../events.js';
 import type { EventSource, PollResult } from '../source.js';
 import { cpiEventPayloads, programDataPayloads } from './anchor.js';
-import { mapSolanaTransaction } from './solana-map.js';
+import { launchMetaFromCreated, mapSolanaTransaction } from './solana-map.js';
 import { launchpadEventCoder, type SolanaLaunchpadEvent } from './solana-events.js';
 import type { SignatureInfo, SolanaIndexRpc, SolanaTransaction } from './solana-rpc.js';
 import type { TokenRegistry } from './registry.js';
@@ -129,27 +129,57 @@ export class SolanaChainSource implements EventSource {
     const { batch, coveredTo } = boundToSlotBoundary(collected, this.maxTxPerPass, toInclusive);
     const nativeUsdPrice = await this.readNativeUsd();
 
-    const events: ChainEvent[] = [];
+    // Decode every transaction first, then map. The two passes matter: order
+    // *within* a slot is not recoverable from `getSignaturesForAddress`, so a
+    // third-party buy landing in the launch's own slot can be mapped before
+    // the `create_token` transaction. Mapping that fill needs the launch's
+    // curve constants, and a miss throws `UnknownMintError` — which used to
+    // fail the pass, retry it, and finally dead-letter the whole range,
+    // launch included. Learning every launch in the batch up front removes
+    // the dependency on intra-slot order.
+    const decoded: {
+      info: SignatureInfo;
+      tx: SolanaTransaction;
+      records: SolanaLaunchpadEvent[];
+    }[] = [];
     for (const info of batch) {
       const tx = await this.opts.rpc.getTransaction(info.signature);
       if (!tx) {
-        // Finalized signature with no transaction body: only plausible if the
-        // node pruned it between the two calls. Louder than a debug line
-        // because it is a real (if rare) gap in a range we are about to
-        // advance past.
+        // A finalized signature with no transaction body. In practice this is
+        // a load-balanced RPC answering the two calls from nodes at different
+        // heights, not a real hole — and skipping it would advance the cursor
+        // past a launch or fill for good. Fail the pass so it is retried (and,
+        // if it never resolves, dead-lettered with a replayable range).
         this.opts.logger.warn('solana transaction vanished between calls', {
           net: 'SOL',
           signature: info.signature,
           slot: info.slot,
         });
-        continue;
+        throw new Error(
+          `SOL getTransaction(${info.signature}) returned null for a finalized signature at slot ${info.slot}`,
+        );
       }
       // A reverted transaction changed no state, so it materialises nothing.
       if (tx.meta?.err != null || info.err != null) continue;
 
       const records = this.decodeTransaction(tx);
       if (records.length === 0) continue;
+      decoded.push({ info, tx, records });
+    }
 
+    for (const { records } of decoded) {
+      for (const record of records) {
+        if (record.kind !== 'TokenCreated') continue;
+        const known = this.opts.registry.peek('SOL', record.mint);
+        this.opts.registry.remember({
+          ...launchMetaFromCreated(record),
+          circulatingAtoms: known?.circulatingAtoms ?? 0n,
+        });
+      }
+    }
+
+    const events: ChainEvent[] = [];
+    for (const { info, tx, records } of decoded) {
       events.push(
         ...(await mapSolanaTransaction(records, {
           txSig: info.signature,
@@ -190,11 +220,16 @@ export class SolanaChainSource implements EventSource {
 
     const inner = tx.meta?.innerInstructions;
     if (inner && inner.length > 0) {
-      const keys = tx.transaction.message.accountKeys.map((k) =>
-        typeof k === 'string' ? k : k.pubkey,
-      );
+      // `programIdIndex` indexes the *full* key list of a versioned message:
+      // static keys, then lookup-table writable, then lookup-table readonly.
+      const loaded = tx.meta?.loadedAddresses;
+      const keys = [
+        ...tx.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey)),
+        ...(loaded?.writable ?? []),
+        ...(loaded?.readonly ?? []),
+      ];
       for (const bytes of cpiEventPayloads(inner, keys, this.opts.programId)) {
-        const decoded = launchpadEventCoder.decodeBytes(bytes);
+        const decoded = launchpadEventCoder.decodeCpiBytes(bytes);
         if (decoded) out.push(decoded.data);
       }
     }

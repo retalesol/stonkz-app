@@ -6,6 +6,7 @@ import {
   type NativeTransferSource,
   type NativeTransferVerification,
   type PriceOracle,
+  type SimulationResult,
 } from './types.js';
 
 /**
@@ -27,7 +28,14 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   private slot: number;
   private readonly balances = new Map<string, number>();
   private readonly contracts = new Map<string, FakeEthCallHandler>();
-  private readonly solanaMessages = new Map<string, string>();
+  private readonly solanaMessages = new Map<string, { messageBase64: string; failed: boolean }>();
+  private readonly accounts = new Map<string, string>();
+  private simulation: (payload: {
+    from?: string;
+    to?: string;
+    data: string;
+  }) => SimulationResult | Promise<SimulationResult> = () => ({ ok: true });
+  private simulationFailing = false;
   private readonly evmReceipts = new Map<string, FakeEvmReceipt>();
   private readonly transfers = new Map<string, NativeTransferVerification>();
   private failing = false;
@@ -67,8 +75,52 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   }
 
   /** `routes/launch.test.ts` seeds what a submitted, confirmed Solana signature "contains". */
-  setSolanaTransactionMessage(signature: string, messageBase64: string): void {
-    this.solanaMessages.set(signature, messageBase64);
+  setSolanaTransactionMessage(
+    signature: string,
+    messageBase64: string,
+    opts: { failed?: boolean } = {},
+  ): void {
+    this.solanaMessages.set(signature, { messageBase64, failed: opts.failed ?? false });
+  }
+
+  /** Raw account bytes (base64) `getAccountDataBase64` serves — e.g. a Solana BaseOracle. */
+  setAccountData(address: string, base64: string | null): void {
+    if (base64 === null) this.accounts.delete(address);
+    else this.accounts.set(address, base64);
+  }
+
+  /**
+   * What `/launch/prepare`'s preflight sees: a fixed result or a function of
+   * the simulated payload (the calldata on EVM, the wire tx on Solana).
+   */
+  setSimulation(
+    result:
+      | SimulationResult
+      | ((payload: { from?: string; to?: string; data: string }) => SimulationResult),
+  ): void {
+    this.simulation = typeof result === 'function' ? result : () => result;
+  }
+
+  /** Makes only the simulation call fail at the transport level (timeout, 5xx). */
+  setSimulationFailing(failing: boolean): void {
+    this.simulationFailing = failing;
+  }
+
+  async simulateCall(tx: { from: string; to: string; data: string }): Promise<SimulationResult> {
+    if (this.failing || this.simulationFailing)
+      throw new RpcError(this.net, 'eth_call', 'simulated outage');
+    return this.simulation(tx);
+  }
+
+  async simulateTransaction(base64Tx: string): Promise<SimulationResult> {
+    if (this.failing || this.simulationFailing)
+      throw new RpcError(this.net, 'simulateTransaction', 'simulated outage');
+    return this.simulation({ data: base64Tx });
+  }
+
+  async getAccountDataBase64(address: string): Promise<string | null> {
+    if (this.failing) throw new RpcError(this.net, 'getAccountInfo', 'simulated outage');
+    return this.accounts.get(address) ?? null;
   }
 
   /** `routes/launch.test.ts` seeds what an EVM tx hash "receipted" as. */
@@ -112,6 +164,13 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   }
 
   async getTransactionMessageBase64(signature: string): Promise<string | null> {
+    if (this.failing) throw new RpcError(this.net, 'getTransaction', 'simulated outage');
+    return this.solanaMessages.get(signature)?.messageBase64 ?? null;
+  }
+
+  async getTransactionOutcome(
+    signature: string,
+  ): Promise<{ messageBase64: string; failed: boolean } | null> {
     if (this.failing) throw new RpcError(this.net, 'getTransaction', 'simulated outage');
     return this.solanaMessages.get(signature) ?? null;
   }

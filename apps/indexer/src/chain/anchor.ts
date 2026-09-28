@@ -102,6 +102,19 @@ export class AnchorEventCoder<T> {
     reader.assertExhausted(layout.name);
     return { name: layout.name, data };
   }
+
+  /**
+   * Decodes an `emit_cpi!` inner-instruction payload, which **must** carry
+   * `EVENT_IX_TAG`. Without the tag the bytes are an ordinary instruction to
+   * the program, not an event: `decodeBytes` treats the tag as optional (it
+   * also serves `Program data:` lines), so feeding it raw inner-instruction
+   * data would let any instruction whose first eight bytes happen to equal an
+   * event discriminator be read as that event.
+   */
+  decodeCpiBytes(bytes: Buffer): DecodedAnchorEvent<T> | null {
+    if (bytes.length < 16 || !bytes.subarray(0, 8).equals(EVENT_IX_TAG)) return null;
+    return this.decodeBytes(bytes);
+  }
 }
 
 const INVOKE_LINE = /^Program (\S+) invoke \[(\d+)\]$/;
@@ -153,6 +166,12 @@ export function programDataPayloads(logs: readonly string[], programId: string):
 /**
  * `emit_cpi!` payloads: the instruction data of every inner instruction whose
  * program is `programId`, base58 as the JSON-encoded RPC returns it.
+ *
+ * `accountKeys` must be the full key list — static keys followed by
+ * `meta.loadedAddresses.writable` then `.readonly` — or an instruction whose
+ * program id was resolved through a lookup table is missed. Callers decode
+ * each payload with `AnchorEventCoder.decodeCpiBytes`, which requires the
+ * `EVENT_IX_TAG`; this function only establishes which program ran it.
  */
 export function cpiEventPayloads(
   innerInstructions: readonly {

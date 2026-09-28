@@ -57,7 +57,8 @@ import {
 import { applySettings, saveSettings, settingsPayload } from '../state/settings.js';
 import { fillCandleGaps, mergeFillIntoSeries } from '../lib/candles.js';
 import { NATIVE_PRICE, WALLET, selectNet, nativeUsd } from '../state/wallet.js';
-import { activeWallet } from '../wallet/index.js';
+import { activeWallet, isRejection, pendingSignature, requireWallet } from '../wallet/index.js';
+import { LaunchPendingError, LaunchedDevBuyError, type LaunchHooks } from './launch-errors.js';
 import { fetchRewards, openCrateLive, type LiveRewardsSnapshot } from './social.js';
 import { simApi } from './sim.js';
 import type {
@@ -1319,8 +1320,61 @@ async function liveTrade(quote: Quote): Promise<Fill> {
 /* Launch — `POST /launch/prepare` + `/launch/confirm`. Plan step 97.         */
 /* -------------------------------------------------------------------------- */
 
-async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
+/** Post-broadcast `/launch/confirm` failures that mean "nothing was created". */
+const LAUNCH_DEFINITIVE_FAILURES = new Set(['transaction_reverted', 'transaction_failed']);
+
+/**
+ * `/launch/confirm`, retried until the API has seen the transaction.
+ *
+ * By the time this runs the create transaction has been broadcast, so the
+ * only safe outcomes are a confirmed row, a definitive on-chain revert, or a
+ * `LaunchPendingError` that tells the dialog *not* to offer a relaunch —
+ * a blind retry here is how one click becomes two coins.
+ */
+async function confirmLaunch(
+  net: Net,
+  intentId: string,
+  signature: string,
+): Promise<ApiLaunchConfirm> {
+  const deadline = Date.now() + 60_000;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postJson<ApiLaunchConfirm>('/launch/confirm', { intentId, signature }, net);
+    } catch (err) {
+      const apiErr = err instanceof LiveApiError ? err : null;
+      if (apiErr && LAUNCH_DEFINITIVE_FAILURES.has(apiErr.code)) throw err;
+      if (apiErr?.code === 'already_confirmed') {
+        throw new LaunchPendingError(net, signature, 'this launch is already recorded');
+      }
+      // The wallet confirms against its own RPC and the API reads from
+      // another, so a 404 usually means "a block behind"; a dropped fetch, a
+      // 5xx or a rate limit are just as transient.
+      const transient =
+        apiErr === null
+          ? err instanceof TypeError
+          : apiErr.code === 'transaction_not_found' ||
+            apiErr.code === 'rate_limited' ||
+            apiErr.status >= 500;
+      if (!transient || attempt >= 7 || Date.now() > deadline) {
+        throw new LaunchPendingError(
+          net,
+          signature,
+          err instanceof Error && err.message ? err.message : 'not confirmed yet',
+        );
+      }
+      await new Promise((r) => setTimeout(r, Math.min(8_000, 1_500 * (attempt + 1))));
+    }
+  }
+}
+
+async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<SimCoin> {
   const net = WALLET.net;
+  // Fail here rather than at signing: a successful `/launch/prepare` counts
+  // against the per-wallet launch quota, so a missing wallet or a MetaMask
+  // sitting on the wrong chain must surface before the prepare, not after.
+  const wallet = requireWallet(net);
+  await wallet.ensureChain?.();
+  hooks.onPhase?.('prepare');
   const prep = await postJson<ApiLaunchPrepare>(
     '/launch/prepare',
     {
@@ -1333,39 +1387,37 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
       cashback: draft.cashback,
       baseSymbol: draft.base,
       devBuyNative: net === 'SOL' ? draft.buy : 0,
+      // Token socials, under the `tokens` column names. `/launch/prepare`
+      // does not read them yet (they are ignored, not rejected); sending them
+      // now means they persist the moment the route does.
+      ...(draft.x ? { xHandle: draft.x.replace(/^@/, '') } : {}),
+      ...(draft.web ? { website: draft.web } : {}),
+      ...(draft.tg ? { telegram: draft.tg } : {}),
     },
     net,
   );
   // Solana's create and Robinhood's `createToken` calldata are each a
   // single signable payload — one signature, inline, the same as an atomic
   // trade. Only a Robinhood dev buy (below) is ever a second one.
-  //
-  // `/launch/confirm` looks this signature up *on chain* to decode the mint
-  // out of the creation log, so it is the one endpoint that could never have
-  // worked against the old fabricated signature at all.
-  const { signature } = await signAndConfirm(
-    net,
-    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
-  );
-  // The wallet confirms against its own RPC, the API reads from another; a
-  // 404 here usually means the API is a block behind, not that the launch
-  // failed. Retrying keeps a minted token from going unrecorded (which would
-  // also let the same ticker mint twice, since the cooldown never saw it).
-  let confirmed: ApiLaunchConfirm | null = null;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      confirmed = await postJson<ApiLaunchConfirm>(
-        '/launch/confirm',
-        { intentId: prep.intentId, signature },
-        net,
-      );
-      break;
-    } catch (err) {
-      const notFound = err instanceof LiveApiError && err.code === 'transaction_not_found';
-      if (!notFound || attempt >= 6) throw err;
-      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-    }
+  hooks.onPhase?.('sign');
+  let signature: string;
+  try {
+    ({ signature } = await signAndConfirm(
+      net,
+      prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+    ));
+  } catch (err) {
+    // Broadcast, but the wallet's own confirmation poll gave up. It may
+    // still land: let `/launch/confirm` look it up on chain instead of
+    // reporting a failure the user would answer by launching again.
+    const pending = pendingSignature(err);
+    if (!pending) throw err;
+    signature = pending;
   }
+  // `/launch/confirm` looks this signature up *on chain* to decode the mint
+  // out of the creation log.
+  hooks.onPhase?.('confirm');
+  const confirmed = await confirmLaunch(net, prep.intentId, signature);
 
   const mc = confirmed.mc;
   const c: SimCoin = {
@@ -1408,18 +1460,27 @@ async function liveLaunch(draft: LaunchDraft): Promise<SimCoin> {
   // header comment), so a dev buy there is necessarily a *second*,
   // independent `/trade/prepare` call, not part of the launch transaction.
   if (isEvm(net) && draft.buy > 0) {
+    hooks.onPhase?.('devbuy');
     try {
       const quote = await fetchQuote(net, c.sym, 'buy', draft.buy);
       await liveTrade(quote);
     } catch (err) {
       // The token is live even if the follow-up dev buy failed or was
-      // cancelled — surface it as its own toast-worthy failure, not a
-      // reason to unwind a launch that already confirmed on-chain.
+      // cancelled — surface it as its own outcome, never as a reason to
+      // unwind (or re-run) a launch that already confirmed on-chain.
       c.hold = 0;
-      throw new LiveApiError(
-        err instanceof LiveApiError ? err.code : 'dev_buy_failed',
-        `${c.sym} launched, but the dev buy did not go through: ${err instanceof Error ? err.message : String(err)}`,
-        0,
+      unlock('deploy');
+      emit('coins');
+      const reason = isRejection(err)
+        ? 'it was cancelled in the wallet'
+        : err instanceof Error && err.message
+          ? err.message
+          : String(err);
+      throw new LaunchedDevBuyError(
+        c.sym,
+        c.mint,
+        `${c.sym} launched, but the dev buy did not go through: ${reason}`,
+        { cause: err },
       );
     }
   } else if (draft.buy > 0) {
@@ -1964,8 +2025,8 @@ export const liveApi: StonkzApi = {
     // Back to the guest board: Solana + Robinhood together.
     void reloadBoard('ALL');
   },
-  async launch(draft: LaunchDraft): Promise<SimCoin> {
-    return liveLaunch(draft);
+  async launch(draft: LaunchDraft, hooks?: LaunchHooks): Promise<SimCoin> {
+    return liveLaunch(draft, hooks);
   },
   async claimableFees(): Promise<FeeVault[]> {
     return liveClaimableFees();

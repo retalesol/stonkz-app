@@ -27,6 +27,7 @@ import {
   USDC_MINT,
   WSOL_MINT,
   emitCpiPayload,
+  emitPayload,
   encodeFeeAccrued,
   encodeTokenCreated,
   encodeTrade,
@@ -535,5 +536,172 @@ describe('SolanaChainSource — signature paging and the cursor window', () => {
     const { source, rpc } = makeSource(busy(3), { finalizedSlot: 1_012 });
     rpc.failNext = new Error('429 too many requests');
     await expect(source.pollRange(1_009, 1_012)).rejects.toThrow(/429/);
+  });
+});
+
+describe('SolanaChainSource — the launch path end to end', () => {
+  /** A fill with a chosen staker peel, so two fills in one tx are distinguishable. */
+  function fillWithStakers(stakers: bigint): string[] {
+    return fillLogs().map((line, i) =>
+      i === 2
+        ? programDataLine(
+            'Trade',
+            encodeTrade({
+              mint: DOGGO_MINT,
+              trader: TRADER,
+              isBuy: true,
+              baseAmount: FILL.grossBase,
+              tokenAmount: FILL.tokensOut,
+              effFeeBps: 250,
+              inCashback: false,
+              feeTotal: FILL.fee,
+              feeProtocol: CHAIN_LEGS.protocol,
+              feeOps: CHAIN_LEGS.stonkzOps,
+              feeBurn: CHAIN_LEGS.burn,
+              feeCreatorBucket: CHAIN_LEGS.creatorBucket,
+              feeStakers: stakers,
+              feeCreator: CHAIN_LEGS.creatorBucket - stakers,
+              cashbackTokens: 0n,
+              virtualBase: AFTER.virtualBase,
+              virtualToken: AFTER.virtualToken,
+              realBase: AFTER.realBase,
+              realToken: AFTER.realToken,
+              circulating: FILL.tokensOut,
+              ts: 1_757_000_100n,
+            }),
+          )
+        : line,
+    );
+  }
+
+  it('maps a sniper buy that sorts ahead of the launch inside the same slot', async () => {
+    // Same slot, and the snipe's signature sorts first. Intra-slot order is
+    // not recoverable from getSignaturesForAddress, so this used to throw
+    // UnknownMintError, retry, and dead-letter the range — launch included.
+    const { source } = makeSource([
+      { signature: 'zzLaunch', slot: 1_100, blockTimeSecs: 1_757_000_000, logs: [launchLog()] },
+      { signature: 'aaSnipe', slot: 1_100, blockTimeSecs: 1_757_000_000, logs: fillLogs() },
+    ]);
+    const { events } = await source.pollRange(1_000, 1_200);
+    // And the launch is ingested before the fill of its own token.
+    expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
+    const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
+    expect(trade?.sym).toBe('DOGGO');
+    expect(trade?.usdValue).toBeCloseTo(1.5 * 214.08, 6);
+  });
+
+  it('maps a same-transaction dev buy as a v2-split Trade + FeeAccrued', async () => {
+    const devBuy = fillLogs();
+    const { source } = makeSource([
+      {
+        signature: 'sigLaunchWithDevBuy',
+        slot: 1_100,
+        blockTimeSecs: 1_757_000_000,
+        logs: [
+          `Program ${PROGRAM_ID} invoke [1]`,
+          'Program log: Instruction: CreateToken',
+          launchLog(),
+          `Program ${PROGRAM_ID} success`,
+          ...devBuy,
+          `Program ${PROGRAM_ID} success`,
+        ],
+      },
+    ]);
+    const { events } = await source.pollRange(1_000, 1_200);
+    expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
+    const fee = events.find((e) => e.kind === 'FeeAccrued');
+    if (fee?.kind !== 'FeeAccrued') throw new Error('expected FeeAccrued');
+    expect(fee.protocol / fee.feeAmount).toBeCloseTo(0.15, 12);
+    expect(fee.creatorBucket / fee.feeAmount).toBeCloseTo(0.69, 12);
+    expect(fee.stonkzOps / fee.feeAmount).toBeCloseTo(0.1, 12);
+    expect(fee.burn / fee.feeAmount).toBeCloseTo(0.06, 12);
+    for (const event of events) expect(() => assertEventIntegrity(event)).not.toThrow();
+  });
+
+  it("pairs each FeeAccrued with its own fill's staker peel in a multi-fill transaction", async () => {
+    const first = fillWithStakers(CHAIN_LEGS.creatorBucket / 5n);
+    const second = fillWithStakers(0n);
+    const { source } = makeSource([
+      { signature: 'sigLaunch', slot: 1_100, blockTimeSecs: 1_757_000_000, logs: [launchLog()] },
+      {
+        signature: 'sigTwoFills',
+        slot: 1_150,
+        blockTimeSecs: 1_757_000_100,
+        logs: [
+          ...first,
+          `Program ${PROGRAM_ID} success`,
+          ...second,
+          `Program ${PROGRAM_ID} success`,
+        ],
+      },
+    ]);
+    const { events } = await source.pollRange(1_000, 1_200);
+    const fees = events.filter((e) => e.kind === 'FeeAccrued');
+    expect(fees).toHaveLength(2);
+    if (fees[0]?.kind !== 'FeeAccrued' || fees[1]?.kind !== 'FeeAccrued') throw new Error('fees');
+    expect(fees[0].stakerShare).toBeCloseTo(fees[0].creatorBucket / 5, 9);
+    // Used to read the first fill's peel again.
+    expect(fees[1].stakerShare).toBe(0);
+  });
+
+  it('fails the pass rather than skipping a finalized signature whose body is missing', async () => {
+    const { source, rpc } = makeSource([
+      { signature: 'sigLaunch', slot: 1_100, blockTimeSecs: 1_757_000_000, logs: [launchLog()] },
+    ]);
+    rpc.getTransaction = async () => null;
+    await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(/returned null/);
+  });
+
+  it('ignores an inner instruction to the program that lacks the emit_cpi! tag', async () => {
+    const body = Buffer.from(launchLog().split('Program data: ')[1] as string, 'base64').subarray(
+      8,
+    );
+    const { source } = makeSource([
+      {
+        signature: 'sigUntagged',
+        slot: 1_100,
+        blockTimeSecs: 1_757_000_000,
+        logs: ['Program log: something else'],
+        // Discriminator + body, no EVENT_IX_TAG: an ordinary instruction, not an event.
+        cpiData: [emitPayload('TokenCreated', body)],
+        accountKeys: [PROGRAM_ID],
+      },
+    ]);
+    const { events } = await source.pollRange(1_000, 1_200);
+    expect(events).toHaveLength(0);
+  });
+
+  it('resolves an emit_cpi! program id loaded through an address lookup table', async () => {
+    const body = Buffer.from(launchLog().split('Program data: ')[1] as string, 'base64').subarray(
+      8,
+    );
+    const { source, rpc } = makeSource([
+      {
+        signature: 'sigAlt',
+        slot: 1_100,
+        blockTimeSecs: 1_757_000_000,
+        logs: ['Program log: something else'],
+        cpiData: [emitCpiPayload('TokenCreated', body)],
+      },
+    ]);
+    const original = rpc.getTransaction.bind(rpc);
+    rpc.getTransaction = async (sig) => {
+      const tx = await original(sig);
+      if (!tx?.meta) return tx;
+      return {
+        ...tx,
+        meta: {
+          ...tx.meta,
+          innerInstructions: (tx.meta.innerInstructions ?? []).map((g) => ({
+            ...g,
+            instructions: g.instructions.map((ix) => ({ ...ix, programIdIndex: 2 })),
+          })),
+          loadedAddresses: { writable: [TRADER], readonly: [PROGRAM_ID] },
+        },
+        transaction: { message: { accountKeys: [CREATOR] } },
+      };
+    };
+    const { events } = await source.pollRange(1_000, 1_200);
+    expect(events.map((e) => e.kind)).toEqual(['TokenCreated']);
   });
 });

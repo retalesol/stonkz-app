@@ -52,6 +52,7 @@ export class EvmChainSource implements EventSource {
   readonly net: Net;
 
   private readonly addresses: readonly string[];
+  private readonly emitters: LogEmitters;
   private readonly confirmations: number;
   private readonly logWindow: number;
 
@@ -63,10 +64,14 @@ export class EvmChainSource implements EventSource {
     // direct curve call, and filtering on the zero address would make the
     // provider return the (many) logs of accounts that burn to it.
     const router = opts.routerAddress.toLowerCase();
-    this.addresses =
-      router && !/^0x0{40}$/.test(router)
-        ? [opts.launchpadAddress.toLowerCase(), router]
-        : [opts.launchpadAddress.toLowerCase()];
+    const hasRouter = router !== '' && !/^0x0{40}$/.test(router);
+    this.addresses = hasRouter
+      ? [opts.launchpadAddress.toLowerCase(), router]
+      : [opts.launchpadAddress.toLowerCase()];
+    this.emitters = {
+      launchpad: opts.launchpadAddress.toLowerCase(),
+      router: hasRouter ? router : null,
+    };
   }
 
   async head(): Promise<number> {
@@ -97,14 +102,11 @@ export class EvmChainSource implements EventSource {
     }
 
     const from = fromExclusive + 1;
-    const to = Math.min(toInclusive, from + this.logWindow - 1);
-
-    const raw = await this.opts.rpc.getLogs({
-      fromBlock: from,
-      toBlock: to,
-      addresses: this.addresses,
-    });
-    const groups = groupByTransaction(raw, this.opts.logger);
+    const { raw, to } = await this.getLogsAdaptive(
+      from,
+      Math.min(toInclusive, from + this.logWindow - 1),
+    );
+    const groups = groupByTransaction(raw, this.opts.logger, this.emitters, this.net);
     if (groups.length === 0) return { events: [], coveredTo: to };
 
     const nativeUsdPrice = await this.readNativeUsd();
@@ -130,20 +132,67 @@ export class EvmChainSource implements EventSource {
   }
 
   /**
+   * `eth_getLogs` for `[from, to]`, halving the window when the provider
+   * refuses it for size.
+   *
+   * Providers cap both the block span and the result count of one call, and
+   * the result cap is data-dependent: a window that is fine today fails the
+   * day a launch goes viral. Retrying the *same* window then fails
+   * deterministically until the runner dead-letters it — skipping every event
+   * in it, launches included. Halving until it fits turns that into a slower
+   * pass that still makes progress; `coveredTo` reports the narrower window,
+   * so the cursor only moves over what was read. Errors that are not about
+   * size (timeouts, 5xx) are rethrown unchanged for the runner's retry path.
+   */
+  private async getLogsAdaptive(
+    from: number,
+    initialTo: number,
+  ): Promise<{ raw: RawEvmLog[]; to: number }> {
+    let to = initialTo;
+    for (;;) {
+      try {
+        const raw = await this.opts.rpc.getLogs({
+          fromBlock: from,
+          toBlock: to,
+          addresses: this.addresses,
+        });
+        return { raw, to };
+      } catch (err) {
+        if (to <= from || !isLogWindowTooLarge(err)) throw err;
+        const narrower = from + Math.floor((to - from) / 2);
+        this.opts.logger.warn('getLogs window refused; narrowing', {
+          net: this.net,
+          from,
+          to,
+          narrower,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        to = narrower;
+      }
+    }
+  }
+
+  /**
    * `eth_getLogs` results carry no timestamp, so a block header is fetched per
-   * distinct block in the pass and cached for its duration. A missing header
-   * yields 0, which `Ingestor` treats as "unknown" rather than 1970.
+   * distinct block in the pass and cached for its duration.
+   *
+   * A block that has logs but no header is an RPC inconsistency (a
+   * load-balanced provider answering from a node that is behind), not a fact
+   * about the chain — the block is already `confirmations` deep. It fails the
+   * pass so it is retried: materialising the events with a zero timestamp
+   * stamps the launch, its trades and their candles at 1970.
    */
   private async blockTimeMs(blockNumber: number, cache: Map<number, number>): Promise<number> {
     const hit = cache.get(blockNumber);
     if (hit !== undefined) return hit;
     const block = await this.opts.rpc.getBlock(blockNumber);
     const ts = block?.timestampMs ?? 0;
-    if (ts === 0) {
-      this.opts.logger.warn('rh block header missing; event will carry no block time', {
-        net: 'RH',
+    if (!(ts > 0)) {
+      this.opts.logger.warn('evm block header missing for a block with logs', {
+        net: this.net,
         blockNumber,
       });
+      throw new Error(`${this.net} block ${blockNumber} has logs but no header timestamp`);
     }
     cache.set(blockNumber, ts);
     return ts;
@@ -158,7 +207,7 @@ export class EvmChainSource implements EventSource {
       this.opts.logger.warn(
         'native price unavailable; non-native-base fills will record 0 native',
         {
-          net: 'RH',
+          net: this.net,
           err: err instanceof Error ? err.message : String(err),
         },
       );
@@ -187,9 +236,34 @@ export interface EvmTxGroup {
  * log the chain has already disowned is exactly the failure the buffer exists
  * to prevent.
  */
-export function groupByTransaction(raw: readonly RawEvmLog[], logger: Logger): EvmTxGroup[] {
+export interface LogEmitters {
+  /** Lowercased launchpad address. */
+  launchpad: string;
+  /** Lowercased router address, or `null` when this deployment has none. */
+  router: string | null;
+}
+
+const ROUTER_EVENTS = new Set(['AtomicBuy', 'AtomicSell']);
+
+/** A provider's "this `eth_getLogs` is too big" answer, as opposed to an outage. */
+export function isLogWindowTooLarge(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  // A rate limit is not a size problem: narrowing would only multiply calls.
+  if (/rate.?limit|too many requests|\b429\b/i.test(message)) return false;
+  return /more than \d+ results|too many (results|logs)|response size|block range|range (is )?too (large|wide)|exceeds? (the )?(max|maximum|limit)|limit of \d+|result(s)? (limit|cap)/i.test(
+    message,
+  );
+}
+
+export function groupByTransaction(
+  raw: readonly RawEvmLog[],
+  logger: Logger,
+  emitters?: LogEmitters,
+  net: Net = 'RH',
+): EvmTxGroup[] {
   const groups = new Map<string, EvmTxGroup>();
   let removed = 0;
+  let foreign = 0;
 
   for (const log of raw) {
     if (log.removed === true) {
@@ -200,6 +274,21 @@ export function groupByTransaction(raw: readonly RawEvmLog[], logger: Logger): E
     // Not an error: a launchpad transaction also emits ERC-20 `Transfer`s, and
     // the address filter cannot exclude them.
     if (!decoded) continue;
+
+    // Only our own contracts' logs count, and each event only from the
+    // contract that declares it. The `eth_getLogs` address filter normally
+    // guarantees the first half — but the ABI is public, anyone can deploy a
+    // contract that emits a byte-identical `TokenCreated` or `Trade`, and a
+    // provider that ignores or mangles the filter must not be able to turn
+    // that into a listed token or a paid trade.
+    if (emitters) {
+      const from = log.address.toLowerCase();
+      const expected = ROUTER_EVENTS.has(decoded.name) ? emitters.router : emitters.launchpad;
+      if (expected === null || from !== expected) {
+        foreign++;
+        continue;
+      }
+    }
 
     const txHash = log.transactionHash.toLowerCase();
     const existing = groups.get(txHash);
@@ -217,9 +306,15 @@ export function groupByTransaction(raw: readonly RawEvmLog[], logger: Logger): E
   }
 
   if (removed > 0) {
-    logger.warn('rh getLogs returned reorg-removed logs inside a confirmed range', {
-      net: 'RH',
+    logger.warn('getLogs returned reorg-removed logs inside a confirmed range', {
+      net,
       removed,
+    });
+  }
+  if (foreign > 0) {
+    logger.warn('getLogs returned Stonkz-shaped logs from an unexpected emitter; ignored', {
+      net,
+      foreign,
     });
   }
 

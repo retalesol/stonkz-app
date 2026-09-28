@@ -60,4 +60,7 @@ pub enum LaunchpadError {
     PoolNotCreated,
     #[msg("Meteora DLMM minted / locked no position liquidity for this deposit")]
     NoLiquidityMinted,
+    /// Appended, never inserted: error codes are positional.
+    #[msg("Launched mints must use the classic SPL Token program")]
+    UnsupportedTokenProgram,
 }

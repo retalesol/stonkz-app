@@ -36,4 +36,7 @@
   .foot{font-size:10px;padding-inline:8px}
   .drawer{width:100vw}
   .board{gap:8px}
+  /* Rank widget + HOW IT WORKS + wallet chip overflowed a 375px header once
+     connected, pushing the chip off-screen; let the actions wrap instead. */
+  .top-act{flex-wrap:wrap;justify-content:flex-end;row-gap:6px;padding:0 8px;max-width:100%;box-sizing:border-box}
 }

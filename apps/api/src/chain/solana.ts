@@ -127,7 +127,22 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
 
   /** `routes/launch.ts` / a future `/trade/confirm`'s verification read — the compiled message only, signatures stripped. */
   async getTransactionMessageBase64(signature: string): Promise<string | null> {
-    const res = await this.call<{ transaction: [string, string] } | null>('getTransaction', [
+    return (await this.getTransactionOutcome(signature))?.messageBase64 ?? null;
+  }
+
+  /**
+   * The compiled message plus whether the transaction executed. `null` when
+   * the signature is unknown at `confirmed`. A versioned (v0) transaction —
+   * which nothing in this router emits — reads back as an empty message, so
+   * it can never equal a prepared payload.
+   */
+  async getTransactionOutcome(
+    signature: string,
+  ): Promise<{ messageBase64: string; failed: boolean } | null> {
+    const res = await this.call<{
+      transaction: [string, string];
+      meta: { err: unknown } | null;
+    } | null>('getTransaction', [
       signature,
       { encoding: 'base64', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
     ]);
@@ -137,8 +152,41 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
     // (`solana-tx.ts`/`solana-launch-tx.ts` both refuse to emit versioned
     // ones — see their address-lookup-table guard), so parsing as legacy is
     // exactly what a real submitted tx is expected to be.
-    const tx = Transaction.from(raw);
-    return tx.compileMessage().serialize().toString('base64');
+    let messageBase64 = '';
+    try {
+      messageBase64 = Transaction.from(raw).compileMessage().serialize().toString('base64');
+    } catch {
+      messageBase64 = '';
+    }
+    const failed = !res.meta || (res.meta.err !== null && res.meta.err !== undefined);
+    return { messageBase64, failed };
+  }
+
+  /**
+   * Pre-sign dry run of an unsigned wire-format transaction. The wallet has
+   * not signed yet, so signature verification is off, and the blockhash is
+   * replaced so a slow prepare cannot fail simulation on expiry alone.
+   * Transport errors throw `RpcError`; an execution failure is a result.
+   */
+  async simulateTransaction(
+    base64Tx: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const res = await this.call<{ value: { err: unknown; logs: string[] | null } }>(
+      'simulateTransaction',
+      [
+        base64Tx,
+        {
+          encoding: 'base64',
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+          commitment: 'confirmed',
+        },
+      ],
+    );
+    const err = res.value?.err;
+    if (err === null || err === undefined) return { ok: true };
+    const logs = (res.value.logs ?? []).slice(-20).join('\n');
+    return { ok: false, reason: `${JSON.stringify(err)}\n${logs}` };
   }
 
   /**

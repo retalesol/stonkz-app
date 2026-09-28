@@ -7,6 +7,7 @@ import {
   assertOnChainFeeSplit,
   baseAtomsToUsd,
   inferBaseDecimals,
+  isNativeBaseMint,
   marketCapUsd,
   nativeFeeLegs,
   nativeNotional,
@@ -113,29 +114,62 @@ function text(args: Args, key: string): string {
 }
 
 /**
- * The exact native leg of a routed fill, when the router logged one.
+ * The router log that belongs to the `Trade` at `index`: the first
+ * `AtomicBuy`/`AtomicSell` for the same token and side *after* it.
  *
- * A transaction holds at most one atomic trade per token — the router does one
- * curve hop per call — so matching on the token address is sufficient.
+ * `StonkzRouter` calls the launchpad (which emits `Trade`) and only then emits
+ * its own event, so the pairing is positional. Matching on the token alone —
+ * which this used to do — hands every fill in a multi-fill transaction the
+ * first router log's ETH leg and wallet.
  */
-function routerNative(logs: readonly EvmTxLog[], token: string): number | null {
-  for (const { event } of logs) {
-    if (event.name !== 'AtomicBuy' && event.name !== 'AtomicSell') continue;
+function routerLogFor(logs: readonly EvmTxLog[], index: number, token: string, isBuy: boolean) {
+  const wanted = isBuy ? 'AtomicBuy' : 'AtomicSell';
+  for (let i = index + 1; i < logs.length; i++) {
+    const event = logs[i]?.event;
+    if (!event) continue;
+    // The next curve fill starts a new pairing window.
+    if (event.name === 'Trade' && addr(event.args, 'token') === token) return null;
+    if (event.name !== wanted) continue;
     if (addr(event.args, 'token') !== token) continue;
-    const wei = event.name === 'AtomicBuy' ? big(event.args, 'ethIn') : big(event.args, 'ethOut');
-    return toWhole(wei, NATIVE_DECIMALS.RH);
+    return event;
   }
   return null;
 }
 
-/** Real wallet behind an atomic router trade (Trade.trader is the router). */
-function routerTrader(logs: readonly EvmTxLog[], token: string): string | null {
-  for (const { event } of logs) {
-    if (event.name !== 'AtomicBuy' && event.name !== 'AtomicSell') continue;
-    if (addr(event.args, 'token') !== token) continue;
-    return addr(event.args, 'trader');
+/**
+ * The exact native leg of a routed fill, when the router logged one and the
+ * curve's base is *not* already the wrapped native token.
+ *
+ * For a WETH-based curve the launchpad's own `baseAmount` is the ETH leg to
+ * the wei, and it is the better number: `AtomicBuy.ethIn` is `msg.value`,
+ * which overstates the spend whenever the curve could not take all of it (the
+ * graduation cap) and the router refunded the rest. For any other base the
+ * router is the only place the ETH leg is recorded; a partial fill is scaled
+ * by the share of the aggregator's output the curve actually consumed.
+ */
+function routerNative(
+  router: NonNullable<ReturnType<typeof routerLogFor>>,
+  baseAmount: bigint,
+): number {
+  if (router.name === 'AtomicSell') return toWhole(big(router.args, 'ethOut'), NATIVE_DECIMALS.RH);
+  const ethIn = big(router.args, 'ethIn');
+  const delivered = big(router.args, 'baseFromAggregator');
+  const wei = delivered > 0n && baseAmount < delivered ? (ethIn * baseAmount) / delivered : ethIn;
+  return toWhole(wei, NATIVE_DECIMALS.RH);
+}
+
+/**
+ * The `Trade` a `FeeAccrued` at `index` belongs to: the nearest earlier
+ * `Trade` for the same token. `_emitFill` emits `Trade`, `FeeAccrued`,
+ * `TreasuryCredit` back to back, so this is exact even when one transaction
+ * carries several fills.
+ */
+function tradeFor(logs: readonly EvmTxLog[], index: number, token: string) {
+  for (let i = index - 1; i >= 0; i--) {
+    const event = logs[i]?.event;
+    if (event?.name === 'Trade' && addr(event.args, 'token') === token) return event;
   }
-  return null;
+  return undefined;
 }
 
 export async function mapEvmTransaction(
@@ -144,7 +178,6 @@ export async function mapEvmTransaction(
 ): Promise<ChainEvent[]> {
   const out: ChainEvent[] = [];
   const hasFeeAccrued = logs.some((l) => l.event.name === 'FeeAccrued');
-  const trade = logs.find((l) => l.event.name === 'Trade')?.event;
   const migrated = logs.find((l) => l.event.name === 'LiquidityMigrated')?.event;
 
   const net = ctx.net;
@@ -165,7 +198,7 @@ export async function mapEvmTransaction(
   // from 0: `chain_events` is unique on (net, txSig, logIndex, kind), and the
   // block's own indices are what a block explorer and a re-ingest of the same
   // transaction both agree on.
-  for (const { logIndex, event } of logs) {
+  for (const [index, { logIndex, event }] of logs.entries()) {
     const args = event.args;
 
     switch (event.name) {
@@ -207,10 +240,11 @@ export async function mapEvmTransaction(
           logIndex,
           mint: token,
           sym: text(args, 'ticker'),
-          // See `solana-map.ts`: the event carries the ticker, not the display
-          // name — that lives in the off-chain metadata. `/launch/confirm`
-          // writes the richer row first for launches made through this stack,
-          // and `onTokenCreated` inserts with `onConflictDoNothing`.
+          // The event carries the ticker, not the display name, description
+          // or image. `Ingestor.writeLaunchRows` keeps what `/launch/confirm`
+          // wrote, or reads the creator's `/launch/prepare` intent when the
+          // indexer gets there first; this placeholder only survives for a
+          // launch made outside this stack.
           name: text(args, 'ticker'),
           descr: '',
           creator: addr(args, 'creator'),
@@ -251,9 +285,12 @@ export async function mapEvmTransaction(
         );
         const baseAmount = big(args, 'baseAmount');
         const realToken = big(args, 'realToken');
+        const isBuy = bool(args, 'isBuy');
         const usdValue = baseAtomsToUsd(baseAmount, meta.basePrice1e6, meta.baseDecimals);
         const circulating = meta.tokensForSale > realToken ? meta.tokensForSale - realToken : 0n;
         ctx.registry.observeFill(net, token, circulating);
+        const router = routerLogFor(logs, index, token, isBuy);
+        const nativeBase = isNativeBaseMint(net, meta.baseMint);
 
         out.push({
           ...base,
@@ -263,18 +300,19 @@ export async function mapEvmTransaction(
           sym: meta.sym,
           // Routed fills call the launchpad from StonkzRouter, so Trade.trader
           // is the router. Prefer AtomicBuy/Sell.trader (the wallet).
-          trader: routerTrader(logs, token) ?? addr(args, 'trader'),
-          side: bool(args, 'isBuy') ? 'buy' : 'sell',
+          trader: router ? addr(router.args, 'trader') : addr(args, 'trader'),
+          side: isBuy ? 'buy' : 'sell',
           nativeAmount:
-            routerNative(logs, token) ??
-            nativeNotional(
-              net,
-              meta.baseMint,
-              baseAmount,
-              meta.baseDecimals,
-              usdValue,
-              ctx.nativeUsdPrice,
-            ),
+            router && !nativeBase
+              ? routerNative(router, baseAmount)
+              : nativeNotional(
+                  net,
+                  meta.baseMint,
+                  baseAmount,
+                  meta.baseDecimals,
+                  usdValue,
+                  ctx.nativeUsdPrice,
+                ),
           baseAmount: toWhole(baseAmount, meta.baseDecimals),
           tokenAmount: toWhole(big(args, 'tokenAmount'), meta.tokenDecimals),
           usdValue,
@@ -305,6 +343,7 @@ export async function mapEvmTransaction(
           big(args, 'creatorBucket'),
         );
         const feeUsd = baseAtomsToUsd(feeTotal, meta.basePrice1e6, meta.baseDecimals);
+        const trade = tradeFor(logs, index, token);
         out.push({
           ...base,
           kind: 'FeeAccrued',

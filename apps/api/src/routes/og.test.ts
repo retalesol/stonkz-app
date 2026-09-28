@@ -46,3 +46,34 @@ describe('GET /og/t/:sym', () => {
     expect(html).toContain('NOPE');
   });
 });
+
+describe('OG page hardening', () => {
+  it('cannot be broken out of via the inline redirect script', async () => {
+    const payload = encodeURIComponent('</script><script>alert(document.domain)</script>');
+    const res = await h.app.request(`/og/u/${payload}`);
+    const html = await res.text();
+    expect(html).not.toContain('</script><script>');
+    expect(html.match(/<script>/g)).toHaveLength(1);
+  });
+
+  it('uses the token image as og:image when it is https', async () => {
+    await h.deps.db.insert(tokens).values({
+      net: 'SOL',
+      sym: 'PIC',
+      name: 'Pic Coin',
+      descr: '',
+      creator: 'CREATOR',
+      mint: 'mint-PIC',
+      baseSymbol: 'SOL',
+      baseMint: 'So11111111111111111111111111111111111111112',
+      supply: 1_000_000_000,
+      feeBps: 100,
+      mc: 1,
+      seed: 1,
+      imageUrl: 'https://gw.example/ipfs/bafypic',
+    });
+    const html = await (await h.app.request('/og/t/PIC?net=SOL')).text();
+    expect(html).toContain('<meta property="og:image" content="https://gw.example/ipfs/bafypic">');
+    expect(html).toContain('summary_large_image');
+  });
+});

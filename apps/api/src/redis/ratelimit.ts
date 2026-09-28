@@ -34,6 +34,12 @@ export const RATE_LIMITS = {
    * a single source hammering distinct wallets to dodge the per-wallet cap.
    */
   launchIp: { bucket: 'launch_ip', limit: 30, windowSeconds: 3600 },
+  /**
+   * `/launch/confirm` reads a transaction back from an RPC. The web client
+   * polls it (~7 tries) while the API's node catches up, so this is sized
+   * for several launches' worth of polling, not one call per launch.
+   */
+  launchConfirm: { bucket: 'launch_confirm', limit: 60, windowSeconds: 60 },
   fees: { bucket: 'fees', limit: 60, windowSeconds: 60 },
   /** Stake / unstake / claim-stake prepare — same cadence as fees. */
   stake: { bucket: 'stake', limit: 60, windowSeconds: 60 },

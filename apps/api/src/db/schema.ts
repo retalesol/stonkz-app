@@ -217,11 +217,25 @@ export const launchIntents = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
     consumedTxSig: text('consumed_tx_sig'),
+    /** Off-chain socials, validated at prepare and copied onto `tokens` at confirm (0019). */
+    xHandle: text('x_handle'),
+    website: text('website'),
+    telegram: text('telegram'),
+    /**
+     * Solana: the pinned Metaplex metadata JSON URL written on-chain as the
+     * token `uri` (0019). `uri` above stays the display image. Null on EVM,
+     * or when metadata storage was unavailable and the image went on-chain.
+     */
+    metadataUri: text('metadata_uri'),
   },
   (t) => [
     index('launch_intents_lookup_idx').on(t.net, t.ticker, t.consumedAt),
     index('launch_intents_creator_idx').on(t.net, t.creator),
     index('launch_intents_expires_idx').on(t.expiresAt),
+    // `/launch/confirm` refuses a signature another intent already consumed.
+    index('launch_intents_consumed_sig_idx')
+      .on(t.net, t.consumedTxSig)
+      .where(sql`${t.consumedTxSig} is not null`),
   ],
 );
 

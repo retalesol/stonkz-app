@@ -80,7 +80,14 @@ export function limit(rule: RateLimitRule): MiddlewareHandler<AppEnv> {
     c.header('X-RateLimit-Remaining', String(verdict.remaining));
     if (!verdict.ok) {
       c.header('Retry-After', String(verdict.resetSeconds));
-      return c.json({ error: 'rate_limited', retryAfter: verdict.resetSeconds }, 429);
+      return c.json(
+        {
+          error: 'rate_limited',
+          detail: `too many requests; retry in ${verdict.resetSeconds}s`,
+          retryAfter: verdict.resetSeconds,
+        },
+        429,
+      );
     }
     await next();
     return undefined;

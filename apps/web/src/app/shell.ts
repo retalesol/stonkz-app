@@ -1,8 +1,8 @@
-import { GRAD, usd } from '@stonkz/shared';
-import { api, DISCLOSURE } from '../api/index.js';
+import { GRAD, type Net, usd } from '@stonkz/shared';
+import { api, disclosure } from '../api/index.js';
 import { setNetSwitchHandler } from '../views/board.js';
-import { savedNet, selectNet } from '../state/wallet.js';
-import { loadChains } from '../wallet/chain.js';
+import { netOf, savedNet, selectNet } from '../state/wallet.js';
+import { isDeployed, loadChains } from '../wallet/chain.js';
 import { initFx } from '../fx/debris.js';
 import { toast, initMememan } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
@@ -86,8 +86,71 @@ function apply(r: Route): void {
   if (TV.c) closeToken();
   showView('board');
   window.scrollTo(0, 0);
-  if (r.view === 'launch') openLaunch(must('#createBtn'));
-  else closeLaunch();
+  if (r.view === 'launch') {
+    // A deep link or BACK into `/launch` gets the same gate as the button.
+    if (!launchGate()) {
+      navigate({ view: 'board' }, { replace: true });
+      return;
+    }
+    openLaunch(must('#createBtn'));
+  } else closeLaunch();
+}
+
+/* ------------------------------ launch intent ------------------------------ */
+
+/**
+ * "+ LAUNCH A COIN" pressed while disconnected (or on a net with nothing
+ * deployed): remember it, so finishing the connect opens the stepper instead
+ * of making the user find the button again. Expires so a connect much later,
+ * for some other reason, does not pop a dialog nobody asked for.
+ */
+let launchIntentAt = 0;
+const LAUNCH_INTENT_TTL_MS = 3 * 60_000;
+
+function wantsLaunch(): boolean {
+  return launchIntentAt > 0 && Date.now() - launchIntentAt < LAUNCH_INTENT_TTL_MS;
+}
+
+/** True when the stepper may open now; otherwise explain, open the net picker and remember. */
+function launchGate(): boolean {
+  if (!WALLET.on) {
+    launchIntentAt = Date.now();
+    toast('CONNECT A WALLET TO LAUNCH A COIN');
+    netOpen(true);
+    return false;
+  }
+  if (api.mode === 'live' && !isDeployed(WALLET.net)) {
+    launchIntentAt = Date.now();
+    toast(
+      "LAUNCHES AREN'T LIVE ON " + netOf().name + ' IN THIS ENVIRONMENT YET · PICK ANOTHER NETWORK',
+      'red',
+    );
+    netOpen(true);
+    return false;
+  }
+  return true;
+}
+
+/** Connect from the net picker, then resume a pending launch if there is one. */
+async function connectThenResume(net: Net): Promise<void> {
+  try {
+    await connectWallet(net);
+  } catch (err) {
+    console.warn('connect failed', err);
+  }
+  if (!wantsLaunch()) return;
+  if (!WALLET.on) return;
+  launchIntentAt = 0;
+  if (api.mode === 'live' && !isDeployed(WALLET.net)) {
+    toast("LAUNCHES AREN'T LIVE ON " + netOf().name + ' IN THIS ENVIRONMENT YET', 'red');
+    return;
+  }
+  navigate({ view: 'launch' });
+}
+
+/** The footer line names only the chains this environment actually runs on. */
+function paintDisclosure(): void {
+  must('.foot .demo').textContent = disclosure();
 }
 
 /** Closing the stepper is a navigation, since `/launch` is a route. */
@@ -143,7 +206,7 @@ export async function boot(): Promise<void> {
   renderRank();
 
   must('#gradCap').textContent = usd(GRAD);
-  must('.foot .demo').textContent = DISCLOSURE;
+  paintDisclosure();
 
   try {
     await api.ready();
@@ -151,7 +214,7 @@ export async function boot(): Promise<void> {
     console.warn('api.ready failed', err);
   }
 
-  if (api.mode === 'live') void loadChains();
+  if (api.mode === 'live') void loadChains().then(paintDisclosure);
   const remembered = savedNet();
   if (remembered) selectNet(remembered);
   initBoard();
@@ -178,7 +241,7 @@ export async function boot(): Promise<void> {
     if (TV.c) renderTab();
   });
 
-  initNetPicker((net) => void connectWallet(net));
+  initNetPicker((net) => void connectThenResume(net));
   setNetSwitchHandler((net) => void connectWallet(net));
   initWalletChip({
     onChange: () => {
@@ -203,11 +266,7 @@ export async function boot(): Promise<void> {
   must('#rankBtn').addEventListener('click', () => navigate({ view: 'rewards' }));
   must('#homeBtn').addEventListener('click', () => navigate({ view: 'board' }));
   must('#createBtn').addEventListener('click', () => {
-    if (!WALLET.on) {
-      toast('CONNECT A WALLET TO LAUNCH A COIN');
-      netOpen(true);
-      return;
-    }
+    if (!launchGate()) return;
     navigate({ view: 'launch' });
   });
 

@@ -232,9 +232,26 @@ export const EVENT_KINDS: readonly ChainEventKind[] = [
   'CreatorFeesClaimed',
 ];
 
-/** Chain order within a batch: position, then transaction, then log index. */
+/**
+ * Chain order within a batch: position, then launches, then transaction, then
+ * log index.
+ *
+ * Neither chain's transaction order inside one slot/block is recoverable from
+ * the signature or hash, so ties on position fall back to comparing `txSig`
+ * strings — which is arbitrary. That is harmless between unrelated
+ * transactions but not for a launch and a fill of the same token landing in
+ * the same slot/block (a sniper, or an EVM dev buy mined alongside its
+ * create): sorted fill-first, the fill's `updateToken` found no `tokens` row
+ * and the launch then overwrote the cap with its opening value. A token can
+ * have no event before its own `TokenCreated`, and `TokenCreated` is always
+ * the first event of its own transaction, so ordering launches first within a
+ * position is always consistent with the real chain order.
+ */
 export function compareEvents(a: ChainEvent, b: ChainEvent): number {
   if (a.chainPosition !== b.chainPosition) return a.chainPosition - b.chainPosition;
+  const aLaunch = a.kind === 'TokenCreated' ? 0 : 1;
+  const bLaunch = b.kind === 'TokenCreated' ? 0 : 1;
+  if (aLaunch !== bLaunch) return aLaunch - bLaunch;
   if (a.txSig !== b.txSig) return a.txSig < b.txSig ? -1 : 1;
   return a.logIndex - b.logIndex;
 }

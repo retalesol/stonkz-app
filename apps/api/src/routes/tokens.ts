@@ -329,7 +329,9 @@ export function tokenRoutes(): Hono<AppEnv> {
         )
         .orderBy(desc(holdersSnapshot.tokenAmount))
         .limit(max);
-      const launchpad = deps.env.rhLaunchpadAddress.toLowerCase();
+      // The curve's own balance is the launchpad of *this* net (Base's is
+      // not RH's), flagged so it is never counted as a holder.
+      const launchpad = isEvm(net) ? evmLaunchpadAddress(deps.env, net).toLowerCase() : '';
       const holders: HolderOut[] = rows.map((r) => ({
         wallet: r.wallet,
         amount: r.tokenAmount,
@@ -395,7 +397,7 @@ export function tokenRoutes(): Hono<AppEnv> {
             net,
             sym,
             source: live.source,
-            curveWallet: deps.env.rhLaunchpadAddress,
+            curveWallet: evmLaunchpadAddress(deps.env, net),
             holderCount: holders.filter((h) => !h.curve).length,
             holders,
           });

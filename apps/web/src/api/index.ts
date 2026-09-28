@@ -27,12 +27,18 @@ export const api: StonkzApi = API_MODE === 'live' ? liveApi : simApi;
  * Sim mode keeps the sandbox disclosure.
  */
 import { ALL_NETS } from '@stonkz/shared';
-import { envLabel } from '../wallet/chain.js';
+import { envLabel, isDeployed } from '../wallet/chain.js';
 
-export const DISCLOSURE =
-  API_MODE === 'live'
-    ? ALL_NETS.map(envLabel).join(' / ') + ' \u00b7 NOT FINANCIAL ADVICE'
-    : 'SIMULATED DATA \u00b7 NOT FINANCIAL ADVICE';
+/**
+ * Only nets this environment actually has deployed (`chains.json`), so an
+ * undeployed chain is never advertised in the footer. Before `chains.json`
+ * has loaded `isDeployed` answers true, so call again once it has.
+ */
+export function disclosure(): string {
+  if (API_MODE !== 'live') return 'SIMULATED DATA \u00b7 NOT FINANCIAL ADVICE';
+  const nets = ALL_NETS.filter(isDeployed);
+  return (nets.length ? nets.map(envLabel).join(' / ') + ' \u00b7 ' : '') + 'NOT FINANCIAL ADVICE';
+}
 
 export type {
   ClaimResult,

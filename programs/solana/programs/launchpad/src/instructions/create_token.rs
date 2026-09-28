@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::token_interface::{
     mint_to, set_authority, spl_token_2022::instruction::AuthorityType, Mint, MintTo, SetAuthority,
     TokenAccount, TokenInterface,
@@ -9,10 +10,13 @@ use crate::errors::LaunchpadError;
 use crate::events::*;
 use crate::instructions::admin::read_fresh_price;
 use crate::math::derive_curve;
+use crate::metaplex::create_metadata_v3_ix;
 use crate::state::*;
 
-pub const MAX_NAME_LEN: usize = 32;
-pub const MAX_URI_LEN: usize = 200;
+/// Metaplex's own limits, so the metadata CPI can never be the thing that
+/// rejects a launch.
+pub const MAX_NAME_LEN: usize = METAPLEX_MAX_NAME_LEN;
+pub const MAX_URI_LEN: usize = METAPLEX_MAX_URI_LEN;
 
 #[derive(Accounts)]
 #[instruction(name: String, ticker: String, uri: String, supply: u64, fee_bps: u16, cashback: bool, salt: u64)]
@@ -104,14 +108,36 @@ pub struct CreateToken<'info> {
 
     #[account(mut)]
     pub creator: Signer<'info>,
+    /// The launched mint's program. Classic SPL Token only: the Metaplex
+    /// metadata below is the classic-mint path. The base mint is unaffected
+    /// and may still be Token-2022 via `base_token_program`.
+    #[account(
+        constraint = token_program.key() == anchor_spl::token::ID
+            @ LaunchpadError::UnsupportedTokenProgram,
+    )]
     pub token_program: Interface<'info, TokenInterface>,
     pub base_token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
+
+    /* Appended after the original 15 accounts so existing account indices
+     * are unchanged. */
+    /// CHECK: Metaplex metadata PDA for `mint`, created by the CPI below.
+    /// The seeds pin it to `["metadata", metaplex, mint]` under Metaplex.
+    #[account(
+        mut,
+        seeds = [SEED_METADATA, TOKEN_METADATA_PROGRAM_ID.as_ref(), mint.key().as_ref()],
+        seeds::program = TOKEN_METADATA_PROGRAM_ID,
+        bump,
+    )]
+    pub metadata: UncheckedAccount<'info>,
+    /// CHECK: pinned to the Metaplex Token Metadata program id.
+    #[account(address = TOKEN_METADATA_PROGRAM_ID @ LaunchpadError::Unauthorized)]
+    pub token_metadata_program: UncheckedAccount<'info>,
 }
 
 fn valid_ticker(t: &str) -> bool {
     !t.is_empty()
-        && t.len() <= 10
+        && t.len() <= METAPLEX_MAX_SYMBOL_LEN
         && t.bytes()
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
@@ -181,6 +207,32 @@ pub fn create_token(
             signer_seeds,
         ),
         p.lp_reserve,
+    )?;
+
+    // Metaplex metadata, while the curve still holds the mint authority
+    // Metaplex requires. Update authority is the curve PDA and the account is
+    // immutable, so no one can ever change name, symbol or URI.
+    let curve_key = ctx.accounts.curve.key();
+    invoke_signed(
+        &create_metadata_v3_ix(
+            ctx.accounts.metadata.key(),
+            mint_key,
+            curve_key,
+            ctx.accounts.creator.key(),
+            curve_key,
+            &name,
+            &ticker,
+            &uri,
+        ),
+        &[
+            ctx.accounts.metadata.to_account_info(),
+            ctx.accounts.mint.to_account_info(),
+            ctx.accounts.curve.to_account_info(),
+            ctx.accounts.creator.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.token_metadata_program.to_account_info(),
+        ],
+        signer_seeds,
     )?;
 
     // Supply is now fixed forever, and no holder can be frozen.

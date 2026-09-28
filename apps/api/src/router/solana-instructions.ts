@@ -3,8 +3,10 @@ import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-tok
 import {
   anchorDiscriminator,
   derivePdas,
+  deriveMetadataPda,
   deriveMintPda,
   deriveStakePositionPda,
+  TOKEN_METADATA_PROGRAM_ID,
   encodeBool,
   encodeString,
   encodeU16,
@@ -41,13 +43,23 @@ export interface CreateTokenArgs {
   salt: bigint;
 }
 
-/** `create_token(name, ticker, uri, supply, fee_bps, cashback, salt)` — plan step 90. */
+/**
+ * `create_token(name, ticker, uri, supply, fee_bps, cashback, salt)` — plan step 90.
+ *
+ * The program also CPIs Metaplex `CreateMetadataAccountV3` (name / ticker as
+ * symbol / uri, immutable, curve PDA as update authority), so the last two
+ * accounts are the Metaplex metadata PDA and the Metaplex program. They are
+ * appended after the original fifteen, so every earlier index is unchanged.
+ * The launched mint must be classic SPL Token — the program rejects
+ * Token-2022 for `token_program` with `UnsupportedTokenProgram`.
+ */
 export function buildCreateTokenInstruction(
   accounts: CreateTokenAccounts,
   args: CreateTokenArgs,
-): { instruction: TransactionInstruction; mint: PublicKey; curve: PublicKey } {
+): { instruction: TransactionInstruction; mint: PublicKey; curve: PublicKey; metadata: PublicKey } {
   const [mint] = deriveMintPda(accounts.programId, accounts.creator, accounts.salt);
   const pdas = derivePdas(accounts.programId, mint, accounts.baseMint);
+  const [metadata] = deriveMetadataPda(mint);
 
   const data = Buffer.concat([
     anchorDiscriminator('create_token'),
@@ -76,12 +88,16 @@ export function buildCreateTokenInstruction(
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Appended in the Metaplex metadata upgrade.
+    { pubkey: metadata, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_METADATA_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   return {
     instruction: new TransactionInstruction({ programId: accounts.programId, keys, data }),
     mint,
     curve: pdas.curve,
+    metadata,
   };
 }
 

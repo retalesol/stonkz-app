@@ -68,6 +68,11 @@ export class TokenRegistry {
     this.cache.set(mintKey(meta.net, meta.mint), meta);
   }
 
+  /** The cached entry for a mint, without falling back to the database. */
+  peek(net: Net, mint: string): TokenMeta | undefined {
+    return this.cache.get(mintKey(net, mint));
+  }
+
   /**
    * Records the circulating supply a fill left behind, so a `Staked` later in
    * the same batch weights against the float as of that moment rather than as

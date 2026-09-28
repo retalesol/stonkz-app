@@ -34,7 +34,7 @@ import { paintCoinArt } from '../canvas/pix.js';
 import { burst } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, clear, must, reflow } from '../lib/dom.js';
-import { ARR, DOT, MID, clock, clockSec, fmtSupply, ud } from '../lib/fmt.js';
+import { ARR, DOT, MID, clock, clockSec, fmtCurve, fmtSupply, ud } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { copyText } from '../lib/clipboard.js';
 import { displayName, myDisplayName, rememberIdentity } from '../lib/identity.js';
@@ -193,7 +193,7 @@ function tokenHTML(c: SimCoin): Html {
         </div>
         <div class="curvebar">
           <div class="pt">
-            <span>BONDING CURVE</span><b class="am" id="cv-pct">${curve(c).toFixed(1)}%</b>
+            <span>BONDING CURVE</span><b class="am" id="cv-pct">${fmtCurve(curve(c))}</b>
           </div>
           <div class="ptrack">
             <i id="cv-bar" class="${grad ? 'done' : ''}" style="width:${attr(curve(c))}%"></i>
@@ -1206,7 +1206,7 @@ export function syncToken(): void {
   syncCashback();
   const p = $('#cv-pct');
   const b = $('#cv-bar');
-  if (p) p.textContent = curve(c).toFixed(1) + '%';
+  if (p) p.textContent = fmtCurve(curve(c));
   if (b) {
     b.style.width = curve(c) + '%';
     b.className = c.lane === 'grad' ? 'done' : '';

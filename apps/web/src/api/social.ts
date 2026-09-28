@@ -10,7 +10,7 @@ import { authHeader, ensureSession } from '../app/session.js';
  * simulated (staking, crates). Profiles/follows/walls have no sim-side
  * *server* to mirror — `state/social.ts`'s generators stay exactly as they
  * are for `api.mode === 'sim'` — so views call this module directly, gated
- * on `api.mode === 'live'`, the same seam `api/index.ts`'s `DISCLOSURE`
+ * on `api.mode === 'live'`, the same seam `api/index.ts`'s `disclosure()`
  * comment already uses for "some features are live, some are not". See the
  * final report for the tradeoff.
  */

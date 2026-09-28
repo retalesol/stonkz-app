@@ -179,7 +179,13 @@ async function awaitConfirmation(signature: string, lastValidBlockHeight?: numbe
     try {
       status = (await conn.getSignatureStatuses([signature])).value[0];
     } catch (err) {
-      throw mapWalletError(err, 'Could not reach the Solana RPC to confirm this transaction.');
+      const mapped = mapWalletError(
+        err,
+        'Could not reach the Solana RPC to confirm this transaction.',
+      );
+      // Already broadcast: it may still land, so hand the signature up.
+      mapped.signature = signature;
+      throw mapped;
     }
     if (status) {
       if (status.err) {
@@ -204,6 +210,7 @@ async function awaitConfirmation(signature: string, lastValidBlockHeight?: numbe
       throw new WalletError(
         'timeout',
         'No confirmation after 90s. The transaction may still land; check the explorer.',
+        { signature },
       );
     }
     await new Promise((r) => setTimeout(r, CONFIRM_POLL_MS));

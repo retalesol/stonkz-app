@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
-import { anchorDiscriminator, derivePdas, deriveMintPda } from './solana-idl.js';
+import {
+  TOKEN_METADATA_PROGRAM_ID,
+  anchorDiscriminator,
+  deriveMetadataPda,
+  derivePdas,
+  deriveMintPda,
+} from './solana-idl.js';
 
 /**
  * These byte arrays are the literal `discriminator` fields Anchor's IDL
@@ -77,5 +83,19 @@ describe('deriveMintPda', () => {
     expect(a.toBase58()).toBe(b.toBase58());
     expect(a.toBase58()).not.toBe(c.toBase58());
     expect(a.toBase58()).not.toBe(d.toBase58());
+  });
+});
+
+describe('deriveMetadataPda', () => {
+  it("matches Metaplex's real metadata account for USDC", () => {
+    // Same vector as `metadata_pda_matches_the_mainnet_usdc_metadata_account`
+    // in programs/solana/programs/launchpad/src/tests.rs.
+    const usdc = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    expect(deriveMetadataPda(usdc)[0].toBase58()).toBe(
+      '5x38Kp4hvdomTCnCrAny4UtMUt5rQBdB6px2K1Ui45Wq',
+    );
+    expect(TOKEN_METADATA_PROGRAM_ID.toBase58()).toBe(
+      'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+    );
   });
 });

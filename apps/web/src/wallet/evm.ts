@@ -522,9 +522,12 @@ class EvmWallet implements ConnectedWallet {
         throw new WalletError(
           'timeout',
           'Sent, but no receipt yet. The sequencer usually confirms in under a second \u2014 check the explorer.',
-          { cause: err },
+          { cause: err, signature: hash },
         );
       }
+      // Already broadcast; whatever went wrong reading the receipt, the
+      // transaction itself may still land.
+      if (mapped.kind !== 'reverted' && mapped.kind !== 'slippage') mapped.signature = hash;
       throw mapped;
     }
     if (receipt.status === 'reverted') {

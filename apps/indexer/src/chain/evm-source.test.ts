@@ -358,7 +358,9 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
         blockNumber: 1_001,
         blockHash: hash32('b1001'),
         txHash: TX_FILL,
-        logIndex: 2,
+        // After the curve's Trade/FeeAccrued/TreasuryCredit (4..6): the router
+        // emits only once `launchpad.buy` has returned.
+        logIndex: 7,
       },
     );
 
@@ -394,7 +396,9 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
         blockNumber: 1_001,
         blockHash: hash32('b1001'),
         txHash: TX_FILL,
-        logIndex: 2,
+        // After the curve's Trade/FeeAccrued/TreasuryCredit (4..6): the router
+        // emits only once `launchpad.buy` has returned.
+        logIndex: 7,
       },
     );
     const { source } = makeSource([
@@ -610,5 +614,138 @@ describe('groupByTransaction', () => {
   it('drops a reorg-removed log rather than materialising a disowned one', () => {
     const groups = groupByTransaction([{ ...tradeLog(), removed: true }, feeLog()], logger);
     expect(groups[0]?.logs.map((l) => l.event.name)).toEqual(['FeeAccrued']);
+  });
+});
+
+describe('EvmChainSource — the launch path end to end', () => {
+  const EMITTERS = { launchpad: LAUNCHPAD.toLowerCase(), router: ROUTER.toLowerCase() };
+
+  it('ignores a byte-identical TokenCreated emitted by any other contract', () => {
+    const spoof = { ...launchLog(), address: '0x000000000000000000000000000000000000bad1' };
+    expect(groupByTransaction([spoof], logger, EMITTERS)).toHaveLength(0);
+    // Without emitters (the old contract) it would have been accepted.
+    expect(groupByTransaction([spoof], logger)).toHaveLength(1);
+  });
+
+  it('accepts router events only from the router, and launchpad events only from the launchpad', () => {
+    const atomicFromLaunchpad = encodeLog(
+      'AtomicBuy',
+      { trader: TRADER, token: DOGGO, ethIn: 1n, baseFromAggregator: 1n, tokensOut: 1n },
+      {
+        address: LAUNCHPAD,
+        blockNumber: 1_001,
+        blockHash: hash32('b1001'),
+        txHash: TX_FILL,
+        logIndex: 9,
+      },
+    );
+    const tradeFromRouter = { ...tradeLog(), address: ROUTER.toLowerCase() };
+    expect(
+      groupByTransaction([atomicFromLaunchpad, tradeFromRouter], logger, EMITTERS),
+    ).toHaveLength(0);
+    expect(
+      groupByTransaction([atomicFromLaunchpad], logger, {
+        launchpad: EMITTERS.launchpad,
+        router: null,
+      }),
+    ).toHaveLength(0);
+  });
+
+  it('drops spoofed logs even when the provider ignores the address filter', async () => {
+    const spoofLaunch = {
+      ...launchLog({ ticker: 'FAKE' }, { txHash: hash32('bad') }),
+      address: '0x000000000000000000000000000000000000bad1',
+    };
+    const { source, rpc } = makeSource([launchLog()]);
+    const honest = rpc.getLogs.bind(rpc);
+    rpc.getLogs = async (filter) => [...(await honest(filter)), spoofLaunch];
+    const { events } = await source.pollRange(999, 1_000);
+    expect(events.map((e) => (e.kind === 'TokenCreated' ? e.sym : e.kind))).toEqual(['DOGGO']);
+  });
+
+  it('narrows a getLogs window the provider refuses for size instead of failing it', async () => {
+    const { source, rpc } = makeSource([launchLog(), tradeLog(), feeLog()]);
+    rpc.maxLogsPerCall = 1;
+    const result = await source.pollRange(999, 1_001);
+    // [1000, 1001] held 3 logs; [1000, 1000] holds the launch alone.
+    expect(result.coveredTo).toBe(1_000);
+    expect(result.events.map((e) => e.kind)).toEqual(['TokenCreated']);
+    const spans = rpc.calls
+      .filter((c) => c.method === 'eth_getLogs')
+      .map((c) => [
+        (c.params as { fromBlock: number }).fromBlock,
+        (c.params as { toBlock: number }).toBlock,
+      ]);
+    expect(spans).toEqual([
+      [1_000, 1_001],
+      [1_000, 1_000],
+    ]);
+  });
+
+  it('does not narrow on a rate limit, which is not a size problem', async () => {
+    const { source, rpc } = makeSource([launchLog()]);
+    rpc.failGetLogs = new Error('429 Too Many Requests: rate limit exceeded');
+    await expect(source.pollRange(990, 1_001)).rejects.toThrow(/429/);
+    expect(rpc.calls.filter((c) => c.method === 'eth_getLogs')).toHaveLength(1);
+  });
+
+  it('fails the pass instead of stamping a launch at 1970 when its block header is missing', async () => {
+    const { source } = makeSource([launchLog({}, { blockNumber: 1_005 })]);
+    await expect(source.pollRange(999, 1_005)).rejects.toThrow(/no header timestamp/);
+  });
+
+  it('orders a same-block snipe after the launch it trades, whatever the tx hashes', async () => {
+    const launchTx = hash32('ff01');
+    const snipeTx = hash32('0001');
+    const { source } = makeSource([
+      launchLog({}, { blockNumber: 1_001, txHash: launchTx, logIndex: 0 }),
+      tradeLog({}, { blockNumber: 1_001, txHash: snipeTx, logIndex: 4 }),
+      feeLog({}, { blockNumber: 1_001, txHash: snipeTx, logIndex: 5 }),
+    ]);
+    const { events } = await source.pollRange(1_000, 1_001);
+    expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
+  });
+
+  it('keeps the exact base leg for a WETH curve even when the router refunded part of msg.value', async () => {
+    const atomic = encodeLog(
+      'AtomicBuy',
+      {
+        trader: TRADER,
+        token: DOGGO,
+        // msg.value was 1 ETH; the curve only took 0.4 and 0.6 went back.
+        ethIn: 10n ** 18n,
+        baseFromAggregator: FILL.grossBase,
+        tokensOut: FILL.tokensOut,
+      },
+      {
+        address: ROUTER,
+        blockNumber: 1_001,
+        blockHash: hash32('b1001'),
+        txHash: TX_FILL,
+        logIndex: 7,
+      },
+    );
+    const { source } = makeSource([launchLog(), tradeLog({ trader: ROUTER }), feeLog(), atomic]);
+    const { events } = await source.pollRange(999, 1_001);
+    const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
+    expect(trade?.nativeAmount).toBeCloseTo(0.4, 12);
+    expect(trade?.trader).toBe(TRADER);
+  });
+
+  it("pairs each FeeAccrued with its own fill's staker peel in a multi-fill transaction", async () => {
+    const { source } = makeSource([
+      launchLog(),
+      tradeLog({ feeStakers: LEGS.creatorBucket / 4n }, { logIndex: 4 }),
+      feeLog({}, { logIndex: 5 }),
+      treasuryLog({ logIndex: 6 }),
+      tradeLog({ feeStakers: 0n, feeCreator: LEGS.creatorBucket }, { logIndex: 7 }),
+      feeLog({}, { logIndex: 8 }),
+      treasuryLog({ logIndex: 9 }),
+    ]);
+    const { events } = await source.pollRange(999, 1_001);
+    const fees = events.filter((e): e is FeeAccruedEvent => e.kind === 'FeeAccrued');
+    expect(fees).toHaveLength(2);
+    expect(fees[0]?.stakerShare).toBeCloseTo((fees[0]?.creatorBucket ?? 0) / 4, 9);
+    expect(fees[1]?.stakerShare).toBe(0);
   });
 });

@@ -188,12 +188,21 @@ export interface LaunchChartInput {
  * The launch stepper's bonding-curve preview. Axis is the base mint, matching
  * the program; the trade box remains native-denominated. `index.html:3897`
  */
-export function drawLaunchChart(cv: HTMLCanvasElement | null, input: LaunchChartInput): void {
+export function drawLaunchChart(
+  cv: HTMLCanvasElement | null,
+  input: LaunchChartInput,
+  attempt = 0,
+): void {
   if (!cv) return;
   const w = cv.clientWidth;
   const h = cv.clientHeight;
   if (w < 2 || h < 2) {
-    setTimeout(() => drawLaunchChart(cv, input), 40);
+    // Not laid out yet (the scrim paints a frame later). Retry briefly, but
+    // never forever: a canvas the stepper already replaced, or a dialog that
+    // was closed, would otherwise poll every 40ms for the rest of the session.
+    if (cv.isConnected && attempt < 50) {
+      setTimeout(() => drawLaunchChart(cv, input, attempt + 1), 40);
+    }
     return;
   }
   const g = fitCanvas(cv);

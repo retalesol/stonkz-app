@@ -2,6 +2,22 @@ import type { FetchLike } from './types.js';
 
 let nextId = 1;
 
+/**
+ * A JSON-RPC `error` object the node itself returned — as opposed to a
+ * transport failure (timeout, HTTP status). Kept distinct because an
+ * `eth_call` revert arrives this way, with the revert payload in `data`.
+ */
+export class JsonRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+    readonly data?: unknown,
+  ) {
+    super(`${code} ${message}`);
+    this.name = 'JsonRpcError';
+  }
+}
+
 export interface JsonRpcOptions {
   timeoutMs?: number;
 }
@@ -27,8 +43,11 @@ export async function jsonRpc<T>(
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = (await res.json()) as { result?: T; error?: { code: number; message: string } };
-    if (body.error) throw new Error(`${body.error.code} ${body.error.message}`);
+    const body = (await res.json()) as {
+      result?: T;
+      error?: { code: number; message: string; data?: unknown };
+    };
+    if (body.error) throw new JsonRpcError(body.error.code, body.error.message, body.error.data);
     if (body.result === undefined) throw new Error('missing result');
     return body.result;
   } finally {

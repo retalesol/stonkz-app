@@ -26,6 +26,19 @@ import { resolveTokenRow } from './token-resolve.js';
  * this host. See the final report for why that rewrite, not a change to
  * `apps/web`'s own (framework-less) build, is the right layer for it.
  */
+/**
+ * A JS string literal safe inside an inline `<script>`: `JSON.stringify`
+ * alone leaves `</script>` intact, and the URL embeds a path segment the
+ * caller controls (`/og/u/:addr`).
+ */
+function scriptString(s: string): string {
+  return JSON.stringify(s)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 function ogPage(opts: { title: string; description: string; url: string; image?: string }): string {
   const image = opts.image ?? '';
   return `<!doctype html>
@@ -44,7 +57,7 @@ ${image ? `<meta property="og:image" content="${esc(image)}">` : ''}
 <meta name="twitter:title" content="${esc(opts.title)}">
 <meta name="twitter:description" content="${esc(opts.description)}">
 <meta http-equiv="refresh" content="0; url=${esc(opts.url)}">
-<script>location.replace(${JSON.stringify(opts.url)});</script>
+<script>location.replace(${scriptString(opts.url)});</script>
 </head>
 <body><a href="${esc(opts.url)}">${esc(opts.title)}</a></body>
 </html>`;
@@ -59,9 +72,10 @@ export function ogRoutes(): Hono<AppEnv> {
     const sym = (c.req.param('sym') ?? '').toUpperCase();
     const mintQ = c.req.query('mint')?.trim();
     const row = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
+    const symPath = encodeURIComponent(sym);
     const url = row?.mint
-      ? `${deps.env.publicWebOrigin}/t/${sym}?mint=${encodeURIComponent(row.mint)}`
-      : `${deps.env.publicWebOrigin}/t/${sym}`;
+      ? `${deps.env.publicWebOrigin}/t/${symPath}?mint=${encodeURIComponent(row.mint)}`
+      : `${deps.env.publicWebOrigin}/t/${symPath}`;
     if (!row) {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(ogPage({ title: `STONKZ · $${sym}`, description: 'A coin on ston.kz.', url }));
@@ -69,7 +83,9 @@ export function ogRoutes(): Hono<AppEnv> {
     const title = `STONKZ · $${row.sym} · ${usd(row.mc)} MCAP`;
     const description = row.descr || `${row.name} ($${row.sym}) is trading on ston.kz.`;
     c.header('content-type', 'text/html; charset=utf-8');
-    return c.body(ogPage({ title, description, url }));
+    // Only an https image is a card image a crawler will fetch for a preview.
+    const image = row.imageUrl && /^https:\/\//i.test(row.imageUrl) ? row.imageUrl : undefined;
+    return c.body(ogPage({ title, description, url, ...(image ? { image } : {}) }));
   });
 
   /** Profile OG when net is unknown — infers SOL vs EVM from address shape. */
@@ -78,7 +94,7 @@ export function ogRoutes(): Hono<AppEnv> {
     const addr = c.req.param('addr') ?? '';
     const netQ = parseNet(c.req.query('net'));
     const net = netQ ?? (addr.startsWith('0x') ? inferNetFromAddress(addr, 'RH') : 'SOL');
-    const url = `${deps.env.publicWebOrigin}/u/${addr}`;
+    const url = `${deps.env.publicWebOrigin}/u/${encodeURIComponent(addr)}`;
     if (!addr) {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(ogPage({ title: 'STONKZ', description: 'A member of ston.kz.', url }));
@@ -98,7 +114,7 @@ export function ogRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const net = parseNet(c.req.param('net'));
     const addr = c.req.param('addr');
-    const url = `${deps.env.publicWebOrigin}/u/${addr ?? ''}`;
+    const url = `${deps.env.publicWebOrigin}/u/${encodeURIComponent(addr ?? '')}`;
     if (!net || !addr) {
       c.header('content-type', 'text/html; charset=utf-8');
       return c.body(ogPage({ title: 'STONKZ', description: 'A member of ston.kz.', url }));

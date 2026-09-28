@@ -22,6 +22,7 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod math;
+pub mod metaplex;
 pub mod state;
 
 #[cfg(test)]

@@ -72,6 +72,49 @@ export interface EvmTransactionSource {
 }
 
 /**
+ * A confirmed Solana transaction's compiled message *and* whether it
+ * executed. The message alone is not enough for `/launch/confirm`: a
+ * transaction that landed but failed (`meta.err`) still carries the exact
+ * prepared message, and registering its mint would list a token that does
+ * not exist on-chain.
+ */
+export interface SolanaTransactionOutcome {
+  messageBase64: string;
+  failed: boolean;
+}
+
+export interface SolanaTransactionStatusSource {
+  getTransactionOutcome(signature: string): Promise<SolanaTransactionOutcome | null>;
+}
+
+/**
+ * Pre-sign simulation result. `reason` is the raw revert string / program
+ * logs — for the server log and the error mapper only, never sent verbatim
+ * to a browser.
+ */
+export type SimulationResult = { ok: true } | { ok: false; reason: string };
+
+/** `eth_call` as a given sender, reporting a revert instead of throwing. */
+export interface EvmCallSimulator {
+  simulateCall(tx: {
+    from: string;
+    to: string;
+    data: string;
+    value?: string;
+  }): Promise<SimulationResult>;
+}
+
+/** `simulateTransaction` of an unsigned wire-format transaction (base64). */
+export interface SolanaTransactionSimulator {
+  simulateTransaction(base64Tx: string): Promise<SimulationResult>;
+}
+
+/** Raw account read — what the Solana BaseOracle price comes from. */
+export interface SolanaAccountDataSource {
+  getAccountDataBase64(address: string): Promise<string | null>;
+}
+
+/**
  * A verified plain native transfer — what `social/tips.ts` needs to check a
  * tip against, without trusting anything the client asserted about it.
  * `amountNative` is whole units (SOL, not lamports; ETH, not wei), `null`

@@ -20,6 +20,7 @@ export {
   describeWalletError,
   isRejection,
   mapWalletError,
+  pendingSignature,
   walletErrorHeadline,
   walletErrorKind,
   type WalletErrorKind,

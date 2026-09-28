@@ -45,3 +45,9 @@ address = "5MxLgy9oPdTC3YgkiePHqr3EoCRD9uLVYRQS2ANAs7wy" # AmmConfig index 0 (de
 
 [[test.validator.clone]]
 address = "3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy" # create_pool_fee receiver (devnet)
+
+# `create_token` CPIs Metaplex Token Metadata (`CreateMetadataAccountV3`), so
+# the local validator needs the real program. `--clone` of an upgradeable
+# program also clones its ProgramData account.
+[[test.validator.clone]]
+address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s" # Metaplex Token Metadata

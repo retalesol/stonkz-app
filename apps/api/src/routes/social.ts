@@ -1,4 +1,5 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { and, count, desc, eq, sql } from 'drizzle-orm';
 import { parseNet, type Net } from '@stonkz/shared';
 import { follows, tape, tokens, users, wallLikes, wallPosts } from '../db/schema.js';
@@ -10,6 +11,67 @@ import { minTipFor, verifyTip } from '../social/tips.js';
 import { SolanaRpc } from '../chain/solana.js';
 import { asErc20BalanceSource } from '../chain/types.js';
 import { serialiseToken } from './serialise.js';
+import { MAX_IMAGE_BYTES, PinataError, uploadToPinata } from '../social/pinata.js';
+import { checkWebsite } from './launch-validate.js';
+
+/**
+ * Multipart ceiling for image uploads: the image itself plus form overhead.
+ * Enforced on the stream, so an oversized body is refused before it is
+ * buffered into memory rather than after.
+ */
+const imageBodyLimit = bodyLimit({
+  maxSize: MAX_IMAGE_BYTES + 64 * 1024,
+  onError: (c) =>
+    c.json(
+      { error: 'too_large', detail: `image must be at most ${MAX_IMAGE_BYTES / 1024 / 1024} MB` },
+      413,
+    ),
+});
+
+/** Reads the multipart `file` field and uploads it; a response on refusal. */
+async function uploadImageField(
+  c: Context<AppEnv>,
+  name: string,
+  fallbackFilename: string,
+): Promise<
+  { ok: true; uploaded: Awaited<ReturnType<typeof uploadToPinata>> } | { ok: false; res: Response }
+> {
+  const deps = c.get('deps');
+  const body = await c.req.parseBody().catch(() => null);
+  const file = body?.['file'];
+  if (!file || typeof file === 'string') {
+    return {
+      ok: false,
+      res: c.json({ error: 'bad_request', detail: 'multipart file field is required' }, 400),
+    };
+  }
+  const blob = file as File;
+  try {
+    const uploaded = await uploadToPinata({
+      jwt: deps.env.pinataJwt,
+      gateway: deps.env.pinataGateway,
+      bytes: new Uint8Array(await blob.arrayBuffer()),
+      mimeType: blob.type || 'application/octet-stream',
+      filename: blob.name || fallbackFilename,
+      name,
+    });
+    return { ok: true, uploaded };
+  } catch (err) {
+    if (err instanceof PinataError) {
+      if (err.upstream) deps.logger.warn('pinata upload failed', { upstream: err.upstream });
+      const status =
+        err.code === 'not_configured'
+          ? 503
+          : err.code === 'upload_failed'
+            ? 502
+            : err.code === 'too_large'
+              ? 413
+              : 415;
+      return { ok: false, res: c.json({ error: err.code, detail: err.message }, status) };
+    }
+    throw err;
+  }
+}
 
 /**
  * Phase 5.A — plan steps 143-150.
@@ -203,14 +265,27 @@ export function socialRoutes(): Hono<AppEnv> {
         );
       patch.bio = v;
     }
-    if ('avatarUrl' in body)
-      patch.avatarUrl = body['avatarUrl'] ? String(body['avatarUrl']).slice(0, 2048) : null;
+    // Profile links render for every visitor: http(s) only, never
+    // `javascript:`/`data:`; an avatar is an <img>, so https only.
+    if ('avatarUrl' in body) {
+      const raw = body['avatarUrl'] ? String(body['avatarUrl']).trim() : '';
+      if (raw && !/^https:\/\//i.test(raw)) {
+        return c.json({ error: 'bad_request', detail: 'avatarUrl must be an https:// URL' }, 400);
+      }
+      const checked = checkWebsite(raw, 2048);
+      if (!checked.ok)
+        return c.json({ error: 'bad_request', detail: 'avatarUrl must be an https:// URL' }, 400);
+      patch.avatarUrl = checked.value;
+    }
     if ('xHandle' in body)
       patch.xHandle = body['xHandle']
         ? String(body['xHandle']).replace(/^@/, '').slice(0, 64)
         : null;
-    if ('website' in body)
-      patch.website = body['website'] ? String(body['website']).slice(0, 2048) : null;
+    if ('website' in body) {
+      const checked = checkWebsite(body['website'] ? String(body['website']) : '', 2048);
+      if (!checked.ok) return c.json({ error: 'bad_request', detail: checked.detail }, 400);
+      patch.website = checked.value;
+    }
     if ('telegram' in body)
       patch.telegram = body['telegram'] ? String(body['telegram']).slice(0, 64) : null;
 
@@ -242,107 +317,59 @@ export function socialRoutes(): Hono<AppEnv> {
    * Upload a profile picture to Pinata and persist the gateway URL on `users`.
    * Multipart field name: `file`. JWT never leaves the API.
    */
-  app.post('/me/avatar', requireAuth(), limit(RATE_LIMITS.avatar), async (c) => {
+  app.post('/me/avatar', requireAuth(), limit(RATE_LIMITS.avatar), imageBodyLimit, async (c) => {
     const deps = c.get('deps');
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
 
-    const body = await c.req.parseBody();
-    const file = body['file'];
-    if (!file || typeof file === 'string') {
-      return c.json({ error: 'bad_request', detail: 'multipart file field is required' }, 400);
-    }
-    const blob = file as File;
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    const mimeType = blob.type || 'application/octet-stream';
-    const filename = blob.name || 'avatar.png';
-
-    try {
-      const { uploadToPinata } = await import('../social/pinata.js');
-      const uploaded = await uploadToPinata({
-        jwt: deps.env.pinataJwt,
-        gateway: deps.env.pinataGateway,
-        bytes,
-        mimeType,
-        filename,
-        name: 'stonkz-avatar',
+    const result = await uploadImageField(c, 'stonkz-avatar', 'avatar.png');
+    if (!result.ok) return result.res;
+    const { uploaded } = result;
+    await deps.db
+      .insert(users)
+      .values({ net, wallet, avatarUrl: uploaded.url, updatedAt: new Date(deps.now()) })
+      .onConflictDoUpdate({
+        target: [users.net, users.wallet],
+        set: { avatarUrl: uploaded.url, updatedAt: new Date(deps.now()) },
       });
-      await deps.db
-        .insert(users)
-        .values({ net, wallet, avatarUrl: uploaded.url, updatedAt: new Date(deps.now()) })
-        .onConflictDoUpdate({
-          target: [users.net, users.wallet],
-          set: { avatarUrl: uploaded.url, updatedAt: new Date(deps.now()) },
-        });
-      const [row] = await deps.db
-        .select()
-        .from(users)
-        .where(and(eq(users.net, net), eq(users.wallet, wallet)))
-        .limit(1);
-      return c.json({
-        net,
-        wallet,
-        avatarUrl: uploaded.url,
-        cid: uploaded.cid,
-        profile: row ? serialiseUser(row) : null,
-      });
-    } catch (err) {
-      const { PinataError } = await import('../social/pinata.js');
-      if (err instanceof PinataError) {
-        const status =
-          err.code === 'not_configured' ? 503 : err.code === 'upload_failed' ? 502 : 400;
-        return c.json({ error: err.code, detail: err.message }, status);
-      }
-      throw err;
-    }
+    const [row] = await deps.db
+      .select()
+      .from(users)
+      .where(and(eq(users.net, net), eq(users.wallet, wallet)))
+      .limit(1);
+    return c.json({
+      net,
+      wallet,
+      avatarUrl: uploaded.url,
+      cid: uploaded.cid,
+      profile: row ? serialiseUser(row) : null,
+    });
   });
 
   /**
    * Upload a launch / generic image to Pinata. Returns the gateway URL only —
    * does not touch the user profile. Multipart field: `file`.
    */
-  app.post('/uploads/image', requireAuth(), limit(RATE_LIMITS.avatar), async (c) => {
-    const deps = c.get('deps');
-    const user = c.get('user');
-    if (!user) return c.json({ error: 'unauthorized' }, 401);
-
-    const body = await c.req.parseBody();
-    const file = body['file'];
-    if (!file || typeof file === 'string') {
-      return c.json({ error: 'bad_request', detail: 'multipart file field is required' }, 400);
-    }
-    const blob = file as File;
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    const mimeType = blob.type || 'application/octet-stream';
-    const filename = blob.name || 'token.png';
-
-    try {
-      const { uploadToPinata } = await import('../social/pinata.js');
-      const uploaded = await uploadToPinata({
-        jwt: deps.env.pinataJwt,
-        gateway: deps.env.pinataGateway,
-        bytes,
-        mimeType,
-        filename,
-        name: 'stonkz-token',
-      });
+  app.post(
+    '/uploads/image',
+    requireAuth(),
+    limit(RATE_LIMITS.avatar),
+    imageBodyLimit,
+    async (c) => {
+      const user = c.get('user');
+      if (!user) return c.json({ error: 'unauthorized' }, 401);
+      const result = await uploadImageField(c, 'stonkz-token', 'token.png');
+      if (!result.ok) return result.res;
+      const { uploaded } = result;
       return c.json({
         url: uploaded.url,
         cid: uploaded.cid,
         mimeType: uploaded.mimeType,
         size: uploaded.size,
       });
-    } catch (err) {
-      const { PinataError } = await import('../social/pinata.js');
-      if (err instanceof PinataError) {
-        const status =
-          err.code === 'not_configured' ? 503 : err.code === 'upload_failed' ? 502 : 400;
-        return c.json({ error: err.code, detail: err.message }, status);
-      }
-      throw err;
-    }
-  });
+    },
+  );
 
   /** Public member card — wallet or username. On-chain balance + holdings when possible. */
   app.get('/users/:net/:addr', optionalAuth(), limit(RATE_LIMITS.read), async (c) => {

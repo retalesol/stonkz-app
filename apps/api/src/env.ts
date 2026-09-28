@@ -378,7 +378,8 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       'BASE_V3_FACTORY_ADDRESS',
       int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID) === BASE_SEPOLIA_CHAIN_ID
         ? '0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24'
-        : '0x33128a8fC17869897dc68A926803F6140319853',
+        : // Uniswap v3 factory on Base mainnet (8453).
+          '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
     ),
     baseV3QuoterAddress: str(src, 'BASE_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
     arcRpcUrl: str(src, 'ARC_RPC_URL', ARC_RPC_URL),

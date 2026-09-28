@@ -62,3 +62,16 @@ describe('readEnv production gates', () => {
     expect(env.rhLaunchpadAddress).toBe(ZERO_EVM_ADDRESS);
   });
 });
+
+describe('readEnv chain defaults', () => {
+  it('defaults every EVM factory to a well-formed address on testnet and mainnet ids', () => {
+    for (const BASE_CHAIN_ID of ['84532', '8453']) {
+      const env = readEnv({ NODE_ENV: 'test', BASE_CHAIN_ID });
+      expect(env.baseV3FactoryAddress).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    }
+    for (const RH_CHAIN_ID of ['46630', '4663']) {
+      const env = readEnv({ NODE_ENV: 'test', RH_CHAIN_ID });
+      expect(env.rhV3FactoryAddress).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    }
+  });
+});
