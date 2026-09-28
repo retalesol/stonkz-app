@@ -2,8 +2,8 @@
   "cluster": "devnet",
   "programId": "FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg",
   "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
-  "lastUpgradedSlot": 504567336,
-  "upgradeSignature": "fZb4Eqh3ykLgU4VgGPgFSqN1HoQPao8WcVnwowMUAjrTZUvwPboqj8SsppRgp3rsReEzwgVxh8buc3We1EgJbRH",
-  "upgradedAt": "2026-09-26",
-  "note": "Four-leg fee split (20 protocol / 10 game / 10 burn / 60 creator bucket); buy/sell take burn_vault. Mint PDA seeds are creator+salt; duplicate tickers allowed. Program ID unchanged."
+  "lastUpgradedSlot": 505228004,
+  "upgradeSignature": "5Pe1xKgbZCVpAszki6xNrSJPnRVUFTXuDUZnuPDC1mKvvdWMa85XmEeeDGeUWs8j7AUCRigpdrGeMGyMjLsHvtaM",
+  "upgradedAt": "2026-09-28",
+  "note": "v2 fee split (69 creator bucket / 15 platform / 10 $STONKZ buyback / 6 RWA crate fund); vault seeds unchanged. Mint PDA seeds are creator+salt; duplicate tickers allowed. Program ID unchanged."
 }

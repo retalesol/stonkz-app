@@ -30,7 +30,8 @@
     "No RH stock tokens on Base \u2014 ETH/WETH/USDC majors only.",
     "Deployer is the same testnet key used for RH 46630 \u2014 burned for mainnet.",
     "2026-09-27: full redeploy at block 47348724 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`.",
-    "2026-09-27: StonkzRouter redeployed at 0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d (block 47352362) with the capped-buy refund and permit fall-through; previous router 0xEeE3db8e58a0b371ed1CAA16bc4a25D296E57276 is unreferenced."
+    "2026-09-27: StonkzRouter redeployed at 0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d (block 47352362) with the capped-buy refund and permit fall-through; previous router 0xEeE3db8e58a0b371ed1CAA16bc4a25D296E57276 is unreferenced.",
+    "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x3738186EB44716AF8701A83cE810E38c4Dcd0514, block 47423325)."
   ],
   "previous": [
     {
@@ -51,9 +52,11 @@
     }
   ],
   "implementation": {
-    "StonkzLaunchpad": "0xd3E7E74A6A4aE4b54c6Aa32611B4DB74b34e1415",
-    "upgradedAt": "2026-09-27",
-    "note": "Fresh deploy on the four-leg fee split (20 protocol / 10 game / 10 burn / 60 creator bucket), append-only layout."
+    "StonkzLaunchpad": "0x3738186EB44716AF8701A83cE810E38c4Dcd0514",
+    "upgradedAt": "2026-09-28",
+    "upgradeTx": "0x9d3bdbc218c990a30a8fa95398411929d8a41aabb53a4e7e6fda7840096a0d83",
+    "upgradeBlock": 47423325,
+    "note": "v2 fee schedule: 69% creator bucket / 15% platform / 10% $STONKZ buyback (half crates, half burn) / 6% RWA crate fund. Constants only; storage layout unchanged."
   },
   "deployBlock": 47348724,
   "deployTxs": {

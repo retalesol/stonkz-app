@@ -38,12 +38,15 @@
     "BASE_MINT_OVERRIDES_RH maps USDG to TestnetUsdg for COPIUM staging (real USDG not faucetable).",
     "2026-09-13: upgraded StonkzLaunchpad impl to 0xe729089137ee7Af2495F3C55cf1538121fBea68d (duplicate ticker/name allowed on-chain).",
     "2026-09-27: full redeploy at block 124871527 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`.",
-    "2026-09-27: StonkzRouter redeployed at 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c (block 124911291) with the capped-buy refund and permit fall-through; previous router 0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa is unreferenced."
+    "2026-09-27: StonkzRouter redeployed at 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c (block 124911291) with the capped-buy refund and permit fall-through; previous router 0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa is unreferenced.",
+    "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230, block 125797509)."
   ],
   "implementation": {
-    "StonkzLaunchpad": "0xc762a0e8659596a19989E75a5E349f0B6b413dd7",
-    "upgradedAt": "2026-09-27",
-    "note": "Fresh deploy on the four-leg fee split (20 protocol / 10 game / 10 burn / 60 creator bucket), append-only layout."
+    "StonkzLaunchpad": "0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230",
+    "upgradedAt": "2026-09-28",
+    "upgradeTx": "0x0f1a884c65bce25ead161069b8201fbc2714e727db796226e7c23a177d940164",
+    "upgradeBlock": 125797509,
+    "note": "v2 fee schedule: 69% creator bucket / 15% platform / 10% $STONKZ buyback (half crates, half burn) / 6% RWA crate fund. Constants only; storage layout unchanged."
   },
   "previous": [
     {
