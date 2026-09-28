@@ -31,7 +31,8 @@
     "Deployer is the same testnet key used for RH 46630 \u2014 burned for mainnet.",
     "2026-09-27: full redeploy at block 47348724 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`.",
     "2026-09-27: StonkzRouter redeployed at 0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d (block 47352362) with the capped-buy refund and permit fall-through; previous router 0xEeE3db8e58a0b371ed1CAA16bc4a25D296E57276 is unreferenced.",
-    "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x3738186EB44716AF8701A83cE810E38c4Dcd0514, block 47423325)."
+    "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x3738186EB44716AF8701A83cE810E38c4Dcd0514, block 47423325).",
+    "2026-09-29: launchpad upgraded in place (impl 0x0007A46B7391735e65E76DfD088d13240D580253): createToken refuses supply > 1e12. Layout unchanged."
   ],
   "previous": [
     {
@@ -53,10 +54,12 @@
   ],
   "implementation": {
     "StonkzLaunchpad": "0x3738186EB44716AF8701A83cE810E38c4Dcd0514",
-    "upgradedAt": "2026-09-28",
-    "upgradeTx": "0x9d3bdbc218c990a30a8fa95398411929d8a41aabb53a4e7e6fda7840096a0d83",
-    "upgradeBlock": 47423325,
-    "note": "v2 fee schedule: 69% creator bucket / 15% platform / 10% $STONKZ buyback (half crates, half burn) / 6% RWA crate fund. Constants only; storage layout unchanged."
+    "upgradedAt": "2026-09-29",
+    "upgradeTx": null,
+    "upgradeBlock": null,
+    "note": "v2 fee schedule: 69% creator bucket / 15% platform / 10% $STONKZ buyback (half crates, half burn) / 6% RWA crate fund. Constants only; storage layout unchanged.",
+    "address": "0x0007A46B7391735e65E76DfD088d13240D580253",
+    "change": "createToken caps supply at CurveMath.MAX_SUPPLY (1e12)"
   },
   "deployBlock": 47348724,
   "deployTxs": {
