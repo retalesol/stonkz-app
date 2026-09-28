@@ -677,7 +677,10 @@ async function doLaunch(): Promise<void> {
     if (err instanceof SignerCancelledError) toast('LAUNCH CANCELLED');
     else if (isRejection(err)) toast('LAUNCH REJECTED IN WALLET');
     else if (err instanceof LiveApiError) {
-      if (err.code === 'name_or_ticker_cooldown') {
+      if (err.code === 'rate_limited') {
+        const mins = Math.max(1, Math.ceil((err.retryAfterMs ?? 3_600_000) / 60_000));
+        toast(`LAUNCH LIMIT REACHED FOR THIS WALLET ${DOT} TRY AGAIN IN ${mins} MIN`, 'red');
+      } else if (err.code === 'name_or_ticker_cooldown') {
         const retrySec = Math.max(1, Math.ceil((err.retryAfterMs ?? 300_000) / 1000));
         toast(`NAME OR TICKER ON COOLDOWN ${DOT} TRY AGAIN IN ${retrySec}S`, 'red');
       } else if (err.code === 'dev_buy_failed') {

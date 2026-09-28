@@ -455,3 +455,26 @@ describe('POST /launch/prepare + /launch/confirm', () => {
     expect(confirmed.body.error).toBe('intent_expired');
   });
 });
+
+describe('per-wallet launch quota', () => {
+  it('does not spend the quota on prepares that fail', async () => {
+    const app = await createTestApp({ env: { LAUNCH_RATE_LIMIT_PER_WALLET: '2' } });
+    try {
+      const { token } = await app.login('SOL');
+      // Five refused prepares (bad fee) cost nothing...
+      for (let i = 0; i < 5; i++) {
+        const bad = await prepare(token, { ...SOL_TICKER_BODY, ticker: `bad${i}`, feePct: 9 }, app);
+        expect(bad.status).toBeGreaterThanOrEqual(400);
+        expect(bad.status).not.toBe(429);
+      }
+      // ...so both successful ones still fit, and only then is the wallet capped.
+      expect((await prepare(token, { ...SOL_TICKER_BODY, ticker: 'okone' }, app)).status).toBe(200);
+      expect((await prepare(token, { ...SOL_TICKER_BODY, ticker: 'oktwo' }, app)).status).toBe(200);
+      const capped = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'okthree' }, app);
+      expect(capped.status).toBe(429);
+      expect(capped.body.error).toBe('rate_limited');
+    } finally {
+      await app.close();
+    }
+  });
+});

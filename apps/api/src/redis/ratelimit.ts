@@ -69,3 +69,27 @@ export async function rateLimit(
     resetSeconds,
   };
 }
+
+/**
+ * Read a window's count without consuming it. Paired with {@link rateLimit}
+ * for limits that should only count successes: peek before the work, consume
+ * after it succeeded. Concurrent requests can overshoot by the number in
+ * flight, which is acceptable for per-wallet quotas.
+ */
+export async function peekRateLimit(
+  redis: RedisLike,
+  rule: RateLimitRule,
+  identity: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): Promise<RateLimitVerdict> {
+  const window = Math.floor(nowSeconds / rule.windowSeconds);
+  const key = `rl:${rule.bucket}:${identity}:${window}`;
+  const count = Number((await redis.get(key)) ?? 0) || 0;
+  const resetSeconds = (window + 1) * rule.windowSeconds - nowSeconds;
+  return {
+    ok: count < rule.limit,
+    limit: rule.limit,
+    remaining: Math.max(0, rule.limit - count),
+    resetSeconds,
+  };
+}

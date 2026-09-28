@@ -231,13 +231,19 @@ async function readErrorBody(
     error?: unknown;
     detail?: unknown;
     retryAfterMs?: unknown;
+    /** Seconds, as the rate limiter reports it. */
+    retryAfter?: unknown;
   };
+  const retryAfterMs =
+    typeof body.retryAfterMs === 'number' && Number.isFinite(body.retryAfterMs)
+      ? body.retryAfterMs
+      : typeof body.retryAfter === 'number' && Number.isFinite(body.retryAfter)
+        ? body.retryAfter * 1000
+        : undefined;
   return {
     code: typeof body.error === 'string' ? body.error : 'request_failed',
     detail: typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`,
-    ...(typeof body.retryAfterMs === 'number' && Number.isFinite(body.retryAfterMs)
-      ? { retryAfterMs: body.retryAfterMs }
-      : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
   };
 }
 
