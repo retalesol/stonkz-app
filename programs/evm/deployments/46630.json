@@ -16,7 +16,9 @@
     "StockPriceSource": "0x5e36248dF811A4b8358014f71276714E196D00fE",
     "StockPriceAttester": "0x7DB88BA71807567be8057aff24B2D2D6aeAF6650",
     "FeeLocker": "0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3",
-    "UniswapV3Migrator": "0x7C6DE508a176E48Df24863845c603aDe3D656748"
+    "UniswapV3Migrator": "0x7C6DE508a176E48Df24863845c603aDe3D656748",
+    "ReferralVault": "0x942A1eB9747Aa3b161cb3e7a068Fdf846B8bC445",
+    "ReferralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894"
   },
   "tokens": {
     "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
@@ -52,7 +54,8 @@
     "2026-09-29: StockPriceSource 0xF53dE95ae1Fed92FFd9C9305E1716FD48EFcB776 (V3 TWAP x Pyth ETH, Pyth equity cross-check, last-close anchor off hours, push fallback) set as PythPriceSource fallback; stock/WETH pools cardinality 64 (pools still unseeded). UpgradeStockLaunch: router 0x3aAEEa60419e90fee3d9629eb36FAff8179984aE, impl 0x598588D7E739f4FEBA329063633BDDD5F5EA0B18.",
     "2026-09-29: UpgradeAttestedStockLaunch: StockPriceSourceV2 0x5e36248dF811A4b8358014f71276714E196D00fE (signed DefiLlama quotes, attester 0x7DB88BA71807567be8057aff24B2D2D6aeAF6650, attestMaxAge 300s) is PythPriceSource fallback; router 0x1d44A1868D84900953B02FF8d653bB42e3a26DB7 (attestationSink = V2); impl 0x4F1A2D8DFA632A66Ed587E086d9CFCa230DDD39F.",
     "2026-09-29: UpgradeStockLaunch (graduation router): router 0xA039af821d950C03EE870F05bF1A32F06F9053c5, impl 0x97a37E0655e5feA670B2DaF26A6fF40D0f798b61.",
-    "2026-09-30: impl 0xCc494654811164C14399b9b0be7773DC29Cc453a (accrueExternalFees); FeeLocker 0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3 + UniswapV3Migrator 0x7C6DE508a176E48Df24863845c603aDe3D656748 (1% tier) installed via setMigrator."
+    "2026-09-30: impl 0xCc494654811164C14399b9b0be7773DC29Cc453a (accrueExternalFees); FeeLocker 0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3 + UniswapV3Migrator 0x7C6DE508a176E48Df24863845c603aDe3D656748 (1% tier) installed via setMigrator.",
+    "2026-09-30: ReferralVault 0x942A1eB9747Aa3b161cb3e7a068Fdf846B8bC445 (signer 0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894, 1 ETH/day)."
   ],
   "implementation": {
     "StonkzLaunchpad": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
