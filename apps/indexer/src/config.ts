@@ -129,10 +129,11 @@ export const DEFAULT_LOCK_KEY = 0x53_74_6f_6e_6b_7a; // "Stonkz"
  */
 export const LEGACY_ROUTERS: Readonly<Record<number, readonly string[]>> = {
   // Robinhood Chain testnet — deployments/46630.json: the 2026-09-27 router and
-  // the 2026-09-29 atomic-launch router (superseded by the stock-launch router).
+  // the 2026-09-29 atomic-launch and stock-launch routers (each superseded).
   46630: [
     '0xC98F8214999220CE06E04ca8739A34Cb8AF5779c',
     '0x985877AcDF01A21527E093bc4fCE513EB180C775',
+    '0x3aAEEa60419e90fee3d9629eb36FAff8179984aE',
   ],
   // Base Sepolia — deployments/84532.json, 2026-09-27 redeploy.
   84532: ['0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d'],
