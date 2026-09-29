@@ -352,6 +352,35 @@ export type EvmLaunchReceiptCheck =
   | { ok: false; status: 409 | 422; error: string; detail: string };
 
 /**
+ * True when the transaction was sent straight to the launchpad or the router,
+ * i.e. the calldata we prepared is the calldata that ran. Anything else — a
+ * 7702-delegated EOA executing a batch, a relayer or bundler forwarding the
+ * call — is a relayed launch, verified off `TokenCreated` instead.
+ */
+export function isDirectLaunchCall(
+  receipt: Pick<EvmTransactionReceipt, 'to'>,
+  a: { launchpad: string; router: string },
+): boolean {
+  const to = receipt.to?.toLowerCase() ?? '';
+  if (to === '' || to === ZERO_EVM_ADDRESS) return false;
+  return to === a.launchpad.toLowerCase() || to === a.router.toLowerCase();
+}
+
+/** Every launch parameter `TokenCreated` logs equals the intent's. */
+function tokenCreatedMatchesIntent(
+  created: DecodedTokenCreated,
+  intent: { ticker: string; supply: number; baseMint: string; feeBps: number; cashback: boolean },
+): boolean {
+  return (
+    created.ticker === intent.ticker &&
+    created.supply === BigInt(Math.round(intent.supply)) * 10n ** BigInt(EVM_TOKEN_DECIMALS) &&
+    created.baseToken.toLowerCase() === intent.baseMint.toLowerCase() &&
+    created.feeBps === intent.feeBps &&
+    created.cashback === intent.cashback
+  );
+}
+
+/**
  * `/launch/confirm`'s EVM verification after status and sender are checked:
  *
  * - `to` the launchpad: the legacy `createToken` — calldata byte-for-byte
@@ -359,6 +388,10 @@ export type EvmLaunchReceiptCheck =
  * - `to` the configured router: a router launch whose function and
  *   `CreateParams` match the intent (`routerLaunchMatchesIntent`; the price
  *   update, value and deadline may differ).
+ *
+ * - anything else (EIP-7702 smart account, relayer, bundler): the launchpad's
+ *   `TokenCreated` must carry the intent's ticker, supply, base, fee and
+ *   cashback — the calldata ran inside a contract we did not prepare.
  *
  * Either way the launchpad's `TokenCreated` must name this wallet as creator.
  * A router launch's `AtomicBuy` (trader = wallet, token = the new coin) is the
@@ -383,6 +416,7 @@ export function verifyEvmLaunchReceipt(
   },
 ): EvmLaunchReceiptCheck {
   const to = receipt.to?.toLowerCase() ?? '';
+  const relayed = !isDirectLaunchCall(receipt, a);
   const viaLaunchpad =
     to === a.launchpad.toLowerCase() &&
     receipt.input.toLowerCase() === a.intent.unsignedPayload.toLowerCase();
@@ -393,7 +427,19 @@ export function verifyEvmLaunchReceipt(
     to === a.router.toLowerCase() &&
     isRouterLaunchPayload(a.intent.unsignedPayload) &&
     routerLaunchMatchesIntent(receipt.input, a.intent.unsignedPayload, a.intent);
-  if (!viaLaunchpad && !viaRouter) {
+  const created = decodeTokenCreated(receipt.logs, a.launchpad as Address);
+  // A relayed call (EIP-7702 smart account, a sponsored/bundled send) reaches
+  // the launchpad through a contract we did not prepare calldata for, so the
+  // calldata cannot be compared. The launchpad's own `TokenCreated` is the
+  // binding instead: creator is this wallet (the launchpad's `msg.sender`
+  // chain, not the relayer) and every launch parameter it logs is the
+  // intent's. Name and URI are not logged; they are the intent's anyway.
+  const viaRelay =
+    relayed &&
+    !!created &&
+    created.creator.toLowerCase() === a.wallet.toLowerCase() &&
+    tokenCreatedMatchesIntent(created, a.intent);
+  if (!viaLaunchpad && !viaRouter && !viaRelay) {
     return {
       ok: false,
       status: 409,
@@ -401,7 +447,6 @@ export function verifyEvmLaunchReceipt(
       detail: 'the confirmed transaction does not match what was prepared',
     };
   }
-  const created = decodeTokenCreated(receipt.logs, a.launchpad as Address);
   if (!created || created.creator.toLowerCase() !== a.wallet.toLowerCase()) {
     return {
       ok: false,
@@ -411,7 +456,7 @@ export function verifyEvmLaunchReceipt(
     };
   }
   let devBuy: EvmConfirmedDevBuy | null = null;
-  if (viaRouter) {
+  if (viaRouter || viaRelay) {
     const buy: DecodedAtomicBuy | null = decodeAtomicBuy(
       receipt.logs,
       a.router,

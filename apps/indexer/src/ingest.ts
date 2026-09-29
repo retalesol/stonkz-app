@@ -21,6 +21,7 @@ import type { Ledger } from '@stonkz/api/game/ledger';
 import type { ReferralService } from '@stonkz/api/game/referrals';
 import type { Publisher } from '@stonkz/api/ws/publisher';
 import type { Logger } from '@stonkz/api/observability/logger';
+import { fillId } from '@stonkz/api/chain/trade-fills';
 import { candleUpdatesFor } from './candles.js';
 import {
   assertEventIntegrity,
@@ -58,6 +59,9 @@ export interface IngestReport {
   /** Highest chain position accepted, per net. */
   positions: Partial<Record<Net, number>>;
 }
+
+/** Relative float dust below which an unstaked position is treated as empty. */
+const STAKE_DUST = 1e-9;
 
 /** How far back `chg` looks, matching the 24H label on the card. */
 const CHANGE_WINDOW_MS = 86_400_000;
@@ -498,23 +502,34 @@ export class Ingestor {
     const lane = await this.updateToken(event, mint);
     await this.updateKoth(event.net);
 
-    await this.opts.publisher.fill(event.net, event.sym, {
-      t: event.blockTimeMs,
-      sym: event.sym,
-      net: event.net,
-      buy: event.side === 'buy',
-      sol: event.nativeAmount,
-      tok: event.tokenAmount,
-      mc: event.mc,
-      w: event.trader,
-      v: event.usdValue,
-      cb: event.cashback,
-      sig: event.txSig,
-    });
+    // `fid` is the id `/trade/confirm` gave the provisional print of this same
+    // fill (`apps/api/src/chain/trade-fills.ts`), so the web replaces that
+    // print instead of adding a second trade, candle volume or tape entry.
+    await this.opts.publisher.fill(
+      event.net,
+      event.sym,
+      {
+        t: event.blockTimeMs,
+        sym: event.sym,
+        net: event.net,
+        mint,
+        buy: event.side === 'buy',
+        sol: event.nativeAmount,
+        tok: event.tokenAmount,
+        mc: event.mc,
+        w: event.trader,
+        v: event.usdValue,
+        cb: event.cashback,
+        sig: event.txSig,
+        fid: fillId(event.txSig, await this.tradeOrdinal(event)),
+      },
+      mint,
+    );
     await this.opts.publisher.token(event.sym, {
       type: 'curve',
       net: event.net,
       sym: event.sym,
+      mint,
       mc: event.mc,
       price: event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0,
       lane,
@@ -530,6 +545,26 @@ export class Ingestor {
     });
     report.xpAwarded += result.xp;
     report.achievementsUnlocked.push(...result.unlocked);
+  }
+
+  /**
+   * This fill's position among its transaction's fills, in log order — the
+   * ordinal half of the shared fill id. Earlier fills of the same transaction
+   * are always applied first (`compareEvents`), so counting the recorded
+   * rows below this log index is exact on a first pass and on a replay.
+   */
+  private async tradeOrdinal(event: TradeEvent): Promise<number> {
+    const [row] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(trades)
+      .where(
+        and(
+          eq(trades.net, event.net),
+          eq(trades.txSig, event.txSig),
+          sql`${trades.logIndex} < ${event.logIndex}`,
+        ),
+      );
+    return row?.n ?? 0;
   }
 
   /** Position and native cost basis, per the plan's step 98. */
@@ -949,8 +984,26 @@ export class Ingestor {
 
   /* ----------------------------------------------------------------- stake */
 
+  /**
+   * `Staked.amount` is the position's **new total** on both programs
+   * (`StonkzLaunchpad.stake` emits `p.amount`; Solana emits `amount_after`),
+   * not the amount just added. So the row is *set* to it — a top-up used to be
+   * added on top of the old total and double-counted — and the stake XP is
+   * paid on the delta against what the row held before.
+   */
   private async onStaked(event: StakedEvent, report: IngestReport): Promise<void> {
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
+    const key = and(
+      eq(stakePositions.net, event.net),
+      eq(stakePositions.mint, mint),
+      eq(stakePositions.wallet, event.wallet),
+    );
+    const [before] = await this.db
+      .select({ amount: stakePositions.amount })
+      .from(stakePositions)
+      .where(key)
+      .limit(1);
+    const added = Math.max(0, event.amount - (before?.amount ?? 0));
 
     await this.db
       .insert(stakePositions)
@@ -967,7 +1020,7 @@ export class Ingestor {
       .onConflictDoUpdate({
         target: [stakePositions.net, stakePositions.mint, stakePositions.wallet],
         set: {
-          amount: sql`${stakePositions.amount} + ${event.amount}`,
+          amount: event.amount,
           lockDays: event.lockDays,
           mult: event.mult,
           untilMs: event.untilMs,
@@ -980,20 +1033,26 @@ export class Ingestor {
       wallet: event.wallet,
       sym: event.sym,
       txSig: event.txSig,
-      amount: event.amount,
+      amount: added,
       circulating: event.circulating,
     });
     report.xpAwarded += result.xp;
     report.achievementsUnlocked.push(...result.unlocked);
   }
 
+  /**
+   * `Unstaked.amount` is the amount withdrawn (both programs), so this one is
+   * a decrement. Float dust left by subtracting whole-token doubles is
+   * snapped to zero so an emptied position stops counting as a staker.
+   */
   private async onUnstaked(event: UnstakedEvent): Promise<void> {
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
+    const left = sql`${stakePositions.amount} - ${event.amount}`;
 
     await this.db
       .update(stakePositions)
       .set({
-        amount: sql`greatest(0, ${stakePositions.amount} - ${event.amount})`,
+        amount: sql`case when ${left} <= ${STAKE_DUST} * greatest(1, ${stakePositions.amount}) then 0 else ${left} end`,
         updatedAt: new Date(this.now()),
       })
       .where(

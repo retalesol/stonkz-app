@@ -263,6 +263,10 @@ function rpc(net: EvmNet): PublicClient {
   const client = createPublicClient({
     chain: evmChains[net],
     transport: http(EVM_CHAINS[net].rpcUrl),
+    // viem's default is 4s when the chain declares no block time (ours do
+    // not). Base blocks every 2s and RH faster, so `waitForTransactionReceipt`
+    // sat on a mined trade for up to 4s before the page could show it.
+    pollingInterval: 1_000,
   }) as PublicClient;
   publicClients[net] = client;
   return client;

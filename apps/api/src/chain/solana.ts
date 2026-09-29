@@ -7,6 +7,7 @@ import {
   type FetchLike,
   type NativeTransferSource,
   type NativeTransferVerification,
+  type SolanaTransactionLogs,
 } from './types.js';
 
 export const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -242,6 +243,41 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
       to: bestTo?.addr ?? null,
       amountNative: bestTo ? bestTo.delta / LAMPORTS_PER_SOL : null,
       blockTimeMs: res.blockTime !== null ? res.blockTime * 1000 : null,
+    };
+  }
+  /**
+   * `/trade/confirm`'s read: logs and inner instructions at `confirmed`, the
+   * same `json` encoding the indexer fetches at `finalized`, so both decode
+   * the launchpad's `Trade` events from identical inputs.
+   */
+  async getTransactionLogs(signature: string): Promise<SolanaTransactionLogs | null> {
+    const res = await this.call<{
+      slot: number;
+      blockTime: number | null;
+      transaction: { message: { accountKeys: (string | { pubkey: string })[] } };
+      meta: {
+        err: unknown;
+        logMessages?: string[] | null;
+        innerInstructions?: { instructions: { programIdIndex?: number; data?: string }[] }[] | null;
+        loadedAddresses?: { writable?: string[]; readonly?: string[] } | null;
+      } | null;
+    } | null>('getTransaction', [
+      signature,
+      { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+    ]);
+    if (!res?.transaction) return null;
+    const meta = res.meta;
+    return {
+      slot: res.slot,
+      blockTimeMs: res.blockTime !== null ? res.blockTime * 1000 : null,
+      failed: !meta || (meta.err !== null && meta.err !== undefined),
+      logMessages: meta?.logMessages ?? [],
+      innerInstructions: meta?.innerInstructions ?? [],
+      accountKeys: [
+        ...res.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey)),
+        ...(meta?.loadedAddresses?.writable ?? []),
+        ...(meta?.loadedAddresses?.readonly ?? []),
+      ],
     };
   }
 }

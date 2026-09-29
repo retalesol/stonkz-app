@@ -1,4 +1,14 @@
-import { FEE_SPLIT, LOCKS, circ, effFee, feePie, inCashback, num, price } from '@stonkz/shared';
+import {
+  FEE_SPLIT,
+  LOCKS,
+  chainLockMult,
+  circ,
+  effFee,
+  feePie,
+  inCashback,
+  num,
+  price,
+} from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { PIE_COLOURS, drawPie } from '../canvas/pie.js';
 import { toast } from '../fx/toast.js';
@@ -7,10 +17,18 @@ import { DOT } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
 import { type SimCoin } from '../state/coins.js';
 import { holdOf } from '../state/holdings.js';
-import { ensureStake, poolFrac, stakedFrac, totalStaked, yourShare } from '../state/stake.js';
+import {
+  ensureStake,
+  poolFrac,
+  stakePoolOf,
+  stakedFrac,
+  totalStaked,
+  yourShare,
+} from '../state/stake.js';
 import { saveUser } from '../state/user.js';
 import { nativeUnit } from '../state/wallet.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
+import { rewardText, stakePanel, stakePanelHTML } from './stake-view.js';
 
 /**
  * Per-token staking.
@@ -28,9 +46,32 @@ let afterChange: () => void = () => undefined;
 
 function earnText(c: SimCoin): string {
   const st = ensureStake(c.sym);
+  if (api.mode === 'live') return rewardText(st, c.sym, nativeUnit());
   return inCashback(c)
     ? num(st.rewTok || 0) + ' ' + c.sym
     : (st.rewSol || 0).toFixed(4) + ' ' + nativeUnit();
+}
+
+function panelFor(c: SimCoin) {
+  return stakePanel({
+    sym: c.sym,
+    st: ensureStake(c.sym),
+    pool: stakePoolOf(c.sym),
+    unit: nativeUnit(),
+    live: api.mode === 'live',
+    now: Date.now(),
+  });
+}
+
+/** A position fixes its lock: both programs revert a top-up at another term ("lock mismatch"). */
+function heldLock(c: SimCoin): number | null {
+  const st = ensureStake(c.sym);
+  return st.amt > 0 ? st.days : null;
+}
+
+function lockMultLabel(days: number, mult: number): string {
+  // On chain FLEX has zero weight; the sandbox keeps the oracle's 1x.
+  return (api.mode === 'live' ? chainLockMult(days) : mult) + 'x';
 }
 
 export function renderStake(c: SimCoin): void {
@@ -38,6 +79,8 @@ export function renderStake(c: SimCoin): void {
   const cb = inCashback(c);
   const pie = feePie(1, poolFrac(c));
   const live = api.mode === 'live';
+  const held = heldLock(c);
+  if (held !== null) STK.lock = held;
   must('#stk-title').textContent = 'Stake ' + c.sym;
   must('#stk-sub').textContent = live
     ? (cb ? 'CASHBACK WINDOW ' + DOT + ' REWARDS IN ' + c.sym : 'REWARDS IN ' + nativeUnit()) +
@@ -59,9 +102,7 @@ export function renderStake(c: SimCoin): void {
         <div>
           <div class="lbl">YOUR STAKE</div>
           <div class="val gd" id="sv-you">${num(st.amt)}</div>
-          <span class="hint" id="sv-mult"
-            >${st.until > Date.now() ? st.mult + 'x ' + DOT + ' LOCKED' : 'NO LOCK ' + DOT + ' 1x'}</span
-          >
+          <span class="hint" id="sv-mult">${multHint(c)}</span>
         </div>
         <div>
           <div class="lbl">FEES TO POOL</div>
@@ -137,11 +178,25 @@ export function renderStake(c: SimCoin): void {
                     type="button"
                     class="lock-opt${STK.lock === l[0] ? ' on' : ''}"
                     data-lock="${attr(l[0])}"
+                    ${held !== null && held !== l[0] ? html`disabled` : ''}
                   >
-                    <span class="lm">${l[1]}x</span><span class="ld">${l[2]}</span>
+                    <span class="lm">${lockMultLabel(l[0], l[1])}</span
+                    ><span class="ld">${l[2]}</span>
                   </button>`,
               )}
             </div>
+            ${
+              held !== null
+                ? html`<span class="hint" id="stk-lockhint"
+                    >TOP-UPS KEEP YOUR ${held ? held + 'D' : 'FLEX'} TERM AND RESTART ITS CLOCK
+                    ${DOT} UNSTAKE ALL TO CHANGE TERM</span
+                  >`
+                : live
+                  ? html`<span class="hint" id="stk-lockhint"
+                      >FLEX PARKS TOKENS AND EARNS NOTHING ${DOT} LOCK 1D+ TO EARN</span
+                    >`
+                  : ''
+            }
           </div>
           <div class="fee-row">
             <button type="button" class="big" id="stk-go" style="flex:1">STAKE</button
@@ -151,11 +206,15 @@ export function renderStake(c: SimCoin): void {
           </div>
         </div>
       </div>
-      <div class="stk-claim">
-        <span class="lbl" style="margin:0">CLAIMABLE</span
-        ><span class="v" id="sv-claim">${earnText(c)}</span><span class="grow"></span
-        ><button type="button" class="claimbtn" id="stk-claim">CLAIM</button>
-      </div>
+      ${
+        live
+          ? stakePanelHTML(panelFor(c), c.sym)
+          : html`<div class="stk-claim">
+              <span class="lbl" style="margin:0">CLAIMABLE</span
+              ><span class="v" id="sv-claim">${earnText(c)}</span><span class="grow"></span
+              ><button type="button" class="claimbtn" id="stk-claim">CLAIM</button>
+            </div>`
+      }
       <p class="hint">
         STAKE WEIGHT = AMOUNT x LOCK MULTIPLIER. THE POOL TAKES HALF THE CREATOR BUCKET WHEN ALL
         CIRCULATING SUPPLY IS STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS
@@ -179,7 +238,24 @@ export function renderStake(c: SimCoin): void {
   });
   must('#stk-go').addEventListener('click', () => void doStake(c, 1));
   must('#stk-un').addEventListener('click', () => void doStake(c, -1));
-  must('#stk-claim').addEventListener('click', () => void doClaim(c));
+  $('#stk-unall')?.addEventListener('click', () => void doUnstake(c, undefined));
+  $('#stk-claim')?.addEventListener('click', () => void doClaim(c));
+}
+
+function multHint(c: SimCoin): string {
+  const st = ensureStake(c.sym);
+  if (api.mode !== 'live') {
+    return st.until > Date.now() ? st.mult + 'x ' + DOT + ' LOCKED' : 'NO LOCK ' + DOT + ' 1x';
+  }
+  if (!(st.amt > 0)) return 'NOTHING STAKED';
+  const p = panelFor(c);
+  return (
+    (p.earns ? +p.mult.toFixed(2) + 'x' : 'FLEX ' + DOT + ' 0x') +
+    ' ' +
+    DOT +
+    ' ' +
+    (p.locked ? 'LOCKED' : 'UNLOCKED')
+  );
 }
 
 /** Patch the live numbers without rebuilding the dialog. `index.html:3151` */
@@ -200,9 +276,20 @@ export function syncStake(): void {
   set('#lg-pool', (pie.stakers * 100).toFixed(1) + '%');
   set('#lg-cre', (pie.creator * 100).toFixed(1) + '%');
   set('#lg-fee', effFee(c).toFixed(1) + '%');
+  set('#sv-mult', multHint(c));
   const earn = earnText(c);
   set('#sv-earn', earn);
   set('#sv-claim', earn);
+  if (api.mode === 'live') {
+    const p = panelFor(c);
+    set('#stk-pos-amt', num(p.amount) + ' ' + c.sym);
+    set('#stk-pos-until', p.unlockLabel);
+    set('#stk-pos-rew', p.rewardLabel);
+  }
+}
+
+function failed(err: unknown, fallback: string): void {
+  toast(err instanceof Error ? err.message.toUpperCase() : fallback, 'red');
 }
 
 async function doStake(c: SimCoin, dir: 1 | -1): Promise<void> {
@@ -212,79 +299,109 @@ async function doStake(c: SimCoin, dir: 1 | -1): Promise<void> {
     toast('ENTER AN AMOUNT FIRST');
     return;
   }
-  const st = ensureStake(c.sym);
-  if (dir > 0) {
-    const h = holdOf(c.sym);
-    if (!h || h.tok < amt) {
-      toast('NOT ENOUGH ' + c.sym + ' ' + DOT + ' BUY SOME FIRST');
-      return;
-    }
-    const L = LOCKS.find((l) => l[0] === STK.lock) ?? (LOCKS[0] as (typeof LOCKS)[number]);
-    try {
-      await api.stake({ sym: c.sym, amount: amt, days: L[0], mult: L[1] });
-    } catch (err) {
-      toast(err instanceof Error ? err.message.toUpperCase() : 'STAKE FAILED', 'red');
-      return;
-    }
-    toast(
-      'STAKED ' +
-        num(amt) +
-        ' ' +
-        c.sym +
-        (L[0] ? ' ' + DOT + ' ' + L[2] + ' LOCK ' + L[1] + 'x' : '') +
-        (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
-    );
-    void circ(c);
-  } else {
-    if (st.until > Date.now()) {
-      toast('LOCKED UNTIL ' + new Date(st.until).toLocaleDateString());
-      return;
-    }
-    if (st.amt < amt) {
-      toast('YOU ONLY HAVE ' + num(st.amt) + ' STAKED');
-      return;
-    }
-    // The adapter unstakes the whole position; the oracle allowed partials, so
-    // re-stake the remainder in the same beat rather than change the contract.
-    const back = await api.unstake(c.sym);
-    const keep = back - amt;
-    if (keep > 0) await api.stake({ sym: c.sym, amount: keep, days: st.days, mult: st.mult });
-    toast('UNSTAKED ' + num(amt) + ' ' + c.sym);
+  if (dir < 0) {
+    await doUnstake(c, amt);
+    return;
   }
+  const h = holdOf(c.sym);
+  if (!h || h.tok < amt) {
+    toast('NOT ENOUGH ' + c.sym + ' ' + DOT + ' BUY SOME FIRST');
+    return;
+  }
+  const L = LOCKS.find((l) => l[0] === STK.lock) ?? (LOCKS[0] as (typeof LOCKS)[number]);
+  try {
+    await api.stake({ sym: c.sym, amount: amt, days: L[0], mult: L[1] });
+  } catch (err) {
+    failed(err, 'STAKE FAILED');
+    return;
+  }
+  toast(
+    'STAKED ' +
+      num(amt) +
+      ' ' +
+      c.sym +
+      (L[0] ? ' ' + DOT + ' ' + L[2] + ' LOCK ' + lockMultLabel(L[0], L[1]) : ' ' + DOT + ' FLEX') +
+      (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
+  );
+  void circ(c);
+  settle(c);
+}
+
+/** Unstake `amt`, or the whole position when `amt` is undefined. */
+async function doUnstake(c: SimCoin, amt: number | undefined): Promise<void> {
+  const st = ensureStake(c.sym);
+  if (st.until > Date.now()) {
+    toast('LOCKED UNTIL ' + new Date(st.until).toLocaleString());
+    return;
+  }
+  if (!(st.amt > 0)) {
+    toast('NOTHING STAKED IN ' + c.sym);
+    return;
+  }
+  if (amt !== undefined && st.amt < amt) {
+    toast('YOU ONLY HAVE ' + num(st.amt) + ' STAKED');
+    return;
+  }
+  let back = 0;
+  try {
+    back = await api.unstake(c.sym, amt);
+  } catch (err) {
+    failed(err, 'UNSTAKE FAILED');
+    return;
+  }
+  if (back <= 0) {
+    toast('NOTHING UNSTAKED');
+    return;
+  }
+  toast('UNSTAKED ' + num(back) + ' ' + c.sym);
+  settle(c);
+}
+
+function settle(c: SimCoin): void {
   saveUser();
-  input.value = '';
-  renderStake(c);
+  const input = $<HTMLInputElement>('#stk-amt');
+  if (input) input.value = '';
+  if (STK.c === c) renderStake(c);
   afterChange();
 }
 
 async function doClaim(c: SimCoin): Promise<void> {
-  const res = await api.claimStake(c.sym);
-  if (res.tokens <= 0 && res.native <= 0) {
+  let res;
+  try {
+    res = await api.claimStake(c.sym);
+  } catch (err) {
+    failed(err, 'CLAIM FAILED');
+    return;
+  }
+  if (res.tokens <= 0 && res.native <= 0 && !(res.base && res.base > 0)) {
     toast('NOTHING TO CLAIM YET');
     return;
   }
   const parts = [
+    res.base && res.base > 0 ? res.base.toFixed(6) + ' ' + (res.baseSym || nativeUnit()) : '',
+    !(res.base && res.base > 0) && res.native > 0 ? res.native.toFixed(4) + ' ' + nativeUnit() : '',
     res.tokens > 0 ? num(res.tokens) + ' ' + c.sym : '',
-    res.tokens > 0 && res.native > 0 ? ' + ' : '',
-    res.native > 0 ? res.native.toFixed(4) + ' ' + nativeUnit() : '',
-  ];
-  toast('CLAIMED ' + parts.join(''));
+  ].filter(Boolean);
+  toast('CLAIMED ' + parts.join(' + '));
   void price(c);
-  renderStake(c);
-  afterChange();
+  settle(c);
 }
 
 export function openStake(c: SimCoin, opener?: Element | null): void {
   STK.c = c;
   STK.lock = 0;
   const st = ensureStake(c.sym);
-  if (st.until > Date.now()) STK.lock = st.days;
+  if (st.amt > 0 || st.until > Date.now()) STK.lock = st.days;
   renderStake(c);
   openScrim('#stakeScrim', opener);
-  if (api.mode === 'live' && api.hydrateStake) {
-    void api.hydrateStake(c.sym).then(() => {
-      if (STK.c === c) renderStake(c);
-    });
+  if (api.mode === 'live') {
+    // The position straight off the chain (the indexer trails by ~12 blocks
+    // and never carries pending rewards), plus the pool's totals.
+    void Promise.all([api.hydrateStake?.(c.sym, { chain: true }), api.stakePool?.(c.sym)]).then(
+      () => {
+        if (STK.c === c) renderStake(c);
+      },
+    );
   }
 }
 

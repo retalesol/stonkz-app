@@ -43,6 +43,11 @@ export const RATE_LIMITS = {
   fees: { bucket: 'fees', limit: 60, windowSeconds: 60 },
   /** Stake / unstake / claim-stake prepare — same cadence as fees. */
   stake: { bucket: 'stake', limit: 60, windowSeconds: 60 },
+  /**
+   * `GET /stake/:sym/chain` pays for two RPC reads per call. The dialog asks
+   * on open and a few times after the wallet's own transaction confirms.
+   */
+  stakeChain: { bucket: 'stake_chain', limit: 30, windowSeconds: 60 },
   /** Plan step 144/148 — profile writes and follows are cheap but should not be scriptable. */
   social: { bucket: 'social', limit: 30, windowSeconds: 60 },
   /** `POST /wall` also pays for a chain RPC read (`verifyTip`), so it is capped tighter than a plain write. */

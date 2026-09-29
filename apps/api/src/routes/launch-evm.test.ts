@@ -537,7 +537,7 @@ describe('EVM /launch/confirm of a router launch', () => {
     expect(res.body.error).toBe('signature_mismatch');
   });
 
-  it('refuses the other launch function, and a router call sent to any other address', async () => {
+  it('refuses the other launch function sent to the router', async () => {
     const { token, address, body } = await prepared('wrongfn');
     const sig = evmHash('c4');
     h.rpcs.RH.setEvmReceipt(sig, {
@@ -548,16 +548,55 @@ describe('EVM /launch/confirm of a router launch', () => {
       logs: [tokenCreatedLog(TOKEN, address as Address, RH_WETH, 'WRONGFN')],
     });
     expect((await confirm(token, body.intentId, sig)).body.error).toBe('signature_mismatch');
+  });
 
-    const sig2 = evmHash('c5');
-    h.rpcs.RH.setEvmReceipt(sig2, {
+  // Measured on Base Sepolia (MEMEMAN, tx 0x422df40f…): a MetaMask EIP-7702
+  // smart account sends the launch through a relayer (`from` 0xb42f…) to a
+  // delegation contract (`to` 0xdb9b…). The launchpad still logs the wallet
+  // as creator. Refusing that made every such launch wait for the indexer.
+  it('confirms a relayed (EIP-7702 / bundled) launch off the launchpad TokenCreated', async () => {
+    const { token, address, body } = await prepared('relayed');
+    const sig = evmHash('c5');
+    h.rpcs.RH.setEvmReceipt(sig, {
       status: 'success',
-      from: address,
+      from: '0xb42f812a44c22cc6b861478900401ee759ebead6',
+      to: '0xdb9b1e94b5b69df7e401ddbede43491141047db3',
+      input: '0xdeadbeef',
+      logs: [
+        tokenCreatedLog(TOKEN, address as Address, RH_WETH, 'RELAYED'),
+        atomicBuyLog(RH_ROUTER, address as Address, TOKEN, 5n * 10n ** 18n),
+      ],
+    });
+    const res = await confirm(token, body.intentId, sig);
+    expect(res.status).toBe(200);
+    expect(res.body.mint?.toLowerCase()).toBe(TOKEN.toLowerCase());
+    expect(res.body.devBuy?.tokens).toBe(5);
+  });
+
+  it.each([
+    ['another creator', { creator: '0x000000000000000000000000000000000000dEaD' }, 409],
+    ['another ticker', { ticker: 'OTHER' }, 409],
+    ['another base', { base: RH_USDG }, 409],
+    ['a non-launchpad emitter', { emitter: '0x000000000000000000000000000000000000beef' }, 409],
+  ] as const)('refuses a relayed launch whose TokenCreated has %s', async (_, change, status) => {
+    const { token, address, body } = await prepared(`rel${Object.keys(change)[0]!.slice(0, 3)}`);
+    const log = tokenCreatedLog(
+      TOKEN,
+      ('creator' in change ? change.creator : address) as Address,
+      ('base' in change ? change.base : RH_WETH) as Address,
+      'ticker' in change ? change.ticker : launchParams(body.data).ticker,
+    );
+    const sig = evmHash('c6');
+    h.rpcs.RH.setEvmReceipt(sig, {
+      status: 'success',
+      from: '0xb42f812a44c22cc6b861478900401ee759ebead6',
       to: '0x000000000000000000000000000000000000beef',
       input: body.data,
-      logs: [tokenCreatedLog(TOKEN, address as Address, RH_WETH, 'WRONGFN')],
+      logs: [{ ...log, address: 'emitter' in change ? change.emitter : log.address }],
     });
-    expect((await confirm(token, body.intentId, sig2)).body.error).toBe('signature_mismatch');
+    const res = await confirm(token, body.intentId, sig);
+    expect(res.status).toBe(status);
+    expect(res.body.mint).toBeUndefined();
   });
 
   it('refuses a router launch another wallet sent, or whose TokenCreated names another creator', async () => {

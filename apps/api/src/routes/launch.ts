@@ -63,6 +63,7 @@ import { findLaunchCooldown } from './token-resolve.js';
 import {
   prepareEvmLaunch,
   stockPricerFor,
+  isDirectLaunchCall,
   verifyEvmLaunchReceipt,
   type EvmConfirmedDevBuy,
 } from './launch-evm.js';
@@ -1207,7 +1208,17 @@ export function launchRoutes(): Hono<AppEnv> {
           }
           // Calldata is reproducible by anyone once an intent expires, so the
           // sender is what binds the confirmation to this wallet.
-          if (!receipt.from || receipt.from.toLowerCase() !== wallet.toLowerCase()) {
+          //
+          // A *relayed* send (EIP-7702 smart account, sponsored/bundled tx)
+          // has a relayer as `from` by construction; there the launchpad's
+          // `TokenCreated.creator` is the binding, checked in
+          // `verifyEvmLaunchReceipt`. A direct call to the launchpad or the
+          // router from another wallet is still refused here.
+          const direct = isDirectLaunchCall(receipt, {
+            launchpad: launchpadAddr,
+            router: evmRouterAddress(deps.env, net),
+          });
+          if (direct && (!receipt.from || receipt.from.toLowerCase() !== wallet.toLowerCase())) {
             return c.json(
               {
                 error: 'tx_sender_mismatch',

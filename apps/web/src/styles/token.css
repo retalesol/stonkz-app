@@ -75,6 +75,8 @@ textarea.fld{resize:vertical;min-height:52px;font-size:11px}
 .scrolly::-webkit-scrollbar-thumb{background:#2b3342}
 .scrolly::-webkit-scrollbar-track{background:#06070a}
 tr.newrow td{animation:rowin .5s ease-out}
+/* Shown at one confirmation, before the indexer's safe depth (`live-fills.ts`). */
+tr.pend td{opacity:.72}
 @keyframes rowin{0%{background:rgba(255,162,43,.4)}100%{background:transparent}}
 .tag{font-size:9px;letter-spacing:.05em;border:1px solid currentColor;padding:0 3px}
 .tag.dev{color:var(--down)}.tag.snp{color:var(--violet)}.tag.whl{color:var(--blue)}.tag.bc{color:var(--amber)}

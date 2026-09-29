@@ -193,6 +193,8 @@ export interface TokenFees {
     referrals: number;
   };
   source: 'chain' | 'sim';
+  /** This coin's staking pool. Absent from older API builds and in sim. */
+  staking?: StakePoolSummary;
 }
 
 /** §5.3 — connected wallet. */
@@ -255,6 +257,54 @@ export interface Stake {
   rewTok: number;
   /** Rewards accrued in the native unit. */
   rewSol: number;
+  /**
+   * On-chain pool weight in whole tokens (`amount * lock bps / 1e4`). FLEX is
+   * **zero** on both programs — a parked position earns nothing. Absent in sim
+   * and on rows read before the API reported it.
+   */
+  weight?: number;
+  /** Pending rewards in the curve's base asset (whole units), when read from chain. */
+  rewBase?: number;
+  /** The base asset `rewBase` is denominated in (e.g. `WETH`, `USDC`). */
+  baseSym?: string;
+  /** Where the numbers came from: a fresh on-chain read, or the indexer's table. */
+  source?: 'chain' | 'indexer';
+  /** Epoch ms of the last on-chain read, so a lagging indexer row cannot overwrite it. */
+  chainAt?: number;
+}
+
+/**
+ * One coin's staking pool, as the Fees tab and the stake dialog show it.
+ * Token amounts are whole tokens; `lifetimeNative` is the chain's native unit.
+ */
+export interface StakePoolSummary {
+  /** Everything staked: lock-eligible plus FLEX. */
+  totalStaked: number;
+  /** Staked with a lock of at least one day — the only stake that earns. */
+  eligibleStaked: number;
+  /** FLEX: parked, zero weight, excluded from the pool fraction. */
+  flexStaked: number;
+  /** Sum of every position's weight (whole-token units). */
+  totalWeight: number;
+  /** Wallets with a non-zero position. */
+  stakers: number;
+  /** Circulating supply the programs weigh against (`tokensForSale - realToken`). */
+  circulating: number;
+  /** `totalStaked / circulating`, 0..1. */
+  stakedFrac: number;
+  /** The stakers' current share of the 69% creator bucket, 0..0.5 (eligible stake only). */
+  bucketShare: number;
+  /** The same share expressed against the whole curve fee (`bucketShare * 0.69`). */
+  feeShare: number;
+  /** Lifetime stakers' earnings in the native unit (indexer). */
+  lifetimeNative: number;
+  /** Lifetime stakers' earnings in the base asset, when read from chain. */
+  lifetimeBase?: number;
+  /** Lifetime stakers' earnings paid in the token (cashback window), when read from chain. */
+  lifetimeTokens?: number;
+  /** The curve's base asset, which `lifetimeBase` is denominated in. */
+  baseSym?: string;
+  source: 'indexer' | 'chain';
 }
 
 /** §5.5 — another user, resolved from an address. */

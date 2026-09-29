@@ -47,6 +47,8 @@ import { syncHoldingFromChain, safeSellAmountInput } from '../api/live-holding.j
 import { SET } from '../state/settings.js';
 import { NATIVE_PRICE, WALLET, nativeUnit } from '../state/wallet.js';
 import { openStake } from '../modals/stake.js';
+import { stakeOf } from '../state/stake.js';
+import { stakingSectionHTML } from './fees-staking.js';
 import { setChatToken, roomOf, addChat } from './chat.js';
 import { netPill, paint } from './board.js';
 import { connectWallet } from '../app/wallet.js';
@@ -609,6 +611,7 @@ function tradesHTML(c: SimCoin): Html {
             t.fresh && i === 0 ? 'newrow' : '',
             multi ? 'tr-hop' : '',
             open ? 'open' : '',
+            t.pending ? 'pend' : '',
           ]
             .filter(Boolean)
             .join(' ');
@@ -625,7 +628,7 @@ function tradesHTML(c: SimCoin): Html {
                         href="${attr(explorerTxUrl(c.net ?? 'SOL', t.sig))}"
                         target="_blank"
                         rel="noopener"
-                        title="View transaction"
+                        title="${attr(t.pending ? 'Confirmed on chain, awaiting indexer finality' : 'View transaction')}"
                         >${clockSec(t.t)}</a
                       >`
                     : clockSec(t.t)
@@ -841,7 +844,12 @@ async function loadFees(c: SimCoin): Promise<void> {
   const b = $('#tabbody');
   if (!b || !api.tokenFees) return;
   try {
-    const f = await api.tokenFees(c);
+    // The viewer's own position rides along when a wallet is signed in; the
+    // indexer row is enough here (the stake dialog reads the chain).
+    const [f] = await Promise.all([
+      api.tokenFees(c),
+      api.mode === 'live' && WALLET.on && api.hydrateStake ? api.hydrateStake(c.sym) : undefined,
+    ]);
     if (TV.c !== c || TV.tab !== 'fees') return;
     render(b, feesHTML(f));
   } catch (err) {
@@ -915,6 +923,18 @@ function feesHTML(f: TokenFees): Html {
         </tbody>
       </table>
     </div>
+    ${
+      f.staking
+        ? stakingSectionHTML({
+            sym: f.sym,
+            unit: u,
+            pool: f.staking,
+            viewer: WALLET.on ? stakeOf(f.sym) : null,
+            nat,
+            now: Date.now(),
+          })
+        : ''
+    }
     <p class="hint">
       ${
         f.source === 'chain'

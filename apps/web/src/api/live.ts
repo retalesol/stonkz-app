@@ -10,6 +10,7 @@ import {
   type Net,
   type Quote,
   type Settings,
+  type StakePoolSummary,
   type TokenFees,
   type Wallet,
   crateBy,
@@ -43,7 +44,7 @@ import {
 } from '../state/coins.js';
 import { creditTokens, holdOf, noteTrade, HOLD } from '../state/holdings.js';
 import { syncHoldingFromChain } from './live-holding.js';
-import { ensureStake, stakeOf } from '../state/stake.js';
+import { ensureStake, setStakePool, stakeOf, stakePoolOf } from '../state/stake.js';
 import { rememberIdentity } from '../lib/identity.js';
 import {
   USER,
@@ -55,7 +56,14 @@ import {
   unlock,
 } from '../state/user.js';
 import { applySettings, saveSettings, settingsPayload } from '../state/settings.js';
-import { fillCandleGaps, mergeFillIntoSeries } from '../lib/candles.js';
+import { fillCandleGaps } from '../lib/candles.js';
+import {
+  FillLedger,
+  applyFillToSeries,
+  sigKey,
+  type FillSource,
+  type SeriesAnchor,
+} from './live-fills.js';
 import { NATIVE_PRICE, WALLET, selectNet, nativeUsd } from '../state/wallet.js';
 import { activeWallet, isRejection, pendingSignature, requireWallet } from '../wallet/index.js';
 import { LaunchPendingError, LaunchedDevBuyError, type LaunchHooks } from './launch-errors.js';
@@ -192,6 +200,18 @@ interface ApiFillPayload {
   v: number;
   cb?: boolean;
   sig?: string;
+  mint?: string;
+  /** `${sig}:${ordinal}` — the same on the provisional and the indexed print. */
+  fid?: string;
+  /** `/trade/confirm`'s fast-path print, ahead of the indexer's confirmation depth. */
+  provisional?: boolean;
+}
+
+/** `POST /trade/confirm` (`apps/api/src/routes/trade.ts`). */
+interface ApiTradeConfirm {
+  ok: boolean;
+  pending?: boolean;
+  fills?: ApiFillPayload[];
 }
 
 interface ApiTapeResponse {
@@ -549,6 +569,129 @@ function applyCandles(c: SimCoin, candles: ApiCandle[]): void {
   );
   c.h = filled.map((k) => k.c * supply);
   c.hv = filled.map((k) => k.v);
+  // Live fills open new 1m candles from here (`applyFillToSeries`).
+  anchorOf(c).lastBucket =
+    filled.length > 0 ? (filled[filled.length - 1] as { t: number }).t : null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Live fills — local (wallet confirmed), provisional (`/trade/confirm`) and    */
+/* authoritative (indexer) prints of one trade collapse into one row, one      */
+/* candle contribution and one tape print. See `live-fills.ts`.                */
+/* -------------------------------------------------------------------------- */
+
+const ledgers = new WeakMap<SimCoin, FillLedger>();
+const anchors = new WeakMap<SimCoin, SeriesAnchor>();
+const latestFillT = new WeakMap<SimCoin, number>();
+const reconcileTimers = new WeakMap<SimCoin, number>();
+/** A provisional print the indexer has not confirmed by now is re-read from REST. */
+const RECONCILE_MS = 150_000;
+
+function ledgerOf(c: SimCoin): FillLedger {
+  let l = ledgers.get(c);
+  if (!l) {
+    l = new FillLedger();
+    ledgers.set(c, l);
+  }
+  return l;
+}
+
+function anchorOf(c: SimCoin): SeriesAnchor {
+  let a = anchors.get(c);
+  if (!a) {
+    a = { lastBucket: null };
+    anchors.set(c, a);
+  }
+  return a;
+}
+
+/** One live print onto a coin: trade row, market cap and the open chart. */
+function applyLiveFill(c: SimCoin, f: ApiFillPayload, source: FillSource): void {
+  const verdict = ledgerOf(c).admit({ sig: f.sig, fid: f.fid, source }, Date.now());
+  const t = f.t > 0 ? f.t : Date.now();
+  // Prints can land out of order (an older fill's indexed twin after a newer
+  // provisional one); only the newest may move the headline cap.
+  const newest = t >= (latestFillT.get(c) ?? 0);
+  if (newest) {
+    latestFillT.set(c, t);
+    c.lastMc = c.mc;
+    c.mc = f.mc;
+  }
+  const side = f.buy ? 'buy' : 'sell';
+  const hops = hopsForTrade(c, side, f.sol, f.tok);
+  pushTrade(c, {
+    buy: f.buy,
+    sol: f.sol,
+    tok: f.tok,
+    mc: f.mc,
+    cb: !!f.cb,
+    w: f.cb ? 'CASHBACK' : shortAddr(f.w),
+    ...(f.cb ? {} : { addr: f.w }),
+    v: venueFor(c),
+    ...(hops ? { hops } : {}),
+    ...(f.sig ? { sig: f.sig } : {}),
+    pending: source !== 'authoritative' && !(f.sig && ledgerOf(c).isFinal(f.sig)),
+  });
+  if (c.h && c.hv && (verdict === 'add' || newest)) {
+    applyFillToSeries(
+      c.h,
+      c.hv,
+      anchorOf(c),
+      {
+        t,
+        mc: newest ? f.mc : (c.h[c.h.length - 1] ?? f.mc),
+        volUsd: f.v > 0 ? f.v : f.sol * (NATIVE_PRICE.usd || 0),
+      },
+      verdict === 'add',
+    );
+  }
+  if (source !== 'authoritative') scheduleReconcile(c);
+}
+
+function scheduleReconcile(c: SimCoin): void {
+  if (reconcileTimers.has(c)) return;
+  const id = window.setTimeout(() => {
+    reconcileTimers.delete(c);
+    void reconcileCoin(c);
+  }, RECONCILE_MS);
+  reconcileTimers.set(c, id);
+}
+
+/**
+ * A provisional print whose transaction the indexer never recorded (dropped
+ * or reorged out): REST only ever holds indexed fills, so re-reading it is the
+ * rollback. Everything still pending re-arrives as new over the socket.
+ */
+async function reconcileCoin(c: SimCoin): Promise<void> {
+  const ledger = ledgerOf(c);
+  const stale = ledger.stale(Date.now(), RECONCILE_MS - 5_000);
+  if (stale.length === 0) {
+    if (ledger.hasPending()) scheduleReconcile(c);
+    return;
+  }
+  if (subscribed.has('token:' + c.sym)) {
+    await hydrateToken(c).catch(() => undefined);
+    ledger.clear();
+    latestFillT.delete(c);
+    emit('tick');
+    return;
+  }
+  for (const sig of stale) ledger.forget(sig);
+  if (ledger.hasPending()) scheduleReconcile(c);
+}
+
+/** Tape prints already shown, so a provisional and its indexed twin print once. */
+const tapeSeen = new Set<string>();
+function firstTapePrint(p: ApiFillPayload): boolean {
+  const key = p.fid ?? (p.sig ? sigKey(p.sig) : '');
+  if (!key) return true;
+  if (tapeSeen.has(key)) return false;
+  tapeSeen.add(key);
+  if (tapeSeen.size > 500) {
+    const oldest = tapeSeen.values().next().value;
+    if (oldest !== undefined) tapeSeen.delete(oldest);
+  }
+  return true;
 }
 
 function venueFor(c: SimCoin): string {
@@ -946,7 +1089,18 @@ async function handleTokenCreated(sym: string, net: Net, mint?: string): Promise
 function onTapeEvent(data: Record<string, unknown>): void {
   if (data['type'] !== 'fill') return;
   const payload = data['payload'] as ApiFillPayload;
-  emit('fill', { fill: toFill(payload), animate: true });
+  // The tape is the one lane every board subscribes to, so it is also what
+  // keeps card market caps moving between the 30s board polls.
+  const mint =
+    payload.mint ?? (typeof data['mint'] === 'string' ? (data['mint'] as string) : undefined);
+  const c = findCoin({ sym: payload.sym, mint });
+  if (c && payload.t >= (latestFillT.get(c) ?? 0) && Number.isFinite(payload.mc)) {
+    latestFillT.set(c, payload.t);
+    c.lastMc = c.mc;
+    c.mc = payload.mc;
+    emit('tick');
+  }
+  if (firstTapePrint(payload)) emit('fill', { fill: toFill(payload), animate: true });
 }
 
 function onTokenEvent(sym: string, data: Record<string, unknown>): void {
@@ -956,37 +1110,21 @@ function onTokenEvent(sym: string, data: Record<string, unknown>): void {
   switch (data['type']) {
     case 'fill': {
       const f = data['payload'] as ApiFillPayload;
-      c.lastMc = c.mc;
-      c.mc = f.mc;
-      const side = f.buy ? 'buy' : 'sell';
-      const hops = hopsForTrade(c, side, f.sol, f.tok);
-      pushTrade(c, {
-        buy: f.buy,
-        sol: f.sol,
-        tok: f.tok,
-        mc: f.mc,
-        cb: !!f.cb,
-        w: f.cb ? 'CASHBACK' : shortAddr(f.w),
-        ...(f.cb ? {} : { addr: f.w }),
-        v: venueFor(c),
-        ...(hops ? { hops } : {}),
-        ...(f.sig ? { sig: f.sig } : {}),
-      });
-      // Keep the open chart moving with the tape — merge into the last bucket
-      // so we do not invent a new "candle" per fill.
-      if (c.h && c.hv) {
-        mergeFillIntoSeries(c.h, c.hv, f.mc, f.sol * (NATIVE_PRICE.usd || 0));
-        if (c.h.length > 240) {
-          c.h.shift();
-          c.hv.shift();
-        }
-      }
+      // Same-minute fills update the open candle; a new minute opens one
+      // (the old merge-into-last-point never did, so a buy only showed as a
+      // new candle after a page reload). `emit('tick')` redraws the chart.
+      applyLiveFill(c, f, f.provisional ? 'provisional' : 'authoritative');
       emit('tick');
       return;
     }
     case 'curve': {
-      c.lastMc = c.mc;
-      c.mc = data['mc'] as number;
+      // While a provisional print is outstanding its fill frames own the cap
+      // (newest-first); an indexed `curve` for an older fill would pull it back.
+      const mc = data['mc'];
+      if (typeof mc === 'number' && Number.isFinite(mc) && !ledgerOf(c).hasPending()) {
+        c.lastMc = c.mc;
+        c.mc = mc;
+      }
       const lane = data['lane'] as Lane;
       if (lane && c.lane !== lane) {
         c.lane = lane;
@@ -1095,6 +1233,31 @@ async function reloadBoard(scope: BoardScope): Promise<void> {
   for (const t of list) COINS.push(toSimCoin(t));
   emit('coins');
   void seedTape(scope);
+}
+
+/** Candles, trades and holders for a token page, from REST (indexed fills only). */
+async function hydrateToken(c: SimCoin): Promise<void> {
+  const net = c.net ?? WALLET.net;
+  const mq = mintQs(c);
+  const [candlesRes, tradesRes, holdersRes] = await Promise.all([
+    getJson<ApiCandlesResponse>(`/tokens/${c.sym}/candles?net=${net}&tf=1m&limit=200${mq}`).catch(
+      () => ({ candles: [] }),
+    ),
+    getJson<ApiTradesResponse>(`/tokens/${c.sym}/trades?net=${net}&limit=40${mq}`).catch(() => ({
+      trades: [],
+    })),
+    getJson<ApiHoldersResponse>(`/tokens/${c.sym}/holders?net=${net}&limit=50${mq}`).catch(
+      (): ApiHoldersResponse => ({ holders: [] }),
+    ),
+  ]);
+  applyCandles(c, candlesRes.candles);
+  c.trades = tradesRes.trades.map((r) => mapTradeRow(c, r));
+  c.liveHolders = mapHolders(c, holdersRes.holders, holdersRes.curveWallet);
+  if (typeof holdersRes.holderCount === 'number') {
+    c.hold = holdersRes.holderCount;
+  } else {
+    c.hold = holdersRes.holders.filter((h) => !h.curve).length;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1247,11 +1410,27 @@ function applyConfirmedTrade(
   // sells paint "BALANCE 6.7M ETH" after dumping RHLIVE.
   const nativeAmt = buy ? amountIn : quote.amountOut;
   const tokAmt = buy ? quote.amountOut : amountIn;
-  // Prefer server `/trade/confirm` + chain sync for the next quote; the local
-  // mc nudge is display-only until the board refresh lands.
-  const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
-  c.lastMc = c.mc;
-  c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
+  // The instant, local print. `/trade/confirm` answers with the exact fill a
+  // moment later (and the indexer after its depth); both replace this one in
+  // place (`live-fills.ts`) rather than adding a second row or candle.
+  const verdict = signature
+    ? ledgerOf(c).admit({ sig: signature, source: 'local' }, Date.now())
+    : 'add';
+  if (verdict === 'add') {
+    // Display-only nudge until the exact post-fill cap arrives.
+    const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
+    c.lastMc = c.mc;
+    c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
+    if (c.h && c.hv) {
+      applyFillToSeries(
+        c.h,
+        c.hv,
+        anchorOf(c),
+        { t: Date.now(), mc: c.mc, volUsd: nativeAmt * NATIVE_PRICE.usd },
+        true,
+      );
+    }
+  }
   const hops = hopsFromQuote(quote) ?? hopsForTrade(c, side, nativeAmt, tokAmt);
   const t = pushTrade(c, {
     buy,
@@ -1262,8 +1441,9 @@ function applyConfirmedTrade(
     addr: sessionWallet(net),
     v: quote.routeLabel || venueFor(c),
     ...(hops ? { hops } : {}),
-    ...(signature ? { sig: signature } : {}),
+    ...(signature ? { sig: signature, pending: !ledgerOf(c).isFinal(signature) } : {}),
   });
+  if (signature) scheduleReconcile(c);
   noteTrade(c, buy, nativeAmt, tokAmt);
   // XP is server-authoritative in live mode — `addXP` is a no-op, and the
   // ledger credits on the matching chain_events row once the indexer sees it.
@@ -1271,6 +1451,8 @@ function applyConfirmedTrade(
   if (nativeAmt * NATIVE_PRICE.usd >= 1000) unlock('whale');
   if (inCashback(c)) unlock('cashback');
   emit('coins');
+  // `coins` rebuilds the board; `tick` is what redraws the open chart.
+  emit('tick');
   // Prefer the chain balance over optimistic math — MetaMask is the truth.
   if (isEvm(net) && c.mint) {
     void syncHoldingFromChain(c, sessionWallet(net));
@@ -1327,16 +1509,7 @@ async function liveTrade(quote: Quote): Promise<Fill> {
     explorerUrl,
   } = await signTradePlan(net, prep, title, c.sym, body);
   lastTx = signature ? { signature, url: explorerUrl ?? explorerTxUrl(net, signature) } : null;
-  // Re-sync curve reserves from chain so the next sell quote is not stuck on
-  // empty DB reserves if the indexer lags.
-  if (signature) {
-    void postJson(
-      '/trade/confirm',
-      { sym: c.sym, ...(c.mint ? { mint: c.mint } : {}), signature, txHash: signature },
-      net,
-    ).catch(() => undefined);
-  }
-  return applyConfirmedTrade(
+  const fill = applyConfirmedTrade(
     c,
     quote.side,
     quote.amountIn,
@@ -1344,6 +1517,36 @@ async function liveTrade(quote: Quote): Promise<Fill> {
     net,
     signature ?? undefined,
   );
+  // The fast path: the API decodes the receipt at one confirmation, publishes
+  // the fill to every open page, answers with the exact numbers, and re-syncs
+  // curve reserves so the next sell quote does not wait on the indexer.
+  if (signature) void confirmTradeFast(c, net, signature);
+  return fill;
+}
+
+/**
+ * `POST /trade/confirm`, retried while the API's node is a block behind the
+ * wallet's (`pending`). Its fills replace the local print with exact numbers.
+ */
+async function confirmTradeFast(c: SimCoin, net: Net, signature: string): Promise<void> {
+  const body = { sym: c.sym, ...(c.mint ? { mint: c.mint } : {}), signature, txHash: signature };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let res: ApiTradeConfirm;
+    try {
+      res = await postJson<ApiTradeConfirm>('/trade/confirm', body, net);
+    } catch {
+      return; // Display-only: the indexer's fill still arrives over the socket.
+    }
+    if (!res.pending) {
+      for (const f of res.fills ?? []) {
+        const coin = findCoin({ sym: f.sym, mint: f.mint }) ?? c;
+        applyLiveFill(coin, f, 'provisional');
+      }
+      if ((res.fills ?? []).length > 0) emit('tick');
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 750 * (attempt + 1)));
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1395,6 +1598,24 @@ async function confirmLaunch(
       await new Promise((r) => setTimeout(r, Math.min(8_000, 1_500 * (attempt + 1))));
     }
   }
+}
+
+/** Re-reads the board every 3s (up to 2 min) until a pending launch is listed. */
+function watchForLaunch(net: Net, ticker: string, creator: string): void {
+  const sym = ticker.trim().toUpperCase();
+  const listed = (): boolean =>
+    COINS.some(
+      (c) =>
+        c.sym === sym && (c.net ?? net) === net && c.dev.toLowerCase() === creator.toLowerCase(),
+    );
+  let tries = 0;
+  const tick = (): void => {
+    if (listed() || ++tries > 40) return;
+    void refreshBoard().finally(() => {
+      if (!listed()) window.setTimeout(tick, 3_000);
+    });
+  };
+  window.setTimeout(tick, 3_000);
 }
 
 async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<SimCoin> {
@@ -1454,7 +1675,16 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
   // `/launch/confirm` looks this signature up *on chain* to decode the mint
   // out of the creation log.
   hooks.onPhase?.('confirm');
-  const confirmed = await confirmLaunch(net, prep.intentId, signature);
+  let confirmed: ApiLaunchConfirm;
+  try {
+    confirmed = await confirmLaunch(net, prep.intentId, signature);
+  } catch (err) {
+    // Broadcast but not (yet) registered by the API: the indexer will list it
+    // after its confirmation depth. Poll the board so the creator's own page
+    // picks it up the moment it does, instead of on the 30s safety poll.
+    if (err instanceof LaunchPendingError) watchForLaunch(net, draft.sym, sessionWallet(net));
+    throw err;
+  }
 
   const mc = confirmed.mc;
   const c: SimCoin = {
@@ -1738,6 +1968,7 @@ type ApiStakePrepare = ApiStakePrepareSol | ApiStakePrepareEvm;
 async function liveStake(input: StakeInput): Promise<void> {
   const net = WALLET.net;
   const coin = bySym(input.sym);
+  const before = stakeOf(input.sym)?.amt ?? 0;
   const prep = await postJson<ApiStakePrepare>(
     '/stake/prepare',
     {
@@ -1763,37 +1994,40 @@ async function liveStake(input: StakeInput): Promise<void> {
   } else {
     await signAndConfirm(net, evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
   }
-  const c = bySym(input.sym);
-  if (!c) return;
-  const st = ensureStake(input.sym);
+  // The tokens left the wallet: move them out of the holdings row now. The
+  // position itself is set from the chain below, never from local arithmetic.
   const h = holdOf(input.sym);
-  const amt = Math.min(input.amount, h ? h.tok : 0);
-  if (amt <= 0) return;
-  st.amt += amt;
-  st.days = input.days;
-  st.mult = input.mult;
-  st.until = input.days ? Date.now() + input.days * 24 * 60 * 60 * 1000 : 0;
-  if (h) {
-    h.cost *= Math.max(0, 1 - amt / h.tok);
-    h.tok -= amt;
+  if (h && h.tok > 0) {
+    const moved = Math.min(input.amount, h.tok);
+    h.cost *= Math.max(0, 1 - moved / h.tok);
+    h.tok -= moved;
     if (h.tok < 1) HOLD.splice(HOLD.indexOf(h), 1);
   }
+  const st = ensureStake(input.sym);
+  // Optimistic until the chain read lands: the new total and lock.
+  st.amt = before + input.amount;
+  st.days = input.days;
+  st.until = Date.now() + input.days * 24 * 60 * 60 * 1000;
   saveUser();
   emit('portfolio');
-  await hydrateLiveStake(input.sym);
+  await refreshStakeAfterTx(input.sym, before);
 }
 
-async function liveUnstake(sym: string): Promise<number> {
+async function liveUnstake(sym: string, amount?: number): Promise<number> {
+  // Read the chain first: the lock and the amount are the program's to decide.
+  await hydrateLiveStake(sym, { chain: true });
   const st = stakeOf(sym);
   if (!st || st.amt <= 0) return 0;
   if (st.until && Date.now() < st.until) {
     throw new LiveApiError(
       'still_locked',
-      'LOCKED UNTIL ' + new Date(st.until).toLocaleDateString(),
+      'LOCKED UNTIL ' + new Date(st.until).toLocaleString(),
       422,
     );
   }
-  const amt = st.amt;
+  const amt = amount === undefined ? st.amt : Math.min(amount, st.amt);
+  if (!(amt > 0)) return 0;
+  const before = st.amt;
   const net = WALLET.net;
   const coin = bySym(sym);
   const prep = await postJson<ApiStakePrepare>(
@@ -1805,22 +2039,19 @@ async function liveUnstake(sym: string): Promise<number> {
     net,
     prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
   );
-  st.amt = 0;
-  st.mult = 1;
-  st.days = 0;
-  st.until = 0;
+  st.amt = Math.max(0, before - amt);
   creditTokens(sym, amt);
   saveUser();
-  await hydrateLiveStake(sym);
+  await refreshStakeAfterTx(sym, before);
   return amt;
 }
 
 async function liveClaimStake(sym: string): Promise<StakeClaim> {
   const net = WALLET.net;
-  await hydrateLiveStake(sym);
+  // Pending rewards live in the program's accumulator, not in the indexer:
+  // read them on chain so the toast reports what the claim actually paid.
+  await hydrateLiveStake(sym, { chain: true });
   const st = stakeOf(sym);
-  // Always attempt the on-chain claim — pending rewards live on the program,
-  // not only in the indexer columns. Local zeros must not block a claim.
   const prep = await postJson<ApiStakePrepare>(
     '/stake/claim/prepare',
     { sym, ...(bySym(sym)?.mint ? { mint: bySym(sym)!.mint } : {}) },
@@ -1830,14 +2061,19 @@ async function liveClaimStake(sym: string): Promise<StakeClaim> {
     net,
     prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
   );
-  const out: StakeClaim = { tokens: st?.rewTok ?? 0, native: st?.rewSol ?? 0 };
+  const out: StakeClaim = {
+    tokens: st?.rewTok ?? 0,
+    native: st?.rewSol ?? 0,
+    ...(st?.rewBase ? { base: st.rewBase, baseSym: st.baseSym ?? '' } : {}),
+  };
   if (out.tokens > 0) creditTokens(sym, out.tokens);
   if (out.native > 0) WALLET.sol += out.native;
   if (st) {
     st.rewTok = 0;
     st.rewSol = 0;
+    st.rewBase = 0;
   }
-  await hydrateLiveStake(sym);
+  await refreshStakeAfterTx(sym, st?.amt ?? 0, { expectChange: false });
   saveUser();
   emit('wallet');
   return out;
@@ -1850,25 +2086,87 @@ interface ApiStakeRow {
   until: number;
   rewTok: number;
   rewSol: number;
+  weight?: number;
+  rewBase?: number;
+  baseSym?: string;
+  source?: 'chain' | 'indexer';
 }
 
-async function hydrateLiveStake(sym: string): Promise<void> {
+/**
+ * How long a chain read outranks the indexer. The indexer trails the chain by
+ * its confirmation depth (12 blocks on EVM) plus a poll, so a background
+ * refresh inside this window would otherwise put back the pre-stake zero.
+ */
+export const STAKE_CHAIN_TRUST_MS = 120_000;
+
+/**
+ * `GET /stake/:sym` (indexer) or `GET /stake/:sym/chain` (on-chain read).
+ * Returns the row it applied, or `null` when it kept the local state.
+ */
+async function hydrateLiveStake(
+  sym: string,
+  opts: { chain?: boolean } = {},
+): Promise<ApiStakeRow | null> {
   const net = WALLET.net;
   try {
     const mint = bySym(sym)?.mint;
     const qs = mint ? `?mint=${encodeURIComponent(mint)}` : '';
-    const row = await getJsonAuthed<ApiStakeRow>(`/stake/${encodeURIComponent(sym)}${qs}`, net);
+    const path = `/stake/${encodeURIComponent(sym)}${opts.chain ? '/chain' : ''}${qs}`;
+    const row = await getJsonAuthed<ApiStakeRow>(path, net);
     const st = ensureStake(sym);
+    const fromChain = row.source === 'chain';
+    if (!fromChain && st.chainAt && Date.now() - st.chainAt < STAKE_CHAIN_TRUST_MS) return null;
     st.amt = row.amt;
     st.mult = row.mult;
     st.days = row.days;
     st.until = row.until;
     st.rewTok = row.rewTok;
     st.rewSol = row.rewSol;
+    if (row.weight !== undefined) st.weight = row.weight;
+    if (row.rewBase !== undefined) st.rewBase = row.rewBase;
+    if (row.baseSym) st.baseSym = row.baseSym;
+    st.source = row.source ?? 'indexer';
+    if (fromChain) st.chainAt = Date.now();
     saveUser();
     emit('portfolio');
+    return row;
   } catch {
     /* leave local stake as-is */
+    return null;
+  }
+}
+
+/**
+ * After the wallet's own stake / unstake / claim confirmed: read the position
+ * on chain (the API's RPC can be a block behind the wallet's, so retry a few
+ * times while the amount has not moved yet), then refresh the pool totals.
+ */
+async function refreshStakeAfterTx(
+  sym: string,
+  before: number,
+  opts: { expectChange?: boolean } = {},
+): Promise<void> {
+  const expectChange = opts.expectChange ?? true;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+    const row = await hydrateLiveStake(sym, { chain: true });
+    if (row?.source === 'chain' && (!expectChange || Math.abs(row.amt - before) > 1e-9)) break;
+  }
+  await hydrateLiveStakePool(sym);
+}
+
+async function hydrateLiveStakePool(sym: string): Promise<StakePoolSummary | null> {
+  const coin = bySym(sym);
+  const net = coin?.net ?? WALLET.net;
+  try {
+    const mint = coin?.mint ? `&mint=${encodeURIComponent(coin.mint)}` : '';
+    const pool = await getJson<StakePoolSummary>(
+      `/tokens/${encodeURIComponent(sym)}/staking?net=${net}${mint}`,
+    );
+    setStakePool(sym, pool);
+    return pool;
+  } catch {
+    return stakePoolOf(sym);
   }
 }
 
@@ -1922,27 +2220,7 @@ export const liveApi: StonkzApi = {
   },
 
   async watchToken(c: SimCoin): Promise<void> {
-    const net = c.net ?? WALLET.net;
-    const mq = mintQs(c);
-    const [candlesRes, tradesRes, holdersRes] = await Promise.all([
-      getJson<ApiCandlesResponse>(`/tokens/${c.sym}/candles?net=${net}&tf=1m&limit=200${mq}`).catch(
-        () => ({ candles: [] }),
-      ),
-      getJson<ApiTradesResponse>(`/tokens/${c.sym}/trades?net=${net}&limit=40${mq}`).catch(() => ({
-        trades: [],
-      })),
-      getJson<ApiHoldersResponse>(`/tokens/${c.sym}/holders?net=${net}&limit=50${mq}`).catch(
-        (): ApiHoldersResponse => ({ holders: [] }),
-      ),
-    ]);
-    applyCandles(c, candlesRes.candles);
-    c.trades = tradesRes.trades.map((r) => mapTradeRow(c, r));
-    c.liveHolders = mapHolders(c, holdersRes.holders, holdersRes.curveWallet);
-    if (typeof holdersRes.holderCount === 'number') {
-      c.hold = holdersRes.holderCount;
-    } else {
-      c.hold = holdersRes.holders.filter((h) => !h.curve).length;
-    }
+    await hydrateToken(c);
     subscribeChannel('token:' + c.sym);
   },
 
@@ -2098,9 +2376,11 @@ export const liveApi: StonkzApi = {
 
   async tokenFees(c: SimCoin): Promise<TokenFees> {
     const net = c.net ?? WALLET.net;
-    return getJson<TokenFees>(
+    const fees = await getJson<TokenFees>(
       '/tokens/' + encodeURIComponent(c.sym) + '/fees?net=' + net + mintQs(c),
     );
+    if (fees.staking) setStakePool(c.sym, fees.staking);
+    return fees;
   },
   async claimCreatorFees(sym?: string): Promise<ClaimResult> {
     return liveClaimCreatorFees(sym);
@@ -2108,8 +2388,8 @@ export const liveApi: StonkzApi = {
   async stake(input: StakeInput): Promise<void> {
     return liveStake(input);
   },
-  async unstake(sym: string): Promise<number> {
-    return liveUnstake(sym);
+  async unstake(sym: string, amount?: number): Promise<number> {
+    return liveUnstake(sym, amount);
   },
   async claimStake(sym: string): Promise<StakeClaim> {
     return liveClaimStake(sym);
@@ -2117,8 +2397,11 @@ export const liveApi: StonkzApi = {
   async pushSettings(settings): Promise<void> {
     return pushLiveSettings(settings);
   },
-  async hydrateStake(sym: string): Promise<void> {
-    return hydrateLiveStake(sym);
+  async hydrateStake(sym: string, opts?: { chain?: boolean }): Promise<void> {
+    await hydrateLiveStake(sym, opts);
+  },
+  async stakePool(sym: string): Promise<StakePoolSummary | null> {
+    return hydrateLiveStakePool(sym);
   },
   async openCrate(tier: CrateTier): Promise<CrateResult> {
     return liveOpenCrate(tier);

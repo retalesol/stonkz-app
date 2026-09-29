@@ -678,7 +678,9 @@ async function claimStakeFor(sym: string): Promise<void> {
 }
 
 async function claimAllStakes(): Promise<void> {
-  const list = stakedList().filter((o) => (o.st.rewTok || 0) > 0.0001 || (o.st.rewSol || 0) > 0.000001);
+  const list = stakedList().filter(
+    (o) => (o.st.rewTok || 0) > 0.0001 || (o.st.rewSol || 0) > 0.000001 || (o.st.rewBase || 0) > 0,
+  );
   if (!list.length) {
     toast('NOTHING TO CLAIM YET');
     return;

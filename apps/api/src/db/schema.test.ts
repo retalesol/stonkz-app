@@ -44,16 +44,18 @@ describe('migration history', () => {
       '0018_fee_v2_rwa_crates',
       // 0019 carries launch socials on the intent and indexes consumed signatures.
       '0019_launch_intent_socials',
+      // 0020 rebuilds stake amounts that were summed from new-total `Staked` events.
+      '0020_stake_position_totals',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(20);
+    expect(second.skipped).toHaveLength(21);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
     expect(files.map((f) => f.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     ]);
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });

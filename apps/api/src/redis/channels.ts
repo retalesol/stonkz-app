@@ -33,12 +33,22 @@ export type BoardEvent =
   | { type: 'graduated'; net: Net; sym: string };
 
 export type TokenEvent =
-  | { type: 'fill'; net: Net; sym: string; payload: unknown }
-  | { type: 'curve'; net: Net; sym: string; mc: number; price: number; lane: string }
+  | { type: 'fill'; net: Net; sym: string; payload: unknown; mint?: string }
+  | {
+      type: 'curve';
+      net: Net;
+      sym: string;
+      mc: number;
+      price: number;
+      lane: string;
+      mint?: string;
+      /** From `/trade/confirm`'s fast path, ahead of the indexer's confirmation depth. */
+      provisional?: boolean;
+    }
   | { type: 'cashback'; net: Net; sym: string; cbStartMs: number | null; effFeePct: number }
   | { type: 'graduated'; net: Net; sym: string };
 
-export type TapeEvent = { type: 'fill'; net: Net; sym: string; payload: unknown };
+export type TapeEvent = { type: 'fill'; net: Net; sym: string; payload: unknown; mint?: string };
 
 /** The seven user-channel event types the rewards ceremonies listen for. */
 export type UserEvent =

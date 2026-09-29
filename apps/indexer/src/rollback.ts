@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { laneOf, type Net } from '@stonkz/shared';
 import type { Db } from '@stonkz/api/db/client';
 import {
@@ -47,8 +47,10 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
  *    exactly by range. Migration 0007 added that column to `tape` and
  *    `treasury_credits` for precisely this reason.
  * 2. **Additive accumulators** — `creator_vaults`, `treasuries`,
- *    `stake_positions` are running sums of per-event deltas, so subtracting
- *    the disowned events' own deltas is exact. The deltas are read back out of
+ *    `stake_positions`' rewards are running sums of per-event deltas, so
+ *    subtracting the disowned events' own deltas is exact. A stake position's
+ *    *amount* is not — `Staked` carries the new total — so it is rebuilt from
+ *    the surviving `Staked`/`Unstaked` events. The deltas are read back out of
  *    the `chain_events` payloads, which is the reason that table stores the
  *    whole event and not just its identity.
  * 3. **Non-invertible derived state** — `candles` (`greatest`/`least` for the
@@ -354,8 +356,10 @@ export class ReorgRollback {
       sym: string | null;
       wallet: string | null;
       payload: unknown;
+      chainPosition: number;
     }[],
   ): Promise<void> {
+    const stakeKeys = new Map<string, { sym: string; mint: string | null; wallet: string }>();
     for (const row of disowned) {
       switch (row.kind) {
         case 'FeeAccrued': {
@@ -401,51 +405,18 @@ export class ReorgRollback {
           break;
         }
 
-        case 'Staked': {
-          if (!row.sym || !row.wallet) break;
-          const stake = row.payload as Pick<StakedEvent, 'mint' | 'amount'>;
-          const stakeKey = stake.mint?.trim()
-            ? and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.mint, stake.mint.trim()),
-                eq(stakePositions.wallet, row.wallet),
-              )
-            : and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.sym, row.sym),
-                eq(stakePositions.wallet, row.wallet),
-              );
-          await tx
-            .update(stakePositions)
-            .set({
-              amount: sql`greatest(0, ${stakePositions.amount} - ${stake.amount})`,
-              updatedAt: new Date(this.now()),
-            })
-            .where(stakeKey);
-          break;
-        }
-
+        // `Staked` carries the position's new total, so neither kind can be
+        // undone by arithmetic on its own payload; the position is rebuilt
+        // from the events that survive the rollback instead (below).
+        case 'Staked':
         case 'Unstaked': {
           if (!row.sym || !row.wallet) break;
-          const unstake = row.payload as { mint?: string; amount: number };
-          const stakeKey = unstake.mint?.trim()
-            ? and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.mint, unstake.mint.trim()),
-                eq(stakePositions.wallet, row.wallet),
-              )
-            : and(
-                eq(stakePositions.net, net),
-                eq(stakePositions.sym, row.sym),
-                eq(stakePositions.wallet, row.wallet),
-              );
-          await tx
-            .update(stakePositions)
-            .set({
-              amount: sql`${stakePositions.amount} + ${unstake.amount}`,
-              updatedAt: new Date(this.now()),
-            })
-            .where(stakeKey);
+          const mint = (row.payload as { mint?: string }).mint?.trim() || null;
+          stakeKeys.set(`${mint ?? row.sym}|${row.wallet}`, {
+            sym: row.sym,
+            mint,
+            wallet: row.wallet,
+          });
           break;
         }
 
@@ -486,6 +457,66 @@ export class ReorgRollback {
           break;
       }
     }
+
+    if (stakeKeys.size === 0) return;
+    const fromPosition = Math.min(...disowned.map((r) => r.chainPosition));
+    for (const key of stakeKeys.values()) {
+      await this.rebuildStakePosition(tx, net, key, fromPosition);
+    }
+  }
+
+  /**
+   * Replays the surviving `Staked` (sets the total) and `Unstaked` (subtracts)
+   * events for one position, in chain order, and writes the result back.
+   */
+  private async rebuildStakePosition(
+    tx: Tx,
+    net: Net,
+    key: { sym: string; mint: string | null; wallet: string },
+    fromPosition: number,
+  ): Promise<void> {
+    const survivors = await tx
+      .select({ kind: chainEvents.kind, payload: chainEvents.payload })
+      .from(chainEvents)
+      .where(
+        and(
+          eq(chainEvents.net, net),
+          eq(chainEvents.wallet, key.wallet),
+          inArray(chainEvents.kind, ['Staked', 'Unstaked']),
+          lt(chainEvents.chainPosition, fromPosition),
+          key.mint
+            ? sql`${chainEvents.payload}->>'mint' = ${key.mint}`
+            : eq(chainEvents.sym, key.sym),
+        ),
+      )
+      .orderBy(asc(chainEvents.chainPosition), asc(chainEvents.logIndex), asc(chainEvents.id));
+
+    let amount = 0;
+    let lock: Pick<StakedEvent, 'lockDays' | 'mult' | 'untilMs'> | null = null;
+    for (const e of survivors) {
+      const p = e.payload as Partial<StakedEvent>;
+      if (e.kind === 'Staked') {
+        amount = Number(p.amount ?? 0);
+        lock = { lockDays: p.lockDays ?? 0, mult: p.mult ?? 0, untilMs: p.untilMs ?? 0 };
+      } else {
+        amount = Math.max(0, amount - Number(p.amount ?? 0));
+      }
+    }
+
+    await tx
+      .update(stakePositions)
+      .set({
+        amount,
+        ...(lock ?? {}),
+        updatedAt: new Date(this.now()),
+      })
+      .where(
+        and(
+          eq(stakePositions.net, net),
+          key.mint ? eq(stakePositions.mint, key.mint) : eq(stakePositions.sym, key.sym),
+          eq(stakePositions.wallet, key.wallet),
+        ),
+      );
   }
 
   /* ------------------------------------------------------ position-scoped rows */

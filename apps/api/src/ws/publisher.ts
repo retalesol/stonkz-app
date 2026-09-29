@@ -49,11 +49,16 @@ export class Publisher {
     return this.send(CHANNELS.chat(net, room), event);
   }
 
-  /** A fill lands on the token page, the board and the tape at once. */
-  async fill(net: Net, sym: string, payload: unknown): Promise<void> {
+  /**
+   * A fill lands on the token page, the board and the tape at once. `mint`
+   * rides at the top level too, so a client can tell duplicate tickers apart
+   * without unpacking the payload.
+   */
+  async fill(net: Net, sym: string, payload: unknown, mint?: string): Promise<void> {
+    const tag = mint ? { mint } : {};
     await Promise.all([
-      this.token(sym, { type: 'fill', net, sym, payload }),
-      this.tape({ type: 'fill', net, sym, payload }),
+      this.token(sym, { type: 'fill', net, sym, payload, ...tag }),
+      this.tape({ type: 'fill', net, sym, payload, ...tag }),
     ]);
   }
 }

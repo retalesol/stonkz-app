@@ -52,6 +52,7 @@ import {
 } from '../router/evm-router.js';
 import type { TokenRow } from './serialise.js';
 import { resolveTokenRow } from './token-resolve.js';
+import { confirmTradeFills } from './trade-provisional.js';
 
 function asEthCaller(rpc: unknown): EthCaller | undefined {
   const candidate = rpc as Partial<EthCaller>;
@@ -592,8 +593,21 @@ export function tradeRoutes(): Hono<AppEnv> {
   });
 
   /**
-   * `POST /trade/confirm` — after the wallet broadcasts, re-read curve reserves
-   * from chain so the next sell quote does not depend on the indexer catching up.
+   * `POST /trade/confirm` — after the wallet confirms, the fast path.
+   *
+   * 1. Reads the transaction back at one confirmation (EVM receipt / Solana
+   *    `confirmed`), decodes the launchpad's `Trade`s — emitters checked
+   *    strictly — and, once per transaction, publishes them to
+   *    `token:{sym}` + `tape` as **provisional** fills with the post-fill cap
+   *    (`routes/trade-provisional.ts`). Other viewers see the trade within a
+   *    block; the indexer's authoritative fill (same `fid`) supersedes it.
+   * 2. Re-reads curve reserves from chain so the next sell quote does not
+   *    depend on the indexer catching up.
+   *
+   * The response carries the decoded fills so the trader's own page swaps its
+   * optimistic row for exact numbers without waiting for the socket.
+   * `pending: true` means the API's node has not seen the transaction yet;
+   * the client retries.
    */
   app.post('/trade/confirm', requireAuth(), limit(RATE_LIMITS.trade), async (c) => {
     const deps = c.get('deps');
@@ -634,28 +648,18 @@ export function tradeRoutes(): Hono<AppEnv> {
     const resolved = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!resolved) return c.json({ error: 'not_found' }, 404);
 
-    // Best-effort proof check: confirm the tx exists / succeeded. We still
-    // sync reserves from chain even if the indexer never sees the fill.
-    if (isEvm(net)) {
-      const rpc = deps.rpcs[net] as {
-        getTransactionReceipt?: (h: string) => Promise<{ status: string } | null>;
-      };
-      if (typeof rpc.getTransactionReceipt === 'function') {
-        const receipt = await rpc.getTransactionReceipt(proof).catch(() => null);
-        if (receipt && receipt.status === 'reverted') {
-          return c.json({ error: 'tx_reverted', detail: 'transaction reverted on chain' }, 422);
-        }
-      }
-    } else {
-      const rpc = deps.rpcs.SOL as {
-        getTransactionMessageBase64?: (s: string) => Promise<string | null>;
-      };
-      if (typeof rpc.getTransactionMessageBase64 === 'function') {
-        const msg = await rpc.getTransactionMessageBase64(proof).catch(() => null);
-        if (msg === null) {
-          // Not yet confirmed — still attempt sync; client may retry.
-        }
-      }
+    // Provisional fills are display-only; an RPC hiccup here must not cost
+    // the trader the reserve resync below, so it degrades to "pending".
+    const outcome = await confirmTradeFills(deps, net, proof).catch((err: unknown) => {
+      deps.logger.warn('trade/confirm: provisional decode failed', {
+        net,
+        sym,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return { kind: 'pending' as const };
+    });
+    if (outcome.kind === 'reverted') {
+      return c.json({ error: 'tx_reverted', detail: 'transaction reverted on chain' }, 422);
     }
 
     const synced = await syncCurveReserves({
@@ -682,6 +686,10 @@ export function tradeRoutes(): Hono<AppEnv> {
       curveRealBase: synced.curveRealBase,
       curveRealToken: synced.curveRealToken,
       mc: synced.mc ?? resolved.mc,
+      pending: outcome.kind === 'pending',
+      fills: outcome.kind === 'ok' ? outcome.fills : [],
+      provisional: outcome.kind === 'ok' && outcome.published,
+      final: outcome.kind === 'ok' && outcome.final,
     });
   });
 

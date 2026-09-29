@@ -7,6 +7,7 @@ import {
   type NativeTransferVerification,
   type PriceOracle,
   type SimulationResult,
+  type SolanaTransactionLogs,
 } from './types.js';
 
 /**
@@ -21,7 +22,8 @@ export interface FakeEvmReceipt {
   from?: string | null;
   to: string | null;
   input: string;
-  logs: { address: string; topics: string[]; data: string }[];
+  logs: { address: string; topics: string[]; data: string; logIndex?: string | number | null }[];
+  blockNumber?: number | null;
 }
 
 export class FakeChainRpc implements ChainRpc, NativeTransferSource {
@@ -37,6 +39,8 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   }) => SimulationResult | Promise<SimulationResult> = () => ({ ok: true });
   private simulationFailing = false;
   private readonly evmReceipts = new Map<string, FakeEvmReceipt>();
+  private readonly blockTimes = new Map<number, number>();
+  private readonly solanaLogs = new Map<string, SolanaTransactionLogs>();
   private readonly transfers = new Map<string, NativeTransferVerification>();
   private failing = false;
 
@@ -178,6 +182,26 @@ export class FakeChainRpc implements ChainRpc, NativeTransferSource {
   async getTransactionReceipt(hash: string): Promise<FakeEvmReceipt | null> {
     if (this.failing) throw new RpcError(this.net, 'eth_getTransactionReceipt', 'simulated outage');
     return this.evmReceipts.get(hash.toLowerCase()) ?? null;
+  }
+
+  /** `/trade/confirm` tests: the inclusion block's timestamp. */
+  setBlockTime(blockNumber: number, ms: number): void {
+    this.blockTimes.set(blockNumber, ms);
+  }
+
+  async getBlockTimestampMs(blockNumber: number): Promise<number | null> {
+    if (this.failing) throw new RpcError(this.net, 'eth_getBlockByNumber', 'simulated outage');
+    return this.blockTimes.get(blockNumber) ?? null;
+  }
+
+  /** `/trade/confirm` tests: what a confirmed Solana signature's logs contain. */
+  setSolanaTransactionLogs(signature: string, logs: SolanaTransactionLogs): void {
+    this.solanaLogs.set(signature, logs);
+  }
+
+  async getTransactionLogs(signature: string): Promise<SolanaTransactionLogs | null> {
+    if (this.failing) throw new RpcError(this.net, 'getTransaction', 'simulated outage');
+    return this.solanaLogs.get(signature) ?? null;
   }
 
   /** `social/tips.test.ts` seeds what a signature "verified" as on-chain. */

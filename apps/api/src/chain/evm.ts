@@ -200,14 +200,16 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
     from: string | null;
     to: string | null;
     input: string;
-    logs: { address: string; topics: string[]; data: string }[];
+    logs: { address: string; topics: string[]; data: string; logIndex?: string | null }[];
+    blockNumber: number | null;
   } | null> {
     const [receipt, tx] = await Promise.all([
       this.call<{
         status: string;
         from?: string | null;
         to: string | null;
-        logs: { address: string; topics: string[]; data: string }[];
+        blockNumber?: string | null;
+        logs: { address: string; topics: string[]; data: string; logIndex?: string | null }[];
       } | null>('eth_getTransactionReceipt', [hash]),
       this.call<{ input?: string; data?: string } | null>('eth_getTransactionByHash', [hash]),
     ]);
@@ -219,7 +221,19 @@ export class EvmRpc implements ChainRpc, NativeTransferSource {
       // `input` on older nodes, `data` is the ethers-style alias some RPCs use.
       input: tx.input ?? tx.data ?? '0x',
       logs: receipt.logs,
+      blockNumber: receipt.blockNumber ? Number.parseInt(receipt.blockNumber, 16) : null,
     };
+  }
+
+  /** `/trade/confirm`'s provisional fill timestamp — the same block time the indexer stamps. */
+  async getBlockTimestampMs(blockNumber: number): Promise<number | null> {
+    const block = await this.call<{ timestamp?: string } | null>('eth_getBlockByNumber', [
+      `0x${blockNumber.toString(16)}`,
+      false,
+    ]);
+    if (!block?.timestamp) return null;
+    const seconds = Number.parseInt(block.timestamp, 16);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
   }
 
   /**

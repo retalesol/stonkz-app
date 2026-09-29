@@ -59,6 +59,8 @@ export interface Trade {
   open?: boolean;
   cb?: boolean;
   fresh?: boolean;
+  /** Shown from the wallet / `/trade/confirm` before the indexer's safe depth. */
+  pending?: boolean;
 }
 
 export interface SimCoin extends Coin {
@@ -417,6 +419,8 @@ export function pushTrade(
     v?: string;
     hops?: TradeHop[];
     sig?: string;
+    /** Not yet recorded by the indexer (local or provisional print). */
+    pending?: boolean;
   },
 ): Trade {
   seedTrades(c);
@@ -468,6 +472,9 @@ export function pushTrade(
       // Merges are WS echoes of an already-shown fill — do not re-flash.
       fresh: false,
     };
+    // The indexed print clears the pending mark; a provisional one keeps it.
+    if (o.pending) merged.pending = true;
+    else delete merged.pending;
     trades.forEach((t) => (t.fresh = false));
     trades.splice(existingIdx, 1);
     trades.unshift(merged);
@@ -487,6 +494,7 @@ export function pushTrade(
     v: o.v ?? (o.cb ? 'CB' : randomVenue()),
     ...(o.hops && o.hops.length ? { hops: o.hops } : {}),
     ...(sig ? { sig } : {}),
+    ...(o.pending ? { pending: true } : {}),
     fresh: true,
   };
   trades.unshift(t);

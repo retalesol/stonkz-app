@@ -4,6 +4,7 @@ import type {
   Net,
   Quote,
   Settings,
+  StakePoolSummary,
   SupplyOption,
   TokenFees,
   Wallet,
@@ -78,6 +79,9 @@ export interface StakeInput {
 export interface StakeClaim {
   tokens: number;
   native: number;
+  /** Paid in the curve's base asset when that is not the native unit (live). */
+  base?: number;
+  baseSym?: string;
 }
 
 export interface CrateResult {
@@ -133,12 +137,18 @@ export interface StonkzApi {
   claimCreatorFees(sym?: string): Promise<ClaimResult>;
 
   stake(input: StakeInput): Promise<void>;
-  unstake(sym: string): Promise<number>;
+  /** Unstake `amount` (default: the whole position). Resolves to what was unstaked. */
+  unstake(sym: string, amount?: number): Promise<number>;
   claimStake(sym: string): Promise<StakeClaim>;
   /** Live: persist SET to PUT /me/settings. Sim: no-op. */
   pushSettings?(settings: Settings): Promise<void>;
-  /** Live: hydrate USER.stake from GET /stake/:sym. Sim: no-op. */
-  hydrateStake?(sym: string): Promise<void>;
+  /**
+   * Live: hydrate USER.stake from `GET /stake/:sym` (indexer) or, with
+   * `chain`, `GET /stake/:sym/chain` (on-chain read). Sim: no-op.
+   */
+  hydrateStake?(sym: string, opts?: { chain?: boolean }): Promise<void>;
+  /** Live: the coin's pool totals (`GET /tokens/:sym/staking`), cached in `state/stake`. */
+  stakePool?(sym: string): Promise<StakePoolSummary | null>;
 
   openCrate(tier: CrateTier): Promise<CrateResult>;
 

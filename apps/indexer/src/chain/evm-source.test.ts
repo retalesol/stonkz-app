@@ -823,3 +823,88 @@ describe('EvmChainSource — the launch path end to end', () => {
     expect(fees[1]?.stakerShare).toBe(0);
   });
 });
+
+describe('EvmChainSource — staking events', () => {
+  const at = (blockNumber: number, tx: string, logIndex = 0) => ({
+    address: LAUNCHPAD,
+    blockNumber,
+    blockHash: BLOCKS.find((b) => b.number === blockNumber)?.hash ?? hash32('bff'),
+    txHash: hash32(tx),
+    logIndex,
+  });
+  const HALF = FILL.tokensOut / 2n;
+
+  it('decodes a FLEX stake as a zero-weight position holding the new total', async () => {
+    const flex = encodeLog(
+      'Staked',
+      // `StonkzLaunchpad.stake` emits `p.amount` — the position's total — and
+      // FLEX (0 days) carries no weight.
+      {
+        token: DOGGO,
+        owner: TRADER,
+        amount: HALF,
+        lockDays: 0,
+        weight: 0n,
+        lockUntil: 1_757_000_004n,
+      },
+      at(1_002, 'a44'),
+    );
+    const { source } = makeSource([launchLog(), tradeLog(), feeLog(), flex]);
+    const { events } = await source.pollRange(999, 1_002);
+    const stake = events.find((e) => e.kind === 'Staked');
+    if (stake?.kind !== 'Staked') throw new Error('expected Staked');
+    expect(stake.mint).toBe(DOGGO);
+    expect(stake.wallet).toBe(TRADER);
+    expect(stake.amount).toBeCloseTo(Number(HALF) / 1e18, 6);
+    expect(stake.lockDays).toBe(0);
+    expect(stake.mult).toBe(0);
+    expect(stake.untilMs).toBe(1_757_000_004_000);
+  });
+
+  it('decodes Unstaked as the amount withdrawn and StakeClaimed as base + tokens', async () => {
+    const unstaked = encodeLog(
+      'Unstaked',
+      { token: DOGGO, owner: TRADER, amount: HALF / 2n },
+      at(1_002, 'a55'),
+    );
+    const claimed = encodeLog(
+      'StakeClaimed',
+      { token: DOGGO, owner: TRADER, base: 10n ** 15n, tokens: 3n * 10n ** 18n },
+      at(1_002, 'a66'),
+    );
+    const { source } = makeSource([launchLog(), tradeLog(), feeLog(), unstaked, claimed]);
+    const { events } = await source.pollRange(999, 1_002);
+
+    const un = events.find((e) => e.kind === 'Unstaked');
+    if (un?.kind !== 'Unstaked') throw new Error('expected Unstaked');
+    expect(un.wallet).toBe(TRADER);
+    expect(un.amount).toBeCloseTo(Number(HALF / 2n) / 1e18, 6);
+
+    const claim = events.find((e) => e.kind === 'StakeClaimed');
+    if (claim?.kind !== 'StakeClaimed') throw new Error('expected StakeClaimed');
+    // WETH is the native wrapper, so the base leg is the native amount exactly.
+    expect(claim.rewardNative).toBeCloseTo(0.001, 12);
+    expect(claim.rewardTokens).toBe(3);
+  });
+
+  it('checksums a lower-cased owner so it joins against auth sessions', async () => {
+    const staked = encodeLog(
+      'Staked',
+      {
+        token: DOGGO,
+        owner: TRADER.toLowerCase(),
+        amount: HALF,
+        lockDays: 7,
+        weight: (HALF * 12_500n) / 10_000n,
+        lockUntil: 1_757_604_804n,
+      },
+      at(1_002, 'a77'),
+    );
+    const { source } = makeSource([launchLog(), tradeLog(), feeLog(), staked]);
+    const { events } = await source.pollRange(999, 1_002);
+    const stake = events.find((e) => e.kind === 'Staked');
+    if (stake?.kind !== 'Staked') throw new Error('expected Staked');
+    expect(stake.wallet).toBe(TRADER);
+    expect(stake.mult).toBeCloseTo(1.25, 12);
+  });
+});

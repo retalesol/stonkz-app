@@ -55,6 +55,12 @@ export interface EvmLog {
   address: string;
   topics: string[];
   data: string;
+  /**
+   * The log's index within its block, as the node reported it (hex or a
+   * number). `/trade/confirm` keys a provisional fill on it; `/launch/confirm`
+   * does not need it, so older fakes may omit it.
+   */
+  logIndex?: string | number | null;
 }
 
 export interface EvmTransactionReceipt {
@@ -64,6 +70,35 @@ export interface EvmTransactionReceipt {
   to: string | null;
   input: string;
   logs: EvmLog[];
+  /** Inclusion block; `/trade/confirm` reads its timestamp for the provisional fill. */
+  blockNumber?: number | null;
+}
+
+/** `/trade/confirm`: the inclusion block's timestamp, in ms, or `null` when the node has no header yet. */
+export interface EvmBlockTimeSource {
+  getBlockTimestampMs(blockNumber: number): Promise<number | null>;
+}
+
+/**
+ * A confirmed Solana transaction's logs and inner instructions — what
+ * `/trade/confirm` decodes the launchpad's `Trade` events from, with the same
+ * `Program data:` attribution the indexer uses. `null` when the signature is
+ * unknown at `confirmed`.
+ */
+export interface SolanaTransactionLogs {
+  slot: number;
+  blockTimeMs: number | null;
+  failed: boolean;
+  logMessages: string[];
+  innerInstructions: {
+    instructions: { programIdIndex?: number; programId?: string; data?: string }[];
+  }[];
+  /** Full key list: static keys, then lookup-table writable, then readonly. */
+  accountKeys: string[];
+}
+
+export interface SolanaTransactionLogsSource {
+  getTransactionLogs(signature: string): Promise<SolanaTransactionLogs | null>;
 }
 
 /** `POST /launch/confirm` on Robinhood — mirrors `SolanaTransactionSource`'s job for EVM. */

@@ -141,6 +141,13 @@
       "when": 1790040000000,
       "tag": "0019_launch_intent_socials",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790110000000,
+      "tag": "0020_stake_position_totals",
+      "breakpoints": true
     }
   ]
 }

@@ -544,15 +544,19 @@ export const simApi: StonkzApi = {
   },
 
   /** TODO(Phase 4.B): `unstake`, rejected on-chain while the lock is live. */
-  async unstake(sym) {
+  async unstake(sym, amount) {
     const st = stakeOf(sym);
     if (!st || st.amt <= 0) return 0;
     if (st.until && Date.now() < st.until) return 0;
-    const amt = st.amt;
-    st.amt = 0;
-    st.mult = 1;
-    st.days = 0;
-    st.until = 0;
+    const amt = amount === undefined ? st.amt : Math.min(amount, st.amt);
+    if (!(amt > 0)) return 0;
+    st.amt -= amt;
+    if (st.amt <= 0) {
+      st.amt = 0;
+      st.mult = 1;
+      st.days = 0;
+      st.until = 0;
+    }
     creditTokens(sym, amt);
     saveUser();
     return amt;

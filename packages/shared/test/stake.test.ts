@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { LOCKS, SUPPLY } from '../src/constants.js';
 import { circ } from '../src/curve.js';
 import { creatorVsStakers } from '../src/fees.js';
-import { poolFrac, stakeMult, stakedFrac, yourShare } from '../src/stake.js';
+import {
+  CHAIN_LOCK_WEIGHT_BPS,
+  chainLockMult,
+  poolFrac,
+  stakeMult,
+  stakedFrac,
+  stakerBucketShare,
+  unstakeableAmount,
+  yourShare,
+} from '../src/stake.js';
 import type { Stake } from '../src/types.js';
 
 const T0 = 1_757_000_000_000;
@@ -106,5 +115,40 @@ describe('yourShare', () => {
     const lockedWeight = locked.amt * stakeMult(locked, T0);
     expect(yourShare(flexWeight, others + flexWeight)).toBeCloseTo(0.5, 12);
     expect(yourShare(lockedWeight, others + lockedWeight)).toBeCloseTo(800 / 900, 12);
+  });
+});
+
+describe('chain staking math', () => {
+  it('mirrors the programs: FLEX carries no weight', () => {
+    expect(chainLockMult(0)).toBe(0);
+    expect(chainLockMult(1)).toBe(1.1);
+    expect(chainLockMult(30)).toBe(1.5);
+    expect(chainLockMult(365)).toBe(8);
+    expect(chainLockMult(42)).toBe(0);
+  });
+
+  it('agrees with LOCKS on every locked term', () => {
+    for (const [days, mult] of LOCKS) {
+      if (days === 0) continue;
+      expect(chainLockMult(days)).toBe(mult);
+      expect(CHAIN_LOCK_WEIGHT_BPS[days]).toBe(Math.round(mult * 10_000));
+    }
+  });
+
+  it('splits the creator bucket by eligible stake, capped at half', () => {
+    expect(stakerBucketShare(0, 1000)).toBe(0);
+    expect(stakerBucketShare(100, 0)).toBe(0);
+    expect(stakerBucketShare(250, 1000)).toBe(0.125);
+    expect(stakerBucketShare(1000, 1000)).toBe(0.5);
+    expect(stakerBucketShare(5000, 1000)).toBe(0.5);
+  });
+
+  it('only releases a position once its lock has run out', () => {
+    expect(unstakeableAmount(null, T0)).toBe(0);
+    expect(unstakeableAmount(stake({ amt: 0 }), T0)).toBe(0);
+    expect(unstakeableAmount(stake({ amt: 6182, until: T0 - 1 }), T0)).toBe(6182);
+    expect(unstakeableAmount(stake({ amt: 6182, until: T0 }), T0)).toBe(6182);
+    expect(unstakeableAmount(stake({ amt: 6182, until: T0 + 1 }), T0)).toBe(0);
+    expect(unstakeableAmount(stake({ amt: 5, until: 0 }))).toBe(5);
   });
 });

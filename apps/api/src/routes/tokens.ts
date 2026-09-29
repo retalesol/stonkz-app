@@ -26,6 +26,7 @@ import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
 import { resolveTokenRow } from './token-resolve.js';
+import { stakePoolSummary } from './stake-data.js';
 
 const TIMEFRAMES = new Set(['1m', '5m', '15m', '1h', '4h', '1d']);
 /** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
@@ -287,8 +288,29 @@ export function tokenRoutes(): Hono<AppEnv> {
         referrals,
       },
       source: 'chain',
+      staking: await stakePoolSummary(deps, net, token),
     };
     return c.json(body);
+  });
+
+  /**
+   * `GET /tokens/:sym/staking?net=&mint=` — the coin's stake pool on its own:
+   * total staked, stakers, the pool's current share of the creator bucket and
+   * lifetime staker earnings. Public; cached for `STAKE_POOL_TTL_MS`.
+   */
+  app.get('/tokens/:sym/staking', async (c) => {
+    const deps = c.get('deps');
+    const sym = c.req.param('sym').toUpperCase();
+    const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+    const mintQ = c.req.query('mint')?.trim() || undefined;
+    const token = await resolveTokenRow(deps.db, net, { mint: mintQ, sym });
+    if (!token) return c.json({ error: 'not_found' }, 404);
+    return c.json({
+      sym: token.sym,
+      net,
+      mint: token.mint,
+      ...(await stakePoolSummary(deps, net, token)),
+    });
   });
 
   app.get('/tokens/:sym/holders', async (c) => {
