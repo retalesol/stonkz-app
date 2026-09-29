@@ -9,9 +9,10 @@ use anchor_spl::token_interface::{
 
 use crate::constants::*;
 use crate::errors::LaunchpadError;
-use crate::events::{Graduated, LiquidityMigrated};
+use crate::events::{DexFeesClaimed, Graduated, LiquidityMigrated};
 use crate::instructions::admin::read_fresh_price;
-use crate::math::{mcap_base, mcap_usd_1e6, CurveState};
+use crate::instructions::trade::{accrue_bucket_base, accrue_bucket_token};
+use crate::math::{circulating, mcap_base, mcap_usd_1e6, split_fee, CurveState};
 use crate::state::*;
 
 /// Graduation is permissionless: anyone may call it once a trigger is met, so
@@ -253,7 +254,7 @@ pub fn migrate_create_pool(ctx: Context<MigrateCreatePool>) -> Result<()> {
 
     let accounts = vec![
         AccountMeta::new(ctx.accounts.lb_pair.key(), false),
-        AccountMeta::new(ctx.accounts.bin_array_bitmap_extension.key(), false),
+        optional_meta(ctx.accounts.bin_array_bitmap_extension.key(), dex),
         AccountMeta::new_readonly(token_x_mint, false),
         AccountMeta::new_readonly(token_y_mint, false),
         AccountMeta::new(ctx.accounts.reserve_x.key(), false),
@@ -302,9 +303,11 @@ pub fn migrate_create_pool(ctx: Context<MigrateCreatePool>) -> Result<()> {
 }
 
 /// Seed liquidity into the pool created by `migrate_create_pool`: init the
-/// active bin array, open a position under the escrow (operator), deposit a
-/// SpotBalanced band around the active bin, then set owner-side permanence via
-/// `lock_release_point = u64::MAX` and clear the operator to the dead address.
+/// active bin array, open a position owned by the escrow PDA, deposit
+/// SpotBalanced into the active bin, and refund the unspent rent buffer. The
+/// position stays with the escrow for good: no instruction of this program
+/// withdraws, closes or reassigns it (DLMM's operator timelock is
+/// whitelist-gated and unavailable — see step 4).
 #[derive(Accounts)]
 pub struct MigrateSeedLiquidity<'info> {
     #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
@@ -379,6 +382,8 @@ pub struct MigrateSeedLiquidity<'info> {
     pub base_token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
+    /// `initialize_position_pda` takes the rent sysvar.
+    pub rent: Sysvar<'info, Rent>,
 }
 
 pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> {
@@ -490,21 +495,37 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
         )?;
     }
 
-    // 4) initialize_position_by_operator — owner = escrow so we can clear
-    //    operator afterward; lock_release = MAX so liquidity cannot withdraw.
-    let lock_release = u64::MAX;
+    // 4) initialize_position_pda — payer, base and owner are all the escrow
+    //    PDA, so the position (`["position", lb_pair, escrow, lower, width]`)
+    //    is owned by a key only this program can sign for.
+    //
+    //    Why not `initialize_position_by_operator` with `lock_release_point =
+    //    u64::MAX` (the previous design)? DLMM gates that instruction on its
+    //    own operator whitelist (`create_operator_account`, admin-signed):
+    //    against the real `lb_clmm` it returns `UnauthorizedAccess` for every
+    //    caller, on preset and customizable pairs alike — verified in
+    //    `tests/meteora-graduation.ts` — so the on-chain timelock is simply
+    //    not available to a per-mint PDA. Permanence therefore rests on this
+    //    program: no instruction of it removes liquidity from, closes, or
+    //    reassigns the position, and the escrow has no other signer. That is
+    //    the same trust the EVM side places in its UUPS admin; hand the
+    //    program's upgrade authority to the timelock at the governance
+    //    handover (`docs/governance-handover.md`).
+    //
+    //    `fee_owner` is left at its default, which DLMM reads as "the owner":
+    //    `claim_fee2` pays into the escrow's token accounts, so the program —
+    //    and only the program, via `claim_dex_fees` — can pull swap fees and
+    //    route them through the curve's split. (The design before this one
+    //    named the incinerator as fee owner, which would have burned every
+    //    post-bond fee for good.)
+    let lock_release: u64 = 0;
     {
-        let mut data = Vec::with_capacity(8 + 4 + 4 + 32 + 8);
-        data.extend_from_slice(&METEORA_INIT_POSITION_BY_OPERATOR_DISCRIMINATOR);
+        let mut data = Vec::with_capacity(8 + 4 + 4);
+        data.extend_from_slice(&METEORA_INIT_POSITION_PDA_DISCRIMINATOR);
         data.extend_from_slice(&lower_bin_id.to_le_bytes());
         data.extend_from_slice(&width.to_le_bytes());
-        data.extend_from_slice(METEORA_DEAD_OWNER.as_ref()); // fee_owner
-        data.extend_from_slice(&lock_release.to_le_bytes());
 
-        // operator_token_x / owner_token_x: proof accounts (X side ATA)
-        let token_x_ata = ctx.accounts.user_token_x.key();
         let escrow_ai = ctx.accounts.escrow.to_account_info();
-        let token_x_ai = ctx.accounts.user_token_x.to_account_info();
         invoke_signed(
             &Instruction {
                 program_id: dex,
@@ -513,11 +534,9 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
                     AccountMeta::new_readonly(escrow, true), // base
                     AccountMeta::new(position, false),
                     AccountMeta::new_readonly(lb_pair, false),
-                    AccountMeta::new_readonly(escrow, false), // owner
-                    AccountMeta::new_readonly(escrow, true),  // operator
-                    AccountMeta::new_readonly(token_x_ata, false),
-                    AccountMeta::new_readonly(token_x_ata, false),
+                    AccountMeta::new_readonly(escrow, true), // owner
                     AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+                    AccountMeta::new_readonly(ctx.accounts.rent.key(), false),
                     AccountMeta::new_readonly(ctx.accounts.event_authority.key(), false),
                     AccountMeta::new_readonly(dex, false),
                 ],
@@ -528,11 +547,9 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
                 escrow_ai.clone(),
                 ctx.accounts.position.to_account_info(),
                 ctx.accounts.lb_pair.to_account_info(),
-                escrow_ai.clone(),
                 escrow_ai,
-                token_x_ai.clone(),
-                token_x_ai,
                 ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.rent.to_account_info(),
                 ctx.accounts.event_authority.to_account_info(),
                 ctx.accounts.dex_program.to_account_info(),
             ],
@@ -540,18 +557,24 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
         )?;
     }
 
-    // 5) add_liquidity_by_strategy — SpotBalanced on the active bin
+    // 5) add_liquidity2 — the whole of both sides into the active bin, as an
+    //    explicit 100% / 100% distribution. Two lessons from the real program:
+    //    the v2 forms take bin arrays as trailing remaining accounts, which is
+    //    what lets a one-bin position pass its single array once (v1 names
+    //    `bin_array_lower` / `bin_array_upper` and, given the same account
+    //    twice, fails with `AccountBorrowFailed`); and `SpotBalanced` rounds
+    //    its weights, leaving ~0.1% of one side undeposited in the escrow —
+    //    an exact distribution deposits every atom, so nothing is stranded.
     {
-        let mut data = Vec::with_capacity(8 + 8 + 8 + 4 + 4 + 4 + 4 + 1 + 64);
-        data.extend_from_slice(&METEORA_ADD_LIQUIDITY_BY_STRATEGY_DISCRIMINATOR);
+        let mut data = Vec::with_capacity(8 + 8 + 8 + 4 + (4 + 2 + 2) + 4);
+        data.extend_from_slice(&METEORA_ADD_LIQUIDITY2_DISCRIMINATOR);
         data.extend_from_slice(&amount_x.to_le_bytes());
         data.extend_from_slice(&amount_y.to_le_bytes());
-        data.extend_from_slice(&active_id.to_le_bytes());
-        data.extend_from_slice(&0i32.to_le_bytes()); // max_active_bin_slippage
-        data.extend_from_slice(&lower_bin_id.to_le_bytes());
-        data.extend_from_slice(&lower_bin_id.to_le_bytes()); // max = min (single bin)
-        data.push(METEORA_STRATEGY_SPOT_BALANCED);
-        data.extend_from_slice(&[0u8; 64]);
+        data.extend_from_slice(&1u32.to_le_bytes()); // bin_liquidity_dist: one entry
+        data.extend_from_slice(&lower_bin_id.to_le_bytes()); // bin_id = active
+        data.extend_from_slice(&METEORA_BPS_ALL.to_le_bytes()); // distribution_x
+        data.extend_from_slice(&METEORA_BPS_ALL.to_le_bytes()); // distribution_y
+        data.extend_from_slice(&0u32.to_le_bytes()); // RemainingAccountsInfo { slices: vec![] }
 
         let (token_x_mint, token_y_mint) = sort_mints(mint_key, base_mint_key);
         let (token_x_mint_ai, token_y_mint_ai, token_x_prog_ai, token_y_prog_ai) =
@@ -570,7 +593,6 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
                     ctx.accounts.token_program.to_account_info(),
                 )
             };
-        let bin_ai = ctx.accounts.bin_array.to_account_info();
 
         invoke_signed(
             &Instruction {
@@ -578,20 +600,20 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
                 accounts: vec![
                     AccountMeta::new(position, false),
                     AccountMeta::new(lb_pair, false),
-                    AccountMeta::new(ctx.accounts.bin_array_bitmap_extension.key(), false),
+                    optional_meta(ctx.accounts.bin_array_bitmap_extension.key(), dex),
                     AccountMeta::new(ctx.accounts.user_token_x.key(), false),
                     AccountMeta::new(ctx.accounts.user_token_y.key(), false),
                     AccountMeta::new(ctx.accounts.reserve_x.key(), false),
                     AccountMeta::new(ctx.accounts.reserve_y.key(), false),
                     AccountMeta::new_readonly(token_x_mint, false),
                     AccountMeta::new_readonly(token_y_mint, false),
-                    AccountMeta::new(ctx.accounts.bin_array.key(), false),
-                    AccountMeta::new(ctx.accounts.bin_array.key(), false),
                     AccountMeta::new_readonly(escrow, true),
                     AccountMeta::new_readonly(token_x_prog_ai.key(), false),
                     AccountMeta::new_readonly(token_y_prog_ai.key(), false),
                     AccountMeta::new_readonly(ctx.accounts.event_authority.key(), false),
                     AccountMeta::new_readonly(dex, false),
+                    // remaining: the one bin array this position spans
+                    AccountMeta::new(ctx.accounts.bin_array.key(), false),
                 ],
                 data,
             },
@@ -605,41 +627,32 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
                 ctx.accounts.reserve_y.to_account_info(),
                 token_x_mint_ai,
                 token_y_mint_ai,
-                bin_ai.clone(),
-                bin_ai,
                 ctx.accounts.escrow.to_account_info(),
                 token_x_prog_ai,
                 token_y_prog_ai,
                 ctx.accounts.event_authority.to_account_info(),
                 ctx.accounts.dex_program.to_account_info(),
+                ctx.accounts.bin_array.to_account_info(),
             ],
             &[escrow_seeds],
         )?;
     }
 
-    // 6) Clear operator → dead so nobody (including escrow) can manage liquidity.
-    {
-        let mut data = Vec::with_capacity(8 + 32);
-        data.extend_from_slice(&METEORA_UPDATE_POSITION_OPERATOR_DISCRIMINATOR);
-        data.extend_from_slice(METEORA_DEAD_OWNER.as_ref());
-        invoke_signed(
-            &Instruction {
-                program_id: dex,
-                accounts: vec![
-                    AccountMeta::new(position, false),
-                    AccountMeta::new_readonly(escrow, true),
-                    AccountMeta::new_readonly(ctx.accounts.event_authority.key(), false),
-                    AccountMeta::new_readonly(dex, false),
-                ],
-                data,
-            },
-            &[
-                ctx.accounts.position.to_account_info(),
-                ctx.accounts.escrow.to_account_info(),
-                ctx.accounts.event_authority.to_account_info(),
-                ctx.accounts.dex_program.to_account_info(),
-            ],
-            &[escrow_seeds],
+    // 6) Hand back whatever of the rent buffer the CPIs did not spend. The
+    //    escrow is a data-less PDA that only ever signs, so it needs no balance
+    //    of its own; leaving lamports here would strand them on every coin.
+    let leftover = ctx.accounts.escrow.lamports();
+    if leftover > 0 {
+        anchor_lang::system_program::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.system_program.to_account_info(),
+                anchor_lang::system_program::Transfer {
+                    from: ctx.accounts.escrow.to_account_info(),
+                    to: ctx.accounts.migration_authority.to_account_info(),
+                },
+                &[escrow_seeds],
+            ),
+            leftover,
         )?;
     }
 
@@ -657,7 +670,359 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
         base_deposited: base_amount,
         token_deposited: token_amount,
         lock_release_point: lock_release,
+        // Held by the program escrow with no withdraw instruction; DLMM's own
+        // timelock is not available to us (see step 4).
         position_locked: 1,
+        ts: now,
+    });
+    Ok(())
+}
+
+/* -------------------------------------------------------------------------- */
+/* Post-bond fees — claim from the locked DLMM position into the curve split   */
+/* -------------------------------------------------------------------------- */
+
+/// Permissionless crank. The escrow PDA owns the locked position *and* is its
+/// `fee_owner`, so only this program can claim its swap fees — and this is the
+/// only instruction that does, into program vaults and ledgers, never to the
+/// caller. Base-side fees take the curve's exact split (15% protocol / 10%
+/// `$STONKZ` buyback / 6% RWA crate fund / 69% creator bucket, the bucket
+/// peeled between creator and stakers as on every fill). The launched-token
+/// side has no per-mint treasury to hold the protocol legs, so only its 69%
+/// bucket is credited (creator + stakers, in tokens, as during cashback) and
+/// the other 31% is burned. Liquidity never moves: `claim_fee2` touches fees
+/// only, and the position's `lock_release_point` stays `u64::MAX`.
+#[derive(Accounts)]
+pub struct ClaimDexFees<'info> {
+    #[account(seeds = [SEED_GLOBAL], bump = global.bump)]
+    pub global: Box<Account<'info, Global>>,
+    #[account(
+        mut,
+        seeds = [SEED_CURVE, mint.key().as_ref()],
+        bump = curve.bump,
+        has_one = mint,
+        has_one = base_mint @ LaunchpadError::BaseMintMismatch,
+    )]
+    pub curve: Box<Account<'info, Curve>>,
+    /// Mutable: the token side's non-bucket legs are burned.
+    #[account(mut)]
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, seeds = [SEED_BUCKET_BASE_VAULT, mint.key().as_ref()], bump)]
+    pub bucket_base_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [SEED_BUCKET_TOKEN_VAULT, mint.key().as_ref()], bump)]
+    pub bucket_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [SEED_PROTOCOL_VAULT, base_mint.key().as_ref()], bump)]
+    pub protocol_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [SEED_OPS_VAULT, base_mint.key().as_ref()], bump)]
+    pub ops_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds = [SEED_BURN_VAULT, base_mint.key().as_ref()], bump)]
+    pub burn_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// CHECK: escrow PDA — position owner and fee owner; CPI signer.
+    #[account(mut, seeds = [SEED_METEORA_ESCROW, mint.key().as_ref()], bump)]
+    pub escrow: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        associated_token::mint = base_mint,
+        associated_token::authority = escrow,
+        associated_token::token_program = base_token_program,
+    )]
+    pub escrow_base: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = escrow,
+        associated_token::token_program = token_program,
+    )]
+    pub escrow_token: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// CHECK: must be the pool `migrate_create_pool` recorded.
+    #[account(mut, address = curve.dex_pool @ LaunchpadError::PoolNotCreated)]
+    pub lb_pair: UncheckedAccount<'info>,
+    /// CHECK: verified against the DLMM `PositionV2` layout in the handler
+    /// (program-owned, this pool, escrow as owner and fee owner).
+    #[account(mut)]
+    pub position: UncheckedAccount<'info>,
+    /// CHECK: bin array covering the position's lower bin (DLMM validates).
+    #[account(mut)]
+    pub bin_array_lower: UncheckedAccount<'info>,
+    /// CHECK: bin array covering the upper bin; the same account for a one-bin position.
+    #[account(mut)]
+    pub bin_array_upper: UncheckedAccount<'info>,
+    /// CHECK: Meteora reserve for token X (DLMM validates `has_one`).
+    #[account(mut)]
+    pub reserve_x: UncheckedAccount<'info>,
+    /// CHECK: Meteora reserve for token Y.
+    #[account(mut)]
+    pub reserve_y: UncheckedAccount<'info>,
+    /// CHECK: event authority PDA `["__event_authority"]` under `dex_program`.
+    pub event_authority: UncheckedAccount<'info>,
+    /// CHECK: Meteora program id from Global.
+    #[account(address = global.dex_program @ LaunchpadError::Unauthorized)]
+    pub dex_program: UncheckedAccount<'info>,
+    /// CHECK: SPL Memo, a required account of every DLMM v2 instruction.
+    #[account(address = SPL_MEMO_PROGRAM_ID @ LaunchpadError::Unauthorized)]
+    pub memo_program: UncheckedAccount<'info>,
+
+    /// Anyone. Pays the transaction fee and receives nothing.
+    pub caller: Signer<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub base_token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn claim_dex_fees(ctx: Context<ClaimDexFees>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    require!(ctx.accounts.curve.migrated, LaunchpadError::NotMigrated);
+
+    let mint_key = ctx.accounts.mint.key();
+    let base_mint_key = ctx.accounts.base_mint.key();
+    let escrow = ctx.accounts.escrow.key();
+    let dex = ctx.accounts.dex_program.key();
+    let lb_pair = ctx.accounts.lb_pair.key();
+    let position = ctx.accounts.position.key();
+
+    // The position is the one `migrate_seed_liquidity` opened: DLMM-owned, on
+    // this pool, owned by the escrow and paying fees to the escrow. Anything
+    // else would let a caller point the crank at a foreign position (harmless
+    // — DLMM would refuse the escrow as sender — but a clear error is better).
+    {
+        require!(
+            *ctx.accounts.position.owner == dex,
+            LaunchpadError::PositionMismatch
+        );
+        let data = ctx.accounts.position.try_borrow_data()?;
+        require!(
+            data.len() >= METEORA_POSITION_MIN_LEN,
+            LaunchpadError::PositionMismatch
+        );
+        let at = |o: usize| -> Pubkey {
+            let mut b = [0u8; 32];
+            b.copy_from_slice(&data[o..o + 32]);
+            Pubkey::new_from_array(b)
+        };
+        // `fee_owner` at its default means "the owner" to DLMM; the escrow
+        // explicitly is accepted too. Anything else (e.g. the incinerator the
+        // previous build wrote) would send the claim elsewhere.
+        let fee_owner = at(METEORA_POSITION_FEE_OWNER_OFFSET);
+        require!(
+            at(METEORA_POSITION_LB_PAIR_OFFSET) == lb_pair
+                && at(METEORA_POSITION_OWNER_OFFSET) == escrow
+                && (fee_owner == Pubkey::default() || fee_owner == escrow),
+            LaunchpadError::PositionMismatch
+        );
+    }
+
+    let (lower_bin_id, width) = unpack_position_meta(ctx.accounts.curve.dex_position_meta);
+    require!(width > 0, LaunchpadError::PositionMismatch);
+    let upper_bin_id = lower_bin_id
+        .checked_add(width - 1)
+        .ok_or(LaunchpadError::MathOverflow)?;
+
+    let escrow_bump = [ctx.bumps.escrow];
+    let escrow_seeds: &[&[u8]] = &[SEED_METEORA_ESCROW, mint_key.as_ref(), &escrow_bump];
+
+    let base_before = ctx.accounts.escrow_base.amount;
+    let token_before = ctx.accounts.escrow_token.amount;
+
+    // 1) claim_fee2(min_bin_id, max_bin_id, remaining_accounts_info { slices: [] })
+    //    Bin arrays travel as trailing remaining accounts; a one-bin position
+    //    has one, and DLMM rejects the same account loaded twice.
+    {
+        let (token_x_mint, token_y_mint) = sort_mints(mint_key, base_mint_key);
+        let (user_token_x, user_token_y, token_x_mint_ai, token_y_mint_ai, prog_x, prog_y) =
+            if mint_key < base_mint_key {
+                (
+                    ctx.accounts.escrow_token.to_account_info(),
+                    ctx.accounts.escrow_base.to_account_info(),
+                    ctx.accounts.mint.to_account_info(),
+                    ctx.accounts.base_mint.to_account_info(),
+                    ctx.accounts.token_program.to_account_info(),
+                    ctx.accounts.base_token_program.to_account_info(),
+                )
+            } else {
+                (
+                    ctx.accounts.escrow_base.to_account_info(),
+                    ctx.accounts.escrow_token.to_account_info(),
+                    ctx.accounts.base_mint.to_account_info(),
+                    ctx.accounts.mint.to_account_info(),
+                    ctx.accounts.base_token_program.to_account_info(),
+                    ctx.accounts.token_program.to_account_info(),
+                )
+            };
+
+        let mut data = Vec::with_capacity(8 + 4 + 4 + 4);
+        data.extend_from_slice(&METEORA_CLAIM_FEE2_DISCRIMINATOR);
+        data.extend_from_slice(&lower_bin_id.to_le_bytes());
+        data.extend_from_slice(&upper_bin_id.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes()); // RemainingAccountsInfo { slices: vec![] }
+
+        let mut accounts = vec![
+            AccountMeta::new(lb_pair, false),
+            AccountMeta::new(position, false),
+            AccountMeta::new_readonly(escrow, true), // sender = owner
+            AccountMeta::new(ctx.accounts.reserve_x.key(), false),
+            AccountMeta::new(ctx.accounts.reserve_y.key(), false),
+            AccountMeta::new(user_token_x.key(), false),
+            AccountMeta::new(user_token_y.key(), false),
+            AccountMeta::new_readonly(token_x_mint, false),
+            AccountMeta::new_readonly(token_y_mint, false),
+            AccountMeta::new_readonly(prog_x.key(), false),
+            AccountMeta::new_readonly(prog_y.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.memo_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.event_authority.key(), false),
+            AccountMeta::new_readonly(dex, false),
+        ];
+        let mut infos = vec![
+            ctx.accounts.lb_pair.to_account_info(),
+            ctx.accounts.position.to_account_info(),
+            ctx.accounts.escrow.to_account_info(),
+            ctx.accounts.reserve_x.to_account_info(),
+            ctx.accounts.reserve_y.to_account_info(),
+            user_token_x,
+            user_token_y,
+            token_x_mint_ai,
+            token_y_mint_ai,
+            prog_x,
+            prog_y,
+            ctx.accounts.memo_program.to_account_info(),
+            ctx.accounts.event_authority.to_account_info(),
+            ctx.accounts.dex_program.to_account_info(),
+        ];
+        accounts.push(AccountMeta::new(ctx.accounts.bin_array_lower.key(), false));
+        infos.push(ctx.accounts.bin_array_lower.to_account_info());
+        if ctx.accounts.bin_array_upper.key() != ctx.accounts.bin_array_lower.key() {
+            accounts.push(AccountMeta::new(ctx.accounts.bin_array_upper.key(), false));
+            infos.push(ctx.accounts.bin_array_upper.to_account_info());
+        }
+
+        invoke_signed(
+            &Instruction {
+                program_id: dex,
+                accounts,
+                data,
+            },
+            &infos,
+            &[escrow_seeds],
+        )?;
+    }
+
+    ctx.accounts.escrow_base.reload()?;
+    ctx.accounts.escrow_token.reload()?;
+    let fee_base = ctx
+        .accounts
+        .escrow_base
+        .amount
+        .checked_sub(base_before)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let fee_token = ctx
+        .accounts
+        .escrow_token
+        .amount
+        .checked_sub(token_before)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    require!(fee_base > 0 || fee_token > 0, LaunchpadError::NothingToClaim);
+
+    let circ = circulating(
+        ctx.accounts.curve.tokens_for_sale,
+        ctx.accounts.curve.real_token,
+    );
+
+    // 2) Base side: the curve's split, to the same vaults a fill pays.
+    let s = split_fee(fee_base);
+    {
+        let legs = [
+            (ctx.accounts.protocol_vault.to_account_info(), s.protocol),
+            (ctx.accounts.ops_vault.to_account_info(), s.stonkz_ops),
+            (ctx.accounts.burn_vault.to_account_info(), s.burn),
+            (ctx.accounts.bucket_base_vault.to_account_info(), s.creator_bucket),
+        ];
+        for (to, amount) in legs {
+            if amount == 0 {
+                continue;
+            }
+            transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.base_token_program.to_account_info(),
+                    TransferChecked {
+                        from: ctx.accounts.escrow_base.to_account_info(),
+                        mint: ctx.accounts.base_mint.to_account_info(),
+                        to,
+                        authority: ctx.accounts.escrow.to_account_info(),
+                    },
+                    &[escrow_seeds],
+                ),
+                amount,
+                ctx.accounts.base_mint.decimals,
+            )?;
+        }
+    }
+    let (to_creator_base, to_stakers_base) =
+        accrue_bucket_base(&mut ctx.accounts.curve, s.creator_bucket, circ)?;
+
+    // 3) Token side: the 69% bucket in tokens; the treasury legs are burned.
+    let t = split_fee(fee_token);
+    let tokens_burned = fee_token
+        .checked_sub(t.creator_bucket)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    if t.creator_bucket > 0 {
+        transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.escrow_token.to_account_info(),
+                    mint: ctx.accounts.mint.to_account_info(),
+                    to: ctx.accounts.bucket_token_vault.to_account_info(),
+                    authority: ctx.accounts.escrow.to_account_info(),
+                },
+                &[escrow_seeds],
+            ),
+            t.creator_bucket,
+            ctx.accounts.mint.decimals,
+        )?;
+    }
+    if tokens_burned > 0 {
+        burn(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.mint.to_account_info(),
+                    from: ctx.accounts.escrow_token.to_account_info(),
+                    authority: ctx.accounts.escrow.to_account_info(),
+                },
+                &[escrow_seeds],
+            ),
+            tokens_burned,
+        )?;
+    }
+    let (to_creator_token, to_stakers_token) =
+        accrue_bucket_token(&mut ctx.accounts.curve, t.creator_bucket, circ)?;
+
+    // 4) Lifetime ledgers, as a fill would move them.
+    let c = &mut ctx.accounts.curve;
+    c.protocol_accrued = c.protocol_accrued.saturating_add(s.protocol);
+    c.ops_accrued = c.ops_accrued.saturating_add(s.stonkz_ops);
+    c.creator_bucket_accrued = c.creator_bucket_accrued.saturating_add(s.creator_bucket);
+
+    emit!(DexFeesClaimed {
+        mint: mint_key,
+        base_mint: base_mint_key,
+        pool: lb_pair,
+        position,
+        caller: ctx.accounts.caller.key(),
+        fee_base,
+        fee_token,
+        protocol: s.protocol,
+        ops: s.stonkz_ops,
+        burn: s.burn,
+        creator_bucket_base: s.creator_bucket,
+        creator_bucket_token: t.creator_bucket,
+        to_creator_base,
+        to_stakers_base,
+        to_creator_token,
+        to_stakers_token,
+        tokens_burned,
         ts: now,
     });
     Ok(())
@@ -666,6 +1031,17 @@ pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> 
 /* -------------------------------------------------------------------------- */
 /* helpers                                                                     */
 /* -------------------------------------------------------------------------- */
+
+/// An Anchor `Option<Account>` that is absent is passed as the callee's own
+/// program id; that key must travel read-only (a writable executable would
+/// fail the CPI privilege check), a real account writable.
+fn optional_meta(key: Pubkey, dex: Pubkey) -> AccountMeta {
+    if key == dex {
+        AccountMeta::new_readonly(key, false)
+    } else {
+        AccountMeta::new(key, false)
+    }
+}
 
 fn sort_mints(a: Pubkey, b: Pubkey) -> (Pubkey, Pubkey) {
     if a < b {
@@ -755,18 +1131,29 @@ fn active_id_from_curve_price(
 }
 
 fn get_id_from_price(price_q64: u128, bin_step: u16) -> Result<i32> {
-    // Binary search id such that get_price_from_id(id) ≈ price_q64.
+    // Binary search for the largest id with get_price_from_id(id) <= price.
+    //
+    // `pow_q64` cannot represent the price of every id in [-443636, 443636]:
+    // far above zero it overflows u128, far below it underflows to zero, and
+    // both come back as `None`. The search's first probes are exactly those
+    // extremes (±221,818), so treating `None` as an error — as this did —
+    // failed `migrate_create_pool` for *every* coin. `None` is a direction,
+    // not a failure: an overflowing positive id is above the target, an
+    // underflowing negative id below it.
     let mut lo: i32 = -443_636;
     let mut hi: i32 = 443_636;
     while lo < hi {
-        let mid = lo.saturating_add(hi).saturating_add(1) / 2;
-        let p = get_price_from_id(mid, bin_step).ok_or(LaunchpadError::MathOverflow)?;
-        if p <= price_q64 {
-            lo = mid;
-        } else {
-            hi = mid - 1;
+        let mid = (lo as i64 + hi as i64 + 1).div_euclid(2) as i32;
+        match get_price_from_id(mid, bin_step) {
+            Some(p) if p <= price_q64 => lo = mid,
+            Some(_) => hi = mid - 1,
+            None if mid > 0 => hi = mid - 1,
+            None => lo = mid,
         }
     }
+    // The price must actually be representable at the answer; a target
+    // outside every bin (impossible for real reserves) is the one true error.
+    get_price_from_id(lo, bin_step).ok_or(LaunchpadError::MathOverflow)?;
     Ok(lo)
 }
 

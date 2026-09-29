@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import { withChainsFile } from './chains-file.js';
 import type { Net } from '@stonkz/shared';
@@ -53,6 +54,21 @@ export interface ApiEnv {
   trustedProxyDepth: number;
 
   solanaRpcUrl: string;
+  /**
+   * `JITO_BLOCK_ENGINE_URL`: Jito block-engine origin (e.g.
+   * `https://mainnet.block-engine.jito.wtf`). When set, a trade prepared
+   * with MEV mode `SHIELD` carries a Jito tip and `POST /trade/broadcast`
+   * submits the signed transaction to `/api/v1/transactions?bundleOnly=true`
+   * — the only route on which the tip buys anything. Unset (devnet, local),
+   * prepare writes no tip and reports `fees.mevRoute: 'none'`.
+   */
+  jitoBlockEngineUrl: string | undefined;
+  /**
+   * `SOLANA_PRIVATE_RPC_URL`: a private / staked-connection Solana RPC used
+   * by `POST /trade/broadcast` for MEV mode `RELAY`. Falls back to
+   * `SOLANA_RPC_URL` when unset (and prepare reports `mevRoute: 'none'`).
+   */
+  solanaPrivateRpcUrl: string | undefined;
   /**
    * `mainnet-beta` | `devnet` | `testnet` | `localnet`. Defaults to **devnet**
    * so staging can settle against a free cluster; mainnet is an RPC + cluster
@@ -225,6 +241,28 @@ export interface ApiEnv {
   pinataJwt: string | undefined;
   /** Dedicated gateway host, e.g. `indigo-hollow-catfish-851.mypinata.cloud`. */
   pinataGateway: string;
+
+  /* --------------------------------------------------------------- admin panel */
+
+  /**
+   * `ADMIN_WALLETS`: comma list of net-agnostic wallet addresses (EVM
+   * checksum/lowercase or Solana base58) bootstrapped as `owner`. DB-managed
+   * roles (`admin_roles`) layer on top — see `admin/roles.ts`. Empty (the
+   * default) means the admin panel has no owner and every `/admin/*` route 404s.
+   */
+  adminWallets: readonly string[];
+  /**
+   * `ADMIN_JWT_SECRET`: signs the short-lived admin step-up token. Defaults
+   * to a key derived from `JWT_SECRET` (`sha256("stonkz-admin:" + secret)`)
+   * so the two token families never share a raw key even when unset.
+   */
+  adminJwtSecret: string;
+  /** `ADMIN_TOKEN_TTL_SECONDS`, default 900 (15 min). */
+  adminTokenTtlSeconds: number;
+  /** `ADMIN_CHALLENGE_TTL_SECONDS`, default 300 (5 min). */
+  adminChallengeTtlSeconds: number;
+  /** `ADMIN_IP_ALLOWLIST`: optional comma list of client IPs / CIDR prefixes (`10.0.0.0/8`). Empty = no IP gate. */
+  adminIpAllowlist: readonly string[];
 }
 
 export const ZERO_EVM_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -371,6 +409,16 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
     trustedProxyDepth: int(src, 'TRUSTED_PROXY_DEPTH', 1),
 
     solanaRpcUrl: str(src, 'SOLANA_RPC_URL', 'https://api.devnet.solana.com'),
+    jitoBlockEngineUrl: (() => {
+      const raw = src['JITO_BLOCK_ENGINE_URL']?.trim();
+      if (!raw) return undefined;
+      if (!/^https?:\/\//.test(raw))
+        throw new Error(
+          `env JITO_BLOCK_ENGINE_URL must be an http(s) origin, got ${JSON.stringify(raw)}`,
+        );
+      return raw.replace(/\/+$/, '');
+    })(),
+    solanaPrivateRpcUrl: src['SOLANA_PRIVATE_RPC_URL']?.trim() || undefined,
     solanaCluster: oneOf(
       src,
       'SOLANA_CLUSTER',
@@ -542,6 +590,18 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       /^https?:\/\//,
       '',
     ),
+
+    adminWallets: list(src, 'ADMIN_WALLETS', []),
+    adminJwtSecret: str(
+      src,
+      'ADMIN_JWT_SECRET',
+      createHash('sha256')
+        .update(`stonkz-admin:${str(src, 'JWT_SECRET', DEV_JWT_SECRET)}`)
+        .digest('hex'),
+    ),
+    adminTokenTtlSeconds: int(src, 'ADMIN_TOKEN_TTL_SECONDS', 900),
+    adminChallengeTtlSeconds: int(src, 'ADMIN_CHALLENGE_TTL_SECONDS', 300),
+    adminIpAllowlist: list(src, 'ADMIN_IP_ALLOWLIST', []),
   };
 
   /**

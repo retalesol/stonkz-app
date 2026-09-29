@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
-import { decodeFunctionResult, encodeFunctionData, type Address, type Hex } from 'viem';
+import { decodeFunctionResult, encodeFunctionData, getAddress, type Address, type Hex } from 'viem';
 import { derivePdas, deriveStakePositionPda } from '../router/solana-idl.js';
 import {
   CURVE_ACCOUNT_DISC,
@@ -29,7 +29,7 @@ export interface StakePositionAtoms {
   pendingToken: bigint;
 }
 
-/** The stake-pool slice of a coin record. */
+/** The stake-pool slice of a coin record, plus the creator's claimable ledger. */
 export interface StakePoolAtoms {
   eligibleStaked: bigint;
   flexStaked: bigint;
@@ -38,6 +38,12 @@ export interface StakePoolAtoms {
   stakerAccruedToken: bigint;
   tokensForSale: bigint;
   realToken: bigint;
+  /** `creatorClaimableBase` / `creator_claimable_base`: what `claimCreatorFees` pays right now. */
+  creatorClaimableBase?: bigint;
+  /** `creatorClaimableToken` / `creator_claimable_token`: the cashback-window token slice. */
+  creatorClaimableToken?: bigint;
+  /** The coin's creator as the program records it (checksummed EVM address / base58 pubkey). */
+  creator?: string;
 }
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -90,8 +96,11 @@ export const STAKE_VIEW_ABI = [
  * (`burnAccrued` already was) cannot break the decode.
  */
 export const COINS_WORD = {
+  creator: 2,
   realToken: 15,
   tokensForSale: 17,
+  creatorClaimableBase: 24,
+  creatorClaimableToken: 25,
   eligibleStaked: 28,
   flexStaked: 29,
   totalWeight: 30,
@@ -187,6 +196,11 @@ export function parseCoinsStakePool(raw: string): StakePoolAtoms | null {
     stakerAccruedToken: word(COINS_WORD.stakerAccruedToken),
     tokensForSale: word(COINS_WORD.tokensForSale),
     realToken: word(COINS_WORD.realToken),
+    creatorClaimableBase: word(COINS_WORD.creatorClaimableBase),
+    creatorClaimableToken: word(COINS_WORD.creatorClaimableToken),
+    creator: getAddress(
+      `0x${hex.slice(COINS_WORD.creator * 64 + 24, COINS_WORD.creator * 64 + 64)}`,
+    ),
   };
 }
 
@@ -278,6 +292,8 @@ export interface SolCurveStakePool extends StakePoolAtoms {
 export function decodeSolCurveStakePool(data: Buffer): SolCurveStakePool | null {
   try {
     if (!data.subarray(0, 8).equals(CURVE_ACCOUNT_DISC)) return null;
+    // bump, mint, base_mint, creator
+    const creator = new PublicKey(data.subarray(8 + 1 + 64, 8 + 1 + 96)).toBase58();
     let o = 8 + 1 + 32 * 3;
     const tickerLen = data.readUInt32LE(o);
     if (tickerLen > 64) return null;
@@ -301,7 +317,11 @@ export function decodeSolCurveStakePool(data: Buffer): SolCurveStakePool | null 
     o += 1; // migrated
     o += 32; // dex_pool
     o += 8; // dex_position_meta
-    o += 8 * 5; // protocol, ops, creator bucket, creator claimable base/token
+    o += 8 * 3; // protocol_accrued, ops_accrued, creator_bucket_accrued
+    const creatorClaimableBase = data.readBigUInt64LE(o);
+    o += 8;
+    const creatorClaimableToken = data.readBigUInt64LE(o);
+    o += 8;
     const eligibleStaked = data.readBigUInt64LE(o);
     o += 8;
     const flexStaked = data.readBigUInt64LE(o);
@@ -326,6 +346,9 @@ export function decodeSolCurveStakePool(data: Buffer): SolCurveStakePool | null 
       stakerAccruedToken,
       tokensForSale,
       realToken,
+      creatorClaimableBase,
+      creatorClaimableToken,
+      creator,
     };
   } catch {
     return null;

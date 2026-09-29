@@ -1,3 +1,5 @@
+import type { ChatAccess } from '../views/chat-access.js';
+
 /**
  * Chat rooms and their logs.
  *
@@ -25,10 +27,15 @@ export interface ChatMsg {
 
 export interface ChatState {
   room: string;
-  /** The token whose room is available alongside GLOBAL, if any. */
+  /** The token whose rooms (public + private) sit alongside GLOBAL, if any. */
   token: { sym: string; seed: number } | null;
   logs: Record<string, ChatMsg[]>;
+  /** Total across rooms — what the tab badge shows. */
   unread: number;
+  /** Per-room counts behind the tab chips. */
+  unreadByRoom: Record<string, number>;
+  /** Last `GET /chat/:net/:room/access` per room; `undefined` until fetched. */
+  access: Record<string, ChatAccess | null>;
   open: boolean;
 }
 
@@ -37,8 +44,31 @@ export const CHAT: ChatState = {
   token: null,
   logs: { GLOBAL: [] },
   unread: 0,
+  unreadByRoom: {},
+  access: {},
   open: false,
 };
+
+/** One more unseen line in `room`. Returns the new total. */
+export function bumpUnread(state: ChatState, room: string): number {
+  state.unreadByRoom[room] = (state.unreadByRoom[room] ?? 0) + 1;
+  state.unread++;
+  return state.unread;
+}
+
+/** The user is looking at `room` now; its count folds out of the total. */
+export function clearUnread(state: ChatState, room: string): number {
+  const n = state.unreadByRoom[room] ?? 0;
+  if (n) {
+    state.unread = Math.max(0, state.unread - n);
+    state.unreadByRoom[room] = 0;
+  }
+  return state.unread;
+}
+
+export function unreadIn(state: ChatState, room: string): number {
+  return state.unreadByRoom[room] ?? 0;
+}
 
 export const HANDLES: Array<[string, string]> = [
   ['0xSCHIZO', '#ffd23f'],

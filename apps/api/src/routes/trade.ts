@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { decodeAbiParameters, type Address, type Hex } from 'viem';
 import { and, eq } from 'drizzle-orm';
 import {
@@ -12,6 +12,7 @@ import {
 import { settings } from '../db/schema.js';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
+import { gate } from '../admin/index.js';
 import type { AppEnv } from '../app/context.js';
 import { composeCurveTrade } from '../router/compose.js';
 import {
@@ -36,6 +37,8 @@ import { SolanaRpc } from '../chain/solana.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import { asSolanaBlockhashSource, composeSolanaTradeTransaction } from '../router/solana-tx.js';
 import { composeWithLookupTables } from '../router/solana-alt.js';
+import { MIN_JITO_TIP_LAMPORTS, lamportsFromSol } from '../router/solana-fees.js';
+import type { MevRoute } from '../router/solana-broadcast.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import {
   evmChainId as evmChainIdFor,
@@ -206,7 +209,9 @@ function parsePermit(raw: unknown): PermitInput | null {
 export function tradeRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
-  app.post('/trade/prepare', requireAuth(), limit(RATE_LIMITS.trade), async (c) => {
+  // Admin panel: per-net trading flag + per-wallet trade ban (`admin/moderation-gate.ts`).
+  const tradeGate = gate({ feature: 'trading', ban: 'trade' });
+  app.post('/trade/prepare', requireAuth(), tradeGate, limit(RATE_LIMITS.trade), async (c) => {
     const deps = c.get('deps');
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
@@ -293,6 +298,22 @@ export function tradeRoutes(): Hono<AppEnv> {
     );
     const now = deps.now();
 
+    // Whether the MEV setting can do anything on this deployment. A Jito tip
+    // only buys protection when the signed transaction goes to the block
+    // engine (`POST /trade/broadcast`), so with no `JITO_BLOCK_ENGINE_URL` the
+    // tip is not written at all rather than paid for nothing; `RELAY` needs
+    // no tip, only `SOLANA_PRIVATE_RPC_URL`. Jito also refuses tips under
+    // 1000 lamports, so a positive tip is floored there.
+    const mevRoute: MevRoute =
+      net === 'SOL' && s.mev !== 'OFF' ? deps.solanaBroadcaster.routeFor(s.mev) : 'none';
+    const tipSol =
+      mevRoute === 'jito' && s.mevTip > 0
+        ? Math.max(s.mevTip, MIN_JITO_TIP_LAMPORTS / 1e9)
+        : mevRoute === 'jito'
+          ? s.mevTip
+          : 0;
+    const tipOn = mevRoute === 'jito' && lamportsFromSol(tipSol) > 0;
+
     // Plan step 85: abort before signing if the composed cost exceeds the
     // user's cap. Only meaningful on a buy — a sell's "cost" is gas alone,
     // which `prio`/`mevTip` already represent, and native flows *in*, not out.
@@ -301,7 +322,7 @@ export function tradeRoutes(): Hono<AppEnv> {
       // UI-only (ETH gas is separate) — do not fold them into the cap or the
       // pre-sign balance check.
       const prioCost = net === 'SOL' ? s.prio : 0;
-      const mevCost = net === 'SOL' && s.mev !== 'OFF' ? s.mevTip : 0;
+      const mevCost = tipOn ? tipSol : 0;
       const totalNative = amount + prioCost + mevCost;
       if (totalNative > s.cap) {
         const err = new CapExceededError(totalNative, s.cap);
@@ -429,8 +450,8 @@ export function tradeRoutes(): Hono<AppEnv> {
           curveAmountIn: trade.curveAmountInAtoms,
           curveMinOut: trade.curveMinOutAtoms,
           prioSol: s.prio,
-          mevOn: s.mev !== 'OFF',
-          mevTipSol: s.mevTip,
+          mevOn: tipOn,
+          mevTipSol: tipSol,
           ...(jupiter ? { jupiter } : {}),
         } as const;
         // Jupiter routes compile to v0 against Jupiter's lookup tables plus
@@ -457,6 +478,18 @@ export function tradeRoutes(): Hono<AppEnv> {
           lastValidBlockHeight: composed.lastValidBlockHeight,
           quote: trade.quote,
           expiresAt: now + 30_000,
+          // The settings as they were actually written into the bytes above,
+          // so the ticket confirms real numbers, not the modal's intent.
+          fees: {
+            slipPct: s.slip,
+            computeUnitLimit: composed.fees.computeUnitLimit,
+            computeUnitPriceMicroLamports: composed.fees.computeUnitPriceMicroLamports,
+            maxPriorityLamports: composed.fees.maxPriorityLamports,
+            tipLamports: composed.fees.tipLamports,
+            tipAccount: composed.fees.tipAccount,
+            mevMode: s.mev,
+            mevRoute,
+          },
         });
       }
 
@@ -586,6 +619,62 @@ export function tradeRoutes(): Hono<AppEnv> {
           ? `${net}_ROUTER_ADDRESS is not configured; non-atomic EVM trades are disabled`
           : `no atomic StonkzRouter route for base ${synced.baseSymbol}; pin ${net}_V3_FEE_TIER_OVERRIDES for this asset`,
       );
+    } catch (err) {
+      if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
+      throw err;
+    }
+  });
+
+  /**
+   * `POST /trade/broadcast` — the MEV-protected send for a Solana trade.
+   *
+   * The web signs a prepared transaction *without* sending
+   * (`solana:signTransaction`) when MEV mode is `SHIELD`/`RELAY` and posts the
+   * signed bytes here; `router/solana-broadcast.ts` routes them to the Jito
+   * block engine or the private RPC and falls back to the ordinary RPC,
+   * reporting which one it was. Only the caller's own transaction is relayed:
+   * the fee payer must be the authenticated wallet and the payer signature
+   * must be present, so this is not an open relay.
+   */
+  app.post('/trade/broadcast', requireAuth(), limit(RATE_LIMITS.trade), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+    if (user.net !== 'SOL') {
+      return c.json({ error: 'bad_request', detail: 'broadcast is Solana-only' }, 400);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      transaction?: unknown;
+      mev?: unknown;
+    };
+    const mevRaw = typeof body.mev === 'string' ? body.mev.toUpperCase() : '';
+    if (mevRaw !== 'SHIELD' && mevRaw !== 'RELAY') {
+      return c.json({ error: 'bad_request', detail: 'mev must be SHIELD or RELAY' }, 400);
+    }
+    const raw = typeof body.transaction === 'string' ? body.transaction : '';
+    let tx: VersionedTransaction;
+    try {
+      const bytes = Buffer.from(raw, 'base64');
+      if (bytes.length === 0 || bytes.length > 1232) throw new Error('size');
+      tx = VersionedTransaction.deserialize(bytes);
+    } catch {
+      return c.json(
+        { error: 'bad_transaction', detail: 'transaction must be a base64 signed transaction' },
+        400,
+      );
+    }
+    const payer = tx.message.staticAccountKeys[0]?.toBase58();
+    const sig = tx.signatures[0];
+    const signed = !!sig && sig.some((b) => b !== 0);
+    if (payer !== user.wallet || !signed) {
+      return c.json(
+        { error: 'bad_transaction', detail: 'fee payer must be the signed-in wallet, and signed' },
+        400,
+      );
+    }
+    try {
+      const out = await deps.solanaBroadcaster.send(raw, mevRaw);
+      return c.json(out);
     } catch (err) {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
       throw err;

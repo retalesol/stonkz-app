@@ -31,7 +31,19 @@ export function renderRank(gained = false): void {
         ><b>${r.next === null ? MID : (RANKS[r.i + 1] as (typeof RANKS)[number])[0]}</b>
       </div>
       <div class="row"><span>TOTAL XP EARNED</span><b>${num(USER.xp)} XP</b></div>
-      <div class="row"><span>STONK POINTZ</span><b class="gd">${num(USER.sp ?? 0)}</b></div>
+      <div class="row">
+        <span>STONK POINTZ</span
+        ><b class="gd"
+          >${num(USER.sp ?? 0)}${USER.spLevel ? ' ' + DOT + ' LV ' + USER.spLevel.level : ''}</b
+        >
+      </div>
+      ${
+        USER.spLevel && USER.spLevel.next !== null
+          ? html`<div class="row">
+              <span>NEXT CRATE GRANT</span><b>${num(USER.spLevel.toNext)} SP</b>
+            </div>`
+          : ''
+      }
       <div class="row"><span>$STONKZ</span><b class="gd">${num(USER.stonkz)}</b></div>
       <div class="row"><span>RWA HOLDINGS</span><b class="up">${rwaSummary()}</b></div>
       <div class="row">

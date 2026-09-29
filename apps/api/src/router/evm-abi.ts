@@ -81,6 +81,14 @@ export const LAUNCHPAD_ABI = [
     outputs: [],
   },
   {
+    // Permissionless. Reverts "not graduable" / "stale oracle" / "graduated".
+    type: 'function',
+    name: 'graduate',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'token', type: 'address' }],
+    outputs: [],
+  },
+  {
     type: 'function',
     name: 'coinInfo',
     stateMutability: 'view',
@@ -328,6 +336,20 @@ export const STONKZ_ROUTER_ABI = [
       { name: 'deadline', type: 'uint256' },
     ],
     outputs: [{ name: 'ethOut', type: 'uint256' }],
+  },
+  {
+    // Post a Pyth update, then `StonkzLaunchpad.graduate(token)`: the
+    // permissionless oracle-trigger path (the launchpad's Pyth source bounds
+    // a feed at ~120 s). `msg.value` pays the update fee; the rest is refunded.
+    type: 'function',
+    name: 'graduateWithPriceUpdate',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'priceUpdate', type: 'bytes[]' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [],
   },
 ] as const;
 

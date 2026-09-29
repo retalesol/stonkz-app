@@ -4,10 +4,12 @@ import {
   HOUR,
   RANKS,
   type AchievementKey,
+  type CrateProof,
   type CrateTier,
   type DropLogEntry,
   type RwaReward,
   type User,
+  type UserItem,
   achOf,
   applyXpMult,
   crateBy,
@@ -24,6 +26,7 @@ import { emit } from '../lib/bus.js';
 import { burst } from '../fx/debris.js';
 import { rankUp } from '../fx/rankUp.js';
 import { toast } from '../fx/toast.js';
+import { setLevelCount, showLevelUp } from '../modals/level.js';
 
 /**
  * The local rewards ledger.
@@ -53,6 +56,12 @@ function storageKey(): string {
 interface StoredUser extends User {
   /** Pinata (or other) HTTPS avatar override. */
   avatarUrl?: string;
+  /** Profile links, as `GET /me` / `PATCH /me` hold them (canonical URLs / bare handle). */
+  website?: string;
+  xHandle?: string;
+  telegram?: string;
+  /** Private profile: portfolio, PnL, actions, wall and friends are owner-only. */
+  private?: boolean;
   /** Sim-only: which SP levels have already granted crates. */
   spLevelClaims?: Record<number, boolean>;
 }
@@ -210,19 +219,63 @@ export interface RewardsHydration {
   streak?: number;
   achievements?: { key: AchievementKey; unlockedAt: number }[];
   crates?: { tier: CrateTier; readyAt: number; inventory?: number }[];
-  spLevel?: { level: number; next: number | null; pct: number; toNext: number };
-  dropLog?: { at: number; tier: string; label: string }[];
+  spLevel?: {
+    level: number;
+    next: number | null;
+    pct: number;
+    toNext: number;
+    cur?: number;
+    claimed?: number[];
+    /** Levels whose grants landed on this very read (server `newlyClaimed`). */
+    newlyClaimed?: number[];
+    granted?: Partial<Record<CrateTier, number>>;
+    levelCount?: number;
+  };
+  dropLog?: {
+    at: number;
+    tier: string;
+    label: string;
+    rarity?: string;
+    proof?: CrateProof;
+  }[];
+  /** USD value of the RWA holdings; `null` while unpriced, absent leaves the cache alone. */
+  rwaUsd?: number | null;
+  items?: UserItem[];
+  nextCrateCommit?: string | null;
 }
 
 /** Replace the local ledger with the server's numbers (live mode only). */
 export function hydrateRewards(snap: RewardsHydration): void {
+  hydrated = true;
   const before = rankOf(USER.xp).i;
+  const levelBefore = USER.spLevel?.level ?? 0;
+  const hadLevel = USER.spLevel !== undefined;
   USER.xp = snap.xp;
   USER.sp = snap.sp;
   USER.stonkz = snap.stonkz;
   if (snap.rwa) USER.rwa = snap.rwa.map((r) => ({ asset: r.asset, units: r.units }));
+  if (snap.rwaUsd !== undefined) USER.rwaUsd = snap.rwaUsd;
+  if (snap.items) USER.items = snap.items;
+  if (snap.nextCrateCommit !== undefined) USER.nextCrateCommit = snap.nextCrateCommit;
   if (typeof snap.streak === 'number') USER.streak = snap.streak;
-  if (snap.spLevel) USER.spLevel = snap.spLevel;
+  if (snap.spLevel) {
+    const { newlyClaimed, granted, levelCount, ...rest } = snap.spLevel;
+    USER.spLevel = rest;
+    if (levelCount) setLevelCount(levelCount);
+    // A level that landed on this read (SP earned while the page was away, or
+    // the server catching up an old balance) still deserves its ceremony —
+    // but only past level 1, which every wallet starts on, and only when we
+    // already knew a lower level, so a first hydrate does not replay history.
+    const landed = (newlyClaimed ?? []).filter((l) => l > 1);
+    if (hadLevel && (landed.length > 0 || rest.level > levelBefore)) {
+      showLevelUp({
+        level: rest.level,
+        grants: granted ?? spLevelOf(snap.sp).grants,
+        totalSp: snap.sp,
+        next: rest.next,
+      });
+    }
+  }
 
   if (snap.achievements) {
     USER.ach = {};
@@ -247,6 +300,9 @@ export function hydrateRewards(snap: RewardsHydration): void {
         k: d.tier as CrateTier,
         r: d.label,
         col: crate?.col ?? '#d7dde3',
+        at: d.at,
+        ...(d.rarity ? { rarity: d.rarity } : {}),
+        ...(d.proof ? { proof: d.proof } : {}),
       };
     });
   }
@@ -268,8 +324,15 @@ export function hydrateRewards(snap: RewardsHydration): void {
 export function resetLiveRewards(): void {
   if (!isLiveMode()) return;
   USER = emptyUser();
+  hydrated = false;
   saveUser();
   emit('rank');
+}
+
+let hydrated = false;
+/** True once `GET /rewards` has been applied for the live session (drives the loading state). */
+export function rewardsHydrated(): boolean {
+  return !isLiveMode() || hydrated;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -331,10 +394,111 @@ export function syncSpLevelGrants(): void {
     }
   }
   const info = spLevelOf(sp);
-  USER.spLevel = { level: info.level, next: info.next, pct: info.pct, toNext: info.toNext };
-  if (grantedAny) {
+  USER.spLevel = {
+    level: info.level,
+    next: info.next,
+    pct: info.pct,
+    toNext: info.toNext,
+    cur: info.cur,
+    claimed: Object.keys(claimed)
+      .map(Number)
+      .sort((a, b) => a - b),
+  };
+  if (grantedAny && info.level > 1) {
+    showLevelUp({ level: info.level, grants: info.grants, totalSp: sp, next: info.next });
+  } else if (grantedAny) {
     toast('SP LEVEL ' + info.level + ' ' + DOT + ' CRATES GRANTED', 'gold');
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Live WS user-channel setters                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Apply an `xp` frame: the server's running total wins. Returns true on a
+ * rank-up so the caller can play the ceremony (the server also sends
+ * `rank_up`, but a dropped frame must not lose the moment).
+ */
+export function applyXpTotal(total: number, amount: number, reason?: string): boolean {
+  const before = rankOf(USER.xp).i;
+  USER.xp = total;
+  saveUser();
+  emit('xp', { amount, reason, gained: amount > 0 });
+  emit('rank');
+  return rankOf(total).i > before;
+}
+
+/** Apply an `sp` frame: move the total and the level bar; grants arrive on `level_up` / re-hydrate. */
+export function applySpTotal(total: number): void {
+  USER.sp = total;
+  const info = spLevelOf(total);
+  USER.spLevel = {
+    ...(USER.spLevel ?? {}),
+    level: info.level,
+    next: info.next,
+    pct: info.pct,
+    toNext: info.toNext,
+    cur: info.cur,
+  };
+  saveUser();
+  emit('rank');
+}
+
+/** Apply a `level_up` frame: credit the grants locally so the crate grid moves before the re-hydrate lands. */
+export function applyLevelUp(
+  level: number,
+  grants: Partial<Record<CrateTier, number>>,
+  totalSp: number,
+): void {
+  const inv = (USER.crateInventory ??= {});
+  const claimed = new Set(USER.spLevel?.claimed ?? []);
+  if (claimed.has(level)) return; // Already applied via hydrate — never double-count.
+  claimed.add(level);
+  for (const [tier, n] of Object.entries(grants) as [CrateTier, number][]) {
+    if (n > 0) inv[tier] = (inv[tier] ?? 0) + n;
+  }
+  applySpTotal(Math.max(totalSp, USER.sp ?? 0));
+  USER.spLevel = {
+    ...(USER.spLevel as NonNullable<typeof USER.spLevel>),
+    claimed: [...claimed].sort((a, b) => a - b),
+  };
+  saveUser();
+  if (level > 1) showLevelUp({ level, grants, totalSp, next: USER.spLevel.next });
+  emit('rank');
+}
+
+/** Apply an `achievement` frame. Returns false when it was already known. */
+export function applyAchievement(key: AchievementKey, at: number = Date.now()): boolean {
+  USER.ach ??= {};
+  if (USER.ach[key]) return false;
+  USER.ach[key] = at;
+  saveUser();
+  emit('achievement', { key });
+  emit('rank');
+  return true;
+}
+
+/** Apply a `streak` frame. */
+export function applyStreak(count: number): void {
+  USER.streak = count;
+  saveUser();
+  emit('rank');
+}
+
+/* -------------------------------------------------------------------------- */
+/* Items                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Held items whose perk is live right now. */
+export function activeItems(now: number = Date.now()): UserItem[] {
+  return (USER.items ?? []).filter(
+    (i) => i.count > 0 && (i.expiresAt === null || i.expiresAt > now),
+  );
+}
+
+export function hasActiveItem(item: string, now: number = Date.now()): boolean {
+  return activeItems(now).some((i) => i.item === item);
 }
 
 /**

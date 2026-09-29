@@ -37,11 +37,16 @@ export interface ModerationResult {
   matched: string[];
 }
 
-function matchesField(raw: string): string[] {
+function matchesField(raw: string, extra: readonly string[]): string[] {
   const folded = foldConfusables(raw);
   const collapsed = folded.replace(/[^a-z0-9]/g, '');
   const words = folded.split(/[^a-z0-9]+/).filter(Boolean);
   const hits: string[] = SUBSTRING.filter((w) => collapsed.includes(w));
+  // Admin-managed terms (`admin/settings.ts` → `moderation.words`) match as substrings.
+  for (const w of extra) {
+    const term = foldConfusables(w).replace(/[^a-z0-9]/g, '');
+    if (term.length > 0 && collapsed.includes(term)) hits.push(term);
+  }
   for (const w of WHOLE_WORD) {
     const re = new RegExp(`^${w}(s|es|ed)?$`);
     if (re.test(collapsed) || words.some((word) => re.test(word))) hits.push(w);
@@ -49,16 +54,19 @@ function matchesField(raw: string): string[] {
   return hits;
 }
 
-export function moderateLaunch(fields: {
-  name: string;
-  ticker: string;
-  descr: string;
-}): ModerationResult {
+export function moderateLaunch(
+  fields: {
+    name: string;
+    ticker: string;
+    descr: string;
+  },
+  extra: readonly string[] = [],
+): ModerationResult {
   const matched = [
     ...new Set([
-      ...matchesField(fields.name),
-      ...matchesField(fields.ticker),
-      ...matchesField(fields.descr),
+      ...matchesField(fields.name, extra),
+      ...matchesField(fields.ticker, extra),
+      ...matchesField(fields.descr, extra),
     ]),
   ];
   return { ok: matched.length === 0, matched };

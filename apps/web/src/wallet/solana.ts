@@ -21,7 +21,13 @@ import {
 import bs58 from 'bs58';
 import { SOLANA_RPC_URL, solanaWalletStandardChain } from './chain.js';
 import { WalletError, mapWalletError } from './errors.js';
-import type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice } from './types.js';
+import type {
+  BroadcastResult,
+  ConnectedWallet,
+  SignPayload,
+  SolanaSendRoute,
+  WalletChoice,
+} from './types.js';
 
 /**
  * Real Solana wallets, over the Wallet Standard registry.
@@ -41,6 +47,16 @@ import type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice } from
  *    priority fees and retries best.
  * 2. `solana:signTransaction` + our own `sendRawTransaction` against
  *    `VITE_HELIUS_RPC`, for wallets that only sign.
+ *
+ * With MEV protection on (`payload.mev` is `SHIELD`/`RELAY` and the payload
+ * carries a `broadcast` function) the order flips: the wallet only *signs*,
+ * and the signed bytes go through `broadcast` — `apps/api`'s
+ * `POST /trade/broadcast`, which submits to the Jito block engine or the
+ * private RPC. A wallet's own `signAndSendTransaction` would send over its
+ * own public RPC and silently discard the protection the trader paid a tip
+ * for. If the relay is unreachable the bytes are sent over our RPC instead
+ * and the result says so (`route: 'rpc'`, `routeFallback`), so the UI can
+ * tell the trader the order went out unprotected.
  *
  * Either way this module then polls for a *real* confirmation before
  * resolving, so a caller that awaits `signAndSend()` knows the transaction
@@ -178,6 +194,12 @@ function toBytes(base64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin);
 }
 
 /**
@@ -322,9 +344,14 @@ class SolanaStandardWallet implements ConnectedWallet {
     const bytes = toBytes(payload.transaction);
     const chain = solanaWalletStandardChain() as `${string}:${string}`;
     const version = solanaTransactionVersion(bytes);
-    const declared = this.features.signAndSendTransaction
-      ? this.features.signAndSendVersions
-      : this.features.signTransactionVersions;
+    // MEV protection needs the bytes back unsent, so sign-only is preferred
+    // whenever the wallet offers it; otherwise the wallet's own send wins.
+    const relay = payload.mev && payload.mev !== 'OFF' ? (payload.broadcast ?? null) : null;
+    const signOnly =
+      !!this.features.signTransaction && (!!relay || !this.features.signAndSendTransaction);
+    const declared = signOnly
+      ? this.features.signTransactionVersions
+      : this.features.signAndSendVersions;
     if (declared && !declared.includes(version)) {
       throw new WalletError(
         'unsupported_method',
@@ -336,19 +363,9 @@ class SolanaStandardWallet implements ConnectedWallet {
     }
 
     let signature: string;
-    if (this.features.signAndSendTransaction) {
-      try {
-        const [out] = await this.features.signAndSendTransaction({
-          account: this.account,
-          transaction: bytes,
-          chain,
-        });
-        if (!out) throw new WalletError('unknown', 'The wallet returned no signature.');
-        signature = bs58.encode(out.signature);
-      } catch (err) {
-        throw mapWalletError(err, 'The wallet would not send this transaction.');
-      }
-    } else if (this.features.signTransaction) {
+    let route: SolanaSendRoute = 'wallet';
+    let routeFallback: string | undefined;
+    if (signOnly && this.features.signTransaction) {
       let signed: Uint8Array;
       try {
         const [out] = await this.features.signTransaction({
@@ -361,20 +378,55 @@ class SolanaStandardWallet implements ConnectedWallet {
       } catch (err) {
         throw mapWalletError(err, 'The wallet would not sign this transaction.');
       }
-      try {
-        signature = await rpc().sendRawTransaction(signed, {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        });
-      } catch (err) {
-        throw mapWalletError(err, 'The RPC refused this transaction.');
+      let relayed: Awaited<ReturnType<NonNullable<typeof relay>>> | null = null;
+      if (relay) {
+        try {
+          relayed = await relay(toBase64(signed));
+        } catch (err) {
+          // The API relay is down or refused: the order still goes out, just
+          // over the public RPC, and the caller is told so.
+          routeFallback = 'relay: ' + (err instanceof Error ? err.message : String(err));
+        }
       }
+      if (relayed) {
+        signature = relayed.signature;
+        route = relayed.via;
+        if (relayed.fallback) routeFallback = relayed.fallback;
+      } else {
+        try {
+          signature = await rpc().sendRawTransaction(signed, {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
+          route = 'rpc';
+        } catch (err) {
+          throw mapWalletError(err, 'The RPC refused this transaction.');
+        }
+      }
+    } else if (this.features.signAndSendTransaction) {
+      try {
+        const [out] = await this.features.signAndSendTransaction({
+          account: this.account,
+          transaction: bytes,
+          chain,
+        });
+        if (!out) throw new WalletError('unknown', 'The wallet returned no signature.');
+        signature = bs58.encode(out.signature);
+      } catch (err) {
+        throw mapWalletError(err, 'The wallet would not send this transaction.');
+      }
+      if (relay) routeFallback = `${this.wallet.name} can only sign-and-send through its own RPC`;
     } else {
       throw new WalletError('unsupported_method', 'This wallet cannot send transactions.');
     }
 
     await awaitConfirmation(signature, payload.lastValidBlockHeight);
-    return { signature, explorerUrl: explorerUrl(signature) };
+    return {
+      signature,
+      explorerUrl: explorerUrl(signature),
+      route,
+      ...(routeFallback ? { routeFallback } : {}),
+    };
   }
 
   async nativeBalance(): Promise<number | null> {

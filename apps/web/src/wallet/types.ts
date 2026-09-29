@@ -1,4 +1,4 @@
-import type { EvmNet, Net } from '@stonkz/shared';
+import type { EvmGasPreset, EvmNet, MevMode, Net } from '@stonkz/shared';
 
 /**
  * The one interface every write path in the app signs through.
@@ -30,6 +30,18 @@ export interface WalletChoice {
   readonly unavailable?: string;
 }
 
+/** How a Solana transaction went out. `wallet` = the wallet's own RPC (the pre-MEV path). */
+export type SolanaSendRoute = 'wallet' | 'jito' | 'private' | 'rpc';
+
+/**
+ * The MEV-protected send `apps/api`'s `POST /trade/broadcast` performs on
+ * signed bytes. Supplied by `api/live.ts` on a Solana payload whose MEV mode
+ * is `SHIELD`/`RELAY`; the wallet layer never imports the API client itself.
+ */
+export type SolanaBroadcastFn = (
+  signedTransactionBase64: string,
+) => Promise<{ signature: string; via: 'jito' | 'private' | 'rpc'; fallback?: string }>;
+
 /** What a prepared transaction looks like by the time it reaches a signer. */
 export type SignPayload =
   | {
@@ -37,6 +49,13 @@ export type SignPayload =
       /** Base64 of a serialised (legacy or v0) transaction, as `/trade/prepare` returns it. */
       readonly transaction: string;
       readonly lastValidBlockHeight?: number;
+      /**
+       * Settings MEV mode. With `SHIELD`/`RELAY` and a `broadcast` function
+       * the wallet signs without sending and the bytes go through
+       * `broadcast`; anything else is the wallet's own send.
+       */
+      readonly mev?: MevMode;
+      readonly broadcast?: SolanaBroadcastFn;
     }
   | {
       readonly net: EvmNet;
@@ -45,12 +64,20 @@ export type SignPayload =
       readonly data: string;
       /** Decimal wei, as the API returns it. */
       readonly value: string;
+      /** Settings gas preset; absent / `NORMAL` leaves fees to the wallet. */
+      readonly gas?: EvmGasPreset;
     };
 
 export interface BroadcastResult {
   /** Base58 signature on Solana, `0x…` transaction hash on Robinhood Chain. */
   readonly signature: string;
   readonly explorerUrl?: string;
+  /** Solana: the route the transaction actually took (see `SolanaSendRoute`). */
+  readonly route?: SolanaSendRoute;
+  /** Solana: set when an MEV route was requested but the send fell back — the reason. */
+  readonly routeFallback?: string;
+  /** EVM: the EIP-1559 fields this layer set explicitly, if any (decimal wei strings). */
+  readonly gasFields?: { maxFeePerGas: string; maxPriorityFeePerGas: string };
   /**
    * True only from `wallet/practice.ts`: nothing was broadcast and nothing
    * settled. Every caller that reports success to the user must say so.

@@ -59,7 +59,16 @@ export type UserEvent =
   | { type: 'rwa'; net: Net; wallet: string; asset: string; units: number; total: number }
   | { type: 'achievement'; net: Net; wallet: string; key: string; xp: number }
   | { type: 'streak'; net: Net; wallet: string; count: number; mult: number }
-  | { type: 'crate_ready'; net: Net; wallet: string; tier: string };
+  | { type: 'crate_ready'; net: Net; wallet: string; tier: string }
+  /** An SP level's crate grants landed in inventory (`SpLevelService.sync`). */
+  | {
+      type: 'level_up';
+      net: Net;
+      wallet: string;
+      level: number;
+      grants: Record<string, number>;
+      totalSp: number;
+    };
 
 /** Plan step 151's chat drawer — one event per persisted (non-flagged) message. */
 export type ChatEvent = {

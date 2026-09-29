@@ -9,11 +9,14 @@ import { tokenRoutes } from '../routes/tokens.js';
 import { tradeRoutes } from '../routes/trade.js';
 import { launchRoutes } from '../routes/launch.js';
 import { feesRoutes } from '../routes/fees.js';
+import { graduateRoutes } from '../routes/graduate.js';
 import { stakeRoutes } from '../routes/stake.js';
 import { socialRoutes } from '../routes/social.js';
 import { chatRoutes } from '../routes/chat.js';
 import { xRoutes } from '../routes/x.js';
 import { ogRoutes } from '../routes/og.js';
+import { adminRoutes } from '../routes/admin.js';
+import { platformRoutes } from '../routes/admin-public.js';
 import { referralRoutes } from '../routes/referrals.js';
 import type { AppDeps, AppEnv } from './context.js';
 import { requestLogger, withDeps } from './middleware.js';
@@ -44,12 +47,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/', tradeRoutes());
   app.route('/', launchRoutes());
   app.route('/', feesRoutes());
+  app.route('/', graduateRoutes());
   app.route('/', stakeRoutes());
   app.route('/', socialRoutes());
   app.route('/', referralRoutes());
   app.route('/', chatRoutes());
   app.route('/', xRoutes());
   app.route('/', ogRoutes());
+  app.route('/', platformRoutes());
+  app.route('/', adminRoutes());
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
 

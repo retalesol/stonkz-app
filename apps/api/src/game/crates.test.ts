@@ -1,8 +1,27 @@
+import { createHash, createHmac } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { CRATES, HOUR, RAR, crateXp, rollDrop, type CrateDrop } from '@stonkz/shared';
-import { crateInventory, crateOpens, crateState, itemFlags, rwaRewards } from '../db/schema.js';
+import {
+  CRATES,
+  HOUR,
+  RAR,
+  crateRollFromDigest,
+  crateRollMessage,
+  crateXp,
+  rollDrop,
+  type Crate,
+  type CrateDrop,
+} from '@stonkz/shared';
+import {
+  crateCommitments,
+  crateInventory,
+  crateOpens,
+  crateState,
+  itemFlags,
+  rwaRewards,
+} from '../db/schema.js';
 import { CrateService, itemExpiry } from './crates.js';
+import { ITEM_RHODIUM_KEY } from './items.js';
 import { authed, createTestApp, FROZEN_NOW, type TestApp } from '../test/app.js';
 import { solanaWallet } from '../test/wallets.js';
 
@@ -21,42 +40,44 @@ beforeEach(async () => {
 
 const W = 'CrateWallet11111111111111111111111111111111';
 
-/** Review gate 3.A — crate opens are server-authored end to end. */
-describe('crate RNG', () => {
-  it('is deterministic in (secret, net, wallet, tier, nonce)', () => {
-    const a = h.deps.crates.roll('SOL', W, 'BRONZE', 'nonce-1');
-    const b = h.deps.crates.roll('SOL', W, 'BRONZE', 'nonce-1');
+/** Review gate 3.A — crate opens are server-authored end to end, commit–reveal since 0025. */
+describe('crate RNG (commit–reveal)', () => {
+  const SEED = 'a'.repeat(64);
+
+  it('is deterministic in (serverSeed, net, wallet, tier, clientSeed)', () => {
+    const a = h.deps.crates.roll('SOL', W, 'BRONZE', SEED, 'client-1');
+    const b = h.deps.crates.roll('SOL', W, 'BRONZE', SEED, 'client-1');
     expect(a).toEqual(b);
   });
 
-  it('changes with the nonce, the wallet, the tier and the net', () => {
-    const base = h.deps.crates.roll('SOL', W, 'BRONZE', 'n');
-    expect(h.deps.crates.roll('SOL', W, 'BRONZE', 'n2').rollCommit).not.toBe(base.rollCommit);
-    expect(h.deps.crates.roll('SOL', 'other', 'BRONZE', 'n').rollCommit).not.toBe(base.rollCommit);
-    expect(h.deps.crates.roll('SOL', W, 'GOLD', 'n').rollCommit).not.toBe(base.rollCommit);
-    expect(h.deps.crates.roll('RH', W, 'BRONZE', 'n').rollCommit).not.toBe(base.rollCommit);
+  it('changes with the client seed, the server seed, the wallet, the tier and the net', () => {
+    const base = h.deps.crates.roll('SOL', W, 'BRONZE', SEED, 'n');
+    const commit = (r: { rollCommit: string }) => r.rollCommit;
+    expect(commit(h.deps.crates.roll('SOL', W, 'BRONZE', SEED, 'n2'))).not.toBe(commit(base));
+    expect(commit(h.deps.crates.roll('SOL', W, 'BRONZE', 'b'.repeat(64), 'n'))).not.toBe(
+      commit(base),
+    );
+    expect(commit(h.deps.crates.roll('SOL', 'other', 'BRONZE', SEED, 'n'))).not.toBe(commit(base));
+    expect(commit(h.deps.crates.roll('SOL', W, 'GOLD', SEED, 'n'))).not.toBe(commit(base));
+    expect(commit(h.deps.crates.roll('RH', W, 'BRONZE', SEED, 'n'))).not.toBe(commit(base));
   });
 
-  it('changes with the server secret, and never reveals it', () => {
-    const other = new CrateService({
-      db: h.deps.db,
-      ledger: h.deps.ledger,
-      publisher: h.deps.publisher,
-      spLevels: h.deps.spLevels,
-      secret: 'a-completely-different-server-secret-000000',
-      now: h.now,
+  it('is recomputable by anyone from the published formula', () => {
+    const roll = h.deps.crates.roll('SOL', W, 'SILVER', SEED, 'audit-me');
+    const digest = createHmac('sha256', SEED)
+      .update(crateRollMessage('SOL', W, 'SILVER', 'audit-me'))
+      .digest();
+    expect(digest.toString('hex')).toBe(roll.rollCommit);
+    expect(crateRollFromDigest(digest)).toEqual({
+      rollValue: roll.rollValue,
+      amountRoll: roll.amountRoll,
     });
-    const mine = h.deps.crates.roll('SOL', W, 'BRONZE', 'n');
-    const theirs = other.roll('SOL', W, 'BRONZE', 'n');
-    expect(theirs.rollCommit).not.toBe(mine.rollCommit);
-    // Only a hash of the secret is ever persisted or returned.
-    expect(theirs.serverSeedHash).not.toBe(mine.serverSeedHash);
-    expect(mine.serverSeedHash).not.toContain('test-crate-secret');
+    expect(createHash('sha256').update(SEED).digest('hex')).toBe(roll.serverSeedHash);
   });
 
   it('produces two independent draws in range', () => {
     for (let i = 0; i < 400; i++) {
-      const roll = h.deps.crates.roll('SOL', W, 'SILVER', `nonce-${i}`);
+      const roll = h.deps.crates.roll('SOL', W, 'SILVER', SEED, `nonce-${i}`);
       expect(roll.rollValue).toBeGreaterThanOrEqual(0);
       expect(roll.rollValue).toBeLessThan(100);
       expect(roll.amountRoll).toBeGreaterThanOrEqual(0);
@@ -64,22 +85,74 @@ describe('crate RNG', () => {
     }
   });
 
-  it('spreads rolls across the drop table rather than pinning one row', async () => {
+  it('spreads rolls across the drop table rather than pinning one row', () => {
     const seen = new Set<number>();
+    const bronze = CRATES[0];
     for (let i = 0; i < 600 && seen.size < 3; i++) {
-      const roll = h.deps.crates.roll('SOL', W, 'BRONZE', `spread-${i}`);
-      // Same walk the open path uses.
-      const bronze = CRATES[0];
-      let acc = 0;
-      for (let j = 0; j < (bronze?.drops.length ?? 0); j++) {
-        acc += bronze?.drops[j]?.[0] ?? 0;
-        if (roll.rollValue < acc) {
-          seen.add(j);
-          break;
-        }
-      }
+      const roll = h.deps.crates.roll('SOL', W, 'BRONZE', SEED, `spread-${i}`);
+      if (bronze) seen.add(rollDrop(bronze, () => roll.rollValue / 100));
     }
     expect(seen.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('publishes the seed hash before the open and reveals a matching seed after it', async () => {
+    const before = await h.deps.crates.commitment('SOL', W);
+    expect(before).toMatch(/^[0-9a-f]{64}$/);
+    // Asking again does not rotate it — the wallet can pin it.
+    expect(await h.deps.crates.commitment('SOL', W)).toBe(before);
+
+    const result = await h.deps.crates.open('SOL', W, 'BRONZE', { clientSeed: 'my-seed' });
+    expect(result.roll.serverSeedHash).toBe(before);
+    expect(result.roll.serverSeed).not.toBeNull();
+    expect(
+      createHash('sha256')
+        .update(result.roll.serverSeed as string)
+        .digest('hex'),
+    ).toBe(before);
+    expect(result.roll.clientSeed).toBe('my-seed');
+    expect(result.roll.clientSeeded).toBe(true);
+    // Recompute the roll the way a user would.
+    const recomputed = h.deps.crates.roll(
+      'SOL',
+      W,
+      'BRONZE',
+      result.roll.serverSeed as string,
+      'my-seed',
+    );
+    expect(recomputed.rollCommit).toBe(result.roll.rollCommit);
+    expect(rollDrop(CRATES[0] as Crate, () => recomputed.rollValue / 100)).toBe(result.dropIndex);
+
+    // A fresh commitment is in force for the next open, and it differs.
+    expect(result.nextServerSeedHash).not.toBe(before);
+    expect(await h.deps.crates.commitment('SOL', W)).toBe(result.nextServerSeedHash);
+
+    // The seed is never persisted anywhere a client could read it early: only
+    // the consumed row holds it, and it is gone.
+    const pending = await h.deps.db
+      .select()
+      .from(crateCommitments)
+      .where(and(eq(crateCommitments.wallet, W), eq(crateCommitments.net, 'SOL')));
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.seedHash).toBe(result.nextServerSeedHash);
+    expect(pending[0]?.seed).not.toBe(result.roll.serverSeed);
+  });
+
+  it('draws and discloses a server seed when the client sends none', async () => {
+    const result = await h.deps.crates.open('SOL', W, 'BRONZE');
+    expect(result.roll.clientSeeded).toBe(false);
+    expect(result.roll.clientSeed).toMatch(/^[0-9a-f]{32}$/);
+    const [row] = await h.deps.db.select().from(crateOpens).where(eq(crateOpens.wallet, W));
+    expect(row?.clientSeeded).toBe(false);
+    expect(row?.serverSeed).toBe(result.roll.serverSeed);
+  });
+
+  it('rejects a malformed client seed before touching cooldown or inventory', async () => {
+    await expect(
+      h.deps.crates.open('SOL', W, 'BRONZE', { clientSeed: 'has spaces!' }),
+    ).rejects.toMatchObject({ code: 'bad_seed' });
+    const states = await h.deps.crates.states('SOL', W);
+    expect(states.find((s) => s.tier === 'BRONZE')?.inventory).toBe(2);
+    expect(states.every((s) => s.ready)).toBe(true);
   });
 });
 
@@ -124,35 +197,29 @@ describe('crate opens', () => {
     expect(rIndex).toBeGreaterThanOrEqual(0);
     const rDrop = silver?.drops[rIndex] as Extract<CrateDrop, readonly [number, 'R', ...unknown[]]>;
 
-    // Search for a nonce whose provable roll lands on the `R` row, then pin it.
-    let nonce = '';
-    const secret = 'rwa-drop-test-secret-0000000000000000000000';
-    const probe = new CrateService({
-      db: h.deps.db,
-      ledger: h.deps.ledger,
-      publisher: h.deps.publisher,
-      spLevels: h.deps.spLevels,
-      secret,
-      now: h.now,
-    });
-    for (let i = 0; i < 5_000 && !nonce; i++) {
-      const roll = probe.roll('SOL', W, tier, `rwa-${i}`);
-      if (silver && rollDrop(silver, () => roll.rollValue / 100) === rIndex) nonce = `rwa-${i}`;
+    // Pin the server seed, then search for a client seed whose provable roll
+    // lands on the `R` row — exactly what a user could do if the seed leaked
+    // early, which is why the hash goes out first and the seed only after.
+    const seed = 'c'.repeat(64);
+    let clientSeed = '';
+    for (let i = 0; i < 5_000 && !clientSeed; i++) {
+      const roll = h.deps.crates.roll('SOL', W, tier, seed, `rwa-${i}`);
+      if (silver && rollDrop(silver, () => roll.rollValue / 100) === rIndex)
+        clientSeed = `rwa-${i}`;
     }
-    expect(nonce).not.toBe('');
+    expect(clientSeed).not.toBe('');
     const crates = new CrateService({
       db: h.deps.db,
       ledger: h.deps.ledger,
       publisher: h.deps.publisher,
       spLevels: h.deps.spLevels,
-      secret,
       now: h.now,
-      nonceSource: () => nonce,
+      seedSource: () => seed,
     });
     await h.deps.db.insert(crateInventory).values({ wallet: W, net: 'SOL', tier, count: 1 });
 
     const before = h.userEvents.length;
-    const result = await crates.open('SOL', W, tier);
+    const result = await crates.open('SOL', W, tier, { clientSeed });
 
     expect(result.kind).toBe('R');
     expect(result.dropIndex).toBe(rIndex);
@@ -286,6 +353,118 @@ describe('crate opens', () => {
   });
 });
 
+describe('Rhodium key — instant crate', () => {
+  it('spends one key to open through the global cooldown, and only with useKey', async () => {
+    await h.deps.crates.open('SOL', W, 'BRONZE');
+    await h.deps.ledger.grantItem('SOL', W, ITEM_RHODIUM_KEY, null);
+
+    // Without opting in, the cooldown still applies.
+    await expect(h.deps.crates.open('SOL', W, 'BRONZE')).rejects.toMatchObject({
+      code: 'cooling_down',
+    });
+
+    const result = await h.deps.crates.open('SOL', W, 'BRONZE', { useKey: true });
+    expect(result.keyUsed).toBe(true);
+    const [flag] = await h.deps.db
+      .select()
+      .from(itemFlags)
+      .where(and(eq(itemFlags.wallet, W), eq(itemFlags.item, ITEM_RHODIUM_KEY)));
+    expect(flag?.count).toBe(0);
+
+    // The key is gone; the third open is locked again.
+    await expect(h.deps.crates.open('SOL', W, 'BRONZE', { useKey: true })).rejects.toMatchObject({
+      code: 'no_key',
+    });
+  });
+
+  it('does not burn a key when the cooldown is already clear or inventory is empty', async () => {
+    await h.deps.ledger.grantItem('SOL', W, ITEM_RHODIUM_KEY, null);
+    const first = await h.deps.crates.open('SOL', W, 'BRONZE', { useKey: true });
+    expect(first.keyUsed).toBe(false);
+
+    // Cooling now, no RHODIUM inventory: the key is restored on the failure path.
+    await expect(h.deps.crates.open('SOL', W, 'RHODIUM', { useKey: true })).rejects.toMatchObject({
+      code: 'no_inventory',
+    });
+    const [flag] = await h.deps.db
+      .select()
+      .from(itemFlags)
+      .where(and(eq(itemFlags.wallet, W), eq(itemFlags.item, ITEM_RHODIUM_KEY)));
+    expect(flag?.count).toBe(1);
+    // …and the cooldown claimed by the failed attempt was released, so a
+    // Rhodium key still lets the next real open through.
+    const second = await h.deps.crates.open('SOL', W, 'BRONZE', { useKey: true });
+    expect(second.keyUsed).toBe(true);
+  });
+});
+
+describe('crate history', () => {
+  it('lists every open with a proof a user can re-derive', async () => {
+    const a = await h.deps.crates.open('SOL', W, 'BRONZE', { clientSeed: 'first' });
+    h.advance(HOUR);
+    const b = await h.deps.crates.open('SOL', W, 'BRONZE', { clientSeed: 'second' });
+
+    const rows = await h.deps.crates.history('SOL', W);
+    expect(rows.map((r) => r.id)).toEqual([b.openId, a.openId]);
+    for (const row of rows) {
+      expect(row.proof.verifiable).toBe(true);
+      expect(row.proof.clientSeeded).toBe(true);
+      const digest = createHmac('sha256', row.proof.serverSeed as string)
+        .update(row.proof.message as string)
+        .digest();
+      expect(digest.toString('hex')).toBe(row.proof.rollCommit);
+      expect(crateRollFromDigest(digest).rollValue).toBe(row.proof.rollValue);
+      expect(rollDrop(CRATES[0] as Crate, () => row.proof.rollValue / 100)).toBe(row.dropIndex);
+    }
+  });
+
+  it('marks pre-commit-reveal rows as not user-verifiable', async () => {
+    await h.deps.db.insert(crateOpens).values({
+      wallet: W,
+      net: 'SOL',
+      tier: 'BRONZE',
+      rollCommit: 'f'.repeat(64),
+      serverSeedHash: 'e'.repeat(64),
+      clientNonce: 'legacy-nonce',
+      rollValue: 12.5,
+      amountRoll: 0.5,
+      dropIndex: 0,
+      rarity: 'COMMON',
+      payloadJson: { label: '100 $STONKZ', kind: 'S', amount: 100 },
+      stonkzAwarded: 100,
+      openedAt: new Date(h.now()),
+    });
+    const [row] = await h.deps.crates.history('SOL', W);
+    expect(row?.proof).toMatchObject({ verifiable: false, serverSeed: null, clientSeed: null });
+  });
+
+  it('serves GET /rewards/crates/history and the next commitment', async () => {
+    const wallet = solanaWallet('crate-history');
+    const { token } = await h.login('SOL', wallet);
+    await h.app.request('/rewards/crates/bronze/open', {
+      method: 'POST',
+      headers: { ...authed(token), 'content-type': 'application/json' },
+      body: JSON.stringify({ clientSeed: 'http-seed' }),
+    });
+    const res = await h.app.request('/rewards/crates/history?limit=5', { headers: authed(token) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      nextCommit: string;
+      opens: { proof: { clientSeed: string; serverSeed: string; serverSeedHash: string } }[];
+    };
+    expect(body.opens).toHaveLength(1);
+    expect(body.opens[0]?.proof.clientSeed).toBe('http-seed');
+    expect(body.nextCommit).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.nextCommit).not.toBe(body.opens[0]?.proof.serverSeedHash);
+
+    const rewards = (await (
+      await h.app.request('/rewards', { headers: authed(token) })
+    ).json()) as { nextCommit: string; dropLog: { proof: { verifiable: boolean } }[] };
+    expect(rewards.nextCommit).toBe(body.nextCommit);
+    expect(rewards.dropLog[0]?.proof.verifiable).toBe(true);
+  });
+});
+
 describe('item expiry', () => {
   it('reads the window out of the item label', () => {
     const now = FROZEN_NOW;
@@ -310,12 +489,30 @@ describe('POST /rewards/crates/:tier/open', () => {
     const body = (await res.json()) as {
       rarity: string;
       xp: number;
-      proof: { rollCommit: string; serverSeedHash: string; nonce: string };
+      nextCommit: string;
+      proof: {
+        rollCommit: string;
+        serverSeedHash: string;
+        serverSeed: string;
+        clientSeed: string;
+        clientSeeded: boolean;
+        message: string;
+        verifiable: boolean;
+      };
     };
     expect(body.xp).toBe(crateXp(0));
     expect(body.proof.rollCommit).toMatch(/^[0-9a-f]{64}$/);
     expect(body.proof.serverSeedHash).toMatch(/^[0-9a-f]{64}$/);
-    // Nothing in the response lets a client predict the next roll.
+    expect(body.proof.verifiable).toBe(true);
+    expect(body.proof.clientSeeded).toBe(false);
+    expect(createHash('sha256').update(body.proof.serverSeed).digest('hex')).toBe(
+      body.proof.serverSeedHash,
+    );
+    expect(
+      createHmac('sha256', body.proof.serverSeed).update(body.proof.message).digest('hex'),
+    ).toBe(body.proof.rollCommit);
+    // The next open's commitment is disclosed as a hash only.
+    expect(body.nextCommit).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(body)).not.toContain('test-crate-secret');
   });
 

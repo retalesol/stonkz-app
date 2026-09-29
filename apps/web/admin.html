@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#000000" />
+    <!--
+  Admin console. Stricter than the terminal's policy: no inline styles at all
+  (the stylesheet is a static file), script-src 'self' only, and connect-src
+  limited to https/wss so a stray http endpoint cannot receive an admin token.
+-->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https: wss:; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'"
+    />
+    <title>Stonkz Admin</title>
+    <link rel="icon" type="image/png" href="/images/stonkz_head.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/admin/admin.css" />
+    <script type="module" src="/src/admin/main.ts"></script>
+  </head>
+  <body>
+    <div id="adm" class="adm">
+      <header class="adm-top">
+        <a class="adm-brand" href="/admin.html"
+          ><span class="mark">STONKZ</span><span class="dom">ADMIN</span></a
+        >
+        <button
+          type="button"
+          class="adm-navtoggle"
+          id="admNavToggle"
+          aria-label="Toggle navigation"
+          aria-expanded="false"
+        >
+          ≡
+        </button>
+        <span class="adm-top-fill"></span>
+        <span class="adm-session" id="admSession"></span>
+      </header>
+      <div class="adm-body">
+        <nav class="adm-nav" id="admNav" aria-label="Sections"></nav>
+        <main class="adm-main" id="admMain" tabindex="-1"></main>
+      </div>
+      <div class="adm-toasts" id="admToasts" aria-live="polite"></div>
+      <div class="adm-scrim" id="admScrim" hidden>
+        <div class="adm-dialog" role="dialog" aria-modal="true" id="admDialog"></div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -67,3 +67,91 @@
   .quad{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
+
+/* ---------- progression audit: level ladder, balances, items, proofs ---------- */
+.rw-strip .rw-bal .v{font-size:18px}
+.lvl-pnl{margin:10px 0}
+.lvl-row{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start}
+.lvl-big .v{font-size:28px;font-weight:700;color:var(--gold);line-height:1.05;font-family:"IBM Plex Sans Condensed",sans-serif}
+.lvl-big .hint{display:block;margin-top:3px;max-width:260px}
+.lvl-prog{min-width:0}
+.lvl-legend{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-bottom:4px;letter-spacing:.06em}
+.lvl-legend span:first-child{color:var(--gold);font-weight:700}
+.lvl-prog .rw-track{height:10px}
+.lvl-next{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.lvl-chip{font-size:10px;font-weight:700;letter-spacing:.08em;padding:1px 6px;border:1px solid var(--line2);background:#0f1420}
+.lvl-chip.dm{color:var(--dim);font-weight:400}
+.lvl-ladder{display:grid;grid-template-columns:repeat(20,minmax(0,1fr));gap:2px;margin-top:12px}
+.lvl-step{position:relative;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 0 4px;background:#11161f;border:1px solid transparent;
+  font-size:9px;color:var(--dim);cursor:default;min-width:0}
+.lvl-step b{font-family:"Silkscreen",monospace;font-size:10px;color:var(--txt2)}
+.lvl-step span{font-size:8.5px;letter-spacing:.02em;white-space:nowrap}
+.lvl-step.done{background:#12261a;border-color:#1f4a30}
+.lvl-step.done b{color:var(--up)}
+.lvl-step.due{background:#2a2410;border-color:#5a4a12}
+.lvl-step.cur{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber) inset}
+.lvl-step.cur b{color:var(--gold)}
+.lvl-tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);z-index:5;min-width:150px;
+  padding:7px 8px;background:#0a0b0e;border:1px solid var(--amber2);box-shadow:0 8px 24px rgba(0,0,0,.6);text-align:center}
+.lvl-tip .lbl{display:block;margin-bottom:4px}
+.lvl-tip .lvl-chip{display:inline-block;margin:1px 2px}
+.lvl-tip .hint{display:block;margin-top:4px}
+.lvl-step:hover .lvl-tip,.lvl-step:focus-within .lvl-tip{display:block}
+.crate .inv{font-size:10px;color:var(--txt2);letter-spacing:.04em}
+.openbtn.key{margin-top:6px;background:#3a2560;border-color:#c9b6ff;color:#f1eaff}
+.openbtn.key:hover{background:#4a3078}
+.openbtn.key[hidden]{display:none}
+.bal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.bal{display:flex;flex-direction:column;gap:3px;min-width:0;padding:8px 10px;background:#0f1420;border:1px solid var(--line2)}
+.bal .v{font-size:20px;font-weight:700;line-height:1.15;overflow-wrap:anywhere;font-family:"IBM Plex Sans Condensed",sans-serif}
+.bal .v.gd{color:var(--gold)}.bal .v.rw{color:#26d0c4;font-size:14px}
+.claim-chip{display:inline-block;align-self:flex-start;margin-top:6px;padding:3px 8px;font-size:9.5px;font-weight:700;letter-spacing:.14em;
+  border:1px dashed var(--amber2);color:var(--amber);background:#1a1204}
+.claim-chip.sim{border-style:solid;border-color:var(--line2);color:var(--dim);background:transparent}
+.item-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line)}
+.item{background:var(--pnl);padding:8px 9px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.item .in{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;color:var(--gold)}
+.item .is{font-size:9.5px;letter-spacing:.06em;color:var(--up)}
+.item.na .is{color:var(--amber)}
+.item.off{opacity:.45}.item.off .is{color:var(--dim)}
+.item .ib{font-size:9.5px;line-height:1.35}
+.reveal.legendary{border-color:var(--gold);box-shadow:0 0 28px rgba(255,210,63,.35)}
+.reveal.epic{border-color:var(--violet)}.reveal.rare{border-color:var(--blue)}
+.dlog th.r,.dlog td.r{text-align:right}
+.proof-btn{background:transparent;border:1px solid var(--line2);color:var(--txt2);font:inherit;font-size:10px;letter-spacing:.06em;padding:2px 6px;cursor:pointer}
+.proof-btn:hover,.proof-btn[aria-expanded="true"]{border-color:var(--amber2);color:var(--gold)}
+.proof-row td{background:#0b0e14;padding:8px 10px}
+.proof{display:flex;flex-direction:column;gap:5px}
+.proof code{display:block;font-size:10px;color:var(--txt2);overflow-wrap:anywhere;margin-top:1px}
+.proof .lbl{display:block}
+.proof-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.proof-actions .hint.up{color:var(--up)}.proof-actions .hint.dn{color:var(--dn,#ff5c5c)}
+.dlog .commit{margin:6px 8px 2px}
+.dlog .commit code{color:var(--txt2)}
+.lvl-win .win-bd{text-align:center;display:flex;flex-direction:column;gap:10px}
+.lvl-hero{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0 4px}
+.lvl-k{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:12px;letter-spacing:.34em;color:var(--amber)}
+.lvl-n{font-family:"Silkscreen",monospace;font-size:36px;color:var(--gold);line-height:1.2;text-shadow:0 0 30px rgba(255,210,63,.8)}
+.lvl-s{font-size:10px;color:var(--txt2);letter-spacing:.12em}
+.lvl-grants{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+.lvl-grant{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 12px;background:#0f1420;border:1px solid var(--line2);min-width:84px}
+.lvl-grant canvas{image-rendering:pixelated;width:54px;height:54px}
+.lvl-grant b{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11px;letter-spacing:.1em}
+.lvl-grant span{font-size:11px;color:var(--txt2)}
+@media (max-width:1120px){
+  .lvl-ladder{grid-template-columns:repeat(10,minmax(0,1fr))}
+  .rw-strip .rw-bal{grid-column:1/-1}
+}
+@media (max-width:680px){
+  .lvl-row{grid-template-columns:1fr}
+  .lvl-big .hint{max-width:none}
+  .lvl-ladder{grid-template-columns:repeat(5,minmax(0,1fr));gap:3px}
+  .lvl-step{padding:6px 0}
+  .lvl-tip{left:0;transform:none;min-width:130px}
+  .lvl-step:nth-child(5n) .lvl-tip{left:auto;right:0}
+  .bal-grid,.item-grid{grid-template-columns:1fr}
+  .bal .v{font-size:18px}
+  .dlog td,.dlog th{font-size:10px;padding:3px 5px}
+  .proof code{font-size:9px}
+  .rw-badge h1{font-size:16px}
+}

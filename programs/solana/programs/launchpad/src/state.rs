@@ -105,8 +105,8 @@ pub struct Curve {
     pub graduated: bool,
     pub graduation_reason: Option<GraduationReason>,
     pub graduated_at: i64,
-    /// Set once `migrate_seed_liquidity` has deposited reserves into a Meteora
-    /// DLMM position and permanently locked it. Once true, `real_base` /
+    /// Set once `migrate_seed_liquidity` has deposited reserves into the
+    /// escrow-owned Meteora DLMM position. Once true, `real_base` /
     /// `lp_reserve` are zero and seeding refuses to run again.
     pub migrated: bool,
     /// Meteora DLMM `LbPair` address. Set by `migrate_create_pool`; verifiable

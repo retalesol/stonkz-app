@@ -1,4 +1,4 @@
-import { isValidTip, minTip, nativeUnit, type Net } from '@stonkz/shared';
+import { isEvm, isValidTip, minTip, nativeUnit, type Net } from '@stonkz/shared';
 import type { NativeTransferSource } from '../chain/types.js';
 import type { ChainRpc } from '../chain/types.js';
 
@@ -48,9 +48,10 @@ function hasNativeTransfer(rpc: ChainRpc): rpc is ChainRpc & NativeTransferSourc
 }
 
 function sameAddress(a: string | null, b: string, net: Net): boolean {
-  if (!a) return false;
-  // EVM addresses are case-insensitive; Solana base58 addresses are exact.
-  return net === 'RH' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  if (!a || !b) return false;
+  // EVM addresses (RH, Base, Arc) are case-insensitive — sessions store the
+  // checksummed form, RPCs return lowercase; Solana base58 addresses are exact.
+  return isEvm(net) ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 export async function verifyTip(input: VerifyTipInput): Promise<TipVerification> {
@@ -65,9 +66,11 @@ export async function verifyTip(input: VerifyTipInput): Promise<TipVerification>
   if (!sameAddress(transfer.from, fromWallet, net)) return { ok: false, reason: 'wrong_sender' };
   if (!sameAddress(transfer.to, toWallet, net)) return { ok: false, reason: 'wrong_recipient' };
 
+  // A non-finite or negative amount from a backend is not a payment of any
+  // size — `isValidTip` already refuses NaN/Infinity; make ≤ 0 explicit too.
   const amount = transfer.amountNative ?? 0;
   const unit = nativeUnit(net);
-  if (!isValidTip(amount, unit)) return { ok: false, reason: 'below_minimum' };
+  if (!(amount > 0) || !isValidTip(amount, unit)) return { ok: false, reason: 'below_minimum' };
 
   // Fail closed on an unknown timestamp (security review L1). Skipping the
   // recency check when `blockTimeMs` is null means an arbitrarily old transfer

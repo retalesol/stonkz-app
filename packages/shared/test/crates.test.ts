@@ -122,7 +122,7 @@ describe('rollCrateAmount', () => {
 });
 
 describe('crateXp', () => {
-  it('is 20 for BRONZE and rises 15 per tier', () => {
+  it('is 10 for BRONZE and rises 10 per tier', () => {
     expect(crateXp(0)).toBe(10);
     expect(crateXp(1)).toBe(20);
     expect(crateXp(3)).toBe(40); // GOLD

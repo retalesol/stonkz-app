@@ -271,8 +271,21 @@ export async function mapSolanaTransaction(
           // `FeeAccrued` names the mint, not the creator; the creator comes
           // from the launch, which is the same place the vault row does.
           creator: meta.creator,
-          ...nativeFeeLegs(feeNative, trade?.feeStakers ?? 0n, record.creatorBucket, splitVersion),
-          creatorTokens: toWhole(trade?.cashbackTokens ?? 0n, meta.tokenDecimals),
+          // See `evm-map.ts`: a converted cashback bucket's peel is in tokens.
+          ...nativeFeeLegs(
+            feeNative,
+            trade && !(trade.cashbackTokens > 0n) ? trade.feeStakers : 0n,
+            record.creatorBucket,
+            splitVersion,
+          ),
+          creatorTokens: toWhole(
+            trade && trade.cashbackTokens > 0n ? trade.feeCreator : 0n,
+            meta.tokenDecimals,
+          ),
+          stakerTokens: toWhole(
+            trade && trade.cashbackTokens > 0n ? trade.feeStakers : 0n,
+            meta.tokenDecimals,
+          ),
         });
         break;
       }

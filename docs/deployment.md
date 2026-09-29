@@ -125,8 +125,60 @@ signer. One-shot helper: `pnpm exec ts-node scripts/set-meteora-config.ts`.
 | mainnet-beta / devnet | `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo` |
 
 **Until this lands, `migrate_create_pool` fails closed** (Anchor's `address = …`
-constraint against `Pubkey::default()`) and nothing can graduate. That is the
-intended fail-closed behaviour, not a bug.
+constraint against `Pubkey::default()`) and nothing can migrate. That is the
+intended fail-closed behaviour, not a bug. (`graduate` itself does not read
+these slots, so a coin can still graduate; its reserves then wait on the curve
+PDA's vaults until the config lands.)
+
+#### 1.3.1 Graduation, migration and post-bond fees (Solana)
+
+- **`graduate`** — permissionless; the app offers it as GRADUATE NOW
+  (`POST /tokens/:sym/graduate/prepare`, which prepends `sync_price_from_pyth`
+  when a feed is pinned so the oracle trigger reads a price seconds old). An
+  exhausted curve graduates with no oracle account at all.
+- **`migrate_create_pool`** then **`migrate_seed_liquidity`** — both signed by
+  `migration_authority`, each idempotent: the first records `curve.dex_pool`
+  and refuses to run twice (`PoolAlreadyExists`); the second refuses before a
+  pool exists (`PoolNotCreated`) and after it has run (`AlreadyMigrated`). A
+  failed seed reverts atomically (reserves stay in the curve vaults), so a
+  retry with the same accounts completes. The seed fronts 0.15 SOL of rent
+  from the authority through the escrow PDA (bin array ≈ 0.0715 SOL +
+  position ≈ 0.0574 SOL) and refunds the unspent remainder in the same
+  transaction; step 1's `LbPair` rent is paid by the authority directly.
+  The position is opened with `initialize_position_pda`, owned by the
+  per-mint escrow PDA (default fee owner = the escrow), so only this program
+  can sign for it and no instruction of it withdraws, closes or reassigns
+  the position. **DLMM's own timelock is not available:**
+  `initialize_position_by_operator` / `lock_release_point` is gated on
+  Meteora's operator whitelist and returns `UnauthorizedAccess` for every
+  other caller (probed against the real program on a local validator, both
+  pair types). Permanence is therefore the launchpad program's — the same
+  trust as the EVM UUPS admin — which is one more reason the program upgrade
+  authority moves to the timelock at the governance handover.
+- **`claim_dex_fees`** — permissionless crank. Claims the locked position's
+  swap fees (`claim_fee2`) into the escrow ATAs and routes them through the
+  curve's own split: base side 15% protocol / 10% buyback / 6% crate fund /
+  69% creator bucket (creator + stakers, as on a fill); launched-token side
+  69% to the bucket in tokens, the other 31% burned (there is no per-mint
+  treasury to hold it). Emits `DexFeesClaimed`. Run it on a cadence (or let
+  anyone): fees only accrue inside the DLMM position until it is called.
+  Positions opened by the previous program build had the incinerator as fee
+  owner; their fees are unrecoverable and `claim_dex_fees` refuses them
+  (`PositionMismatch`).
+- **Testing against the real DLMM:** `anchor test` still clones Raydium (its
+  migration suite is `describe.skip`). The Meteora path is exercised by
+  `tests/meteora-graduation.ts` against a local validator with `lb_clmm`,
+  `PresetParameter2 #1` and Metaplex cloned from devnet — the exact commands
+  are in that file's header. Note the devnet preset has `collect_fee_mode = 1`
+  (fees in the quote token only), so post-bond fees arrive entirely in
+  whichever mint sorted as Y; pick the mainnet preset with that in mind.
+- **Known gap (needs an upgrade):** the `LbPair` PDA is deterministic
+  (`[preset, min(mint), max(mint)]`), so a third party can create it before
+  `migrate_create_pool`, which then fails closed with `PoolAlreadyExists` for
+  good. The fix is to adopt an existing pair and seed at the curve's bin
+  (or use a creator-keyed permissionless pair); until then an operator must
+  pick a different `PresetParameter2` for that coin, which needs a
+  per-coin config the program does not have yet.
 
 ### 1.4 Base prices (oracle authority key)
 
@@ -183,6 +235,58 @@ mode without `INDEXER_ALLOW_FIXTURES=1`.
 EVM launchpad / push-oracle stay **UUPS-upgradeable through public beta**
 (`upgradeToAndCall`, admin-gated). `StonkzRouter` stays immutable by design —
 redeploy and update `RH_ROUTER_ADDRESS` if its logic must change.
+
+#### 2.0.1 Graduation runbook (EVM)
+
+Graduation is two transactions, on purpose:
+
+1. **`graduate(token)` — permissionless.** Either trigger: the 80% allocation
+   sold out (no oracle read; cannot be stale), or a _fresh_ base price puts
+   the cap at/over $69K while tokens remain. The launchpad prices through
+   `PythPriceSource`, whose per-feed bound is ~120 s, so the oracle trigger is
+   only reachable from a transaction that carries a Hermes update:
+   `StonkzRouter.graduateWithPriceUpdate(token, priceUpdate, deadline)` with
+   `msg.value ≥ pyth.getUpdateFee(priceUpdate)` (the excess is refunded). A
+   bare `graduate()` on the oracle trigger reverts `"stale oracle"` — that is a
+   deferral, not a wedge; the exhaustion trigger never consults the oracle.
+   The app offers this as **GRADUATE NOW** on the token page
+   (`POST /tokens/:sym/graduate/prepare`), so no keeper is required; the
+   route answers `router_upgrade_required` until a router that has
+   `graduateWithPriceUpdate` is deployed and set as `<NET>_ROUTER_ADDRESS`
+   (the routers recorded in `deployments/*.json` on 2026-09-29 predate it).
+   `oracleGraduationPaused` (admin / pauser) removes the oracle trigger only.
+2. **`migrateLiquidity(token)` — `migrationAuthority` only.** Sends the raise
+   (`realBase`) and the 20% escrow (`lpReserve`) to `UniswapV2Migrator`, which
+   creates or adopts the V2 pair, swaps a pre-seeded pair back to the curve's
+   closing price (`PoolCorrected`), deposits, and mints every LP token to
+   `0x…dEaD` (`LiquidityMigrated(token, pool, liquidityBurned)`). Surplus
+   tokens are burned, surplus base is escrowed back on the launchpad
+   (`Surplus`). It fails closed with `"not migration authority"` / `"no
+migrator"` and leaves the reserves in place; a retry after fixing the
+   wiring completes normally, and a second call reverts `"nothing"`.
+
+Between the two the curve is closed (`"graduated"` on buy/sell) and the token
+page shows GRADUATED without a pool link; the indexer attaches the pool when
+`LiquidityMigrated` lands (`tokens.pool_address`). Creator fees and stake
+rewards accrued on the curve stay claimable after both steps — the 69% bucket
+is a separate ledger from the raise — and stakers can unstake once their lock
+expires. Nothing accrues after graduation: V2 fees compound into the burned
+position and are claimable by nobody (see `UniswapV2Migrator.sol`'s header for
+why v2, and what a fee-claiming v3/v4 locker would need).
+
+Until a keeper exists, an operator can run both steps for a token from the
+migration-authority key:
+
+```bash
+# Step 1 (anyone). Exhausted curve — no update needed:
+cast send $LAUNCHPAD "graduate(address)" $TOKEN --rpc-url $RPC --private-key $ANY_KEY
+# Step 1 (anyone). Oracle trigger — fetch the Hermes update for the base's feed
+# and post it in the same transaction through the router:
+cast send $ROUTER "graduateWithPriceUpdate(address,bytes[],uint256)" \
+  $TOKEN "[$HERMES_UPDATE_HEX]" $(( $(date +%s) + 300 )) --value $UPDATE_FEE_WEI ...
+# Step 2 (migration authority):
+cast send $LAUNCHPAD "migrateLiquidity(address)" $TOKEN --rpc-url $RPC --private-key $MIGRATION_AUTHORITY_KEY
+```
 
 ### 2.1 Mainnet deploy
 
@@ -320,7 +424,7 @@ Do all of these against the deployment, not against a local test.
 - [ ] `dex_program` and `dex_config` (Meteora DLMM + PresetParameter2) are set and match §1.3.
 - [ ] Protocol and ops vault PDAs are distinct addresses.
 - [ ] Launch a throwaway token, buy, sell. Confirm the 20/10/10/60 split lands in the four expected places (protocol, game, burn, creator bucket).
-- [ ] Force a graduation. On the explorer, confirm the Meteora DLMM pool exists and the position has `lock_release_point = u64::MAX` with operator at the incinerator. This is the claim that liquidity is gone; verify it, don't assume it.
+- [ ] Force a graduation. On the explorer, confirm the Meteora DLMM pool exists and the position (`["position", lb_pair, escrow, lower_bin_id, 1]`) is owned by the coin's `meteora_escrow` PDA with no operator; the escrow ATAs and the escrow itself hold nothing afterwards. This is the claim that liquidity is out of every wallet's reach; verify it, don't assume it.
 - [ ] Confirm the migration authority never held withdrawable liquidity (check the escrow ATA's history).
 
 ### Mobile / in-wallet browser smoke (Phantom, Jupiter)

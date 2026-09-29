@@ -25,11 +25,12 @@ import { anyOpen, closeAll } from '../modals/scrim.js';
 import { closeSteps, initSteps, isStepsOpen } from '../modals/steps.js';
 import { cancelPicker, initWalletPicker, isWalletPickerOpen } from '../modals/walletpicker.js';
 import { closeWiz, initWizard, isWizOpen, openWiz } from '../modals/wizard.js';
-import { COINS, byMint, bySym } from '../state/coins.js';
+import { COINS, byMint, bySym, type SimCoin } from '../state/coins.js';
 import { loadSettings } from '../state/settings.js';
 import { USER, loadUser, saveUser, touchStreak } from '../state/user.js';
 import { WALLET } from '../state/wallet.js';
-import { filterBoard, initBoard, king } from '../views/board.js';
+import { initBoard, king, refreshNetChips } from '../views/board.js';
+import { initSearch } from '../views/search.js';
 import { chatOpen, chatRender, initChat, isChatOpen } from '../views/chat.js';
 import { initProfileView, openProfile, renderProfile } from '../views/profile.js';
 import { openRewards, updateCrates } from '../views/rewards.js';
@@ -61,12 +62,13 @@ import {
 
 function apply(r: Route): void {
   if (r.view === 'token') {
-    const c = (r.mint && byMint(r.mint)) || bySym(r.sym);
+    const local = (r.mint && byMint(r.mint)) || bySym(r.sym);
+    // `?mint=` names one coin exactly. A ticker-only hit with another mint is
+    // the same ticker on another chain, not this coin — look the address up
+    // before settling for it.
+    const c = r.mint && local?.mint !== r.mint ? null : local;
     if (!c) {
-      // A dead link: say so once and fall back to the board rather than
-      // rendering an empty page.
-      toast('NO COIN CALLED ' + r.sym);
-      navigate({ view: 'board' }, { replace: true });
+      void resolveToken(r);
       return;
     }
     if (TV.c !== c) openToken(c);
@@ -94,6 +96,39 @@ function apply(r: Route): void {
     }
     openLaunch(must('#createBtn'));
   } else closeLaunch();
+}
+
+/**
+ * A token link the board does not hold yet: a coin past the first page, or
+ * on a chain the connected board is not showing. `api.search()` (live:
+ * `GET /tokens?q=`, which merges hits into `COINS`) finds it by address or
+ * ticker; only when that too misses is the link dead.
+ */
+async function resolveToken(r: Extract<Route, { view: 'token' }>): Promise<void> {
+  let hit: SimCoin | null = null;
+  try {
+    const matches = await api.search(r.mint ?? r.sym);
+    hit =
+      (r.mint ? matches.find((m) => m.mint === r.mint) : undefined) ??
+      matches.find((m) => m.sym === r.sym) ??
+      null;
+  } catch {
+    hit = null;
+  }
+  // The same ticker on another chain is better than a dead end.
+  if (!hit) hit = bySym(r.sym);
+  // The user may have moved on while the lookup was in flight.
+  const now = current();
+  if (now.view !== 'token' || now.sym !== r.sym || now.mint !== r.mint) return;
+  if (!hit) {
+    // A dead link: say so once and fall back to the board rather than
+    // rendering an empty page.
+    toast('NO COIN CALLED ' + r.sym);
+    navigate({ view: 'board' }, { replace: true });
+    return;
+  }
+  if (TV.c !== hit) openToken(hit);
+  else showView('token');
 }
 
 /* ------------------------------ launch intent ------------------------------ */
@@ -214,7 +249,13 @@ export async function boot(): Promise<void> {
     console.warn('api.ready failed', err);
   }
 
-  if (api.mode === 'live') void loadChains().then(paintDisclosure);
+  // `chains.json` also decides which NET chips the board offers: a chain with
+  // nothing deployed (ARC today) is not a filter anyone can use.
+  if (api.mode === 'live')
+    void loadChains().then(() => {
+      paintDisclosure();
+      refreshNetChips();
+    });
   const remembered = savedNet();
   if (remembered) selectNet(remembered);
   initBoard();
@@ -283,42 +324,9 @@ export async function boot(): Promise<void> {
   });
 
   /* search */
-  // Enter goes through `api.search()` — a local `COINS` filter in sim, the
-  // server's `GET /tokens?q=` in live. Live search merges hits into `COINS`
-  // so symbols beyond the initial board page can still open.
-  must('#searchform').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const q = must<HTMLInputElement>('#q');
-    const query = q.value.trim();
-    if (!query) return;
-    const exact = query.toUpperCase();
-    void api
-      .search(query)
-      .then((matches) => {
-        if (!matches.length) {
-          toast('NO COIN MATCHES ' + exact);
-          return;
-        }
-        const c =
-          matches.find((m) => m.sym === exact) ||
-          matches.find((m) => m.sym.startsWith(exact)) ||
-          matches.find((m) => m.name.toUpperCase().includes(exact)) ||
-          matches[0];
-        if (!c) {
-          toast('NO COIN MATCHES ' + exact);
-          return;
-        }
-        q.value = '';
-        filterBoard('');
-        navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
-      })
-      .catch(() => {
-        toast('SEARCH FAILED', 'red');
-      });
-  });
-  // The as-you-type filter only ever hides/shows cards already on the
-  // rendered board, so it stays a local scan in both modes.
-  must('#q').addEventListener('input', () => filterBoard(must<HTMLInputElement>('#q').value));
+  // The FIND box: as-you-type board filter, the suggestion list and Enter's
+  // `api.search()` all live in `views/search.ts`.
+  initSearch();
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') onEscape();
@@ -338,6 +346,12 @@ export async function boot(): Promise<void> {
   king();
   startLoop();
   api.startStream();
+  // Admin-panel comms (maintenance banner / notices): a lazy chunk, live mode only.
+  if (api.mode === 'live') {
+    void import('../admin/banner.js').then((m) =>
+      m.mountBanner(import.meta.env['VITE_API_URL'] ?? '', () => (WALLET.on ? WALLET.net : null)),
+    );
+  }
 
   const hello = $('#hello');
   if (hello) hello.hidden = WALLET.on || !!USER.seenHello;

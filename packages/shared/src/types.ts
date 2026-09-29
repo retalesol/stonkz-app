@@ -33,6 +33,13 @@ export type SupplyOption = 1e6 | 5e8 | 1e9 | 1e12;
 /** MEV strategy in the settings modal. */
 export type MevMode = 'SHIELD' | 'RELAY' | 'OFF';
 
+/**
+ * EVM gas preset in the settings modal. `NORMAL` leaves EIP-1559 fields to
+ * the wallet; `FAST` / `TURBO` set `maxPriorityFeePerGas` / `maxFeePerGas`
+ * explicitly from the chain's current estimate, scaled up.
+ */
+export type EvmGasPreset = 'NORMAL' | 'FAST' | 'TURBO';
+
 /** Crate tier keys, in ascending value. */
 export type CrateTier =
   'BRONZE' | 'IRON' | 'SILVER' | 'GOLD' | 'PLATINUM' | 'IRIDIUM' | 'PALLADIUM' | 'RHODIUM';
@@ -74,6 +81,19 @@ export interface Coin {
   mint?: string;
   /** Server says prepare may succeed (mint + curve k, not graduated). */
   tradeable?: boolean;
+  /**
+   * Graduation as the chain has it (`lane === 'grad'` only says the cap
+   * crossed $69K). `graduatedAt` is set once `graduate` landed; `poolAddress`
+   * / `positionAddress` once the liquidity was migrated (a later transaction
+   * on EVM); `curveComplete` when the allocation sold out and the curve is
+   * closed pending `graduate`; `graduationReady` when the permissionless
+   * `graduate` call should succeed now.
+   */
+  graduatedAt?: number | null;
+  poolAddress?: string | null;
+  positionAddress?: string | null;
+  curveComplete?: boolean;
+  graduationReady?: boolean;
   lane: Lane | null;
   /** Previous tick's market cap, for flash direction. */
   lastMc: number;
@@ -128,7 +148,17 @@ export interface User {
     next: number | null;
     pct: number;
     toNext: number;
+    /** SP at which the current level started. */
+    cur?: number;
+    /** Levels already granted (server `sp_level_claims`). */
+    claimed?: number[];
   };
+  /** USD value of the RWA holdings (DefiLlama); `null` while unpriced. */
+  rwaUsd?: number | null;
+  /** Utility items won from `I` crate rows. */
+  items?: UserItem[];
+  /** sha256 of the server seed committed for the NEXT crate open. */
+  nextCrateCommit?: string | null;
   log: DropLogEntry[];
   /** Lifetime creator fees claimed, in native units. */
   feesClaimed?: number;
@@ -149,6 +179,32 @@ export interface User {
   ach?: Partial<Record<AchievementKey, number>>;
 }
 
+/** A utility item held from a crate `I` row. */
+export interface UserItem {
+  item: string;
+  count: number;
+  expiresAt: number | null;
+  /** Server says the perk is live (count > 0 and not expired). */
+  active?: boolean;
+  /** Which system honours it, if any is wired up yet; `null` for a label no table lists any more. */
+  effect?: string | null;
+  implemented?: boolean;
+  blurb?: string | null;
+}
+
+/** The commit–reveal proof behind one crate open. */
+export interface CrateProof {
+  serverSeedHash: string;
+  /** Revealed after the open; `null` on legacy rows opened before commit–reveal. */
+  serverSeed: string | null;
+  clientSeed: string | null;
+  /** Hex HMAC digest — the roll itself. */
+  rollCommit: string;
+  rollValue: number;
+  amountRoll: number;
+  dropIndex: number;
+}
+
 /** A row in the crate drop log. */
 export interface DropLogEntry {
   /** HH:MM local clock. */
@@ -158,6 +214,10 @@ export interface DropLogEntry {
   r: string;
   /** Tier colour. */
   col: string;
+  /** Epoch ms of the open (server rows). */
+  at?: number;
+  rarity?: string;
+  proof?: CrateProof;
 }
 
 /**
@@ -191,10 +251,29 @@ export interface TokenFees {
     stakers: number;
     /** Referral commissions paid out of the protocol leg for this coin's fills. */
     referrals: number;
+    /** Staker peel of cashback-window fills, paid in the token. Absent in sim. */
+    stakersTokens?: number;
   };
   source: 'chain' | 'sim';
   /** This coin's staking pool. Absent from older API builds and in sim. */
   staking?: StakePoolSummary;
+  /**
+   * The creator's claimable ledger — what `claimCreatorFees` /
+   * `claim_creator_fees` pays right now. Read on chain when the RPC answers
+   * (`source: 'chain'`), else the indexer's `creator_vaults` row. Absent in
+   * sim and on older API builds.
+   */
+  creator?: {
+    wallet: string;
+    /** Base asset (whole units) — the chain's native unit for a native-paired curve. */
+    claimableBase: number;
+    baseSym: string;
+    /** Launched-token slice from cashback-window fills (whole tokens). */
+    claimableTokens: number;
+    /** Lifetime claimed, native (indexer). */
+    claimedNative: number;
+    source: 'chain' | 'indexer';
+  };
 }
 
 /** §5.3 — connected wallet. */
@@ -242,6 +321,12 @@ export interface Settings {
   /** Prefilled buy amount, native units. */
   defBuy: number;
   confirm: boolean;
+  /**
+   * EVM-only gas preset (`wallet/evm.ts`). Device-local: applied by the
+   * wallet layer at send time, so it is neither sent to nor stored by the
+   * API. Absent means `NORMAL`.
+   */
+  evmGas?: EvmGasPreset;
 }
 
 /** §5.2 — a per-token stake position. */
@@ -407,4 +492,8 @@ export interface Fill {
   fresh?: boolean;
   /** Transaction signature / hash. */
   sig?: string;
+  /** `${sig}:${ordinal}` — one id for a fill's provisional and indexed prints. */
+  fid?: string;
+  /** The coin's mint / contract, so a reused ticker still opens the right chart. */
+  mint?: string;
 }

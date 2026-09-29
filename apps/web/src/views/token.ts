@@ -1,8 +1,10 @@
 import {
   BUYBACK_SPLIT,
   CB_MS,
+  FEE_SPLIT,
   GRAD,
   SUPPLY,
+  type NativeUnit,
   type Quote,
   type QuoteHop,
   type TokenFees,
@@ -21,37 +23,85 @@ import {
   vol24,
 } from '@stonkz/shared';
 import { NET_INFO, fmtNative, isEvm, nativeUnit as nativeUnitOf, type Net } from '@stonkz/shared';
-import { fetchChatHistory, fetchXProfile, sendChatMessage, SocialApiError } from '../api/social.js';
+import {
+  fetchChatAccess,
+  fetchChatHistory,
+  fetchXProfile,
+  sendChatMessage,
+  SocialApiError,
+} from '../api/social.js';
 import { api } from '../api/index.js';
-import { LiveApiError, lastTxLink, subscribeChatRoom, type LiveChatFrame } from '../api/live.js';
-import { explorerAddressUrl, explorerTxUrl } from '../wallet/chain.js';
+import {
+  LiveApiError,
+  lastTxLink,
+  mapHolders,
+  mapTradeRow,
+  subscribeChatRoom,
+  type ApiTradeRow,
+  type LiveChatFrame,
+} from '../api/live.js';
+import { sigKey } from '../api/live-fills.js';
+import {
+  fetchTokenCandles,
+  fetchTokenDetail,
+  fetchTokenHolders,
+  fetchTokenTrades,
+  type TokenDetail,
+} from '../api/token-detail.js';
+import { dexPoolUrl, explorerAddressUrl, explorerTxUrl } from '../wallet/chain.js';
 import { navigate, retitle } from '../app/route.js';
 import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isPracticeSession, isRejection } from '../wallet/index.js';
 import { showView } from '../app/view.js';
-import { drawTokenChart } from '../canvas/chart.js';
+import { drawChartMessage, drawTokenChart, fmtSig, type ChartAxis } from '../canvas/chart.js';
 import { paintCoinArt } from '../canvas/pix.js';
 import { burst } from '../fx/debris.js';
 import { toast } from '../fx/toast.js';
+import {
+  TF_MS,
+  TIMEFRAMES,
+  aggregateCandles,
+  bucketOf,
+  defaultTimeframe,
+  fillOhlcGaps,
+  foldTrade,
+  isTimeframe,
+  seriesToCandles,
+  type Candle,
+  type Timeframe,
+} from '../lib/candles.js';
 import { $, $$, clear, must, reflow } from '../lib/dom.js';
-import { ARR, DOT, MID, clock, clockSec, fmtCurve, fmtSupply, ud } from '../lib/fmt.js';
+import { ARR, DOT, MID, clock, fmtCurve, fmtSupply, ud } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { copyText } from '../lib/clipboard.js';
 import { displayName, myDisplayName, rememberIdentity } from '../lib/identity.js';
 import { reducedMotion } from '../lib/motion.js';
 import { canHover } from '../lib/pointer.js';
 import { ensureSession, hasSession, sessionWallet } from '../app/session.js';
-import { type Comment, type SimCoin, holdersOf, seedSeries, seedTrades } from '../state/coins.js';
+import {
+  type Comment,
+  type Holder,
+  type SimCoin,
+  type Trade,
+  holdersOf,
+  seedSeries,
+  seedTrades,
+} from '../state/coins.js';
 import { holdOf } from '../state/holdings.js';
 import { syncHoldingFromChain, safeSellAmountInput } from '../api/live-holding.js';
-import { SET } from '../state/settings.js';
-import { NATIVE_PRICE, WALLET, nativeUnit } from '../state/wallet.js';
+import { SET, evmGasPreset, settingsSummary } from '../state/settings.js';
+import { NATIVE_PRICE, WALLET, nativeUnit, nativeUsd } from '../state/wallet.js';
 import { openStake } from '../modals/stake.js';
 import { stakeOf } from '../state/stake.js';
+import { composerState, type ChatAccess } from './chat-access.js';
 import { stakingSectionHTML } from './fees-staking.js';
+import { creatorPanel, creatorPanelHTML } from './fees-creator.js';
 import { setChatToken, roomOf, addChat } from './chat.js';
 import { netPill, paint } from './board.js';
 import { connectWallet } from '../app/wallet.js';
+import { commentListHTML, commentsHTML as commentsTabHTML, relTime } from './token-comments.js';
+import { holdersTableHTML } from './token-holders.js';
+import { fmtNativeAmt, tradesTableHTML } from './token-trades.js';
 
 /**
  * The token page.
@@ -65,21 +115,28 @@ export interface TokenViewState {
   c: SimCoin | null;
   tab: 'trades' | 'holders' | 'comments' | 'fees';
   side: 'BUY' | 'SELL';
+  /** Candles shown; `0` is ALL. */
   range: number;
   cross: number | null;
   qTimer: number;
   /** Drops stale quotes when the live adapter answers out of order. */
   qSeq: number;
+  /** Chart bucket. */
+  tf: Timeframe;
+  /** Price axis: USD, or the coin's own gas unit. */
+  axis: 'USD' | 'NATIVE';
 }
 
 export const TV: TokenViewState = {
   c: null,
   tab: 'trades',
   side: 'BUY',
-  range: 90,
+  range: 120,
   cross: null,
   qTimer: 0,
   qSeq: 0,
+  tf: '1m',
+  axis: 'USD',
 };
 
 /* ------------------------------- markup ----------------------------------- */
@@ -90,10 +147,31 @@ function caLabel(c: SimCoin): string {
   return 'PENDING';
 }
 
+/**
+ * Graduation as the chain reports it. `lane === 'grad'` only means the cap
+ * crossed $69K on the board's math; the curve stays open until the
+ * permissionless `graduate` lands (`graduatedAt`). The sim has no chain, so
+ * there the lane is the truth.
+ */
+export function isGraduated(c: SimCoin): boolean {
+  if (api.mode !== 'live') return c.lane === 'grad';
+  return c.graduatedAt != null;
+}
+
+/** The ticket must be off: graduated, or sold out and awaiting `graduate` (buys revert "curve complete"). */
+function curveClosed(c: SimCoin): boolean {
+  return isGraduated(c) || (api.mode === 'live' && c.curveComplete === true);
+}
+
 function tradeHint(c: SimCoin): string {
   if (api.mode !== 'live') return 'ORDERS ARE SIMULATED. NOTHING IS SIGNED, SENT OR SETTLED.';
-  if (c.lane === 'grad') {
-    return 'GRADUATED — CURVE TRADING IS CLOSED. OPEN THE DEX POOL IN AN EXPLORER / UNISWAP (IN-APP DEX ROUTING NOT WIRED).';
+  if (isGraduated(c)) {
+    return c.poolAddress
+      ? 'GRADUATED — CURVE TRADING IS CLOSED. TRADE ON ' + NET_INFO[c.net ?? 'SOL'].dex + ' VIA THE POOL LINK BELOW.'
+      : 'GRADUATED — CURVE TRADING IS CLOSED. LIQUIDITY IS MIGRATING TO ' + NET_INFO[c.net ?? 'SOL'].dex + '.';
+  }
+  if (c.curveComplete) {
+    return 'CURVE SOLD OUT — AWAITING GRADUATION. ANYONE CAN TRIGGER IT BELOW.';
   }
   if (!c.tradeable) {
     return 'FIXTURE TOKEN — NO ON-CHAIN MINT. PICK A TRADEABLE TOKEN (LIVE CURVE) TO PLACE ORDERS.';
@@ -121,12 +199,79 @@ function crossChainHTML(c: SimCoin): Html {
   </div>`;
 }
 
+/** The coin's own gas unit — what its fills, quotes and ticket are denominated in. */
+function coinUnit(c: SimCoin): NativeUnit {
+  return nativeUnitOf(c.net ?? 'SOL');
+}
+
+/** Only http(s) links leave the page; anything else is shown as text. */
+export function safeUrl(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const v = raw.trim();
+  const withScheme = /^https?:\/\//i.test(v)
+    ? v
+    : /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(v)
+      ? 'https://' + v
+      : null;
+  if (!withScheme) return null;
+  try {
+    const u = new URL(withScheme);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function telegramUrl(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const v = raw.trim().replace(/^@/, '');
+  if (/^https?:\/\//i.test(v)) return safeUrl(v);
+  const handle = v.replace(/^(t\.me|telegram\.me)\//i, '').replace(/[^\w]/g, '');
+  return handle ? 'https://t.me/' + handle : null;
+}
+
+export function xProfileUrl(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const handle = raw
+    .trim()
+    .replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, '')
+    .replace(/^@/, '')
+    .replace(/[^\w]/g, '');
+  return handle ? 'https://x.com/' + handle : null;
+}
+
+function extLink(href: string | null, label: string): Html {
+  if (!href) return html``;
+  return html`${DOT} <a class="txlink" href="${attr(href)}" target="_blank" rel="noopener noreferrer"
+      >${label} ↗</a
+    >`;
+}
+
+/** Sensible default order size in the coin's unit: the trader's setting when the wallet is on that chain, else a small chain-appropriate default. */
+const DEFAULT_BUY: Record<NativeUnit, number> = { SOL: 0.5, ETH: 0.02, USDC: 10 };
+/** Gas kept back from MAX so the order plus its fee can still land. */
+const GAS_RESERVE: Record<NativeUnit, number> = { SOL: 0.01, ETH: 0.0005, USDC: 0.5 };
+
+function defaultBuyAmount(c: SimCoin): number {
+  const u = coinUnit(c);
+  const v = u === nativeUnit() ? Number(SET.defBuy) : DEFAULT_BUY[u];
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_BUY[u];
+}
+
+/** Up to six decimals, trailing zeros trimmed — what goes into the amount box. */
+function fmtInput(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return '0';
+  return v.toFixed(6).replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+}
+
 function tokenHTML(c: SimCoin): Html {
-  const grad = c.lane === 'grad';
-  const unit = nativeUnit();
+  const grad = isGraduated(c);
+  const unit = coinUnit(c);
+  const net = c.net ?? 'SOL';
   const pair = c.base || unit;
   const ca = caLabel(c);
   const caFull = c.mint || '';
+  const live = api.mode === 'live';
   return html`<div class="tk-bar">
       <button class="back" id="tk-back">${ARR} BOARD</button
       ><canvas width="128" height="128" aria-hidden="true"></canvas>
@@ -136,38 +281,51 @@ function tokenHTML(c: SimCoin): Html {
           ${
             c.base
               ? html`PAIR <b>${c.sym}/${c.base}</b> ${DOT} SUPPLY
-                  <b>${fmtSupply(c.supply || SUPPLY)}</b> ${DOT} FEE
+                  <b>${fmtSupply(c.supply || SUPPLY)}</b
+                  ><span id="s-circ-wrap" hidden> ${DOT} CIRC <b id="s-circ">${MID}</b></span> ${DOT} FEE
                   <b>${Number(c.tfee).toFixed(1)}%</b> ${DOT} `
               : ''
           }CA
           ${
             caFull
-              ? html`<b class="addrlink" title="${attr(caFull)}" data-addr="${attr(caFull)}"
-                  >${ca}</b
-                >`
+              ? live
+                ? html`<a
+                    class="txlink"
+                    title="${attr(caFull)}"
+                    href="${attr(explorerAddressUrl(net, caFull))}"
+                    target="_blank"
+                    rel="noopener"
+                    >${ca}</a
+                  >`
+                : html`<b title="${attr(caFull)}">${ca}</b>`
               : html`<b class="dm">${ca}</b>`
           }
           ${DOT} DEV
           <b class="addrlink" data-addr="${attr(c.dev)}"
             >${c.dev.length > 12 ? c.dev.slice(0, 4) + '…' + c.dev.slice(-4) : c.dev}</b
           >
-          ${DOT} ${ago(c.age)} ${DOT} ON ${netPill(c.net ?? 'SOL')} ${DOT}
+          ${DOT} <span id="s-age" title="${attr(new Date(Date.now() - c.age * 60_000).toISOString())}">${ago(c.age)}</span> ${DOT} ON ${netPill(net)} ${DOT}
           <span class="${grad ? 'gd' : 'up'}" id="s-state">${grad ? 'BONDED' : 'ACTIVE'}</span>
+          <span id="s-links"
+            >${extLink(safeUrl(c.web), 'WEB')}${extLink(xProfileUrl(c.x), 'X')}${extLink(telegramUrl(c.tg), 'TG')}</span
+          >
         </div>
       </div>
       <div class="tk-stats">
         <div><span class="lbl">PRICE</span><span class="v" id="s-px">${px(price(c))}</span></div>
         <div>
-          <span class="lbl">MARKET CAP</span><span class="v am" id="s-mc">${usd(c.mc)}</span>
+          <span class="lbl">MARKET CAP</span><span class="v am" id="s-mc">${usd(c.mc)}</span
+          ><span class="sub2" id="s-mcn"></span>
         </div>
         <div>
           <span class="lbl">24H</span><span class="v ${ud(c.chg)}" id="s-chg">${pct(c.chg)}</span>
         </div>
         <div>
-          <span class="lbl">VOL 24H</span><span class="v" id="s-vol">${usd(vol24(c))}</span>
+          <span class="lbl">VOL 24H</span><span class="v" id="s-vol">${live ? MID : usd(vol24(c))}</span>
         </div>
         <div>
-          <span class="lbl">LIQUIDITY</span><span class="v" id="s-liq">${usd(liq(c))}</span>
+          <span class="lbl">LIQUIDITY</span><span class="v" id="s-liq">${live ? MID : usd(liq(c))}</span
+          ><span class="sub2" id="s-liqn"></span>
         </div>
         <div><span class="lbl">HOLDERS</span><span class="v" id="s-hold">${num(c.hold)}</span></div>
       </div>
@@ -179,14 +337,28 @@ function tokenHTML(c: SimCoin): Html {
 
     <div class="tk-grid">
       <section class="pnl">
-        <div class="pnl-hd">
+        <div class="pnl-hd chart-hd">
           <h2>Price</h2>
-          <span class="sub">${c.sym}/${pair} ${DOT} 1M CANDLES</span>
-          <div class="rt">
-            <button class="tab" data-rg="45">45M</button
-            ><button class="tab on" data-rg="90">90M</button
-            ><button class="tab" data-rg="140">140M</button
-            ><button class="tab" data-rg="200">ALL</button>
+          <span class="sub">${c.sym}/${pair} ${DOT} <span id="ch-tf">${TV.tf.toUpperCase()}</span> CANDLES</span>
+          <div class="rt chart-ctl">
+            <span class="ctl-group" role="group" aria-label="Timeframe">
+              ${TIMEFRAMES.map(
+                (tf) =>
+                  html`<button type="button" class="tab${tf === TV.tf ? ' on' : ''}" data-tf="${tf}">
+                    ${tf.toUpperCase()}
+                  </button>`,
+              )}
+            </span>
+            <span class="ctl-group" role="group" aria-label="Price unit">
+              <button type="button" class="tab on" data-ax="USD">USD</button
+              ><button type="button" class="tab" data-ax="NATIVE">${unit}</button>
+            </span>
+            <span class="ctl-group" role="group" aria-label="Candles shown">
+              <button type="button" class="tab" data-rg="60">60</button
+              ><button type="button" class="tab on" data-rg="120">120</button
+              ><button type="button" class="tab" data-rg="240">240</button
+              ><button type="button" class="tab" data-rg="0">ALL</button>
+            </span>
           </div>
         </div>
         <div class="chartbox">
@@ -228,7 +400,7 @@ function tokenHTML(c: SimCoin): Html {
             ><input
               class="fld"
               id="t-amt"
-              value="${Number(SET.defBuy).toFixed(2)}"
+              value="${fmtInput(defaultBuyAmount(c))}"
               inputmode="decimal"
             />
           </div>
@@ -237,7 +409,7 @@ function tokenHTML(c: SimCoin): Html {
           <button
             class="big"
             id="t-go"
-            ${api.mode === 'live' && (!c.tradeable || c.lane === 'grad') ? ' disabled' : ''}
+            ${api.mode === 'live' && (!c.tradeable || curveClosed(c)) ? ' disabled' : ''}
           >
             BUY ${c.sym}
           </button>
@@ -284,40 +456,194 @@ function tokenHTML(c: SimCoin): Html {
 
 /* -------------------------------- chart ----------------------------------- */
 
+/**
+ * Chart state for the open coin: the REST candles for the selected timeframe
+ * plus every fill that arrived after them (`c.trades` rows whose signature
+ * the REST read did not cover), folded on each draw. Provisional prints stay
+ * `pending` (drawn translucent) until their indexed twin clears the flag on
+ * the trade row, at which point the fold picks the change up by itself.
+ */
+interface ChartState {
+  /** `sym:mint:tf` the REST candles belong to. */
+  key: string;
+  rest: Candle[];
+  /** Signatures already inside `rest`. */
+  restSigs: Set<string>;
+  basis: 'spot' | 'indexed' | null;
+  loading: boolean;
+  failed: boolean;
+  /** The `c.trades` array the fold was last built from — a new array means REST re-hydrated. */
+  tradesRef: Trade[] | null;
+  view: Candle[];
+  viewKey: string;
+}
+
+function freshChart(key: string): ChartState {
+  return {
+    key,
+    rest: [],
+    restSigs: new Set(),
+    basis: null,
+    loading: false,
+    failed: false,
+    tradesRef: null,
+    view: [],
+    viewKey: '',
+  };
+}
+
+let CH: ChartState = freshChart('');
+
+/** The detail read (`GET /tokens/:sym`) behind the header extras; `null` until it lands. */
+let DETAIL: TokenDetail | null = null;
+let detailKey = '';
+let detailTimer = 0;
+
+function chartKey(c: SimCoin): string {
+  return c.sym + ':' + (c.mint ?? '') + ':' + TV.tf;
+}
+
+function axisFor(c: SimCoin): ChartAxis {
+  if (TV.axis === 'USD') return { unit: 'USD', rate: 1 };
+  const unit = coinUnit(c);
+  const mark = nativeUsd(unit);
+  return { unit, rate: mark > 0 ? 1 / mark : 1 };
+}
+
+async function loadChartCandles(c: SimCoin, key: string): Promise<void> {
+  CH.loading = true;
+  try {
+    const res = await fetchTokenCandles(c, TV.tf);
+    if (TV.c !== c || CH.key !== key) return;
+    CH.rest = res.candles;
+    CH.basis = res.basis;
+    // Everything the indexer has recorded is in those candles; only prints
+    // still ahead of it (pending) and anything that arrives later fold in.
+    CH.restSigs = new Set(
+      (c.trades ?? []).filter((t) => t.sig && !t.pending).map((t) => sigKey(t.sig as string)),
+    );
+    CH.tradesRef = c.trades;
+    CH.failed = false;
+  } catch {
+    if (TV.c !== c || CH.key !== key) return;
+    CH.failed = true;
+  } finally {
+    if (TV.c === c && CH.key === key) {
+      CH.loading = false;
+      CH.viewKey = '';
+      drawTChart();
+    }
+  }
+}
+
+/** USD notional of a fill for the volume bars: the API's figure, else size × the native mark. */
+function tradeUsd(c: SimCoin, t: Trade): number {
+  if (t.usd !== undefined && t.usd > 0) return t.usd;
+  return t.sol * nativeUsd(coinUnit(c));
+}
+
+function composeLiveCandles(c: SimCoin, bucketMs: number, supply: number, now: number): Candle[] {
+  const trades = c.trades ?? [];
+  if (CH.tradesRef !== null && CH.tradesRef !== trades && !CH.loading) {
+    // REST re-hydrated (reconcile after a dropped provisional print): the
+    // authoritative candles may have moved too — re-read them.
+    CH.tradesRef = trades;
+    void loadChartCandles(c, CH.key);
+  }
+  let pending = 0;
+  for (const t of trades) if (t.pending) pending++;
+  const key = [
+    CH.rest.length,
+    trades.length,
+    trades[0]?.sig ?? '',
+    pending,
+    bucketOf(now, bucketMs),
+    c.mc,
+  ].join('|');
+  if (key === CH.viewKey) return CH.view;
+  const out: Candle[] = CH.rest.map((k) => ({ ...k }));
+  // Oldest first so opens carry forward correctly.
+  for (let i = trades.length - 1; i >= 0; i--) {
+    const t = trades[i] as Trade;
+    if (!t.sig || CH.restSigs.has(sigKey(t.sig))) continue;
+    foldTrade(
+      out,
+      { t: t.t.getTime(), price: t.mc / supply, usd: tradeUsd(c, t), pending: t.pending },
+      bucketMs,
+    );
+  }
+  CH.view = fillOhlcGaps(out, bucketMs, now);
+  CH.viewKey = key;
+  return CH.view;
+}
+
 export function drawTChart(): void {
   const c = TV.c;
   if (!c) return;
-  if (api.mode === 'sim') seedSeries(c);
-  const box = $('#tchart')?.parentElement;
-  if (!c.h || !c.hv || c.h.length < 1) {
-    const cvs = $<HTMLCanvasElement>('#tchart');
-    if (cvs) {
-      const g = cvs.getContext('2d');
-      if (g) {
-        const w = cvs.clientWidth || 400;
-        const h = cvs.clientHeight || 220;
-        cvs.width = w;
-        cvs.height = h;
-        g.fillStyle = '#040507';
-        g.fillRect(0, 0, w, h);
-        g.fillStyle = '#6b675c';
-        g.font = '11px "IBM Plex Mono", monospace';
-        g.textAlign = 'center';
-        g.textBaseline = 'middle';
-        g.fillText(api.mode === 'live' ? 'LOADING CANDLES…' : 'NO SERIES', w / 2, h / 2);
-      }
+  const cvs = $<HTMLCanvasElement>('#tchart');
+  if (!cvs) return;
+  const hud = $('#ch-hud');
+  const bucketMs = TF_MS[TV.tf];
+  const supply = c.supply || SUPPLY;
+  const now = Date.now();
+  let candles: Candle[];
+  if (api.mode === 'sim') {
+    seedSeries(c);
+    const one = seriesToCandles(c.h ?? [], c.hv ?? [], supply, bucketOf(now, 60_000), 60_000);
+    candles = bucketMs === 60_000 ? one : aggregateCandles(one, bucketMs);
+  } else {
+    const key = chartKey(c);
+    if (CH.key !== key) CH = freshChart(key);
+    if (c.trades === null) {
+      // `api.watchToken()` has not answered yet; its `.then` redraws.
+      drawChartMessage(cvs, 'LOADING CANDLES…');
+      render(hud, html`<span class="dm">LOADING</span>`);
+      return;
     }
-    if (box) render($('#ch-hud'), html`<span class="dm">NO CANDLE HISTORY YET</span>`);
-    return;
+    if (CH.basis === null && !CH.loading && !CH.failed) void loadChartCandles(c, key);
+    if (CH.loading && CH.rest.length === 0) {
+      drawChartMessage(cvs, 'LOADING CANDLES…');
+      render(hud, html`<span class="dm">LOADING ${TV.tf.toUpperCase()} CANDLES</span>`);
+      return;
+    }
+    candles = composeLiveCandles(c, bucketMs, supply, now);
+    if (candles.length === 0) {
+      drawChartMessage(cvs, CH.failed ? 'CANDLES UNAVAILABLE' : 'NO CANDLE HISTORY YET');
+      render(
+        hud,
+        html`<span class="dm">${CH.failed ? 'COULD NOT LOAD CANDLES' : 'WAITING FOR FIRST PRINT'}</span>`,
+      );
+      return;
+    }
   }
-  const hud = drawTokenChart($<HTMLCanvasElement>('#tchart'), {
-    series: c.h as number[],
-    volume: c.hv as number[],
-    range: TV.range,
+  const out = drawTokenChart(cvs, {
+    candles,
+    range: TV.range > 0 ? TV.range : Infinity,
     cross: TV.cross,
-    coin: c,
+    bucketMs,
+    axis: axisFor(c),
+    supply,
+    vol24Usd: api.mode === 'live' ? (DETAIL?.vol24Usd ?? null) : vol24(c),
   });
-  if (hud) render($('#ch-hud'), hud);
+  if (out) render(hud, out);
+}
+
+/** `GET /tokens/:sym` for the header extras; debounced so a burst of fills asks once. */
+function refreshDetail(c: SimCoin, delayMs = 0): void {
+  if (api.mode !== 'live') return;
+  const key = c.sym + ':' + (c.mint ?? '');
+  window.clearTimeout(detailTimer);
+  detailTimer = window.setTimeout(() => {
+    void fetchTokenDetail(c)
+      .then((d) => {
+        if (TV.c !== c) return;
+        DETAIL = d;
+        detailKey = key;
+        syncToken();
+        drawTChart();
+      })
+      .catch(() => undefined);
+  }, delayMs);
 }
 
 /* -------------------------------- quote ----------------------------------- */
@@ -358,6 +684,7 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
   const feeHop = q.hops.find((h) => h.feeAmount > 0) ?? q.hops.find((h) => h.feeBps > 0);
   const feeNative = feeHop?.feeAmount ?? q.hops.reduce((n, h) => n + h.feeAmount, 0);
   const feeUnit = feeHop ? (buy ? feeHop.inSymbol : feeHop.outSymbol) : q.nativeUnit;
+  const feePct = feeHop && feeHop.feeBps > 0 ? feeHop.feeBps / 100 : q.effFeePct;
   const impact = q.impactPct;
   const hops = q.hops.length > 1 ? q.hops.map((h, i) => hopRow(h, i)) : '';
   const banner = q.indicative
@@ -393,14 +720,15 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
     </div>
     <div class="qrow">
       <span>SLIPPAGE / FEE</span
-      ><b>${slip.toFixed(1)}% ${DOT} ${fmtNativeAmt(feeNative)} ${feeUnit}</b>
+      ><b>${slip.toFixed(1)}% ${DOT} ${feePct.toFixed(1)}% ${DOT} ${fmtNativeAmt(feeNative)} ${feeUnit}</b>
     </div>
+    ${feeSplitRow(feeNative, feeUnit)}
     <div class="qrow">
       <span>NETWORK</span
       ><b
         >${
           isEvm(c.net ?? WALLET.net)
-            ? nativeUnitOf(c.net ?? WALLET.net) + ' GAS · PRIO/MEV N/A ON ' + NET_INFO[c.net ?? WALLET.net].name
+            ? nativeUnitOf(c.net ?? WALLET.net) + ' GAS ' + evmGasPreset() + ' · PRIO/MEV N/A ON ' + NET_INFO[c.net ?? WALLET.net].name
             : 'PRIO ' +
               Number(SET.prio).toFixed(4) +
               ' ' +
@@ -419,12 +747,28 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
     </div>`;
 }
 
-/** Enough decimals for sub-0.01 ETH buys without lying as `0.00`. */
-function fmtNativeAmt(v: number): string {
-  if (!Number.isFinite(v) || v === 0) return '0';
-  if (Math.abs(v) >= 1) return v.toFixed(4).replace(/\.?0+$/, '');
-  if (Math.abs(v) >= 0.01) return v.toFixed(4).replace(/\.?0+$/, '');
-  return v.toFixed(6).replace(/\.?0+$/, '');
+/**
+ * Where this order's curve fee goes — the 69 / 15 / 10 / 6 split both
+ * programs assert on every fill (`FEE_SPLIT`), sized in the fee's own unit.
+ */
+function feeSplitRow(feeNative: number, unit: string): Html {
+  if (!(feeNative > 0)) return html``;
+  const leg = (share: number): string => fmtNativeAmt(feeNative * share);
+  return html`<div class="qrow qsplit">
+    <span>FEE SPLIT</span
+    ><b
+      ><span class="gd" title="Creator bucket, shared with stakers"
+        >CREATOR ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% ${leg(FEE_SPLIT.creatorBucket)}</span
+      >
+      ${DOT}
+      <span title="Platform">PLATFORM ${(FEE_SPLIT.protocol * 100).toFixed(0)}% ${leg(FEE_SPLIT.protocol)}</span>
+      ${DOT}
+      <span title="$STONKZ buyback">BUYBACK ${(FEE_SPLIT.buyback * 100).toFixed(0)}% ${leg(FEE_SPLIT.buyback)}</span>
+      ${DOT}
+      <span title="RWA crate fund">RWA ${(FEE_SPLIT.rwa * 100).toFixed(0)}% ${leg(FEE_SPLIT.rwa)}</span>
+      <span class="dm">${unit}</span></b
+    >
+  </div>`;
 }
 
 /** Buy quick picks in the coin's gas unit: fractions of SOL/ETH, whole USDC under the Arc cap. */
@@ -455,7 +799,7 @@ export function renderQuote(): void {
       ? 'SWITCH TO ' + NET_INFO[c.net ?? 'SOL'].short + ' TO TRADE'
       : TV.side + ' ' + c.sym;
     go.className = 'big' + (buy ? '' : ' sell');
-    if (api.mode === 'live') go.disabled = !c.tradeable || c.lane === 'grad';
+    if (api.mode === 'live') go.disabled = !c.tradeable || curveClosed(c);
   }
 
   const cap = NET_INFO[c.net ?? 'SOL'].maxTradeUsd;
@@ -490,7 +834,7 @@ export function renderQuote(): void {
         }
         const goBtn = $('#t-go') as HTMLButtonElement | null;
         if (goBtn && api.mode === 'live') {
-          goBtn.disabled = !c.tradeable || c.lane === 'grad' || !!q.indicative;
+          goBtn.disabled = !c.tradeable || curveClosed(c) || !!q.indicative;
         }
       })
       .catch((err: unknown) => {
@@ -502,7 +846,7 @@ export function renderQuote(): void {
   }
   const lbl = $('#t-amt-lbl');
   if (lbl) {
-    lbl.textContent = buy ? 'AMOUNT (' + nativeUnit() + ')' : 'AMOUNT (' + c.sym + ')';
+    lbl.textContent = buy ? 'AMOUNT (' + coinUnit(c) + ')' : 'AMOUNT (' + c.sym + ')';
   }
   // Quick picks: native units on buy, % of position on sell.
   const quick = $('#t-quick');
@@ -569,7 +913,7 @@ function paintPosition(c: SimCoin): void {
       bal,
       WALLET.on
         ? html`<span>BALANCE <b class="am">${fmtNative(WALLET.net, WALLET.sol)} ${nativeUnit()}</b></span
-            ><span>PAIR ${c.base || nativeUnit()} ${DOT} ${WALLET.addr}</span>`
+            ><span>PAIR ${c.base || coinUnit(c)} ${DOT} ${WALLET.addr}</span>`
         : html`<span class="dm">NO WALLET CONNECTED</span
             ><span class="dm"
               >${api.mode === 'live' ? 'CONNECT TO TRADE' : 'SIM FILLS ONLY'}</span
@@ -580,201 +924,227 @@ function paintPosition(c: SimCoin): void {
 
 /* --------------------------------- tabs ----------------------------------- */
 
+/** Older-page cursor state for the trades tab, reset on open. */
+const TR = { hasMore: false, loading: false, nextBefore: undefined as number | undefined };
+/** Holders tab state, reset on open. */
+const HD = {
+  shown: 25,
+  loading: false,
+  refreshing: false,
+  source: null as 'explorer' | 'rpc' | 'db' | null,
+  holderCount: null as number | null,
+  /** Distinct fills seen when holders were last read; a new one schedules a refresh. */
+  fillsAtRead: -1,
+  timer: 0,
+};
+
+/** A wallet's label: username when known, else the short address. Short labels pass through. */
+function nameOf(wallet: string): string {
+  return displayName(wallet);
+}
+
+function distinctFills(c: SimCoin): number {
+  const seen = new Set<string>();
+  for (const t of c.trades ?? []) if (t.sig) seen.add(sigKey(t.sig));
+  return seen.size;
+}
+
 function tradesHTML(c: SimCoin): Html {
-  const trades = c.trades ?? [];
-  if (api.mode === 'live' && c.trades == null) {
-    return html`<div class="pnl-bd"><p class="hint">LOADING TRADES…</p></div>`;
+  return tradesTableHTML({
+    trades: c.trades ?? [],
+    net: c.net ?? 'SOL',
+    supply: c.supply || SUPPLY,
+    live: api.mode === 'live',
+    now: Date.now(),
+    txUrl: (sig) => explorerTxUrl(c.net ?? 'SOL', sig),
+    nameOf,
+    hasMore: api.mode === 'live' && TR.hasMore,
+    loading: api.mode === 'live' && (c.trades === null || TR.loading),
+  });
+}
+
+/** Older fills from REST, appended behind what the socket keeps fresh. */
+async function loadOlderTrades(c: SimCoin): Promise<void> {
+  if (TR.loading || !c.trades) return;
+  const oldest = [...c.trades].reverse().find((t) => t.id !== undefined);
+  const before = TR.nextBefore ?? oldest?.id;
+  if (before === undefined) {
+    TR.hasMore = false;
+    renderTab();
+    return;
   }
-  if (!trades.length) {
-    return html`<div class="pnl-bd"><p class="hint">NO RECENT TRADES YET.</p></div>`;
+  TR.loading = true;
+  renderTab();
+  try {
+    const page = await fetchTokenTrades<ApiTradeRow>(c, { before, limit: 40 });
+    if (TV.c !== c || !c.trades) return;
+    const known = new Set(c.trades.map((t) => (t.sig ? sigKey(t.sig) : '')));
+    for (const r of page.trades) {
+      const t = mapTradeRow(c, r);
+      if (t.sig && known.has(sigKey(t.sig))) continue;
+      c.trades.push(t);
+    }
+    TR.hasMore = !!page.hasMore;
+    TR.nextBefore = page.nextBefore;
+  } catch (err) {
+    toast('COULD NOT LOAD OLDER TRADES ' + DOT + ' ' + String(err), 'red');
+  } finally {
+    TR.loading = false;
+    if (TV.c === c && TV.tab === 'trades') renderTab();
   }
-  return html`<div class="scrolly">
-    <table class="tbl">
-      <thead>
-        <tr>
-          <th scope="col">TIME</th>
-          <th scope="col">TYPE</th>
-          <th scope="col" class="r">${nativeUnit()}</th>
-          <th scope="col" class="r">TOKENS</th>
-          <th scope="col" class="r">MCAP</th>
-          <th scope="col">TRADER</th>
-          <th scope="col">VEN</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${trades.map((t, i) => {
-          const link = t.addr || t.w;
-          const multi = !!(t.hops && t.hops.length > 1);
-          const open = !!t.open && multi;
-          const rowClass = [
-            'tr-row',
-            t.fresh && i === 0 ? 'newrow' : '',
-            multi ? 'tr-hop' : '',
-            open ? 'open' : '',
-            t.pending ? 'pend' : '',
-          ]
-            .filter(Boolean)
-            .join(' ');
-          const hopAttrs = multi
-            ? html` data-tr="${i}" tabindex="0" role="button"
-              aria-expanded="${open ? 'true' : 'false'}"`
-            : '';
-          return html`<tr class="${attr(rowClass)}" ${hopAttrs}>
-              <td class="dm">
-                ${
-                  t.sig && api.mode === 'live'
-                    ? html`<a
-                        class="txlink"
-                        href="${attr(explorerTxUrl(c.net ?? 'SOL', t.sig))}"
-                        target="_blank"
-                        rel="noopener"
-                        title="${attr(t.pending ? 'Confirmed on chain, awaiting indexer finality' : 'View transaction')}"
-                        >${clockSec(t.t)}</a
-                      >`
-                    : clockSec(t.t)
-                }
-              </td>
-              <td class="${t.buy ? 'up' : 'dn'}">${t.buy ? 'BUY' : 'SELL'}</td>
-              <td class="r">${t.sol.toFixed(2)}</td>
-              <td class="r">${num(t.tok)}</td>
-              <td class="r">${usd(t.mc)}</td>
-              <td class="${t.cb ? '' : 'bl'}">
-                ${
-                  t.cb
-                    ? html`<span class="tag cb">CASHBACK</span>`
-                    : html`<span class="addrlink" data-addr="${attr(link)}"
-                        >${displayName(t.w)}</span
-                      >`
-                }
-              </td>
-              <td class="dm ven-cell">
-                ${t.v}${multi ? html`<span class="ven-chev" aria-hidden="true">${open ? '▾' : '▸'}</span>` : ''}
-              </td>
-            </tr>
-            ${
-              open && t.hops
-                ? html`<tr class="tr-hops">
-                    <td colspan="7">
-                      <div class="hop-detail">
-                        ${t.hops.map(
-                      (h, hi) =>
-                        html`<div class="hop-leg">
-                          <span class="hop-n">HOP ${hi + 1}</span
-                          ><span class="hop-v">${h.venue}</span
-                          ><span class="hop-path"
-                            >${h.inAmount < 0.001 ? h.inAmount.toPrecision(3) : num(h.inAmount)}
-                            ${h.inSymbol} →
-                            ${h.outAmount < 0.001 ? h.outAmount.toPrecision(3) : num(h.outAmount)}
-                            ${h.outSymbol}</span
-                          >
-                        </div>`,
-                    )}
-                      </div>
-                    </td>
-                  </tr>`
-                : ''
-            }`;
-        })}
-      </tbody>
-    </table>
-  </div>`;
 }
 
 function holdersHTML(c: SimCoin): Html {
   // Live mode: only show API holders (or empty). Never invent wallets.
   // Sim mode: synthetic `holdersOf` until/unless live rows exist.
-  const rows = api.mode === 'live' ? (c.liveHolders ?? []) : (c.liveHolders ?? holdersOf(c));
-  if (api.mode === 'live' && c.liveHolders == null) {
-    return html`<div class="pnl-bd"><p class="hint">LOADING HOLDERS…</p></div>`;
-  }
-  if (!rows.length) {
-    return html`<div class="pnl-bd"><p class="hint">NO HOLDERS ON RECORD YET.</p></div>`;
-  }
-  return html`<div class="scrolly">
-    <table class="tbl">
-      <thead>
-        <tr>
-          <th scope="col">#</th>
-          <th scope="col">WALLET</th>
-          <th scope="col" class="r">HOLDING</th>
-          <th scope="col" class="r">VALUE</th>
-          <th scope="col">TAG</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((h, i) => {
-          const link = h.addr || h.w;
-          return html`<tr>
-            <td class="dm">${i + 1}</td>
-            <td class="${h.curve ? 'am' : 'bl'}">
-              ${
-                h.curve
-                  ? h.w
-                  : html`<span class="addrlink" data-addr="${attr(link)}"
-                      >${displayName(h.w)}</span
-                    >`
-              }
-            </td>
-            <td class="r">${h.p.toFixed(2)}%</td>
-            <td class="r">${usd((c.mc * h.p) / 100)}</td>
-            <td>
-              ${h.tag ? html`<span class="tag ${h.tag[1]}">${h.tag[0]}</span>` : html`<span class="dm">${MID}</span>`}
-            </td>
-          </tr>`;
-        })}
-      </tbody>
-    </table>
-  </div>`;
+  const live = api.mode === 'live';
+  const rows: Holder[] = live ? (c.liveHolders ?? []) : (c.liveHolders ?? holdersOf(c));
+  return holdersTableHTML({
+    rows,
+    mc: c.mc,
+    supply: c.supply || SUPPLY,
+    shown: HD.shown,
+    live,
+    holderCount: live ? (HD.holderCount ?? c.hold) : null,
+    source: live ? HD.source : null,
+    nameOf,
+    loading: live && c.liveHolders == null,
+    refreshing: HD.refreshing,
+  });
 }
 
-function commentsHTML(c: SimCoin): Html {
-  const list = c.comments ?? [];
-  if (api.mode === 'live' && c.comments == null) {
-    return html`<div class="pnl-bd"><p class="hint">LOADING COMMENTS…</p></div>`;
+/** Re-read holders from chain after a fill (the explorer lags a few seconds) or on demand. */
+async function refreshHolders(c: SimCoin): Promise<void> {
+  if (api.mode !== 'live' || HD.refreshing) return;
+  HD.refreshing = true;
+  if (TV.tab === 'holders') renderTab();
+  try {
+    const res = await fetchTokenHolders<Parameters<typeof mapHolders>[1][number]>(c, 100);
+    if (TV.c !== c) return;
+    c.liveHolders = mapHolders(c, res.holders, res.curveWallet);
+    HD.source = res.source ?? null;
+    HD.holderCount = typeof res.holderCount === 'number' ? res.holderCount : null;
+    if (HD.holderCount !== null) c.hold = HD.holderCount;
+    HD.fillsAtRead = distinctFills(c);
+    paint(c);
+    syncToken();
+  } catch {
+    // Keep what we have; the footer still says where it came from.
+  } finally {
+    HD.refreshing = false;
+    if (TV.c === c && TV.tab === 'holders') renderTab();
   }
-  return html`<div class="pnl-bd">
-    <div class="scrolly" style="display:flex;flex-direction:column;gap:7px" id="cmt-list">
-      ${
-        list.length
-          ? list.map(
-              (m) =>
-                html`<div class="cmt${m.mine ? ' mine' : ''}">
-                  <div class="who">
-                    ${html`<span class="addrlink" data-addr="${attr(m.who)}"
-                      >${m.mine ? myDisplayName() : displayName(m.who)}</span
-                    >`}<span>${m.t}</span>
-                  </div>
-                  <p>${m.text}</p>
-                </div>`,
-            )
-          : html`<p class="hint" style="margin:0">NO COMMENTS YET ${DOT} BE THE FIRST.</p>`
-      }
-    </div>
-    <form class="inline-form" id="cmt-form">
-      <input
-        class="fld"
-        id="cmt-in"
-        maxlength="140"
-        placeholder="POST A REPLY"
-        aria-label="Comment"
-      /><button class="send" type="submit">POST</button>
-    </form>
-  </div>`;
 }
 
+/** Called on every beat: a fill the holders read has not seen schedules one refresh. */
+function holdersFollowFills(c: SimCoin): void {
+  if (api.mode !== 'live' || !c.trades) return;
+  const n = distinctFills(c);
+  if (HD.fillsAtRead < 0) {
+    HD.fillsAtRead = n;
+    return;
+  }
+  if (n <= HD.fillsAtRead || HD.timer) return;
+  HD.timer = window.setTimeout(() => {
+    HD.timer = 0;
+    if (TV.c === c) void refreshHolders(c);
+  }, 4000);
+}
+
+/* ------------------------------- comments --------------------------------- */
+
+const COMMENT_MAX_LEN = 140;
 let commentUnsub: (() => void) | null = null;
 let commentsLoadedFor: string | null = null;
+let commentAccess: ChatAccess | null = null;
+let commentReplyTo: string | null = null;
 
 function commentRoomNet(c: SimCoin): Net {
   return c.net ?? 'SOL';
 }
 
-function pushComment(c: SimCoin, m: Comment): void {
+/** What the composer may do here: the chat room's own gates, plus the wallet being on the coin's chain. */
+function commentGate(c: SimCoin): { canPost: boolean; note: string | null } {
+  if (api.mode !== 'live') return { canPost: true, note: null };
+  if (!WALLET.on) return { canPost: false, note: 'CONNECT A WALLET TO COMMENT.' };
+  if (crossChain(c)) {
+    return {
+      canPost: false,
+      note: 'SWITCH YOUR WALLET TO ' + NET_INFO[c.net ?? 'SOL'].name + ' TO COMMENT ON THIS COIN.',
+    };
+  }
+  const st = composerState({
+    room: c.sym.toUpperCase(),
+    live: true,
+    walletOn: WALLET.on,
+    access: commentAccess,
+  });
+  if (st.mode === 'loading') return { canPost: false, note: 'CHECKING WHO CAN POST…' };
+  return { canPost: !st.disabled, note: st.notice };
+}
+
+function commentsHTML(c: SimCoin): Html {
+  const gate = commentGate(c);
+  return commentsTabHTML({
+    list: api.mode === 'live' ? c.comments : (c.comments ?? []),
+    now: Date.now(),
+    canPost: gate.canPost,
+    gateNote: gate.note,
+    nameOf,
+    replyTo: commentReplyTo,
+    maxLen: COMMENT_MAX_LEN,
+  });
+}
+
+/** Repaint the list only, so a live message never wipes what is being typed. */
+function paintCommentList(c: SimCoin): void {
+  const l = $('#cmt-list');
+  if (!l) {
+    if (TV.tab === 'comments') renderTab();
+    return;
+  }
+  const stick = l.scrollHeight - l.scrollTop - l.clientHeight < 40;
+  render(
+    l,
+    commentListHTML({
+      list: c.comments,
+      now: Date.now(),
+      canPost: commentGate(c).canPost,
+      nameOf,
+    }),
+  );
+  if (stick) l.scrollTop = l.scrollHeight;
+}
+
+function pushComment(c: SimCoin, m: Comment): boolean {
   if (!c.comments) c.comments = [];
-  // Dedupe by wallet+text+time bucket for WS echoes of our own POST.
-  if (c.comments.some((x) => x.who === m.who && x.text === m.text && x.t === m.t)) return;
+  // Dedupe the WS echo of our own POST: by server id, else by wallet + text
+  // inside a few seconds.
+  const dup = c.comments.some(
+    (x) =>
+      (m.id !== undefined && x.id === m.id) ||
+      (x.who === m.who &&
+        x.text === m.text &&
+        (m.at === undefined || x.at === undefined ? x.t === m.t : Math.abs(x.at - m.at) < 5000)),
+  );
+  if (dup) return false;
   c.comments.push(m);
   c.reps = c.comments.length;
+  return true;
+}
+
+function commentFromWire(
+  net: Net,
+  m: { id?: number; wallet: string; text: string; createdAtMs: number },
+): Comment {
+  return {
+    who: m.wallet,
+    t: clock(new Date(m.createdAtMs)),
+    at: m.createdAtMs,
+    ...(m.id !== undefined ? { id: m.id } : {}),
+    text: m.text,
+    mine: m.wallet === sessionWallet(net) || m.wallet === WALLET.full,
+  };
 }
 
 async function loadLiveComments(c: SimCoin): Promise<void> {
@@ -784,33 +1154,28 @@ async function loadLiveComments(c: SimCoin): Promise<void> {
   if (commentsLoadedFor === key && c.comments) return;
   commentsLoadedFor = key;
   c.comments = null;
+  commentAccess = null;
   if (TV.c === c && TV.tab === 'comments') renderTab();
 
   commentUnsub?.();
   commentUnsub = null;
 
-  try {
-    const res = await fetchChatHistory(net, room);
-    if (TV.c !== c) return;
-    c.comments = res.messages.map((m) => {
-      if (m.username || m.avatarUrl) {
-        rememberIdentity(m.wallet, {
-          username: m.username ?? null,
-          avatarUrl: m.avatarUrl ?? null,
-        });
-      }
-      return {
-        who: m.wallet,
-        t: clock(new Date(m.createdAtMs)),
-        text: m.text,
-        mine: m.wallet === sessionWallet(net) || m.wallet === WALLET.full,
-      };
-    });
-    c.reps = c.comments.length;
-  } catch {
-    if (TV.c !== c) return;
-    c.comments = [];
-  }
+  const [history, access] = await Promise.all([
+    fetchChatHistory(net, room).catch(() => null),
+    WALLET.on ? fetchChatAccess(net, room).catch(() => null) : Promise.resolve(null),
+  ]);
+  if (TV.c !== c) return;
+  commentAccess = access;
+  c.comments = (history?.messages ?? []).map((m) => {
+    if (m.username || m.avatarUrl) {
+      rememberIdentity(m.wallet, {
+        username: m.username ?? null,
+        avatarUrl: m.avatarUrl ?? null,
+      });
+    }
+    return commentFromWire(net, m);
+  });
+  c.reps = c.comments.length;
 
   commentUnsub = subscribeChatRoom(net, room, (msg: LiveChatFrame) => {
     if (TV.c !== c) return;
@@ -820,14 +1185,9 @@ async function loadLiveComments(c: SimCoin): Promise<void> {
         avatarUrl: msg.avatarUrl ?? null,
       });
     }
-    pushComment(c, {
-      who: msg.wallet,
-      t: clock(new Date(msg.createdAtMs)),
-      text: msg.text,
-      mine: msg.wallet === sessionWallet(net) || msg.wallet === WALLET.full,
-    });
+    if (!pushComment(c, commentFromWire(net, msg))) return;
     paint(c);
-    if (TV.tab === 'comments') renderTab();
+    if (TV.tab === 'comments') paintCommentList(c);
   });
 
   if (TV.c === c && TV.tab === 'comments') renderTab();
@@ -852,9 +1212,41 @@ async function loadFees(c: SimCoin): Promise<void> {
     ]);
     if (TV.c !== c || TV.tab !== 'fees') return;
     render(b, feesHTML(f));
+    $('#fc-claim')?.addEventListener('click', () => void claimCreatorFeesHere(c));
   } catch (err) {
     if (TV.c !== c || TV.tab !== 'fees') return;
     render(b, html`<div class="pnl-bd"><p class="hint dn">FEE LEDGER UNAVAILABLE: ${String(err)}</p></div>`);
+  }
+}
+
+/**
+ * The Fees tab's CLAIM: one `claimCreatorFees` / `claim_creator_fees` for this
+ * coin, then the ledger is re-read so the panel shows the drained balance.
+ */
+async function claimCreatorFeesHere(c: SimCoin): Promise<void> {
+  const btn = $<HTMLButtonElement>('#fc-claim');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api.claimCreatorFees(c.sym);
+    const tokens = res.tokens[c.sym] ?? 0;
+    if (res.native <= 0 && tokens <= 0) {
+      toast('NOTHING TO CLAIM YET');
+      return;
+    }
+    const parts = [
+      res.native > 0 ? res.native.toFixed(6) + ' ' + (c.base || nativeUnit()) : '',
+      tokens > 0 ? num(tokens) + ' ' + c.sym : '',
+    ].filter(Boolean);
+    toast('CLAIMED ' + parts.join(' + '), 'gold');
+  } catch (err) {
+    if (err instanceof SignerCancelledError || isRejection(err)) {
+      toast('CLAIM CANCELLED');
+    } else {
+      toast(err instanceof Error ? describeWalletError(err).toUpperCase() : 'CLAIM FAILED', 'red');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+    if (TV.c === c && TV.tab === 'fees') void loadFees(c);
   }
 }
 
@@ -923,6 +1315,7 @@ function feesHTML(f: TokenFees): Html {
         </tbody>
       </table>
     </div>
+    ${creatorPanelHTML(creatorPanel({ fees: f, viewer: WALLET.on ? WALLET.full : '', nat }), f.sym)}
     ${
       f.staking
         ? stakingSectionHTML({
@@ -975,7 +1368,7 @@ export function renderTab(): void {
         renderTab();
       };
       row.addEventListener('click', (e) => {
-        if ((e.target as Element | null)?.closest('.addrlink')) return;
+        if ((e.target as Element | null)?.closest('.addrlink, a')) return;
         toggle();
       });
       row.addEventListener('keydown', (e) => {
@@ -985,6 +1378,19 @@ export function renderTab(): void {
         }
       });
     });
+    $('#tr-more')?.addEventListener('click', () => void loadOlderTrades(c));
+  }
+  if (TV.tab === 'holders') {
+    $('#hold-more')?.addEventListener('click', () => {
+      HD.shown = Number.MAX_SAFE_INTEGER;
+      renderTab();
+    });
+    $('#hold-refresh')?.addEventListener('click', () => void refreshHolders(c));
+    // First open in live mode with only the hydrate snapshot: the API source
+    // and the count footer come from a fresh read.
+    if (api.mode === 'live' && HD.source === null && !HD.refreshing && c.liveHolders != null) {
+      void refreshHolders(c);
+    }
   }
   if (TV.tab === 'comments') {
     if (api.mode === 'live') void loadLiveComments(c);
@@ -992,6 +1398,44 @@ export function renderTab(): void {
       e.preventDefault();
       void postComment(c);
     });
+    b.querySelectorAll<HTMLElement>('.cmt-reply').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        commentReplyTo = btn.dataset['reply'] ?? null;
+        renderTab();
+        const input = $('#cmt-in') as HTMLInputElement | null;
+        if (input) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    });
+    if (commentReplyTo) {
+      const input = $('#cmt-in') as HTMLInputElement | null;
+      if (input && !input.value.startsWith('@')) commentReplyTo = null;
+    }
+  }
+}
+
+/** Human copy for a `POST /chat` refusal. */
+function commentErrorText(err: unknown): string {
+  const code = err instanceof SocialApiError ? err.code : '';
+  switch (code) {
+    case 'rate_limited':
+      return 'SLOW DOWN ' + DOT + ' TOO MANY COMMENTS, TRY AGAIN IN A MOMENT';
+    case 'too_long':
+      return 'COMMENTS ARE ' + COMMENT_MAX_LEN + ' CHARACTERS MAX';
+    case 'empty':
+      return 'TYPE SOMETHING FIRST';
+    case 'net_mismatch':
+      return 'YOUR WALLET IS ON ANOTHER CHAIN ' + DOT + ' SWITCH TO COMMENT HERE';
+    case 'volume_required':
+      return 'TRADE $100 ON THE CURVE TO UNLOCK COMMENTS';
+    case 'holder_required':
+      return 'HOLD THIS COIN TO COMMENT';
+    case 'unauthorized':
+      return 'SIGN IN WITH YOUR WALLET TO COMMENT';
+    default:
+      return err instanceof Error ? err.message.toUpperCase() : String(err);
   }
 }
 
@@ -999,24 +1443,34 @@ async function postComment(c: SimCoin): Promise<void> {
   const input = $('#cmt-in') as HTMLInputElement | null;
   const v = input?.value.trim();
   if (!input || !v) return;
+  if (v.length > COMMENT_MAX_LEN) {
+    toast('COMMENTS ARE ' + COMMENT_MAX_LEN + ' CHARACTERS MAX', 'red');
+    return;
+  }
 
   if (api.mode !== 'live') {
     if (!c.comments) c.comments = [];
     c.comments.push({
       who: WALLET.full || WALLET.addr || myDisplayName(),
       t: 'now',
+      at: Date.now(),
       text: v,
       mine: true,
     });
     c.reps = c.comments.length;
     paint(c);
     input.value = '';
+    commentReplyTo = null;
     renderTab();
     return;
   }
 
   if (!WALLET.on) {
     toast('CONNECT A WALLET TO COMMENT');
+    return;
+  }
+  if (crossChain(c)) {
+    toast('SWITCH YOUR WALLET TO ' + NET_INFO[c.net ?? 'SOL'].short + ' TO COMMENT', 'red');
     return;
   }
   const net = commentRoomNet(c);
@@ -1027,22 +1481,28 @@ async function postComment(c: SimCoin): Promise<void> {
     await ensureSession(API_BASE, net);
     const res = await sendChatMessage(net, room, v);
     if (res.message?.flagged) {
-      toast('COMMENT FLAGGED BY MODERATION', 'red');
+      toast('COMMENT FLAGGED BY MODERATION ' + DOT + ' NOT POSTED', 'red');
     } else if (res.message) {
-      pushComment(c, {
-        who: sessionWallet(net) || WALLET.full,
-        t: clock(new Date(res.message.createdAtMs)),
-        text: res.message.text,
-        mine: true,
-      });
+      pushComment(c, commentFromWire(net, { ...res.message, wallet: sessionWallet(net) || WALLET.full }));
       paint(c);
     }
     input.value = '';
+    commentReplyTo = null;
     renderTab();
     const l = $('#cmt-list');
     if (l) l.scrollTop = l.scrollHeight;
   } catch (err) {
-    toast(err instanceof SocialApiError ? err.message : String(err), 'red');
+    toast(commentErrorText(err), 'red');
+    if (err instanceof SocialApiError && err.code !== 'rate_limited') {
+      // The gate may have changed (e.g. the wallet's net); re-read it.
+      void fetchChatAccess(net, room)
+        .then((a) => {
+          if (TV.c !== c) return;
+          commentAccess = a;
+          if (TV.tab === 'comments') renderTab();
+        })
+        .catch(() => undefined);
+    }
   } finally {
     input.disabled = false;
     input.focus();
@@ -1165,33 +1625,103 @@ function updateCurveNote(): void {
   if (!c) return;
   const n = $('#cv-note');
   if (!n) return;
-  if (c.lane === 'grad') {
-    const net = c.net ?? 'SOL';
-    // The pool address is not on the API yet, so the honest link is the mint
-    // on the chain's explorer, where the DEX pair is one click away.
+  const net = c.net ?? 'SOL';
+  if (isGraduated(c)) {
+    // `poolAddress` lands with `LiquidityMigrated`, a second transaction on
+    // EVM (authority-gated) — until then the honest link is the mint itself.
     render(
       n,
-      html`GRADUATED ${MID} LIQUIDITY MIGRATED TO ${NET_INFO[net].dex} AND ${NET_INFO[net].lpNote}.
-        ${
-          c.mint && api.mode === 'live'
-            ? html` <a
-                class="txlink"
-                href="${attr(explorerAddressUrl(net, c.mint))}"
-                target="_blank"
-                rel="noopener"
-                >VIEW TOKEN ON EXPLORER \u2197</a
-              >`
-            : ''
-        }`,
+      c.poolAddress
+        ? html`GRADUATED ${MID} LIQUIDITY MIGRATED TO ${NET_INFO[net].dex} AND ${NET_INFO[net].lpNote}.
+            <a
+              class="txlink"
+              href="${attr(dexPoolUrl(net, c.poolAddress))}"
+              target="_blank"
+              rel="noopener"
+              >OPEN ${NET_INFO[net].dex} POOL ↗</a
+            >`
+        : html`GRADUATED ${MID} THE CURVE IS CLOSED. LIQUIDITY IS MIGRATING TO ${NET_INFO[net].dex},
+            WHERE ${NET_INFO[net].lpNote.replace(/ (WERE|IS) /, ' WILL BE ')}.
+            ${
+              c.mint && api.mode === 'live'
+                ? html` <a
+                    class="txlink"
+                    href="${attr(explorerAddressUrl(net, c.mint))}"
+                    target="_blank"
+                    rel="noopener"
+                    >VIEW TOKEN ON EXPLORER ↗</a
+                  >`
+                : ''
+            }`,
     );
-  } else {
-    const net = c.net ?? 'SOL';
+  } else if (api.mode === 'live' && c.graduationReady) {
+    // The threshold is met but nobody has called the permissionless
+    // `graduate` yet. Offer it to whoever is looking.
     render(
       n,
-      html`AT ${usd(GRAD)} MARKET CAP THE CURVE FILLS, LIQUIDITY MIGRATES
+      html`${c.curveComplete ? 'CURVE SOLD OUT' : usd(GRAD) + ' MARKET CAP REACHED'} ${MID}
+        READY TO GRADUATE. GRADUATION IS PERMISSIONLESS: ANY WALLET CAN TRIGGER IT, LIQUIDITY THEN
+        MIGRATES TO ${NET_INFO[net].dex} AND ${NET_INFO[net].lpNote.replace(/ (WERE|IS) /, ' WILL BE ')}.
+        <button type="button" class="custbtn" id="cv-graduate">GRADUATE NOW</button>`,
+    );
+    $('#cv-graduate')?.addEventListener('click', () => void graduateNow(c));
+  } else {
+    const gradBase =
+      DETAIL && DETAIL.graduationBase !== undefined && detailKey === c.sym + ':' + (c.mint ?? '')
+        ? html` (${fmtSig(DETAIL.graduationBase)} ${coinUnit(c)})`
+        : '';
+    render(
+      n,
+      html`AT ${usd(GRAD)} MARKET CAP${gradBase} THE CURVE FILLS, LIQUIDITY MIGRATES
         (${NET_INFO[net].dex}) AND THE LP LOCKS.
         <b class="am">${usd(Math.max(0, GRAD - c.mc))}</b> TO GO.`,
     );
+  }
+}
+
+/**
+ * "GRADUATE NOW": one signature on the permissionless `graduate`. The
+ * indexer flips `graduatedAt` when the event lands; until then the button is
+ * disabled so a double-click cannot queue two transactions.
+ */
+async function graduateNow(c: SimCoin): Promise<void> {
+  const btn = $('#cv-graduate') as HTMLButtonElement | null;
+  if (btn?.disabled) return;
+  if (!WALLET.on) {
+    void connectWallet(c.net ?? 'SOL');
+    return;
+  }
+  if (crossChain(c)) {
+    toast('SWITCH TO ' + NET_INFO[c.net ?? 'SOL'].short + ' TO GRADUATE', 'red');
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'GRADUATING…';
+  }
+  try {
+    await api.graduate(c);
+    toast('GRADUATION SENT ' + MID + ' THE CURVE CLOSES WHEN IT CONFIRMS', 'gold');
+    if (btn) btn.textContent = 'GRADUATION SENT';
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'GRADUATE NOW';
+    }
+    if (err instanceof SignerCancelledError || isRejection(err)) {
+      toast('SIGNING CANCELLED', 'red');
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    const code = err instanceof LiveApiError ? err.code : '';
+    if (code === 'already_graduated') toast('ALREADY GRADUATED ' + MID + ' REFRESHING', 'gold');
+    else if (code === 'not_graduable') {
+      toast('NOT GRADUABLE YET ' + MID + ' THE CHAIN DISAGREES WITH THE BOARD', 'red');
+    } else if (code === 'router_upgrade_required') {
+      toast('ORACLE GRADUATION NEEDS THE UPGRADED ROUTER ' + MID + ' ASK THE OPERATOR', 'red');
+    } else if (err instanceof LiveApiError) {
+      toast(('GRADUATE FAILED: ' + msg).toUpperCase(), 'red');
+    } else toast(('GRADUATE FAILED: ' + describeWalletError(err)).toUpperCase(), 'red');
   }
 }
 
@@ -1205,6 +1735,9 @@ export function syncToken(): void {
     if (e.textContent !== val) e.textContent = val;
     if (cls) e.className = 'v ' + cls;
   };
+  const live = api.mode === 'live';
+  const detail = live && DETAIL && detailKey === c.sym + ':' + (c.mint ?? '') ? DETAIL : null;
+  const unit = coinUnit(c);
   set('#s-px', px(price(c)));
   const mcEl = $('#s-mc');
   const v = usd(c.mc);
@@ -1215,13 +1748,37 @@ export function syncToken(): void {
     mcEl.textContent = v;
   }
   set('#s-chg', pct(c.chg), ud(c.chg));
-  set('#s-vol', usd(vol24(c)));
-  set('#s-liq', usd(liq(c)));
+  // Volume and liquidity are real figures from the detail read in live mode
+  // (24h fills; the base the curve actually holds) — never the sim's
+  // cap-derived stand-ins on a live coin.
+  // An API without the detail extras (older deploy) gets a dash, never a
+  // zero or the simulation-era 14%-of-cap figure it still serialises.
+  const v24 = detail?.vol24Usd;
+  const liqUsd = detail && detail.liqBase !== undefined ? detail.liqUsd : undefined;
+  set('#s-vol', live ? (v24 !== undefined ? usd(v24) : MID) : usd(vol24(c)));
+  set('#s-liq', live ? (liqUsd !== undefined ? usd(liqUsd) : MID) : usd(liq(c)));
+  const mcn = $('#s-mcn');
+  if (mcn) {
+    const t = detail && detail.mcBase !== undefined ? fmtSig(detail.mcBase) + ' ' + unit : '';
+    if (mcn.textContent !== t) mcn.textContent = t;
+  }
+  const liqn = $('#s-liqn');
+  if (liqn) {
+    const t = detail && detail.liqBase !== undefined ? fmtSig(detail.liqBase) + ' ' + unit : '';
+    if (liqn.textContent !== t) liqn.textContent = t;
+  }
+  const circWrap = $('#s-circ-wrap');
+  if (circWrap && detail && detail.circulating !== undefined) {
+    circWrap.hidden = false;
+    set('#s-circ', num(detail.circulating));
+  }
   set('#s-hold', num(c.hold));
+  set('#s-age', ago(c.age));
   const st = $('#s-state');
   if (st) {
-    st.textContent = c.lane === 'grad' ? 'BONDED' : 'ACTIVE';
-    st.className = c.lane === 'grad' ? 'gd' : 'up';
+    const grad = isGraduated(c);
+    st.textContent = grad ? 'BONDED' : c.curveComplete ? 'SOLD OUT' : 'ACTIVE';
+    st.className = grad ? 'gd' : 'up';
   }
   syncCashback();
   const p = $('#cv-pct');
@@ -1229,15 +1786,41 @@ export function syncToken(): void {
   if (p) p.textContent = fmtCurve(curve(c));
   if (b) {
     b.style.width = curve(c) + '%';
-    b.className = c.lane === 'grad' ? 'done' : '';
+    b.className = isGraduated(c) ? 'done' : '';
   }
   updateCurveNote();
+  // Relative comment times move on their own; the list is not rebuilt for it.
+  if (TV.tab === 'comments') {
+    const now = Date.now();
+    for (const el of $$('#cmt-list [data-at]')) {
+      const at = Number(el.dataset['at']);
+      const t = relTime(at, now);
+      if (el.textContent !== t) el.textContent = t;
+    }
+  }
+  holdersFollowFills(c);
   retitle();
 }
 
 /* --------------------------------- open ----------------------------------- */
 
 export function openToken(c: SimCoin): void {
+  CH = freshChart('');
+  DETAIL = null;
+  detailKey = '';
+  TR.hasMore = false;
+  TR.loading = false;
+  TR.nextBefore = undefined;
+  HD.shown = 25;
+  HD.loading = false;
+  HD.refreshing = false;
+  HD.source = null;
+  HD.holderCount = null;
+  HD.fillsAtRead = -1;
+  window.clearTimeout(HD.timer);
+  HD.timer = 0;
+  commentReplyTo = null;
+  commentAccess = null;
   if (api.mode === 'sim') {
     seedSeries(c);
     seedTrades(c);
@@ -1252,10 +1835,14 @@ export function openToken(c: SimCoin): void {
     commentUnsub = null;
     void api.watchToken(c).then(() => {
       if (TV.c !== c) return; // navigated away before the fetch landed
+      // A 40-row first page that came back full may have older fills behind it.
+      TR.hasMore = (c.trades?.length ?? 0) >= 40;
+      HD.fillsAtRead = distinctFills(c);
       paint(c);
       drawTChart();
       if (TV.tab !== 'comments') renderTab();
     });
+    refreshDetail(c);
   }
   c.lane = laneOf(c);
   TV.c = c;
@@ -1263,23 +1850,15 @@ export function openToken(c: SimCoin): void {
   navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) }, { replace: true });
   TV.tab = 'trades';
   TV.side = 'BUY';
-  TV.range = 90;
+  TV.range = 120;
   TV.cross = null;
+  TV.tf = defaultTimeframe(c.age);
+  TV.axis = 'USD';
   const v = must('#tokenView');
   render(v, tokenHTML(c));
   showView('token');
   paintCoinArt($<HTMLCanvasElement>('.tk-bar canvas'), c.seed, c.image, 46);
   updateCurveNote();
-  render(
-    must('#t-quick'),
-    html`${[0.1, 0.5, 1, 5].map((x) => html`<button type="button" class="qa" data-a="${attr(x)}">${x}</button>`)}<button
-        type="button"
-        class="qa"
-        data-a="max"
-      >
-        MAX
-      </button>`,
-  );
   renderTab();
   renderX(c.x ?? '@' + c.sym.toLowerCase());
   renderQuote();
@@ -1319,7 +1898,7 @@ export function openToken(c: SimCoin): void {
     const amt = must<HTMLInputElement>('#t-amt');
     // Reset to a sensible default for the new side — never leave an ETH
     // balance sitting in the box after flipping to SELL.
-    if (TV.side === 'BUY') amt.value = Number(SET.defBuy).toFixed(4);
+    if (TV.side === 'BUY') amt.value = fmtInput(defaultBuyAmount(c));
     else {
       const hp = holdOf(c.sym);
       if (hp?.tokAtoms) amt.value = safeSellAmountInput(BigInt(hp.tokAtoms));
@@ -1350,8 +1929,14 @@ export function openToken(c: SimCoin): void {
           amt.value = tok > 0 ? String(tok * p) : '0';
         }
       }
+    } else if (raw === 'max') {
+      // The wallet's balance is in the wallet's unit; MAX only means
+      // something when that is the coin's unit, and it keeps gas back.
+      const sameUnit = !WALLET.on || nativeUnit() === coinUnit(c);
+      const spendable = sameUnit ? Math.max(0, WALLET.sol - GAS_RESERVE[coinUnit(c)]) : 0;
+      amt.value = fmtInput(spendable);
     } else {
-      amt.value = raw === 'max' ? WALLET.sol.toFixed(4) : Number(raw).toFixed(4);
+      amt.value = fmtInput(Number(raw));
     }
     for (const x of Array.from(must('#t-quick').children)) x.classList.toggle('on', x === b);
     renderQuote();
@@ -1363,6 +1948,24 @@ export function openToken(c: SimCoin): void {
     b.addEventListener('click', () => {
       TV.range = Number(b.dataset['rg']);
       for (const x of $$('[data-rg]')) x.classList.toggle('on', x === b);
+      drawTChart();
+    });
+  }
+  for (const b of $$('[data-tf]')) {
+    b.addEventListener('click', () => {
+      const tf = b.dataset['tf'] ?? '';
+      if (!isTimeframe(tf)) return;
+      TV.tf = tf;
+      for (const x of $$('[data-tf]')) x.classList.toggle('on', x === b);
+      const lbl = $('#ch-tf');
+      if (lbl) lbl.textContent = tf.toUpperCase();
+      drawTChart();
+    });
+  }
+  for (const b of $$('[data-ax]')) {
+    b.addEventListener('click', () => {
+      TV.axis = b.dataset['ax'] === 'NATIVE' ? 'NATIVE' : 'USD';
+      for (const x of $$('[data-ax]')) x.classList.toggle('on', x === b);
       drawTChart();
     });
   }
@@ -1407,11 +2010,13 @@ async function submitTrade(c: SimCoin): Promise<void> {
   }
   const amount = parseFloat(must<HTMLInputElement>('#t-amt').value) || 0;
   if (amount <= 0) return;
-  if (api.mode === 'live' && (!c.tradeable || c.lane === 'grad')) {
+  if (api.mode === 'live' && (!c.tradeable || curveClosed(c))) {
     toast(
-      c.lane === 'grad'
-        ? 'GRADUATED — DEX TRADES NOT WIRED ON STAGING'
-        : 'NOT TRADEABLE YET — PROGRAMS NOT DEPLOYED / NO ON-CHAIN MINT',
+      isGraduated(c)
+        ? 'GRADUATED — TRADE ON ' + NET_INFO[c.net ?? 'SOL'].dex + '; THE CURVE IS CLOSED'
+        : c.curveComplete
+          ? 'CURVE SOLD OUT — AWAITING GRADUATION'
+          : 'NOT TRADEABLE YET — PROGRAMS NOT DEPLOYED / NO ON-CHAIN MINT',
       'red',
     );
     return;
@@ -1422,10 +2027,11 @@ async function submitTrade(c: SimCoin): Promise<void> {
       (buy ? 'BUY ' : 'SELL ') +
       amount +
       ' ' +
-      (buy ? nativeUnit() : c.sym) +
+      (buy ? coinUnit(c) : c.sym) +
       ' OF $' +
       c.sym +
-      '?';
+      '?\n' +
+      settingsSummary(c.net ?? WALLET.net);
     if (!window.confirm(label)) {
       toast('ORDER CANCELLED', 'red');
       return;
@@ -1456,7 +2062,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
     // local mutation the sim used to do. `plan step 95`
     await api.trade(q);
   } catch (err) {
-    go.disabled = api.mode === 'live' && (!c.tradeable || c.lane === 'grad');
+    go.disabled = api.mode === 'live' && (!c.tradeable || curveClosed(c));
     go.textContent = restoreLabel;
     if (err instanceof SignerCancelledError) toast('SIGNING CANCELLED', 'red');
     else if (isRejection(err)) toast(describeWalletError(err), 'red');
@@ -1478,7 +2084,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
       } else if (code === 'cap_exceeded') {
         toast('OVER YOUR TRADE CAP — RAISE IT IN SETTINGS OR TRADE LESS.', 'red');
       } else if (code === 'insufficient_native' || code === 'insufficient_balance') {
-        toast('NOT ENOUGH ' + nativeUnit() + ' FOR THIS ORDER PLUS GAS.', 'red');
+        toast('NOT ENOUGH ' + coinUnit(c) + ' FOR THIS ORDER PLUS GAS.', 'red');
       } else if (code === 'slippage_exceeded' || code === 'quote_expired') {
         toast('PRICE MOVED PAST YOUR SLIPPAGE — REQUOTE AND TRY AGAIN.', 'red');
       } else if (code === 'no_route') {
@@ -1503,7 +2109,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
     (buy ? 'Your buy order for ' : 'Your sell order for ') +
       amount.toFixed(2) +
       ' ' +
-      (buy ? nativeUnit() : c.sym) +
+      (buy ? coinUnit(c) : c.sym) +
       ' of $' +
       c.sym +
       ' was successful' +
@@ -1532,7 +2138,7 @@ async function submitTrade(c: SimCoin): Promise<void> {
       (buy ? 'aped ' : 'sold ') +
       amount.toFixed(2) +
       ' ' +
-      nativeUnit().toLowerCase() +
+      coinUnit(c).toLowerCase() +
       ' of $' +
       c.sym,
     mine: true,
@@ -1542,12 +2148,21 @@ async function submitTrade(c: SimCoin): Promise<void> {
   syncToken();
   renderQuote();
   paint(c);
+  refreshDetail(c, 2500);
 }
 
 export function closeToken(): void {
   if (TV.c && api.mode === 'live') api.unwatchToken(TV.c.sym);
   clearInterval(TV.qTimer);
   TV.qTimer = 0;
+  window.clearTimeout(detailTimer);
+  window.clearTimeout(HD.timer);
+  HD.timer = 0;
+  commentUnsub?.();
+  commentUnsub = null;
+  commentsLoadedFor = null;
+  CH = freshChart('');
+  DETAIL = null;
   TV.c = null;
   clear(must('#tokenView'));
   setChatToken(null);

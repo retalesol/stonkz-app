@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { splitFee as splitFeeAtoms } from '@stonkz/curve-sim';
 import { assertFeeSplit, EventIntegrityError, type FeeAccruedEvent } from '../events.js';
-import {
-  assertOnChainFeeSplit,
-  FeeSplitMismatchError,
-  LEGACY_V1_SPLIT_BPS,
-  nativeFeeLegs,
-  splitFeeLegacyV1,
-} from './market.js';
+import { assertOnChainFeeSplit, FeeSplitMismatchError, nativeFeeLegs } from './market.js';
 
 /** 2.5% of 1.5 SOL, in lamports. */
 const FEE = 37_500_000n;
+
+/** The pre-upgrade 20 / 10 / 10 / 60 split, which the indexer no longer accepts. */
+function splitFeeV1(fee: bigint) {
+  const protocol = (fee * 2_000n) / 10_000n;
+  const stonkzOps = (fee * 1_000n) / 10_000n;
+  const burn = (fee * 1_000n) / 10_000n;
+  return { protocol, stonkzOps, burn, creatorBucket: fee - protocol - stonkzOps - burn };
+}
 
 describe('assertOnChainFeeSplit', () => {
   it('accepts the v2 15/10/6/69 split and says so', () => {
@@ -26,30 +28,23 @@ describe('assertOnChainFeeSplit', () => {
     ).toBe('v2');
   });
 
-  it('accepts the legacy v1 20/10/10/60 split during the upgrade window', () => {
-    const v1 = splitFeeLegacyV1(FEE);
-    expect(LEGACY_V1_SPLIT_BPS).toMatchObject({ protocol: 2_000n, ops: 1_000n, burn: 1_000n });
-    expect(v1).toEqual({
-      protocol: 7_500_000n,
-      stonkzOps: 3_750_000n,
-      burn: 3_750_000n,
-      creatorBucket: 22_500_000n,
-    });
-    expect(
-      assertOnChainFeeSplit('v1', FEE, v1.protocol, v1.stonkzOps, v1.burn, v1.creatorBucket),
-    ).toBe('v1');
-  });
-
-  it('gives v1 floor dust to the bucket, exactly like the programs', () => {
+  it('gives v2 floor dust to the bucket, exactly like the programs', () => {
     const odd = 12_345n;
-    const v1 = splitFeeLegacyV1(odd);
-    expect(v1.protocol + v1.stonkzOps + v1.burn + v1.creatorBucket).toBe(odd);
+    const v2 = splitFeeAtoms(odd);
+    expect(v2.protocol + v2.stonkzOps + v2.burn + v2.creatorBucket).toBe(odd);
     expect(
-      assertOnChainFeeSplit('dust', odd, v1.protocol, v1.stonkzOps, v1.burn, v1.creatorBucket),
-    ).toBe('v1');
+      assertOnChainFeeSplit('dust', odd, v2.protocol, v2.stonkzOps, v2.burn, v2.creatorBucket),
+    ).toBe('v2');
   });
 
-  it('rejects legs that match neither split', () => {
+  it('rejects the retired v1 20/10/10/60 split', () => {
+    const v1 = splitFeeV1(FEE);
+    expect(() =>
+      assertOnChainFeeSplit('v1', FEE, v1.protocol, v1.stonkzOps, v1.burn, v1.creatorBucket),
+    ).toThrow(FeeSplitMismatchError);
+  });
+
+  it('rejects legs that are off by an atom', () => {
     const v2 = splitFeeAtoms(FEE);
     expect(() =>
       assertOnChainFeeSplit(
@@ -60,19 +55,18 @@ describe('assertOnChainFeeSplit', () => {
         v2.burn,
         v2.creatorBucket - 1n,
       ),
-    ).toThrow(FeeSplitMismatchError);
-    // A mix of the two (v2 protocol, v1 burn) is not a valid settlement either.
-    const v1 = splitFeeLegacyV1(FEE);
+    ).toThrow(/not the integer 15\/69\/10\/6 split/);
+    // Legs that sum to the fee but with the wrong burn leg are not a settlement either.
     expect(() =>
       assertOnChainFeeSplit(
         'mixed',
         FEE,
         v2.protocol,
         v2.stonkzOps,
-        v1.burn,
-        FEE - v2.protocol - v2.stonkzOps - v1.burn,
+        v2.burn + 1n,
+        v2.creatorBucket - 1n,
       ),
-    ).toThrow(/match neither/);
+    ).toThrow(FeeSplitMismatchError);
   });
 });
 
@@ -96,18 +90,34 @@ describe('nativeFeeLegs + assertFeeSplit', () => {
     expect(legs.stonkzOps).toBeCloseTo(0.0375 * 0.1, 12);
     expect(legs.burn).toBeCloseTo(0.0375 * 0.06, 12);
     expect(legs.creatorBucket).toBeCloseTo(0.0375 * 0.69, 12);
+    expect(legs.stakerShare).toBe(0);
     expect(() => assertFeeSplit(event(legs))).not.toThrow();
   });
 
-  it('rescales a v1 fill by the v1 ratios and passes the float check', () => {
-    const legs = nativeFeeLegs(0.0375, 0n, 22_500_000n, 'v1');
-    expect(legs.protocol).toBeCloseTo(0.0375 * 0.2, 12);
-    expect(legs.burn).toBeCloseTo(0.0375 * 0.1, 12);
-    expect(legs.creatorBucket).toBeCloseTo(0.0375 * 0.6, 12);
-    expect(() => assertFeeSplit(event(legs))).not.toThrow();
+  it('carries the staker peel across as the same fraction of the bucket, capped at half', () => {
+    const quarter = nativeFeeLegs(0.0375, 25_875_000n / 4n, 25_875_000n);
+    expect(quarter.stakerShare).toBeCloseTo(quarter.creatorBucket / 4, 12);
+    const over = nativeFeeLegs(0.0375, 25_875_000n, 25_875_000n);
+    expect(over.stakerShare).toBeCloseTo(over.creatorBucket / 2, 12);
+    expect(() => assertFeeSplit(event(over))).not.toThrow();
   });
 
-  it('rejects float legs that match neither split', () => {
+  it('rejects float legs on the retired v1 ratios', () => {
+    const legs = nativeFeeLegs(0.0375, 0n, 22_500_000n);
+    expect(() =>
+      assertFeeSplit(
+        event({
+          ...legs,
+          protocol: 0.0375 * 0.2,
+          creatorBucket: 0.0375 * 0.6,
+          stonkzOps: 0.0375 * 0.1,
+          burn: 0.0375 * 0.1,
+        }),
+      ),
+    ).toThrow(EventIntegrityError);
+  });
+
+  it('rejects float legs that match nothing', () => {
     const legs = nativeFeeLegs(1, 0n, 0n);
     expect(() =>
       assertFeeSplit(

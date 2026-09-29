@@ -219,6 +219,20 @@ export function explorerAddressUrl(net: Net, address: string): string {
   );
 }
 
+/**
+ * Where to trade a graduated coin. Solana mainnet: Meteora's own DLMM page
+ * for the pool. Everywhere else (the EVM testnets run a Stonkz-deployed V2
+ * factory no Uniswap front end knows about; Solana devnet has no Meteora UI)
+ * the pool's explorer page, where the pair contract and its reserves are
+ * verifiable and one click from a swap.
+ */
+export function dexPoolUrl(net: Net, pool: string): string {
+  if (!isEvmNet(net) && solanaWalletStandardChain() === 'solana:mainnet') {
+    return 'https://app.meteora.ag/dlmm/' + pool;
+  }
+  return explorerAddressUrl(net, pool);
+}
+
 export function chainLabel(net: Net): string {
   if (net === 'SOL') return 'SOLANA ' + SOLANA_CLUSTER.toUpperCase();
   return NET_INFO[net].name + ' (' + EVM_CHAINS[net].chainId + ')';

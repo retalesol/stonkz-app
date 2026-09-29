@@ -23,12 +23,14 @@ export type ScrimId =
   | '#claimScrim'
   | '#txScrim'
   | '#walletScrim'
-  | '#legalScrim';
+  | '#legalScrim'
+  | '#levelScrim';
 
 const traps = new Map<ScrimId, FocusTrap>();
 
 export function isOpen(id: ScrimId): boolean {
-  return must(id).classList.contains('open');
+  // `#levelScrim` is built on first use, so a missing scrim is simply closed.
+  return $(id)?.classList.contains('open') ?? false;
 }
 
 const ALL_SCRIMS: readonly ScrimId[] = [
@@ -42,6 +44,7 @@ const ALL_SCRIMS: readonly ScrimId[] = [
   '#txScrim',
   '#walletScrim',
   '#legalScrim',
+  '#levelScrim',
 ];
 
 export function anyOpen(): boolean {
@@ -84,8 +87,8 @@ export function openScrim(id: ScrimId, opener?: Element | null): void {
 }
 
 export function closeScrim(id: ScrimId): void {
-  const el = must(id);
-  if (!el.classList.contains('open')) return;
+  const el = $(id);
+  if (!el || !el.classList.contains('open')) return;
   el.classList.remove('open');
   // Another dialog may still be up — only release the scroll lock when none is.
   if (!anyOpen()) document.body.style.overflow = '';

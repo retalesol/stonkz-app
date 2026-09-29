@@ -110,59 +110,24 @@ export class FeeSplitMismatchError extends Error {
 }
 
 /**
- * TRANSITIONAL — remove after the program upgrade.
- *
- * The v1 fee split the deployed programs still settle until the operator
- * upgrades them to v2: 20% protocol / 10% ops (`stonkz_ops`) / 10% burn, each
- * floored in bps, with the remainder (60% + floor dust) to the creator bucket.
- * The indexer accepts a fill that matches this **or** the v2 split
- * (`@stonkz/curve-sim`'s `splitFee`, 15 / 10 / 6 / 69) so fills settled during
- * the upgrade window are ingested rather than dead-lettered. Once every net's
- * programs settle v2, delete this constant, `LEGACY_V1_FEE_SPLIT`,
- * `splitFeeLegacyV1` and the `'v1'` branches below and in `events.ts`.
+ * The fee split a fill was settled under. Only `v2` (15 / 10 / 6 / 69) exists
+ * now: the transitional `v1` (20 / 10 / 10 / 60) acceptance was removed once
+ * every deployed program settled v2 and no v1 fill remained in any indexed
+ * history — RH 46630 and Base 84532 were redeployed on 2026-09-27 and
+ * upgraded to v2 on 2026-09-28 (RH has had no launch since; Base's only
+ * coin, MEMEMAN, settled every fill at v2), and Solana devnet's retained
+ * fills all predate the four-leg event layout, so none of them decodes under
+ * either split. `scripts/reconcile-fees.ts` re-checks this against the chain.
  */
-export const LEGACY_V1_SPLIT_BPS = {
-  protocol: 2_000n,
-  ops: 1_000n,
-  burn: 1_000n,
-  den: 10_000n,
-} as const;
-
-/**
- * TRANSITIONAL — remove after the program upgrade. The v1 split as ratios, in
- * the chain event's leg names, for the `double` check in `events.ts`.
- */
-export const LEGACY_V1_FEE_SPLIT = {
-  protocol: 0.2,
-  stonkzOps: 0.1,
-  burn: 0.1,
-  creatorBucket: 0.6,
-} as const;
-
-/** TRANSITIONAL — the v1 integer split, the same shape as curve-sim's `splitFee`. */
-export function splitFeeLegacyV1(fee: bigint): {
-  protocol: bigint;
-  stonkzOps: bigint;
-  burn: bigint;
-  creatorBucket: bigint;
-} {
-  const { protocol: p, ops: o, burn: b, den } = LEGACY_V1_SPLIT_BPS;
-  const protocol = (fee * p) / den;
-  const stonkzOps = (fee * o) / den;
-  const burn = (fee * b) / den;
-  return { protocol, stonkzOps, burn, creatorBucket: fee - protocol - stonkzOps - burn };
-}
-
-/** Which fee split a fill was settled under. `v1` is transitional (see {@link LEGACY_V1_SPLIT_BPS}). */
-export type FeeSplitVersion = 'v2' | 'v1';
+export type FeeSplitVersion = 'v2';
 
 /**
  * Checks the chain's own fee legs against the 15/10/6/69 split **in integer
  * arithmetic**, using the same `splitFee` mirror the programs are held to by
- * `programs/parity-vectors.json`. During the upgrade window a fill settled
- * under the legacy v1 split ({@link LEGACY_V1_SPLIT_BPS}) is accepted too;
- * anything matching neither throws. Returns the version that matched, so
- * {@link nativeFeeLegs} rescales by the ratios the chain actually used.
+ * `programs/parity-vectors.json`. Anything else throws, and the fill is
+ * dead-lettered rather than ingested with a split the programs could not
+ * have produced. Returns the version that matched, so {@link nativeFeeLegs}
+ * rescales by the ratios the chain actually used.
  *
  * On-chain leg names are unchanged from v1: `ops` funds the `$STONKZ` buyback
  * vault and `burn` funds the RWA crate fund.
@@ -182,18 +147,17 @@ export function assertOnChainFeeSplit(
   burn: bigint,
   creatorBucket: bigint,
 ): FeeSplitVersion {
-  const matches = (expected: ReturnType<typeof splitFeeAtoms>): boolean =>
-    protocol === expected.protocol &&
-    ops === expected.stonkzOps &&
-    burn === expected.burn &&
-    creatorBucket === expected.creatorBucket;
-
   const v2 = splitFeeAtoms(feeTotal);
-  if (matches(v2)) return 'v2';
-  const v1 = splitFeeLegacyV1(feeTotal);
-  if (matches(v1)) return 'v1';
+  if (
+    protocol === v2.protocol &&
+    ops === v2.stonkzOps &&
+    burn === v2.burn &&
+    creatorBucket === v2.creatorBucket
+  ) {
+    return 'v2';
+  }
   throw new FeeSplitMismatchError(
-    `${context}: on-chain legs (${protocol}/${creatorBucket}/${ops}/${burn}) match neither the integer 15/69/10/6 split of ${feeTotal} (${v2.protocol}/${v2.creatorBucket}/${v2.stonkzOps}/${v2.burn}) nor the legacy 20/60/10/10 split (${v1.protocol}/${v1.creatorBucket}/${v1.stonkzOps}/${v1.burn})`,
+    `${context}: on-chain legs (${protocol}/${creatorBucket}/${ops}/${burn}) are not the integer 15/69/10/6 split of ${feeTotal} (${v2.protocol}/${v2.creatorBucket}/${v2.stonkzOps}/${v2.burn})`,
   );
 }
 
@@ -210,6 +174,10 @@ export function assertOnChainFeeSplit(
  * verified separately and exactly by {@link assertOnChainFeeSplit}, so nothing
  * is being taken on trust — the float legs are a faithful rescaling of a total
  * that was already checked.
+ *
+ * `stakerShareAtoms` must be the **native** peel: for a cashback fill whose
+ * bucket was converted into the token the peel is in tokens and the caller
+ * passes `0n` (see `evm-map.ts`).
  */
 export function nativeFeeLegs(
   feeTotalNative: number,
@@ -220,23 +188,14 @@ export function nativeFeeLegs(
   FeeAccruedEvent,
   'feeAmount' | 'protocol' | 'creatorBucket' | 'stonkzOps' | 'burn' | 'stakerShare'
 > {
-  const legs =
-    version === 'v1'
-      ? {
-          protocol: feeTotalNative * LEGACY_V1_FEE_SPLIT.protocol,
-          creatorBucket: feeTotalNative * LEGACY_V1_FEE_SPLIT.creatorBucket,
-          stonkzOps: feeTotalNative * LEGACY_V1_FEE_SPLIT.stonkzOps,
-          burn: feeTotalNative * LEGACY_V1_FEE_SPLIT.burn,
-        }
-      : (() => {
-          const v2 = splitFee(feeTotalNative);
-          return {
-            protocol: v2.protocol,
-            creatorBucket: v2.creatorBucket,
-            stonkzOps: v2.buyback,
-            burn: v2.rwa,
-          };
-        })();
+  void version;
+  const v2 = splitFee(feeTotalNative);
+  const legs = {
+    protocol: v2.protocol,
+    creatorBucket: v2.creatorBucket,
+    stonkzOps: v2.buyback,
+    burn: v2.rwa,
+  };
   // The staker peel is a fraction of the bucket on-chain; carry that same
   // fraction across so it stays inside the bucket after rescaling.
   const stakerFraction =

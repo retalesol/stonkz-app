@@ -1,5 +1,5 @@
 import type { Fill } from '@stonkz/shared';
-import { nativeUnit as nativeUnitOf, pct, usd } from '@stonkz/shared';
+import { fmtNative, nativeUnit as nativeUnitOf, pct, usd } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { navigate } from '../app/route.js';
 import { miniChart } from '../canvas/spark.js';
@@ -10,7 +10,8 @@ import { DOT, fakeAddr, ud } from '../lib/fmt.js';
 import { attr, html, node, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
 import { canHover } from '../lib/pointer.js';
-import { COINS, bySym, seedSeries, type SimCoin } from '../state/coins.js';
+import { COINS, byMint, bySym, seedSeries, type SimCoin } from '../state/coins.js';
+import { TapeLedger } from './tape-ledger.js';
 
 /**
  * The live tape.
@@ -19,16 +20,34 @@ import { COINS, bySym, seedSeries, type SimCoin } from '../state/coins.js';
  * particular trade). Live mode drives the exact same strip from real
  * `board`/`tape` WS fills via `pushFill()` — the punch, the jolt, the debris,
  * the frozen hover print and its chart are unchanged either way.
- * `plan step 65`, `index.html:1278`
+ *
+ * Every print, whatever its source, passes the {@link TapeLedger} first: the
+ * strip is the one place a fill is shown, so it is the one place its id is
+ * checked. `plan step 65`, `index.html:1278`
  */
 
 let run: HTMLElement;
 let vp: HTMLElement;
 let tape: HTMLElement;
 let loop = 0;
+/** Prints already on (or recently through) the strip, by fill id / tx hash. */
+const ledger = new TapeLedger();
+/** Most prints the strip keeps; older ones fall off the left. */
+export const TAPE_MAX_PRINTS = 60;
 
 function vw(): number {
   return vp.clientWidth;
+}
+
+/**
+ * A native amount for the strip: the chain's usual decimals, but never a
+ * `0.00` for a real fill — a 0.0048 SOL sell reads `0.0048`, not nothing.
+ */
+export function fmtTapeAmount(f: Pick<Fill, 'net' | 'sol'>): string {
+  const v = Math.abs(f.sol);
+  const fixed = fmtNative(f.net, v);
+  if (v > 0 && Number(fixed) === 0) return v.toPrecision(2).replace(/e-?\d+$/, '');
+  return fixed;
 }
 
 /** A wholly-invented print — sim mode only. `index.html:1278` */
@@ -44,15 +63,21 @@ function randomFill(): Fill {
     mc: c.mc,
     w: fakeAddr((Math.random() * 1e6) | 0),
     v: 0,
+    ...(c.mint ? { mint: c.mint } : {}),
   };
 }
 
 function build(f: Fill): HTMLElement {
   const el = node(
-    html`<span class="tx" data-sym="${attr(f.sym)}"
+    html`<span
+      class="tx"
+      data-sym="${attr(f.sym)}"
+      data-net="${attr(f.net)}"
+      ${f.mint ? html`data-mint="${attr(f.mint)}"` : ''}
+      ${f.fid ? html`data-fid="${attr(f.fid)}"` : ''}
       ><i class="blk ${f.buy ? 'up' : 'dn'}"></i
       ><b class="${f.buy ? 'up' : 'dn'}">${f.buy ? 'BUY' : 'SELL'}</b
-      ><span>${f.sol.toFixed(2)} ${nativeUnitOf(f.net)}</span><b class="gd">${f.sym}</b
+      ><span>${fmtTapeAmount(f)} ${nativeUnitOf(f.net)}</span><b class="gd">${f.sym}</b
       ><b class="dm">${DOT}</b><span class="dm">${f.w}</span></span
     >`,
   );
@@ -60,7 +85,7 @@ function build(f: Fill): HTMLElement {
 }
 
 function trim(): void {
-  while (run.children.length > 60) run.removeChild(run.firstChild as ChildNode);
+  while (run.children.length > TAPE_MAX_PRINTS) run.removeChild(run.firstChild as ChildNode);
   const w = vw();
   if (!w) return;
   while (run.offsetWidth > w * 2.6 && run.children.length > 4)
@@ -91,13 +116,20 @@ function push(f: Fill, animate: boolean): void {
   trim();
 }
 
-/** The live renderer: a real `board`/`tape` WS fill, or the initial seed batch. */
+/**
+ * The live renderer: a real `board`/`tape` WS fill, or the initial seed batch.
+ * A print the ledger has already seen — the indexed twin of a provisional
+ * fill, a reseed after a reconnect, a frame that raced the seed — is dropped
+ * here, before it can touch the DOM.
+ */
 export function pushFill(f: Fill, animate: boolean): void {
+  if (!ledger.admit(f)) return;
   push(f, animate);
 }
 
 /** Drop every print — call before reseeding on connect / disconnect / net switch. */
 export function clearTape(): void {
+  ledger.clear();
   if (!run) return;
   run.replaceChildren();
   run.style.transition = 'none';
@@ -118,6 +150,12 @@ function hit(r: DOMRect, e: MouseEvent, pad = 6): boolean {
     e.clientY >= r.top - pad &&
     e.clientY <= r.bottom + pad
   );
+}
+
+/** The coin a print belongs to — by mint when the frame carried one, so a reused ticker opens the right chart. */
+function coinOf(el: HTMLElement): SimCoin | null {
+  const mint = el.dataset['mint'];
+  return (mint && byMint(mint)) || bySym(el.dataset['sym'] ?? '');
 }
 
 /** Pick a candle window from the coin's age, the way a terminal would. `index.html:1320` */
@@ -173,7 +211,7 @@ function showPop(el: HTMLElement, c: SimCoin): void {
 }
 
 function pin(el: HTMLElement): void {
-  const c = bySym(el.dataset['sym'] ?? '');
+  const c = coinOf(el);
   if (!c) return;
   const vr = vp.getBoundingClientRect();
   const r = el.getBoundingClientRect();
@@ -233,7 +271,7 @@ export function initTape(): void {
   vp.addEventListener('click', (e) => {
     const el = (e.target as Element | null)?.closest<HTMLElement>('.tx') ?? null;
     if (!el) return;
-    const c = bySym(el.dataset['sym'] ?? '');
+    const c = coinOf(el);
     unpin();
     if (c) navigate({ view: 'token', sym: c.sym, ...(c.mint ? { mint: c.mint } : {}) });
   });

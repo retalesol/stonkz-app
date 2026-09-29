@@ -136,7 +136,13 @@ export function startRouting(): void {
   });
   const initial = parse(location.pathname, location.search);
   now = initial;
-  history.replaceState(initial, '', toPath(initial));
+  // The board keeps its own `?sort=&net=&q=` (views/board.ts), so a shared
+  // filter link survives the canonicalising rewrite here.
+  history.replaceState(
+    initial,
+    '',
+    toPath(initial) + (initial.view === 'board' ? location.search : ''),
+  );
   document.title = titleOf(initial);
   handler(initial, true);
 }

@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { MAJORS, isEvm, nativeUnit, parseNet, stockBasesFor, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { basePriceFor } from '../router/base-price.js';
 import { evmRouterAddress } from '../chain/evm-net.js';
 import { asEthCallSource, readRouterViaV3Support } from '../router/evm-pyth.js';
+import { fillId } from '../chain/trade-fills.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
+import { kothOverrides } from '../admin/index.js';
 import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
 import { resolveTokenRow } from './token-resolve.js';
@@ -28,6 +30,17 @@ export function marketRoutes(): Hono<AppEnv> {
       .select()
       .from(koth)
       .where(net ? eq(koth.net, net) : undefined);
+
+    // Admin KOTH pin (`token_moderation.koth_override`) replaces that net's crown.
+    for (const [oNet, mint] of await kothOverrides(deps.db, net)) {
+      const pinned = await resolveTokenRow(deps.db, oNet, { mint });
+      if (!pinned) continue;
+      const idx = rows.findIndex((r) => r.net === oNet);
+      const crownedAt = rows[idx]?.crownedAt ?? new Date(deps.now());
+      const crown = { net: oNet, sym: pinned.sym, mc: pinned.mc, crownedAt };
+      if (idx >= 0) rows[idx] = crown;
+      else rows.push(crown);
+    }
 
     const now = deps.now();
     const kings = await Promise.all(
@@ -53,22 +66,46 @@ export function marketRoutes(): Hono<AppEnv> {
     const deps = c.get('deps');
     const netParam = c.req.query('net');
     const net = netParam === 'ALL' ? null : (parseNet(netParam) ?? c.get('user')?.net ?? 'SOL');
-    const max = Math.min(Number.parseInt(c.req.query('limit') ?? '40', 10) || 40, 200);
+    const parsed = Number.parseInt(c.req.query('limit') ?? '', 10);
+    const max = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 40;
 
+    // Spelled out in full: drizzle renders `${tape.net}` as a bare `"net"` in
+    // a single-table select, which a correlated subquery resolves to *its*
+    // own row — the fixture filter below was a tautology until it was
+    // qualified, and the mint lookup would have returned the newest coin on
+    // any chain.
+    const TAPE_NET = sql.raw('"tape"."net"');
+    const TAPE_SYM = sql.raw('"tape"."sym"');
     const filters = [
       net ? eq(tape.net, net) : undefined,
       // Drop fills for fixture / legacy tokens that may linger from old replays.
       sql`exists (
         select 1 from ${tokens} t
-        where t.net = ${tape.net}
-          and t.sym = ${tape.sym}
+        where t.net = ${TAPE_NET}
+          and t.sym = ${TAPE_SYM}
           and t.mint <> ''
           and t.mint not like 'legacy:%'
       )`,
     ].filter(Boolean);
 
+    // The fill's position among its transaction's fills — the same ordinal
+    // the indexer and `/trade/confirm` put in `fid`, so a seeded print and
+    // the WS print of one fill carry one id and the strip shows it once.
+    // Window functions run before LIMIT, so the ordinal is right even when
+    // only one of a multi-fill transaction's rows makes the page.
+    const ordinal = sql<number>`(row_number() over (
+      partition by ${tape.net}, ${tape.txSig} order by ${tape.logIndex}
+    ) - 1)::int`;
+    // The newest coin with this ticker on this net, so the board can key the
+    // print to a card even when a ticker was reused.
+    const mint = sql<string | null>`(
+      select t.mint from ${tokens} t
+      where t.net = ${TAPE_NET} and t.sym = ${TAPE_SYM}
+      order by t.launched_at desc limit 1
+    )`;
+
     const rows = await deps.db
-      .select()
+      .select({ ...getTableColumns(tape), ordinal, mint })
       .from(tape)
       .where(and(...filters))
       .orderBy(desc(tape.id))
@@ -80,6 +117,7 @@ export function marketRoutes(): Hono<AppEnv> {
         t: r.blockTime.getTime(),
         sym: r.sym,
         net: r.net,
+        ...(r.mint ? { mint: r.mint } : {}),
         buy: r.side === 'buy',
         sol: r.nativeAmount,
         tok: r.tokenAmount,
@@ -88,6 +126,7 @@ export function marketRoutes(): Hono<AppEnv> {
         v: r.usdValue,
         cb: r.cashback,
         sig: r.txSig,
+        fid: fillId(r.txSig, r.ordinal),
       })),
     });
   });

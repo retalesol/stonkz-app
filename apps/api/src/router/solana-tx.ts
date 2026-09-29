@@ -13,7 +13,7 @@ import {
 import type { ChainRpc, SolanaBlockhashSource, SolanaTransactionSource } from '../chain/types.js';
 import type { JupiterInstruction, JupiterSwapInstructionsResponse } from './jupiter.js';
 import { compileSolanaTransaction } from './solana-alt.js';
-import { buildSolanaFeeInstructions } from './solana-fees.js';
+import { planSolanaFees, splitJupiterComputeBudget } from './solana-fees.js';
 import { buildBuyInstruction, buildSellInstruction, traderAtas } from './solana-instructions.js';
 
 /** Mirrors `app/deps.ts`'s `asEthCaller` — narrows a `ChainRpc` to the blockhash capability only the real Solana RPC (and `FakeChainRpc`) implement. */
@@ -75,6 +75,16 @@ export interface SolanaTradeComposition {
   lookupTables?: readonly AddressLookupTableAccount[];
 }
 
+/** The fee/tip numbers actually written into the transaction — what the UI confirms against. */
+export interface SolanaTradeFees {
+  computeUnitLimit: number;
+  computeUnitPriceMicroLamports: number;
+  /** `computeUnitLimit × price`, the most the priority fee can cost. */
+  maxPriorityLamports: number;
+  tipLamports: number;
+  tipAccount: string | null;
+}
+
 export interface ComposedSolanaTransaction {
   /** Base64 of the serialized, *unsigned* transaction message + empty signature slots. */
   base64: string;
@@ -83,6 +93,7 @@ export interface ComposedSolanaTransaction {
   version: 'legacy' | 0;
   /** Wire size in bytes, at most 1232. */
   bytes: number;
+  fees: SolanaTradeFees;
 }
 
 function toTransactionInstruction(ix: JupiterInstruction): TransactionInstruction {
@@ -97,14 +108,18 @@ function toTransactionInstruction(ix: JupiterInstruction): TransactionInstructio
   });
 }
 
+/**
+ * Jupiter's swap instructions, minus its compute-budget ixs — those are
+ * merged into the single budget `planSolanaFees` writes at the front, the
+ * same way `solana-launch-tx.ts` folds them into a launch. Jupiter's routes
+ * index into its lookup tables; the caller has already read them
+ * (`solana-alt.ts`'s `fetchAddressLookupTables`) and passes them as
+ * `lookupTables`, so the v0 compile below resolves them.
+ */
 function jupiterInstructions(hop: JupiterHop): TransactionInstruction[] {
   const r = hop.response;
-  // Jupiter's routes index into its lookup tables; the caller has already
-  // read them (`solana-alt.ts`'s `fetchAddressLookupTables`) and passes them
-  // as `lookupTables`, so the v0 compile below resolves them.
   const out: TransactionInstruction[] = [];
   if (r.tokenLedgerInstruction) out.push(toTransactionInstruction(r.tokenLedgerInstruction));
-  out.push(...r.computeBudgetInstructions.map(toTransactionInstruction));
   out.push(...r.setupInstructions.map(toTransactionInstruction));
   out.push(toTransactionInstruction(r.swapInstruction));
   if (r.cleanupInstruction) out.push(toTransactionInstruction(r.cleanupInstruction));
@@ -118,15 +133,23 @@ export function composeSolanaTradeTransaction(
   const ixs: TransactionInstruction[] = [];
 
   // Priority / tip first so they apply even if a later ix fails simulation
-  // after CU accounting. Skip CU ixs when Jupiter already packed them.
-  const feeIxs = buildSolanaFeeInstructions({
+  // after CU accounting. Exactly one CU limit and (when `prio` > 0) one CU
+  // price for the whole transaction: Jupiter's own budget ixs are folded in,
+  // never appended alongside ours.
+  const fees = planSolanaFees({
     prioSol: c.prioSol ?? 0,
     mevOn: !!c.mevOn,
     mevTipSol: c.mevTipSol ?? 0,
     payer: c.trader,
-    skipComputeBudget: !!c.jupiter,
+    ...(c.jupiter
+      ? {
+          jupiterBudget: splitJupiterComputeBudget(
+            c.jupiter.response.computeBudgetInstructions.map(toTransactionInstruction),
+          ),
+        }
+      : {}),
   });
-  if (feeIxs.length) ixs.push(...feeIxs);
+  ixs.push(...fees.instructions);
 
   const atas = traderAtas({
     programId: c.programId,
@@ -214,5 +237,14 @@ export function composeSolanaTradeTransaction(
     lastValidBlockHeight: blockhash.lastValidBlockHeight,
     version: compiled.version,
     bytes: compiled.bytes,
+    fees: {
+      computeUnitLimit: fees.computeUnitLimit,
+      computeUnitPriceMicroLamports: fees.computeUnitPriceMicroLamports,
+      maxPriorityLamports: Math.ceil(
+        (fees.computeUnitLimit * fees.computeUnitPriceMicroLamports) / 1_000_000,
+      ),
+      tipLamports: fees.tipLamports,
+      tipAccount: fees.tipAccount,
+    },
   };
 }

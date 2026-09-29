@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { MAX_TRADE_CAP, DEFAULT_TRADE_CAP, nativeUnit } from '@stonkz/shared';
-import { settings, users } from '../db/schema.js';
+import { sessions, settings, users } from '../db/schema.js';
 import { limit, requireAuth } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
+import { serialiseUser } from '../social/profile.js';
 import type { AppEnv } from '../app/context.js';
 
 function clampSetting(raw: unknown, min: number, max: number, fallback: number): number {
@@ -65,13 +66,21 @@ export function meRoutes(): Hono<AppEnv> {
     const snapshot = await deps.ledger.snapshot(net, wallet);
     const crates = await deps.crates.states(net, wallet);
     const referral = await deps.referrals.snapshot(net, wallet);
+    const profile = profileRow ? serialiseUser(profileRow) : null;
 
     return c.json({
       net,
       wallet,
-      username: profileRow?.username ?? null,
-      bio: profileRow?.bio ?? null,
-      avatarUrl: profileRow?.avatarUrl ?? null,
+      // Flat identity fields stay for older clients; `profile` carries the
+      // whole editable set (links + privacy) for the settings dialog.
+      username: profile?.username ?? null,
+      bio: profile?.bio ?? null,
+      avatarUrl: profile?.avatarUrl ?? null,
+      xHandle: profile?.xHandle ?? null,
+      website: profile?.website ?? null,
+      telegram: profile?.telegram ?? null,
+      private: profile?.private ?? false,
+      profile,
       createdAt: profileRow?.createdAt.getTime() ?? null,
       native: {
         unit,
@@ -154,6 +163,31 @@ export function meRoutes(): Hono<AppEnv> {
       });
 
     return c.json({ slip, prio, mev, mevTip, cap, defBuy, confirm });
+  });
+
+  /**
+   * "Sign out everywhere": revokes every other refresh session for this
+   * wallet on this net. The current session stays (the caller is still
+   * looking at the dialog); other devices lose the ability to refresh and
+   * their access tokens expire within `accessTtlSeconds`.
+   */
+  app.post('/me/sessions/revoke-others', requireAuth(), limit(RATE_LIMITS.social), async (c) => {
+    const deps = c.get('deps');
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'unauthorized' }, 401);
+    const revoked = await deps.db
+      .update(sessions)
+      .set({ revokedAt: new Date(deps.now()) })
+      .where(
+        and(
+          eq(sessions.net, user.net),
+          eq(sessions.wallet, user.wallet),
+          isNull(sessions.revokedAt),
+          ...(user.sessionId ? [ne(sessions.id, user.sessionId)] : []),
+        ),
+      )
+      .returning({ id: sessions.id });
+    return c.json({ ok: true, revoked: revoked.length });
   });
 
   /**

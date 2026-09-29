@@ -1,4 +1,5 @@
 import {
+  GRAD,
   cbLeft,
   curve,
   effFee,
@@ -41,6 +42,23 @@ export interface SerialisedToken extends Coin {
   inCashback: boolean;
   cbLeftMs: number;
   graduatedAt: number | null;
+  /**
+   * Graduation, as the chain has it — not as `mc` implies. `lane === 'grad'`
+   * only says the cap crossed $69K; the curve stays open until someone calls
+   * the permissionless `graduate` (oracle trigger) or the allocation sells out.
+   *
+   * - `curveComplete`: the 80% allocation is gone (`realToken == 0`); buys
+   *   revert `"curve complete"` until `graduate` lands, which needs no oracle.
+   * - `graduationReady`: `graduate` should succeed now — the curve is complete
+   *   or the cap is at/over $69K — and `graduatedAt` is still null. What the
+   *   token page turns into a "GRADUATE NOW" button (`POST /tokens/:sym/graduate/prepare`).
+   * - `poolAddress` / `positionAddress`: where the liquidity went, once
+   *   `LiquidityMigrated` has been indexed (a later transaction on EVM).
+   */
+  curveComplete: boolean;
+  graduationReady: boolean;
+  poolAddress: string | null;
+  positionAddress: string | null;
   launchedAt: number;
 }
 
@@ -67,6 +85,9 @@ export function serialiseToken(row: TokenRow, now: number): SerialisedToken {
   };
   const mc = row.mc > 0 ? row.mc : mcFromCurve(row);
   const curveCoin = { mc, supply: row.supply, seed: row.seed };
+  // Only a real curve (`k` set) can be complete; fixture rows default to '0'.
+  const curveComplete =
+    !!row.curveK && row.curveK !== '0' && (row.curveRealToken === '0' || row.curveRealToken === '');
 
   return {
     // The board keys cards by ticker; `(net, sym)` is the real identity.
@@ -109,6 +130,10 @@ export function serialiseToken(row: TokenRow, now: number): SerialisedToken {
     inCashback: inCashback(feeCoin, now),
     cbLeftMs: cbLeft(feeCoin, now),
     graduatedAt: row.graduatedAt?.getTime() ?? null,
+    curveComplete,
+    graduationReady: row.graduatedAt == null && !!row.mint && (curveComplete || mc >= GRAD),
+    poolAddress: row.poolAddress ?? null,
+    positionAddress: row.positionAddress ?? null,
     launchedAt: row.launchedAt.getTime(),
   };
 }

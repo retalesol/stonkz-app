@@ -166,7 +166,7 @@ fn guard(c: &Curve, g: &Global) -> Result<()> {
 /// Called only with the bucket amount. Protocol and ops have already been sent
 /// to their own vaults by the time this runs, so there is no code path by which
 /// they could reach the pool.
-fn accrue_bucket_base(c: &mut Curve, bucket: u64, circulating: u64) -> Result<(u64, u64)> {
+pub(crate) fn accrue_bucket_base(c: &mut Curve, bucket: u64, circulating: u64) -> Result<(u64, u64)> {
     let sp = split_creator_bucket(bucket, c.eligible_staked, circulating);
     c.creator_claimable_base = c
         .creator_claimable_base
@@ -186,7 +186,7 @@ fn accrue_bucket_base(c: &mut Curve, bucket: u64, circulating: u64) -> Result<(u
     Ok((sp.creator, sp.stakers))
 }
 
-fn accrue_bucket_token(c: &mut Curve, tokens: u64, circulating: u64) -> Result<(u64, u64)> {
+pub(crate) fn accrue_bucket_token(c: &mut Curve, tokens: u64, circulating: u64) -> Result<(u64, u64)> {
     let sp = split_creator_bucket(tokens, c.eligible_staked, circulating);
     c.creator_claimable_token = c
         .creator_claimable_token

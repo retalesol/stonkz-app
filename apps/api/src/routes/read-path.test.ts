@@ -361,7 +361,16 @@ describe('GET /tokens/:sym/candles', () => {
     expect(body.candles).toHaveLength(3);
     const times = body.candles.map((c) => c.t);
     expect([...times].sort((a, b) => a - b)).toEqual(times);
-    expect(body.candles[0]).toMatchObject({ o: 4, h: 5, l: 0.5, c: 4.5, v: 300 });
+    // Built from the fills at the curve's spot after each (`mc / supply`),
+    // not from the indexer's exec-price candles: 12,003 / 12,002 / 12,001
+    // over 1e9, oldest first, each open carrying the previous close.
+    expect(body.candles[0]?.c).toBeCloseTo(12_003 / 1e9, 15);
+    expect(body.candles[0]?.v).toBe(300);
+    expect(body.candles[1]?.o).toBeCloseTo(12_003 / 1e9, 15);
+    expect(body.candles[1]?.c).toBeCloseTo(12_002 / 1e9, 15);
+    expect(body.candles[1]?.h).toBeCloseTo(12_003 / 1e9, 15);
+    expect(body.candles[1]?.l).toBeCloseTo(12_002 / 1e9, 15);
+    expect(body.candles[2]?.v).toBe(100);
   });
 
   it('defaults to 1m and rejects an unsupported timeframe', async () => {
@@ -480,6 +489,7 @@ describe('GET /tokens/:sym/fees', () => {
         'referrals',
         'rwa',
         'stakers',
+        'stakersTokens',
       ].sort(),
     );
     expect(body.totals['protocol']).toBeCloseTo(0.3, 9);

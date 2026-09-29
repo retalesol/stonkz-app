@@ -15,3 +15,42 @@
 .mine-row .mt{font-size:10px;color:var(--dim)}
 .empty{padding:14px 10px;font-size:11px;color:var(--dim);text-align:center}
 
+
+/* ---------- profile: links, privacy, pnl, activity (profile-render.ts) ---------- */
+.pf-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.pf-link{font-size:10px;letter-spacing:.06em;color:var(--blue);border:1px solid var(--line2);padding:1px 6px;text-decoration:none}
+.pf-link:hover{border-color:var(--amber);color:var(--amber)}
+.pf-private{font-size:9.5px;letter-spacing:.1em;border:1px solid var(--amber);color:var(--amber);padding:1px 5px;align-self:center;cursor:help}
+.pf-notice{padding:16px 10px;font-size:10.5px;color:var(--dim);text-align:center;border:1px dashed var(--line2);letter-spacing:.04em}
+.pf-sub{font-size:9.5px;color:var(--dim)}
+.pf-net{font-size:9px;color:var(--dim);letter-spacing:.06em;border:1px solid var(--line2);padding:0 3px;vertical-align:middle}
+.pf-pnl{display:flex;gap:16px;padding:6px 10px;border-top:1px solid var(--line);font-size:10.5px}
+.pf-pnl .lbl{color:var(--dim);letter-spacing:.06em;font-size:9.5px}
+.basis-flag{color:var(--dim);font-size:10px;margin-left:3px;cursor:help}
+.pf-tx{color:var(--blue);font-size:10px;text-decoration:none}
+.pf-tx:hover{color:var(--amber);text-decoration:underline}
+.pf-more{display:block;width:100%;margin-top:6px;padding:6px;border:1px solid var(--line2);background:#12161f;color:var(--txt2);font-size:10.5px;letter-spacing:.08em;cursor:pointer}
+.pf-more:hover{border-color:var(--amber);color:var(--amber)}
+.pf-more[disabled]{opacity:.5;cursor:wait}
+.pf-you{font-size:9px;color:var(--dim);letter-spacing:.08em;border:1px solid var(--line2);padding:0 4px;margin-left:6px;vertical-align:middle}
+.friend canvas.has-img{image-rendering:auto}
+
+/* ---------- edit profile dialog (modals/edit.ts) ---------- */
+.ed-row{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.ed-row .lbl{display:flex;justify-content:space-between;align-items:baseline}
+.ed-row .cnt{font-size:9.5px;color:var(--dim);letter-spacing:.04em}
+.ed-row .fld.bad{border-color:var(--down)}
+.ed-err{display:block;min-height:12px;font-size:10px;color:var(--down);letter-spacing:.03em}
+.ed-err:empty{min-height:0}
+.ed-av .ed-av-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.ed-av .ed-av-status{display:block;font-size:10px;color:var(--dim);margin-top:5px;min-height:12px}
+.ed-crop{margin-top:8px;border:1px solid var(--line2);padding:8px;display:flex;flex-direction:column;gap:6px}
+.ed-crop canvas{width:256px;height:256px;max-width:100%;border:1px solid var(--line2);display:block;touch-action:none;cursor:grab;align-self:center}
+.ed-crop .ed-crop-acts{display:flex;gap:6px;justify-content:flex-end}
+.ed-priv{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.ed-priv .chipm{padding:2px 8px;font-size:10.5px;border:1px solid var(--line2);background:#12161f;color:var(--txt2);letter-spacing:.05em}
+.ed-priv .chipm.on{background:var(--amber);border-color:var(--amber);color:#150d00;font-weight:700}
+.ed-foot{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.ed-foot .big{flex:1 1 auto;margin:0}
+.ed-foot .ghost{border:1px solid var(--line2);background:#12161f;color:var(--txt2);padding:7px 10px;font-size:10px;letter-spacing:.08em}
+.ed-foot .ghost:hover{border-color:var(--down);color:var(--down)}

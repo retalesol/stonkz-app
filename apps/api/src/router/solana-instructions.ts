@@ -350,3 +350,48 @@ export function buildClaimStakeInstruction(accounts: ClaimStakeAccounts): Transa
   ];
   return new TransactionInstruction({ programId: accounts.programId, keys, data });
 }
+
+export interface GraduateAccounts {
+  programId: PublicKey;
+  mint: PublicKey;
+  baseMint: PublicKey;
+  /** Any wallet: `graduate` is permissionless. Pays the transaction fee only. */
+  caller: PublicKey;
+  /**
+   * Pass the `BaseOracle` PDA to arm the oracle trigger; `false` omits it,
+   * which leaves only the curve-exhaustion trigger (the program treats the
+   * account as `Option<BaseOracle>` and a stale oracle must not be able to
+   * block an exhausted curve).
+   */
+  withOracle: boolean;
+}
+
+/**
+ * `graduate()` — permissionless. Either trigger: the 80% allocation sold out
+ * (no oracle read), or a fresh `BaseOracle` prices the cap at/over $69K.
+ * Prepend `sync_price_from_pyth` when a Pyth feed is pinned so the oracle
+ * trigger reads a price seconds old, exactly as `/launch/prepare` does.
+ */
+export function buildGraduateInstruction(accounts: GraduateAccounts): TransactionInstruction {
+  const pdas = derivePdas(accounts.programId, accounts.mint, accounts.baseMint);
+  const keys = [
+    { pubkey: pdas.global, isSigner: false, isWritable: false },
+    { pubkey: pdas.curve, isSigner: false, isWritable: true },
+    { pubkey: accounts.mint, isSigner: false, isWritable: true },
+    { pubkey: accounts.baseMint, isSigner: false, isWritable: false },
+    // Anchor encodes an absent `Option<Account>` as the program id itself.
+    {
+      pubkey: accounts.withOracle ? pdas.oracle : accounts.programId,
+      isSigner: false,
+      isWritable: false,
+    },
+    { pubkey: pdas.curveTokenVault, isSigner: false, isWritable: true },
+    { pubkey: accounts.caller, isSigner: true, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+  return new TransactionInstruction({
+    programId: accounts.programId,
+    keys,
+    data: anchorDiscriminator('graduate'),
+  });
+}

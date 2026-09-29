@@ -323,6 +323,30 @@ contract StonkzRouter {
         if (msg.value > fee) _sendEth(msg.sender, msg.value - fee);
     }
 
+    /// @notice Post a price update, then graduate `token` — the permissionless
+    /// path to the oracle trigger now that the launchpad prices through Pyth.
+    /// @dev `StonkzLaunchpad.graduate` reads `_freshPrice`, and on RH / Base the
+    /// launchpad's `PythPriceSource` bounds a feed at ~120 s, so a bare
+    /// `graduate()` from a wallet almost always sees `"stale oracle"` between
+    /// Hermes pulls. This is the same in-transaction update `createAndBuyWithEth`
+    /// makes, followed by the graduation call, in one signature. Anyone may
+    /// call it; the launchpad decides whether the token qualifies. An exhausted
+    /// curve needs no update (pass an empty array) and graduates regardless of
+    /// the oracle. Whatever `msg.value` exceeds the Pyth fee is refunded.
+    ///
+    /// The launchpad is a live UUPS proxy at the EIP-170 ceiling, which is why
+    /// this lives on the (redeployable, immutable) router rather than there.
+    function graduateWithPriceUpdate(address token, bytes[] calldata priceUpdate, uint256 deadline)
+        external
+        payable
+        nonReentrant
+        before(deadline)
+    {
+        uint256 fee = _updatePrice(priceUpdate);
+        launchpad.graduate(token);
+        if (msg.value > fee) _sendEth(msg.sender, msg.value - fee);
+    }
+
     /// @dev Submit `priceUpdate`, paying Pyth's fee from `msg.value`. Entries
     /// starting with `"STKA"` are signed stock-price attestations: they go to
     /// `attestationSink` (or are dropped if it is unset), never to Pyth, and

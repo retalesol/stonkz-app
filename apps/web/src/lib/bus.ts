@@ -36,6 +36,8 @@ export interface BusEvents {
   fill: { fill: Fill; animate: boolean };
   /** Board scope changed — wipe the strip before a fresh `GET /tape` seed. */
   tapeClear: void;
+  /** The API is unreachable (`text`) or back (`null`); the board shows it in its empty lanes. */
+  notice: { text: string | null };
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;

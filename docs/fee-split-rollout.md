@@ -209,3 +209,18 @@ identical to the deployed source (v2 changes constants only). 3. Solana devnet (
 `solana program deploy target/deploy/launchpad.so --program-id FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg -u devnet`.
 No `init-treasury` run: the vaults already exist. 4. Verify one buy per chain lands 69 / 15 / 10 / 6 in the Fees tab, then
 remove `LEGACY_V1_SPLIT_BPS` from the indexer and redeploy it.
+
+**Step 4 status (2026-09-29).** `LEGACY_V1_SPLIT_BPS` and the `'v1'` branches
+are removed; the indexer dead-letters anything but the integer 15 / 10 / 6 / 69
+split. Evidence, read off the chains (`scripts/reconcile-fees.ts` repeats it):
+
+| Net        | Programs at v2 since | Fills since the 09-27 redeploy / layout upgrade                                    |
+| ---------- | -------------------- | ---------------------------------------------------------------------------------- |
+| Base 84532 | block 47423325       | 1 coin (MEMEMAN); lifetime ledgers are an exact 15 / 10 / 6 / 69 split — all v2    |
+| RH 46630   | block 125797509      | `tokenCount() == 0`: no launch, so no fill of either split                         |
+| SOL devnet | slot 505228004       | no fill since the four-leg layout; the 13 older fills predate it and do not decode |
+
+So no v1-split fill exists in any range the indexer can ingest, on any net,
+and the fallback could never fire. RH and Solana still await their first
+live v2 buy; `pnpm exec tsx scripts/reconcile-fees.ts --net RH|SOL --mint …`
+checks it when one lands.

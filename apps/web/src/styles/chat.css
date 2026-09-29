@@ -10,13 +10,27 @@
   transform:translateX(-100%);transition:transform .22s cubic-bezier(.2,.8,.3,1);box-shadow:6px 0 22px rgba(0,0,0,.6)}
 .drawer.open{transform:none}
 .drawer-hd{display:flex;align-items:center;gap:7px;background:var(--hd);border-bottom:1px solid var(--line2);padding:5px 8px}
-.drawer-hd h2{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--amber)}
+.drawer-hd h2{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--amber);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .drawer-hd .x{margin-left:auto;color:var(--dim);letter-spacing:.15em}
 .drawer-hd .x:hover{color:var(--down)}
-.rooms{display:flex;gap:3px;padding:5px 8px;border-bottom:1px solid var(--line);background:var(--pnl2)}
-.room{padding:2px 9px;font-size:10.5px;letter-spacing:.06em;border:1px solid var(--line2);background:#12161f;color:var(--txt2)}
+
+/* room tabs: GLOBAL · $SYM · $SYM (PRIVATE) — wrap on a phone rather than overflow */
+.rooms{display:flex;flex-wrap:wrap;gap:3px;padding:5px 8px;border-bottom:1px solid var(--line);background:var(--pnl2)}
+.room{position:relative;display:inline-flex;align-items:center;gap:4px;padding:2px 9px;font-size:10.5px;letter-spacing:.06em;
+  border:1px solid var(--line2);background:#12161f;color:var(--txt2);white-space:nowrap}
 .room.on{background:var(--amber);border-color:var(--amber);color:#150d00;font-weight:700}
 .room:hover{border-color:var(--amber2)}
+.room.locked{color:var(--dim);border-style:dashed}
+.room.locked.on{color:#150d00;border-style:solid}
+.room .lk{display:inline-block;width:7px;height:9px;border:1.5px solid currentColor;border-radius:2px 2px 1px 1px;
+  box-sizing:border-box;position:relative;top:1px;opacity:.85}
+.room .lk::before{content:"";position:absolute;left:1px;right:1px;top:-5px;height:5px;border:1.5px solid currentColor;
+  border-bottom:0;border-radius:4px 4px 0 0;box-sizing:border-box}
+.room .rb{display:inline-block;min-width:14px;padding:0 4px;margin-left:2px;font-size:9px;line-height:13px;text-align:center;
+  background:#8c2418;color:#fff;border:1px solid #ff7a6a;font-weight:700;letter-spacing:.02em}
+.room.on .rb{display:none}
+
 .chat-log{flex:1;overflow:auto;padding:7px 8px;display:flex;flex-direction:column;gap:6px;
   scrollbar-width:thin;scrollbar-color:#2b3342 #06070a}
 .chat-log::-webkit-scrollbar{width:8px}
@@ -33,8 +47,33 @@
 .cm.sys p{color:var(--up);grid-column:1}
 .cm.in{animation:cmin .3s ease-out}
 @keyframes cmin{0%{opacity:0;transform:translateX(-8px)}100%{opacity:1;transform:none}}
+
+/* locked holders' room: the log is replaced by the lock card */
+.chat-lock{margin:auto;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:22px 14px;
+  border:1px dashed var(--line2);background:#0b0e14;max-width:240px}
+.chat-lock-ico{width:22px;height:18px;border:2px solid var(--amber);border-radius:3px;position:relative;margin-top:10px}
+.chat-lock-ico::before{content:"";position:absolute;left:3px;right:3px;top:-12px;height:12px;border:2px solid var(--amber);
+  border-bottom:0;border-radius:8px 8px 0 0}
+.chat-lock b{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;letter-spacing:.1em;color:var(--amber)}
+.chat-lock span{font-size:10px;letter-spacing:.06em;color:var(--dim);line-height:1.5}
+
+/* composer gate: "TRADE $100 TO UNLOCK CHAT · $X SO FAR" + progress */
+.chat-gate{display:flex;flex-direction:column;gap:4px;padding:6px 8px 0;background:var(--pnl2);border-top:1px solid var(--line2)}
+.chat-gate[hidden]{display:none}
+.chat-gate-txt{font-size:10px;letter-spacing:.08em;color:var(--amber);font-weight:700;line-height:1.4}
+.chat-gate[data-mode="locked"] .chat-gate-txt,.chat-gate[data-mode="unavailable"] .chat-gate-txt{color:var(--dim)}
+.chat-gate-bar{display:block;height:4px;background:#12161f;border:1px solid var(--line2);overflow:hidden}
+.chat-gate-bar i{display:block;height:100%;background:var(--amber);transition:width .3s ease-out}
 .chat-in{display:flex;gap:4px;padding:6px 8px;border-top:1px solid var(--line2);background:var(--pnl2)}
-.chat-in .fld{flex:1}
+.chat-gate:not([hidden])+.chat-in{border-top:0;padding-top:5px}
+.chat-in .fld{flex:1;min-width:0}
+.chat-in.gated .fld{color:var(--dim);border-style:dashed;cursor:not-allowed}
+.chat-in.gated .fld::placeholder{color:#7c6a44;letter-spacing:.06em}
+.chat-in .send:disabled{opacity:.45;cursor:not-allowed}
 .chat-scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:65;display:none}
 .chat-scrim.open{display:block}
 
+@media (max-width:430px){
+  .room{padding:4px 8px;font-size:10px}
+  .chat-gate-txt{font-size:9.5px}
+}

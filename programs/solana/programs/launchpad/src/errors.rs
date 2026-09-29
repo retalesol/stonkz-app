@@ -71,4 +71,8 @@ pub enum LaunchpadError {
     PythFeedMismatch,
     #[msg("No Pyth feed is pinned for this base mint")]
     PythFeedNotPinned,
+    #[msg("Position is not this coin's locked Meteora DLMM position (wrong pool, owner or fee owner)")]
+    PositionMismatch,
+    #[msg("This coin's liquidity has not been migrated yet")]
+    NotMigrated,
 }

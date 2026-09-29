@@ -1,4 +1,5 @@
 import { type Coin, type Fill, price, rng, vol24 } from '@stonkz/shared';
+import { sigKey } from '../api/live-fills.js';
 import { fakeAddr } from '../lib/fmt.js';
 import { NATIVE_PRICE } from './wallet.js';
 
@@ -13,9 +14,14 @@ import { NATIVE_PRICE } from './wallet.js';
 
 export interface Comment {
   who: string;
+  /** Display time (kept for older callers); `at` is what relative times render from. */
   t: string;
   text: string;
   mine: boolean;
+  /** Epoch ms the comment was posted, when known. */
+  at?: number;
+  /** Server id, for dedupe against the WS echo of our own post. */
+  id?: number;
 }
 
 export interface Holder {
@@ -25,6 +31,12 @@ export interface Holder {
   addr?: string;
   /** Percent of supply. */
   p: number;
+  /** Whole tokens held (balance plus anything staked), when the API reports it. */
+  amt?: number;
+  /** Portion of `amt` sitting in the stake escrow. */
+  staked?: number;
+  /** Program-owned balance kind; absent / `wallet` for an ordinary holder. */
+  kind?: 'wallet' | 'curve' | 'lp' | 'stake' | 'bucket';
   tag: readonly [label: string, cls: string] | null;
   curve?: boolean;
 }
@@ -55,6 +67,10 @@ export interface Trade {
   hops?: TradeHop[];
   /** Chain tx signature / hash when known — used to dedupe optimistic + WS. */
   sig?: string;
+  /** Indexer row id — the "load older" cursor. */
+  id?: number;
+  /** USD notional at fill time, when the API reported it. */
+  usd?: number;
   /** UI: expanded hop detail. */
   open?: boolean;
   cb?: boolean;
@@ -80,6 +96,8 @@ export interface SimCoin extends Coin {
    * table until this lands. `plan step 62`
    */
   liveHolders?: Holder[] | null;
+  /** Launch time, epoch ms, when the API sent it — NEWEST sorts on this, not the coarse `age`. */
+  launchedAt?: number;
 }
 
 /** Seed rows: sym, name, desc, mcap, 24h %, replies, holders, age in minutes. */
@@ -421,21 +439,32 @@ export function pushTrade(
     sig?: string;
     /** Not yet recorded by the indexer (local or provisional print). */
     pending?: boolean;
+    id?: number;
+    usd?: number;
+    /** Fill time when known (block time); defaults to now. */
+    t?: Date;
   },
 ): Trade {
   seedTrades(c);
   const trades = c.trades as Trade[];
   const tok = o.tok ?? (o.sol * NATIVE_PRICE.usd) / price(c);
-  const sig = o.sig?.toLowerCase();
+  // Kept in its original case: base58 signatures are case-sensitive and the
+  // explorer link needs them verbatim. Comparison is via `sigKey`.
+  const sig = o.sig;
+  const sigK = sig ? sigKey(sig) : '';
 
   // Same on-chain fill often arrives twice: optimistic apply after wallet
   // confirm, then the indexer WS echo. Prefer merging into the existing row
-  // so multi-hop routes stay a single expandable entry.
+  // so multi-hop routes stay a single expandable entry. Two *different*
+  // transactions never merge, and the size heuristic (for prints without a
+  // signature) requires the same wallet when both are known — two 0.01 ETH
+  // quick-pick buys a few seconds apart are two rows.
   const existingIdx = trades.findIndex((t) => {
-    if (sig && t.sig && t.sig.toLowerCase() === sig) return true;
+    if (sigK && t.sig) return sigKey(t.sig) === sigK;
     if (t.buy !== o.buy) return false;
     const ageMs = Date.now() - t.t.getTime();
     if (ageMs < 0 || ageMs > 45_000) return false;
+    if (t.addr && o.addr && t.addr.toLowerCase() !== o.addr.toLowerCase()) return false;
     const solClose = Math.abs(t.sol - o.sol) / Math.max(o.sol, 1e-12) < 0.02;
     const tokClose = Math.abs(t.tok - tok) / Math.max(tok, 1e-9) < 0.02;
     return solClose && tokClose;
@@ -468,6 +497,8 @@ export function pushTrade(
       v: preferPrevRoute ? prev.v : (o.v ?? prev.v),
       ...(hops ? { hops } : {}),
       ...(sig || prev.sig ? { sig: sig ?? prev.sig } : {}),
+      ...(o.id !== undefined || prev.id !== undefined ? { id: o.id ?? prev.id } : {}),
+      ...(o.usd !== undefined || prev.usd !== undefined ? { usd: o.usd ?? prev.usd } : {}),
       ...(prev.open !== undefined ? { open: prev.open } : {}),
       // Merges are WS echoes of an already-shown fill — do not re-flash.
       fresh: false,
@@ -483,7 +514,7 @@ export function pushTrade(
 
   trades.forEach((t) => (t.fresh = false));
   const t: Trade = {
-    t: new Date(),
+    t: o.t ?? new Date(),
     buy: o.buy,
     sol: o.sol,
     tok,
@@ -494,6 +525,8 @@ export function pushTrade(
     v: o.v ?? (o.cb ? 'CB' : randomVenue()),
     ...(o.hops && o.hops.length ? { hops: o.hops } : {}),
     ...(sig ? { sig } : {}),
+    ...(o.id !== undefined ? { id: o.id } : {}),
+    ...(o.usd !== undefined ? { usd: o.usd } : {}),
     ...(o.pending ? { pending: true } : {}),
     fresh: true,
   };

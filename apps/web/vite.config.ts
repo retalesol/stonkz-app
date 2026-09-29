@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
 
 /**
@@ -49,6 +50,13 @@ export default defineConfig(({ mode }) => {
       // style-src stays a single hash-able entry later.
       cssCodeSplit: false,
       rollupOptions: {
+        // `admin.html` is the operator console (`src/admin/`): its own entry,
+        // its own static stylesheet (`public/admin/admin.css`), so nothing of
+        // it reaches the terminal's entry chunk or the single extracted CSS.
+        input: {
+          main: fileURLToPath(new URL('./index.html', import.meta.url)),
+          admin: fileURLToPath(new URL('./admin.html', import.meta.url)),
+        },
         output: {
           // The wallet SDKs are most of the bundle and only matter once a
           // wallet is in play; keep them out of the entry chunk so the board

@@ -4,7 +4,11 @@
     {
       "name": "web-sim",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@stonkz/web", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "@stonkz/web",
+        "dev"
+      ],
       "port": 5173
     }
   ]

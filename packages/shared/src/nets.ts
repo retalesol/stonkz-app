@@ -61,7 +61,7 @@ export const NET_INFO: Record<Net, NetInfo> = {
     displayDecimals: 2,
     col: '#14f195',
     dex: 'METEORA DLMM',
-    lpNote: 'THE POSITION IS PERMANENTLY LOCKED',
+    lpNote: 'THE LP POSITION IS LOCKED IN THE PROGRAM ESCROW',
     tipMin: 0.001,
     defaultBase: 'SOL',
     stocks: 'xstocks',

@@ -118,3 +118,38 @@ tr.pend td{opacity:.72}
 .txlink{color:inherit;text-decoration:none;border-bottom:1px dotted var(--blue)}
 .txlink:hover{color:var(--amber);border-bottom-color:var(--amber)}
 .mm-bubble.mm-link{cursor:pointer;text-decoration:underline dotted}
+
+/* ---------- token page: chart controls, tables, header extras ---------- */
+.tk-stats .sub2{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.04em;min-height:0}
+.tk-stats .sub2:empty{display:none}
+.tk-id .sub .txlink{color:var(--blue)}
+.pnl-hd.chart-hd{flex-wrap:wrap;row-gap:4px}
+.chart-ctl{display:flex;gap:8px;max-width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chart-ctl::-webkit-scrollbar{display:none}
+.chart-ctl .ctl-group{display:inline-flex;gap:0;flex:0 0 auto}
+.chart-ctl .ctl-group .tab{padding:2px 7px;font-size:10px}
+.chart-ctl .ctl-group .tab+.tab{margin-left:-1px}
+.chartbox .hud{flex-wrap:wrap;row-gap:2px;right:80px}
+.chartbox .hud i{font-style:normal;margin-left:4px}
+.pnl-hd .rt.tabs{max-width:100%;overflow-x:auto;scrollbar-width:none;flex-wrap:nowrap}
+.pnl-hd .rt.tabs::-webkit-scrollbar{display:none}
+.pnl-hd .rt.tabs .tab{flex:0 0 auto;white-space:nowrap}
+.tbl-foot{display:flex;align-items:center;gap:8px;padding:5px 8px;border-top:1px solid var(--line);font-size:10px;color:var(--dim);flex-wrap:wrap}
+.tbl-foot .hint{flex:1;min-width:0}
+.tbl td i.dm{font-style:normal;font-size:9.5px}
+tr.hold-program td{color:var(--amber2)}
+.tag.pend-tag{border:0;padding:0;font-size:10px}
+.cmt-scroll{display:flex;flex-direction:column;gap:7px}
+.cmt .who .cmt-reply{margin-left:8px;border:0;background:transparent;color:var(--dim);font-size:9px;letter-spacing:.08em;padding:0;cursor:pointer}
+.cmt .who .cmt-reply:hover{color:var(--amber)}
+.quote .qrow.qsplit{flex-wrap:wrap;font-size:9.5px}
+.quote .qrow.qsplit b{font-weight:400;color:var(--txt2);text-align:right;flex:1;min-width:0;line-height:1.5}
+.quote .qrow.qsplit b span{white-space:nowrap}
+.tk-id .sub a,.tk-id .sub b{white-space:nowrap}
+@media (max-width:680px){
+  .chartbox .hud{right:66px;top:4px;font-size:9px;gap:6px}
+}
+@media (max-width:480px){
+  /* O/H/L/C only on a phone; the cap and volume live in the header stats. */
+  .chartbox .hud span:nth-child(n+6){display:none}
+}

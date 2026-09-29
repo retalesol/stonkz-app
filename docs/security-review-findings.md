@@ -50,11 +50,18 @@ fee bucket overdraw another, and no unauthenticated write path was found.
 **Resolution (post-review fix, updated 2026-09):** Solana graduation now CPIs
 into **Meteora DLMM** (`lb_clmm`) via two instructions — `migrate_create_pool`
 then `migrate_seed_liquidity` — rather than handing reserves to caller-named
-accounts. DLMM has no fungible LP mint; permanence is a PositionV2 with
-`lock_release_point = u64::MAX` and operator cleared to the Solana incinerator
-so nobody can `remove_liquidity`. An escrow PDA (`SEED_METEORA_ESCROW`) signs
-as funder / position base / liquidity sender; `migration_authority` only funds
-rent. Pool creation uses admin-chosen `PresetParameter2` (`global.dex_config`)
+accounts. DLMM has no fungible LP mint; permanence is a PositionV2 owned by
+the per-mint escrow PDA (`SEED_METEORA_ESCROW`), which only the program can
+sign for and which no instruction of the program withdraws from, closes or
+reassigns. (The earlier wording — `lock_release_point = u64::MAX` via
+`initialize_position_by_operator` — turned out to be unavailable: that DLMM
+instruction is gated on Meteora's operator whitelist and returns
+`UnauthorizedAccess` for every other caller, verified against the real
+program on a local validator; the 2026-09-29 graduation audit replaced it
+with `initialize_position_pda` and added `claim_dex_fees`, which routes the
+position's swap fees through the curve split.) The escrow signs as position
+base / owner / liquidity sender; `migration_authority` only fronts rent, which
+is refunded net. Pool creation uses admin-chosen `PresetParameter2` (`global.dex_config`)
 and opens at the curve close price. CPI is hand-built from the published IDL
 (no foreign Anchor CPI crate), matching SPEC §6. (An earlier fix used Raydium
 CPMM + SPL LP burn; replaced per product decision.)

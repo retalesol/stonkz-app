@@ -24,3 +24,14 @@
 .chip.net{display:inline-flex;align-items:center;gap:5px}
 .chip.net i{width:6px;height:6px;background:var(--nc,var(--dim));display:inline-block}
 .chip.net.on i{background:#150d00}
+
+/* ---------- board: empty lanes, paging, sticky filters ---------- */
+.lane-empty{padding:18px 10px;font-size:10.5px;letter-spacing:.1em;color:var(--dim);text-align:center;margin:0}
+.lane-empty.err{color:var(--down)}
+.board-more{align-self:center;margin:2px auto 0;padding:5px 18px;border:1px solid var(--line2);background:#12161f;color:var(--txt2);
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:11px;letter-spacing:.14em}
+.board-more:hover{border-color:var(--amber2);color:var(--amber)}
+.board-more:disabled{opacity:.6;cursor:progress}
+@media (min-width:681px){
+  .filters{position:sticky;top:var(--top-h,0px);z-index:30;background:var(--bg)}
+}

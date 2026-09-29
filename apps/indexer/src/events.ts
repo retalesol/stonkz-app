@@ -1,5 +1,4 @@
 import { FEE_SPLIT, type Net } from '@stonkz/shared';
-import { LEGACY_V1_FEE_SPLIT } from './chain/market.js';
 
 /**
  * The chain event schema (plan step 55).
@@ -116,9 +115,9 @@ export interface GraduatedEvent extends EventBase {
  * protocol / 69% creator bucket / 10% `$STONKZ` buyback / 6% RWA crate fund)
  * so the indexer can check the on-chain arithmetic rather than recomputing
  * and trusting itself. Leg names mirror the on-chain event fields, which kept
- * their v1 names: `stonkzOps` is the buyback leg, `burn` the RWA leg. Until the
- * programs are upgraded a fill may still carry the legacy v1 split
- * (20 / 60 / 10 / 10); see `chain/market.ts` `LEGACY_V1_SPLIT_BPS`.
+ * their v1 names: `stonkzOps` is the buyback leg, `burn` the RWA leg. Only the
+ * v2 split is accepted; the transitional v1 acceptance was retired once every
+ * program settled v2 (see `chain/market.ts`).
  */
 export interface FeeAccruedEvent extends EventBase {
   kind: 'FeeAccrued';
@@ -133,10 +132,20 @@ export interface FeeAccruedEvent extends EventBase {
   stonkzOps: number;
   /** RWA crate-fund leg (6%), credited to the `rwa` vault. */
   burn: number;
-  /** Portion of the creator bucket peeled to that coin's stakers (Phase 4). */
+  /**
+   * Portion of the creator bucket peeled to that coin's stakers, in the
+   * native unit. Zero for a cashback fill whose bucket was converted (the
+   * peel is in tokens then — see `stakerTokens`).
+   */
   stakerShare: number;
-  /** During a cashback window the creator's 69% arrives as tokens. */
+  /**
+   * During a cashback window the whole bucket is swapped into the launched
+   * token before it is split; this is the **creator's** slice of those
+   * tokens (`Trade.feeCreator`), not the whole conversion.
+   */
   creatorTokens: number;
+  /** The stakers' slice of a converted cashback bucket, in tokens (`Trade.feeStakers`). */
+  stakerTokens?: number;
 }
 
 export interface StakedEvent extends EventBase {
@@ -298,17 +307,17 @@ function splitMismatch(
 }
 
 /**
- * Rejects a `FeeAccrued` whose legs do not add up to the 15/69/10/6 split —
- * or, during the program-upgrade window only, the legacy 20/60/10/10 split
- * (`LEGACY_V1_FEE_SPLIT`; remove that branch after the upgrade).
+ * Rejects a `FeeAccrued` whose legs do not add up to the 15/69/10/6 split.
  *
  * The programs settle the split on-chain and the client never computes it, so
  * a mismatch here means either a program bug or a decoder bug — both of which
- * must stop ingest rather than quietly skew the treasuries.
+ * must stop ingest rather than quietly skew the treasuries. (The transitional
+ * acceptance of the pre-upgrade 20/60/10/10 split is gone: no such fill
+ * exists in any indexed history — see `chain/market.ts`.)
  */
 export function assertFeeSplit(event: FeeAccruedEvent): void {
   const v2 = splitMismatch(event, V2_FEE_SPLIT);
-  if (v2 && splitMismatch(event, LEGACY_V1_FEE_SPLIT)) {
+  if (v2) {
     throw new EventIntegrityError(
       event,
       `${v2.leg} is ${v2.actual}, expected ${v2.expected} (${V2_FEE_SPLIT[v2.leg] * 100}% of ${event.feeAmount})`,

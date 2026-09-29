@@ -101,9 +101,12 @@ pub struct LiquidityMigrated {
     pub position: Pubkey,
     pub base_deposited: u64,
     pub token_deposited: u64,
-    /// `lock_release_point` written on the position (`u64::MAX` = permanent).
+    /// `lock_release_point` on the position. `0`: DLMM's operator timelock is
+    /// not available to a non-whitelisted operator (see `graduate.rs` step 4);
+    /// permanence is the program escrow owning the position with no withdraw
+    /// instruction.
     pub lock_release_point: u64,
-    /// Non-zero once the position operator has been cleared to the dead address.
+    /// `1` once the position is held by the per-mint escrow PDA.
     pub position_locked: u64,
     pub ts: i64,
 }
@@ -156,5 +159,33 @@ pub struct TreasuryWithdrawn {
     pub which: u8,
     pub amount: u64,
     pub destination: Pubkey,
+    pub ts: i64,
+}
+
+/// Fees claimed from the escrow-held Meteora DLMM position and routed
+/// through the curve's own split. Base-side legs go to the same per-base-mint
+/// treasuries as curve fees; the launched-token side has no treasury, so its
+/// non-bucket legs are burned and only the 69% bucket (creator + stakers) is
+/// credited in tokens.
+#[event]
+pub struct DexFeesClaimed {
+    pub mint: Pubkey,
+    pub base_mint: Pubkey,
+    pub pool: Pubkey,
+    pub position: Pubkey,
+    /// Whoever cranked it. Permissionless.
+    pub caller: Pubkey,
+    pub fee_base: u64,
+    pub fee_token: u64,
+    pub protocol: u64,
+    pub ops: u64,
+    pub burn: u64,
+    pub creator_bucket_base: u64,
+    pub creator_bucket_token: u64,
+    pub to_creator_base: u64,
+    pub to_stakers_base: u64,
+    pub to_creator_token: u64,
+    pub to_stakers_token: u64,
+    pub tokens_burned: u64,
     pub ts: i64,
 }

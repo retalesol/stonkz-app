@@ -29,6 +29,7 @@ import { basePriceFor } from '../router/base-price.js';
 import { deriveCurveColumns, type CurveStateColumns } from '../router/curve-state.js';
 import { RouterError, SolanaTransactionTooLargeError } from '../router/errors.js';
 import { moderateLaunch } from '../router/moderation.js';
+import { gate } from '../admin/index.js';
 import { toAtoms } from '../router/units.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import {
@@ -196,7 +197,7 @@ const walletLaunchQuota: MiddlewareHandler<AppEnv> = async (c, next) => {
   const deps = c.get('deps');
   const user = c.get('user');
   if (!user) return c.json({ error: 'unauthorized' }, 401);
-  const rule = walletLaunchRule(deps.env);
+  const rule = walletLaunchRule(deps.admin.settings.launchRateLimit());
   const verdict = await peekRateLimit(
     deps.redis,
     rule,
@@ -257,6 +258,7 @@ export function launchRoutes(): Hono<AppEnv> {
   app.post(
     '/launch/prepare',
     requireAuth(),
+    gate({ feature: 'launch', ban: 'launch' }),
     limit(RATE_LIMITS.launchIp),
     walletLaunchQuota,
     launchBodyLimit,
@@ -379,7 +381,10 @@ export function launchRoutes(): Hono<AppEnv> {
         );
       }
 
-      const moderation = moderateLaunch({ name, ticker, descr });
+      const moderation = moderateLaunch(
+        { name, ticker, descr },
+        deps.admin.settings.moderationWords(),
+      );
       if (!moderation.ok) {
         deps.logger.warn('launch rejected by moderation stub', {
           net,
@@ -1344,7 +1349,7 @@ export function launchRoutes(): Hono<AppEnv> {
       // refusal here: the token already exists, it must still be registered.
       await rateLimit(
         deps.redis,
-        walletLaunchRule(deps.env),
+        walletLaunchRule(deps.admin.settings.launchRateLimit()),
         `w:${net}:${wallet}`,
         Math.floor(now / 1000),
       );

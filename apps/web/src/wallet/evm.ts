@@ -22,7 +22,14 @@ import {
   connectWalletConnect,
   walletConnectUnavailableReason,
 } from './walletconnect.js';
-import { EVM_NETS, NET_INFO, isEvm, type EvmNet, type Net } from '@stonkz/shared';
+import {
+  EVM_NETS,
+  NET_INFO,
+  isEvm,
+  type EvmGasPreset,
+  type EvmNet,
+  type Net,
+} from '@stonkz/shared';
 
 /**
  * Real Robinhood Chain wallets.
@@ -296,6 +303,45 @@ export function toHexWei(decimalWei: string): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Gas preset (settings → EIP-1559 fields)                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Priority-fee multiplier and floor (wei) per preset. `NORMAL` sets nothing. */
+const GAS_PRESETS: Record<Exclude<EvmGasPreset, 'NORMAL'>, { mult: number; floorWei: bigint }> = {
+  // Floors matter on L2s, where the estimate is often 0 and a multiple of 0 is 0.
+  FAST: { mult: 1.5, floorWei: 10_000_000n }, // 0.01 gwei
+  TURBO: { mult: 2.5, floorWei: 50_000_000n }, // 0.05 gwei
+};
+
+export interface EvmGasFields {
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+}
+
+/**
+ * The explicit EIP-1559 fields for a preset, from the chain's own estimate.
+ * The base-fee headroom the estimate already carries is kept; only the tip
+ * is scaled. `null` for `NORMAL`, which leaves the wallet's estimator alone
+ * (MetaMask shows explicit fields as "site suggested" and stops estimating).
+ */
+export function evmGasFields(
+  est: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+  preset: EvmGasPreset | undefined,
+): EvmGasFields | null {
+  if (!preset || preset === 'NORMAL') return null;
+  const p = GAS_PRESETS[preset];
+  const scaled = (est.maxPriorityFeePerGas * BigInt(Math.round(p.mult * 100))) / 100n;
+  const priority = scaled > p.floorWei ? scaled : p.floorWei;
+  const base =
+    est.maxFeePerGas > est.maxPriorityFeePerGas ? est.maxFeePerGas - est.maxPriorityFeePerGas : 0n;
+  return { maxFeePerGas: base + priority, maxPriorityFeePerGas: priority };
+}
+
+function toHex(n: bigint): string {
+  return '0x' + n.toString(16);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Chain enforcement                                                           */
 /* -------------------------------------------------------------------------- */
 
@@ -500,6 +546,23 @@ class EvmWallet implements ConnectedWallet {
     await this.ensureChain();
     await this.preflight(payload.to, payload.data, payload.value);
 
+    // Settings gas preset → explicit EIP-1559 fields. An estimate that cannot
+    // be read is not a reason to refuse to sign: the wallet then prices it.
+    let gas: EvmGasFields | null = null;
+    if (payload.gas && payload.gas !== 'NORMAL') {
+      try {
+        const est = await rpc(this.net).estimateFeesPerGas();
+        if (est.maxFeePerGas !== undefined && est.maxPriorityFeePerGas !== undefined) {
+          gas = evmGasFields(
+            { maxFeePerGas: est.maxFeePerGas, maxPriorityFeePerGas: est.maxPriorityFeePerGas },
+            payload.gas,
+          );
+        }
+      } catch {
+        gas = null;
+      }
+    }
+
     let hash: string;
     try {
       hash = await this.request<string>('eth_sendTransaction', [
@@ -508,6 +571,12 @@ class EvmWallet implements ConnectedWallet {
           to: payload.to,
           data: payload.data,
           value: toHexWei(payload.value),
+          ...(gas
+            ? {
+                maxFeePerGas: toHex(gas.maxFeePerGas),
+                maxPriorityFeePerGas: toHex(gas.maxPriorityFeePerGas),
+              }
+            : {}),
         },
       ]);
     } catch (err) {
@@ -542,7 +611,18 @@ class EvmWallet implements ConnectedWallet {
         'The transaction reverted on chain after it was included \u2014 the price most likely moved. Nothing settled.',
       );
     }
-    return { signature: hash, explorerUrl: explorerBase(this.net) + '/tx/' + hash };
+    return {
+      signature: hash,
+      explorerUrl: explorerBase(this.net) + '/tx/' + hash,
+      ...(gas
+        ? {
+            gasFields: {
+              maxFeePerGas: gas.maxFeePerGas.toString(),
+              maxPriorityFeePerGas: gas.maxPriorityFeePerGas.toString(),
+            },
+          }
+        : {}),
+    };
   }
 
   async nativeBalance(): Promise<number | null> {

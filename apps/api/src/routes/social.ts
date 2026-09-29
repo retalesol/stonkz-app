@@ -1,18 +1,38 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { and, count, desc, eq, sql } from 'drizzle-orm';
-import { parseNet, type Net } from '@stonkz/shared';
-import { follows, tape, tokens, users, wallLikes, wallPosts } from '../db/schema.js';
+import { and, count, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { isEvm, nativeUnit, parseNet, type Net } from '@stonkz/shared';
+import { follows, tokens, users, wallLikes, wallPosts } from '../db/schema.js';
 import { isUniqueViolation } from '../db/errors.js';
 import { optionalAuth, requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
+import { gate } from '../admin/index.js';
 import type { AppDeps, AppEnv } from '../app/context.js';
 import { minTipFor, verifyTip } from '../social/tips.js';
+import { isFlagged } from '../social/chat.js';
+import {
+  ACTIVITY_MAX,
+  FOLLOW_PAGE_MAX,
+  IDENTITY_BATCH_MAX,
+  canSeePrivate,
+  checkProfilePatch,
+  costBasisFor,
+  followList,
+  friendsOf,
+  holdingsFromTrades,
+  identitiesFor,
+  recentActivity,
+  sameWallet,
+  serialiseUser,
+  stakedSummary,
+  withCostBasis,
+  type RawHolding,
+} from '../social/profile.js';
 import { SolanaRpc } from '../chain/solana.js';
 import { asErc20BalanceSource } from '../chain/types.js';
 import { serialiseToken } from './serialise.js';
 import { MAX_IMAGE_BYTES, PinataError, uploadToPinata } from '../social/pinata.js';
-import { checkWebsite } from './launch-validate.js';
+import { sanitizeName } from './launch-validate.js';
 
 /**
  * Multipart ceiling for image uploads: the image itself plus form overhead.
@@ -81,17 +101,17 @@ async function uploadImageField(
  * `PATCH /me` is the only writer of `users`, and a tip has to clear
  * `verifyTip()` before `POST /wall/:net/:addr` inserts anything.
  *
+ * Privacy (0023): `users.private` hides portfolio, PnL, recent actions, wall
+ * and follow lists from everyone but the owner. The decision is
+ * `social/profile.ts`'s `canSeePrivate`, applied on every read route below;
+ * identity fields and created tokens (on-chain attribution) stay public.
+ *
  * `GET /users/:net/:key` accepts a wallet **or** a username and returns
  * on-chain native balance + Stonkz-token holdings when the RPC can answer,
- * with indexed `tokens` / `tape` as the fallback — never simulated flavour.
+ * with the indexer's `trades` as the fallback — never simulated flavour.
  */
 
-const USERNAME_MAX = 22;
-const BIO_MAX = 160;
-
-function isValidUsername(v: string): boolean {
-  return /^[A-Za-z0-9_]{1,22}$/.test(v);
-}
+const WALL_TEXT_MAX = 140;
 
 /** Wallet-shaped keys are looked up by address; otherwise treat as username. */
 function looksLikeWallet(key: string, net: Net): boolean {
@@ -99,25 +119,34 @@ function looksLikeWallet(key: string, net: Net): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(key);
 }
 
-async function resolveWallet(
-  deps: AppDeps,
-  net: Net,
-  key: string,
-): Promise<{ wallet: string; profileRow: typeof users.$inferSelect | null }> {
+interface Resolved {
+  wallet: string;
+  profileRow: typeof users.$inferSelect | null;
+  /** False when a non-wallet key matched no username anywhere. */
+  found: boolean;
+}
+
+async function resolveWallet(deps: AppDeps, net: Net, key: string): Promise<Resolved> {
   if (looksLikeWallet(key, net)) {
     const [byWallet] = await deps.db
       .select()
       .from(users)
-      .where(and(eq(users.net, net), eq(users.wallet, key)))
+      .where(
+        and(
+          eq(users.net, net),
+          isEvm(net) ? sql`lower(${users.wallet}) = ${key.toLowerCase()}` : eq(users.wallet, key),
+        ),
+      )
       .limit(1);
-    return { wallet: key, profileRow: byWallet ?? null };
+    // The stored spelling wins (sessions store checksummed EVM wallets).
+    return { wallet: byWallet?.wallet ?? key, profileRow: byWallet ?? null, found: true };
   }
   const [byName] = await deps.db
     .select()
     .from(users)
     .where(and(eq(users.net, net), sql`lower(${users.username}) = lower(${key})`))
     .limit(1);
-  if (byName) return { wallet: byName.wallet, profileRow: byName };
+  if (byName) return { wallet: byName.wallet, profileRow: byName, found: true };
   // Username is globally unique — fall back across nets so `/u/Mememan` works
   // even if the client defaulted to the wrong net.
   const [anyNet] = await deps.db
@@ -125,57 +154,52 @@ async function resolveWallet(
     .from(users)
     .where(sql`lower(${users.username}) = lower(${key})`)
     .limit(1);
-  if (anyNet) return { wallet: anyNet.wallet, profileRow: anyNet };
-  return { wallet: key, profileRow: null };
+  if (anyNet) return { wallet: anyNet.wallet, profileRow: anyNet, found: true };
+  return { wallet: key, profileRow: null, found: false };
 }
 
-/** Net token position from indexed tape (buys − sells). DB fallback only. */
-async function holdingsFromTape(
-  deps: AppDeps,
-  net: Net,
-  wallet: string,
-): Promise<Array<{ sym: string; tok: number; cost: number; value: number }>> {
-  const rows = await deps.db
-    .select({
-      sym: tape.sym,
-      tok: sql<number>`coalesce(sum(case when ${tape.side} = 'buy' then ${tape.tokenAmount} else -${tape.tokenAmount} end), 0)`,
-      cost: sql<number>`coalesce(sum(case when ${tape.side} = 'buy' then ${tape.usdValue} else 0 end), 0)`,
-    })
-    .from(tape)
-    .where(and(eq(tape.net, net), eq(tape.trader, wallet)))
-    .groupBy(tape.sym);
+/** The member a public route is about, or the 400/404 that stops it. */
+async function resolveMember(
+  c: Context<AppEnv>,
+): Promise<
+  | { ok: true; net: Net; wallet: string; profileRow: Resolved['profileRow']; key: string }
+  | { ok: false; res: Response }
+> {
+  const deps = c.get('deps');
+  const net = parseNet(c.req.param('net'));
+  const key = c.req.param('addr');
+  if (!net || !key) return { ok: false, res: c.json({ error: 'bad_request' }, 400) };
+  const resolved = await resolveWallet(deps, net, key);
+  if (!resolved.found) return { ok: false, res: c.json({ error: 'user_not_found' }, 404) };
+  const memberNet = (resolved.profileRow?.net as Net | undefined) ?? net;
+  return {
+    ok: true,
+    net: memberNet,
+    wallet: resolved.wallet,
+    profileRow: resolved.profileRow,
+    key,
+  };
+}
 
-  const out: Array<{ sym: string; tok: number; cost: number; value: number }> = [];
-  for (const r of rows) {
-    if (Math.abs(Number(r.tok)) < 1e-6) continue;
-    const [tokRow] = await deps.db
-      .select()
-      .from(tokens)
-      .where(and(eq(tokens.net, net), eq(tokens.sym, r.sym)))
-      .orderBy(desc(tokens.launchedAt))
-      .limit(1);
-    const priceUsd = tokRow ? tokRow.mc / tokRow.supply : 0;
-    const tok = Number(r.tok);
-    out.push({
-      sym: r.sym,
-      tok,
-      cost: Number(r.cost),
-      value: tok * priceUsd,
-    });
-  }
-  return out;
+function pageOpts(c: Context<AppEnv>, max: number): { before: number | null; limit: number } {
+  const beforeRaw = Number(c.req.query('before'));
+  const limitRaw = Number(c.req.query('limit'));
+  return {
+    before: Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : null,
+    limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(max, Math.floor(limitRaw)) : 30,
+  };
 }
 
 /**
  * On-chain token balances for mints we know about (launchpad tokens).
- * SOL: SPL token accounts. RH: ERC-20 `balanceOf`. Falls back to null when
- * the RPC cannot answer so the caller can use tape-derived holdings.
+ * SOL: SPL token accounts. EVM: ERC-20 `balanceOf` on *that* net's RPC.
+ * `null` when the RPC cannot answer so the caller can fall back to trades.
  */
 async function holdingsOnChain(
   deps: AppDeps,
   net: Net,
   wallet: string,
-): Promise<Array<{ sym: string; tok: number; cost: number; value: number }> | null> {
+): Promise<RawHolding[] | null> {
   const known = await deps.db
     .select({
       sym: tokens.sym,
@@ -193,13 +217,17 @@ async function holdingsOnChain(
     if (!(rpc instanceof SolanaRpc)) return null;
     try {
       const byMint = await rpc.splTokenBalances(wallet);
-      const out: Array<{ sym: string; tok: number; cost: number; value: number }> = [];
+      const out: RawHolding[] = [];
       for (const t of known) {
         if (!t.mint) continue;
         const bal = byMint.get(t.mint) ?? 0;
         if (bal <= 0) continue;
-        const priceUsd = t.supply > 0 ? t.mc / t.supply : 0;
-        out.push({ sym: t.sym, tok: bal, cost: 0, value: bal * priceUsd });
+        out.push({
+          sym: t.sym,
+          mint: t.mint,
+          tok: bal,
+          priceUsd: t.supply > 0 ? t.mc / t.supply : 0,
+        });
       }
       return out;
     } catch {
@@ -207,18 +235,17 @@ async function holdingsOnChain(
     }
   }
 
-  const erc20 = asErc20BalanceSource(deps.rpcs.RH);
+  const erc20 = asErc20BalanceSource(deps.rpcs[net]);
   if (!erc20) return null;
   try {
-    const out: Array<{ sym: string; tok: number; cost: number; value: number }> = [];
+    const out: RawHolding[] = [];
     for (const t of known) {
       if (!t.mint || !t.mint.startsWith('0x')) continue;
       const atoms = await erc20.erc20BalanceAtoms(t.mint, wallet);
       if (atoms <= 0n) continue;
       const tok = Number(atoms) / 10 ** t.tokenDecimals;
       if (!Number.isFinite(tok) || tok <= 0) continue;
-      const priceUsd = t.supply > 0 ? t.mc / t.supply : 0;
-      out.push({ sym: t.sym, tok, cost: 0, value: tok * priceUsd });
+      out.push({ sym: t.sym, mint: t.mint, tok, priceUsd: t.supply > 0 ? t.mc / t.supply : 0 });
     }
     return out;
   } catch {
@@ -226,10 +253,18 @@ async function holdingsOnChain(
   }
 }
 
+function privateRefusal(c: Context<AppEnv>): Response {
+  return c.json({ error: 'private_profile', detail: 'this profile is private' }, 403);
+}
+
 export function socialRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
-  /** Plan step 144 — profile edits. Extends `GET /me` (routes/me.ts) with the write side. */
+  /**
+   * Plan step 144 — profile edits. Extends `GET /me` (routes/me.ts) with the
+   * write side. Field-level validation lives in `social/profile.ts`; a
+   * refusal names the field so the dialog can show it inline.
+   */
   app.patch('/me', requireAuth(), limit(RATE_LIMITS.social), async (c) => {
     const deps = c.get('deps');
     const user = c.get('user');
@@ -237,58 +272,12 @@ export function socialRoutes(): Hono<AppEnv> {
     const { net, wallet } = user;
 
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const patch: Partial<typeof users.$inferInsert> = {};
-
-    if ('username' in body) {
-      const v = String(body['username'] ?? '').trim();
-      if (v.length === 0) {
-        patch.username = null;
-      } else {
-        if (v.length > USERNAME_MAX || !isValidUsername(v)) {
-          return c.json(
-            {
-              error: 'bad_request',
-              detail: `username must be 1-${USERNAME_MAX} letters, numbers or _`,
-            },
-            400,
-          );
-        }
-        patch.username = v;
-      }
-    }
-    if ('bio' in body) {
-      const v = String(body['bio'] ?? '');
-      if (v.length > BIO_MAX)
-        return c.json(
-          { error: 'bad_request', detail: `bio must be at most ${BIO_MAX} chars` },
-          400,
-        );
-      patch.bio = v;
-    }
-    // Profile links render for every visitor: http(s) only, never
-    // `javascript:`/`data:`; an avatar is an <img>, so https only.
-    if ('avatarUrl' in body) {
-      const raw = body['avatarUrl'] ? String(body['avatarUrl']).trim() : '';
-      if (raw && !/^https:\/\//i.test(raw)) {
-        return c.json({ error: 'bad_request', detail: 'avatarUrl must be an https:// URL' }, 400);
-      }
-      const checked = checkWebsite(raw, 2048);
-      if (!checked.ok)
-        return c.json({ error: 'bad_request', detail: 'avatarUrl must be an https:// URL' }, 400);
-      patch.avatarUrl = checked.value;
-    }
-    if ('xHandle' in body)
-      patch.xHandle = body['xHandle']
-        ? String(body['xHandle']).replace(/^@/, '').slice(0, 64)
-        : null;
-    if ('website' in body) {
-      const checked = checkWebsite(body['website'] ? String(body['website']) : '', 2048);
-      if (!checked.ok) return c.json({ error: 'bad_request', detail: checked.detail }, 400);
-      patch.website = checked.value;
-    }
-    if ('telegram' in body)
-      patch.telegram = body['telegram'] ? String(body['telegram']).slice(0, 64) : null;
-
+    if (!body || typeof body !== 'object' || Array.isArray(body))
+      return c.json({ error: 'bad_request', detail: 'json object expected' }, 400);
+    const checked = checkProfilePatch(body);
+    if (!checked.ok)
+      return c.json({ error: 'bad_request', field: checked.field, detail: checked.detail }, 400);
+    const patch = checked.patch;
     if (Object.keys(patch).length === 0)
       return c.json({ error: 'bad_request', detail: 'no fields to update' }, 400);
 
@@ -301,7 +290,11 @@ export function socialRoutes(): Hono<AppEnv> {
           set: { ...patch, updatedAt: new Date(deps.now()) },
         });
     } catch (err) {
-      if (isUniqueViolation(err)) return c.json({ error: 'username_taken' }, 409);
+      if (isUniqueViolation(err))
+        return c.json(
+          { error: 'username_taken', field: 'username', detail: 'that username is taken' },
+          409,
+        );
       throw err;
     }
 
@@ -371,57 +364,125 @@ export function socialRoutes(): Hono<AppEnv> {
     },
   );
 
+  /**
+   * Public identity for a batch of wallets — what a holders table, a board
+   * card's creator label or a chat backscroll needs to swap addresses for
+   * usernames. `?wallets=a,b,c`, at most 100. Never returns private data.
+   */
+  app.get('/identities/:net', limit(RATE_LIMITS.read), async (c) => {
+    const deps = c.get('deps');
+    const net = parseNet(c.req.param('net'));
+    if (!net) return c.json({ error: 'bad_request' }, 400);
+    const wallets = (c.req.query('wallets') ?? '')
+      .split(',')
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0 && w.length <= 64);
+    if (wallets.length > IDENTITY_BATCH_MAX)
+      return c.json({ error: 'bad_request', detail: `at most ${IDENTITY_BATCH_MAX} wallets` }, 400);
+    return c.json({ net, identities: await identitiesFor(deps, net, wallets) });
+  });
+
   /** Public member card — wallet or username. On-chain balance + holdings when possible. */
   app.get('/users/:net/:addr', optionalAuth(), limit(RATE_LIMITS.read), async (c) => {
     const deps = c.get('deps');
-    const net = parseNet(c.req.param('net'));
+    const netParam = parseNet(c.req.param('net'));
     const key = c.req.param('addr');
-    if (!net || !key) return c.json({ error: 'bad_request' }, 400);
+    if (!netParam || !key) return c.json({ error: 'bad_request' }, 400);
 
-    const { wallet, profileRow } = await resolveWallet(deps, net, key);
-    const memberNet = (profileRow?.net as Net | undefined) ?? net;
-
-    const [followerCountRow, followingCountRow, followingRows, snapshot, launchedRows] =
-      await Promise.all([
-        deps.db
-          .select({ n: count() })
-          .from(follows)
-          .where(and(eq(follows.net, memberNet), eq(follows.followee, wallet))),
-        deps.db
-          .select({ n: count() })
-          .from(follows)
-          .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet))),
-        deps.db
-          .select({ followee: follows.followee })
-          .from(follows)
-          .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet)))
-          .limit(24),
-        deps.ledger.snapshot(memberNet, wallet),
-        deps.db
-          .select()
-          .from(tokens)
-          .where(and(eq(tokens.net, memberNet), eq(tokens.creator, wallet)))
-          .orderBy(sql`${tokens.launchedAt} desc`)
-          .limit(40),
-      ]);
-
+    const resolved = await resolveWallet(deps, netParam, key);
+    if (!resolved.found) return c.json({ error: 'user_not_found' }, 404);
+    const { wallet, profileRow } = resolved;
+    const memberNet = (profileRow?.net as Net | undefined) ?? netParam;
     const caller = c.get('user');
-    let isFollowing = false;
-    if (caller && caller.net === memberNet) {
-      const [row] = await deps.db
+    const own =
+      !!caller && caller.net === memberNet && sameWallet(memberNet, caller.wallet, wallet);
+    const visible = canSeePrivate(caller, memberNet, wallet, profileRow);
+
+    const [followerCountRow, followingCountRow, snapshot, launchedRows] = await Promise.all([
+      deps.db
         .select({ n: count() })
         .from(follows)
-        .where(
-          and(
-            eq(follows.net, memberNet),
-            eq(follows.follower, caller.wallet),
-            eq(follows.followee, wallet),
+        .where(and(eq(follows.net, memberNet), eq(follows.followee, wallet))),
+      deps.db
+        .select({ n: count() })
+        .from(follows)
+        .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet))),
+      deps.ledger.snapshot(memberNet, wallet),
+      deps.db
+        .select()
+        .from(tokens)
+        .where(and(eq(tokens.net, memberNet), eq(tokens.creator, wallet)))
+        .orderBy(sql`${tokens.launchedAt} desc`)
+        .limit(40),
+    ]);
+
+    let isFollowing = false;
+    let followsYou = false;
+    if (caller && caller.net === memberNet && !own) {
+      const [out, back] = await Promise.all([
+        deps.db
+          .select({ n: count() })
+          .from(follows)
+          .where(
+            and(
+              eq(follows.net, memberNet),
+              eq(follows.follower, caller.wallet),
+              eq(follows.followee, wallet),
+            ),
           ),
-        );
-      isFollowing = (row?.n ?? 0) > 0;
+        deps.db
+          .select({ n: count() })
+          .from(follows)
+          .where(
+            and(
+              eq(follows.net, memberNet),
+              eq(follows.follower, wallet),
+              eq(follows.followee, caller.wallet),
+            ),
+          ),
+      ]);
+      isFollowing = (out[0]?.n ?? 0) > 0;
+      followsYou = (back[0]?.n ?? 0) > 0;
     }
 
-    const [nativeBalance, onChainHoldings] = await Promise.all([
+    const now = deps.now();
+    const base = {
+      net: memberNet,
+      addr: wallet,
+      resolvedFrom: key === wallet ? 'wallet' : 'username',
+      profile: profileRow ? serialiseUser(profileRow) : null,
+      private: !!profileRow?.private,
+      own,
+      isFollowing,
+      followsYou,
+      xp: snapshot.xp,
+      rank: snapshot.rank,
+      launched: launchedRows.map((r) => serialiseToken(r, now)),
+    };
+
+    if (!visible) {
+      // Redacted card: identity + created tokens only. Counts, balances,
+      // holdings, staking and follow lists are the owner's.
+      return c.json({
+        ...base,
+        followers: null,
+        following: null,
+        followingWallets: [],
+        native: { unit: nativeUnit(memberNet), balance: null },
+        portfolioUsd: null,
+        holdings: [],
+        holdingsSource: 'private',
+        staked: [],
+      });
+    }
+
+    const [followingRows, nativeBalance, onChainHoldings, basis, staked] = await Promise.all([
+      deps.db
+        .select({ followee: follows.followee })
+        .from(follows)
+        .where(and(eq(follows.net, memberNet), eq(follows.follower, wallet)))
+        .orderBy(desc(follows.createdAt))
+        .limit(24),
       deps.rpcs[memberNet]
         .nativeBalance(wallet)
         .then((v) => {
@@ -433,37 +494,73 @@ export function socialRoutes(): Hono<AppEnv> {
           return null as number | null;
         }),
       holdingsOnChain(deps, memberNet, wallet),
+      costBasisFor(deps, memberNet, wallet).catch(() => new Map()),
+      stakedSummary(deps, memberNet, wallet).catch(() => []),
     ]);
 
-    const holdings =
+    const raw =
       onChainHoldings ??
-      (await holdingsFromTape(deps, memberNet, wallet).catch(
-        () => [] as Awaited<ReturnType<typeof holdingsFromTape>>,
-      ));
+      (await holdingsFromTrades(deps, memberNet, basis).catch(() => [] as RawHolding[]));
+    const holdings = withCostBasis(raw, basis);
     const holdingsSource = onChainHoldings ? 'chain' : 'index';
-    const now = deps.now();
     const portfolioUsd = holdings.reduce((s, h) => s + h.value, 0);
+    const realisedUsd = [...basis.values()].reduce((s, b) => s + b.realisedUsd, 0);
+    const unrealisedUsd = holdings.reduce((s, h) => s + (h.pnlUsd ?? 0), 0);
 
     return c.json({
-      net: memberNet,
-      addr: wallet,
-      resolvedFrom: key === wallet ? 'wallet' : 'username',
-      profile: profileRow ? serialiseUser(profileRow) : null,
+      ...base,
       followers: followerCountRow[0]?.n ?? 0,
       following: followingCountRow[0]?.n ?? 0,
       followingWallets: followingRows.map((r) => r.followee),
-      isFollowing,
-      xp: snapshot.xp,
-      rank: snapshot.rank,
-      native: {
-        unit: memberNet === 'SOL' ? 'SOL' : 'ETH',
-        balance: nativeBalance,
-      },
+      native: { unit: nativeUnit(memberNet), balance: nativeBalance },
       portfolioUsd,
+      pnl: { unrealisedUsd, realisedUsd },
       holdings,
       holdingsSource,
-      launched: launchedRows.map((r) => serialiseToken(r, now)),
+      staked,
     });
+  });
+
+  /** Recent actions — newest first, `?before=<ms>&limit=`. Owner-only on a private profile. */
+  app.get('/users/:net/:addr/activity', optionalAuth(), limit(RATE_LIMITS.read), async (c) => {
+    const deps = c.get('deps');
+    const m = await resolveMember(c);
+    if (!m.ok) return m.res;
+    if (!canSeePrivate(c.get('user'), m.net, m.wallet, m.profileRow)) return privateRefusal(c);
+    const page = await recentActivity(deps, m.net, m.wallet, pageOpts(c, ACTIVITY_MAX));
+    return c.json({ net: m.net, addr: m.wallet, ...page });
+  });
+
+  for (const direction of ['followers', 'following'] as const) {
+    app.get(
+      `/users/:net/:addr/${direction}`,
+      optionalAuth(),
+      limit(RATE_LIMITS.read),
+      async (c) => {
+        const deps = c.get('deps');
+        const m = await resolveMember(c);
+        if (!m.ok) return m.res;
+        if (!canSeePrivate(c.get('user'), m.net, m.wallet, m.profileRow)) return privateRefusal(c);
+        const page = await followList(
+          deps,
+          m.net,
+          m.wallet,
+          direction,
+          pageOpts(c, FOLLOW_PAGE_MAX),
+        );
+        return c.json({ net: m.net, addr: m.wallet, direction, ...page });
+      },
+    );
+  }
+
+  /** Mutual follows. Owner-only on a private profile. */
+  app.get('/users/:net/:addr/friends', optionalAuth(), limit(RATE_LIMITS.read), async (c) => {
+    const deps = c.get('deps');
+    const m = await resolveMember(c);
+    if (!m.ok) return m.res;
+    if (!canSeePrivate(c.get('user'), m.net, m.wallet, m.profileRow)) return privateRefusal(c);
+    const entries = await friendsOf(deps, m.net, m.wallet, pageOpts(c, FOLLOW_PAGE_MAX).limit);
+    return c.json({ net: m.net, addr: m.wallet, entries });
   });
 
   /** Plan steps 144/149 — `toggleFollow`. XP and the `social` achievement land through `GameAwards.follow`. */
@@ -476,11 +573,13 @@ export function socialRoutes(): Hono<AppEnv> {
     if (!net || !key) return c.json({ error: 'bad_request' }, 400);
     if (net !== user.net) return c.json({ error: 'net_mismatch' }, 400);
 
-    const { wallet: target } = await resolveWallet(deps, net, key);
-    if (target === user.wallet) return c.json({ error: 'cannot_follow_self' }, 400);
+    const resolved = await resolveWallet(deps, net, key);
+    const target = resolved.wallet;
+    if (sameWallet(net, target, user.wallet)) return c.json({ error: 'cannot_follow_self' }, 400);
     // Username that never resolved would round-trip as the raw key — refuse
     // so we never store a non-wallet followee that counts queries cannot see.
-    if (!looksLikeWallet(target, net)) return c.json({ error: 'user_not_found' }, 404);
+    if (!resolved.found || !looksLikeWallet(target, net))
+      return c.json({ error: 'user_not_found' }, 404);
 
     const inserted = await deps.db
       .insert(follows)
@@ -502,8 +601,10 @@ export function socialRoutes(): Hono<AppEnv> {
     if (!net || !key) return c.json({ error: 'bad_request' }, 400);
     if (net !== user.net) return c.json({ error: 'net_mismatch' }, 400);
 
-    const { wallet: target } = await resolveWallet(deps, net, key);
-    if (!looksLikeWallet(target, net)) return c.json({ error: 'user_not_found' }, 404);
+    const resolved = await resolveWallet(deps, net, key);
+    const target = resolved.wallet;
+    if (!resolved.found || !looksLikeWallet(target, net))
+      return c.json({ error: 'user_not_found' }, 404);
 
     await deps.db
       .delete(follows)
@@ -514,42 +615,69 @@ export function socialRoutes(): Hono<AppEnv> {
     return c.json({ net, addr: target, following: false });
   });
 
-  /** Plan step 147 — the wall's backscroll. Resolves username → wallet. */
-  app.get('/wall/:net/:addr', limit(RATE_LIMITS.read), async (c) => {
+  /**
+   * Plan step 147 — the wall's backscroll. Resolves username → wallet.
+   * Newest first, `?before=<postId>&limit=`; flagged posts are never replayed;
+   * a private wall is the owner's alone.
+   */
+  app.get('/wall/:net/:addr', optionalAuth(), limit(RATE_LIMITS.read), async (c) => {
     const deps = c.get('deps');
-    const net = parseNet(c.req.param('net'));
-    const key = c.req.param('addr');
-    if (!net || !key) return c.json({ error: 'bad_request' }, 400);
-    const resolved = await resolveWallet(deps, net, key);
-    const memberNet = (resolved.profileRow?.net as Net | undefined) ?? net;
-    const wallet = resolved.wallet;
+    const m = await resolveMember(c);
+    if (!m.ok) return m.res;
+    const { net: memberNet, wallet } = m;
+    if (!canSeePrivate(c.get('user'), memberNet, wallet, m.profileRow)) return privateRefusal(c);
+    const { before, limit: max } = pageOpts(c, 100);
 
     const rows = await deps.db
       .select()
       .from(wallPosts)
-      .where(and(eq(wallPosts.net, memberNet), eq(wallPosts.toWallet, wallet)))
-      .orderBy(wallPosts.id);
+      .where(
+        and(
+          eq(wallPosts.net, memberNet),
+          eq(wallPosts.toWallet, wallet),
+          eq(wallPosts.flagged, false),
+          ...(before ? [lt(wallPosts.id, before)] : []),
+        ),
+      )
+      .orderBy(desc(wallPosts.id))
+      .limit(max + 1);
+    const page = rows.slice(0, max);
+    const ids = page.map((r) => r.id);
 
-    const likeCounts = await deps.db
-      .select({ postId: wallLikes.postId, n: sql<number>`count(*)::int` })
-      .from(wallLikes)
-      .where(eq(wallLikes.net, memberNet))
-      .groupBy(wallLikes.postId);
+    const [likeCounts, identities] = await Promise.all([
+      ids.length
+        ? deps.db
+            .select({ postId: wallLikes.postId, n: sql<number>`count(*)::int` })
+            .from(wallLikes)
+            .where(and(eq(wallLikes.net, memberNet), inArray(wallLikes.postId, ids)))
+            .groupBy(wallLikes.postId)
+        : Promise.resolve([] as { postId: number; n: number }[]),
+      identitiesFor(
+        deps,
+        memberNet,
+        page.map((r) => r.fromWallet),
+      ),
+    ]);
     const likeMap = new Map(likeCounts.map((r) => [r.postId, r.n]));
+    const idMap = new Map(identities.map((i) => [i.wallet, i]));
+    const last = page[page.length - 1];
 
     return c.json({
       net: memberNet,
       addr: wallet,
       minTip: minTipFor(memberNet),
-      posts: rows.map((r) => ({
+      posts: page.map((r) => ({
         id: r.id,
         from: r.fromWallet,
+        fromUsername: idMap.get(r.fromWallet)?.username ?? null,
+        fromAvatarUrl: idMap.get(r.fromWallet)?.avatarUrl ?? null,
         text: r.text,
         tip: r.tipNative,
         sig: r.tipTxSig,
         likes: likeMap.get(r.id) ?? 0,
         createdAtMs: r.createdAt.getTime(),
       })),
+      nextBefore: rows.length > max && last ? last.id : null,
     });
   });
 
@@ -568,7 +696,16 @@ export function socialRoutes(): Hono<AppEnv> {
       .from(wallPosts)
       .where(and(eq(wallPosts.net, net), eq(wallPosts.id, postId)))
       .limit(1);
-    if (!post) return c.json({ error: 'not_found' }, 404);
+    if (!post || post.flagged) return c.json({ error: 'not_found' }, 404);
+
+    // A private wall cannot be read by anyone but its owner, so nobody else
+    // may like a post on it either.
+    const [owner] = await deps.db
+      .select({ private: users.private })
+      .from(users)
+      .where(and(eq(users.net, net), eq(users.wallet, post.toWallet)))
+      .limit(1);
+    if (!canSeePrivate(user, net, post.toWallet, owner ?? null)) return privateRefusal(c);
 
     const inserted = await deps.db
       .insert(wallLikes)
@@ -585,8 +722,12 @@ export function socialRoutes(): Hono<AppEnv> {
   /**
    * Plan step 147-150 — tip verified against the chain, then the post lands.
    * Target may be a username; resolved to wallet before verify + insert.
+   * Text is cleaned of control/format characters and checked against the
+   * chat blocklist: a flagged post is stored (the tip already settled) but
+   * hidden from readers and pays no XP.
    */
-  app.post('/wall/:net/:addr', requireAuth(), limit(RATE_LIMITS.wall), async (c) => {
+  const wallGate = gate({ ban: 'comments' });
+  app.post('/wall/:net/:addr', requireAuth(), wallGate, limit(RATE_LIMITS.wall), async (c) => {
     const deps = c.get('deps');
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
@@ -594,14 +735,22 @@ export function socialRoutes(): Hono<AppEnv> {
     const key = c.req.param('addr');
     if (!net || !key) return c.json({ error: 'bad_request' }, 400);
     if (net !== user.net) return c.json({ error: 'net_mismatch' }, 400);
-    const { wallet: target } = await resolveWallet(deps, net, key);
+    const resolved = await resolveWallet(deps, net, key);
+    const target = resolved.wallet;
+    if (!resolved.found || !looksLikeWallet(target, net))
+      return c.json({ error: 'user_not_found' }, 404);
+    // Nobody can read a private wall but its owner, so nobody else may post
+    // to it — refused before the body is even parsed, so a client that checks
+    // first never sends a tip it cannot show.
+    if (!canSeePrivate(user, net, target, resolved.profileRow)) return privateRefusal(c);
 
     const body = (await c.req.json().catch(() => ({}))) as { text?: unknown; tipTxSig?: unknown };
-    const text = String(body.text ?? '').trim();
+    const text = sanitizeName(String(body.text ?? ''));
     const tipTxSig = String(body.tipTxSig ?? '').trim();
-    if (!text || text.length > 140)
-      return c.json({ error: 'bad_request', detail: 'text must be 1-140 chars' }, 400);
-    if (!tipTxSig) return c.json({ error: 'bad_request', detail: 'tipTxSig is required' }, 400);
+    if (!text || text.length > WALL_TEXT_MAX)
+      return c.json({ error: 'bad_request', detail: `text must be 1-${WALL_TEXT_MAX} chars` }, 400);
+    if (!tipTxSig || tipTxSig.length > 128 || /[\s\p{Cc}]/u.test(tipTxSig))
+      return c.json({ error: 'bad_request', detail: 'tipTxSig is required' }, 400);
 
     const verification = await verifyTip({
       rpc: deps.rpcs[net],
@@ -615,6 +764,7 @@ export function socialRoutes(): Hono<AppEnv> {
     if (!verification.ok)
       return c.json({ error: 'tip_rejected', reason: verification.reason }, 422);
 
+    const flagged = isFlagged(text);
     let inserted: { id: number; createdAt: Date } | undefined;
     try {
       [inserted] = await deps.db
@@ -626,6 +776,7 @@ export function socialRoutes(): Hono<AppEnv> {
           text,
           tipNative: verification.amountNative ?? 0,
           tipTxSig,
+          flagged,
         })
         .returning({ id: wallPosts.id, createdAt: wallPosts.createdAt });
     } catch (err) {
@@ -634,46 +785,31 @@ export function socialRoutes(): Hono<AppEnv> {
     }
     if (!inserted) throw new Error('wall_posts insert returned no row');
 
-    const award = await deps.awards.wallPost({
-      net,
-      wallet: user.wallet,
-      target,
-      tipSig: tipTxSig,
-    });
+    const award = flagged
+      ? { xp: 0 }
+      : await deps.awards.wallPost({
+          net,
+          wallet: user.wallet,
+          target,
+          tipSig: tipTxSig,
+        });
 
     return c.json({
       net,
       addr: target,
       post: {
+        id: inserted.id,
         from: user.wallet,
         text,
         tip: verification.amountNative ?? 0,
         sig: tipTxSig,
+        likes: 0,
         createdAtMs: inserted.createdAt.getTime(),
       },
+      flagged,
       xpAwarded: award.xp,
     });
   });
 
   return app;
-}
-
-function serialiseUser(row: typeof users.$inferSelect): {
-  username: string | null;
-  bio: string | null;
-  avatarUrl: string | null;
-  xHandle: string | null;
-  website: string | null;
-  telegram: string | null;
-  createdAtMs: number;
-} {
-  return {
-    username: row.username,
-    bio: row.bio,
-    avatarUrl: row.avatarUrl,
-    xHandle: row.xHandle,
-    website: row.website,
-    telegram: row.telegram,
-    createdAtMs: row.createdAt.getTime(),
-  };
 }

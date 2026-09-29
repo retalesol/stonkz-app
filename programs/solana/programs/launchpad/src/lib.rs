@@ -171,6 +171,13 @@ pub mod launchpad {
         instructions::graduate::migrate_seed_liquidity(ctx)
     }
 
+    /// Permissionless crank: claim the locked DLMM position's swap fees into
+    /// the curve's own 15 / 10 / 6 / 69 split, so post-bond fees keep flowing
+    /// to the protocol, the buyback, the crate fund, the creator and stakers.
+    pub fn claim_dex_fees(ctx: Context<ClaimDexFees>) -> Result<()> {
+        instructions::graduate::claim_dex_fees(ctx)
+    }
+
     /// Creator bucket only. Cannot reach the protocol or ops vaults.
     pub fn claim_creator_fees(ctx: Context<ClaimCreatorFees>) -> Result<()> {
         instructions::claim::claim_creator_fees(ctx)

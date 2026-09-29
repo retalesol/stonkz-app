@@ -1,13 +1,15 @@
-import { DEFAULT_TRADE_CAP, MAX_TRADE_CAP, type MevMode } from '@stonkz/shared';
+import { DEFAULT_TRADE_CAP, MAX_TRADE_CAP, type EvmGasPreset, type MevMode } from '@stonkz/shared';
 import { api } from '../api/index.js';
 import { toast } from '../fx/toast.js';
 import { $, $$, must } from '../lib/dom.js';
 import { DOT } from '../lib/fmt.js';
 import { attr, html, render } from '../lib/html.js';
 import {
+  BOUNDS,
   DEFAULTS,
   SET,
   capFor,
+  evmGasPreset,
   resetSettings,
   saveSettings,
   settingsPayload,
@@ -56,6 +58,27 @@ function formHTML(): ReturnType<typeof html> {
                 type="button"
                 class="chipm${SET.prio === v ? ' on' : ''}"
                 data-prio="${attr(v)}"
+              >
+                ${label}
+              </button>`,
+          )}</span
+        >
+      </div>
+      <div class="set-row">
+        <span class="k">GAS PRESET<small>EVM ONLY · SETS EIP-1559 FEES ON SEND</small></span>
+        <span class="set-ctl">
+          ${(
+            [
+              ['NORMAL', 'WALLET DEFAULT'],
+              ['FAST', 'FAST'],
+              ['TURBO', 'TURBO'],
+            ] as Array<[EvmGasPreset, string]>
+          ).map(
+            ([v, label]) =>
+              html`<button
+                type="button"
+                class="chipm${evmGasPreset() === v ? ' on' : ''}"
+                data-gas="${v}"
               >
                 ${label}
               </button>`,
@@ -180,6 +203,10 @@ export function initSettings(onSaved: () => void): void {
       SET.mev = b.dataset['mev'] as MevMode;
       mark('data-mev', SET.mev);
     }
+    if (b.dataset['gas']) {
+      SET.evmGas = b.dataset['gas'] as EvmGasPreset;
+      mark('data-gas', SET.evmGas);
+    }
     if (b.dataset['cf']) {
       SET.confirm = b.dataset['cf'] === '1';
       mark('data-cf', b.dataset['cf']);
@@ -201,13 +228,13 @@ export function initSettings(onSaved: () => void): void {
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    SET.slip = field('#st-slip', 0.1, 50, DEFAULTS.slip);
-    SET.prio = field('#st-prio', 0, 1, DEFAULTS.prio);
-    SET.mevTip = field('#st-mev', 0, 1, DEFAULTS.mevTip);
+    SET.slip = field('#st-slip', BOUNDS.slip.min, BOUNDS.slip.max, DEFAULTS.slip);
+    SET.prio = field('#st-prio', BOUNDS.prio.min, BOUNDS.prio.max, DEFAULTS.prio);
+    SET.mevTip = field('#st-mev', BOUNDS.mevTip.min, BOUNDS.mevTip.max, DEFAULTS.mevTip);
     const unit = nativeUnit();
-    SET.cap = field('#st-cap', 0.001, MAX_TRADE_CAP[unit], DEFAULT_TRADE_CAP[unit]);
+    SET.cap = field('#st-cap', BOUNDS.capMin, MAX_TRADE_CAP[unit], DEFAULT_TRADE_CAP[unit]);
     SET.capUnit = unit;
-    SET.defBuy = field('#st-buy', 0.01, 999, DEFAULTS.defBuy);
+    SET.defBuy = field('#st-buy', BOUNDS.defBuy.min, BOUNDS.defBuy.max, DEFAULTS.defBuy);
     saveSettings();
     void pushOrToast().then((ok) => {
       if (!ok) return;

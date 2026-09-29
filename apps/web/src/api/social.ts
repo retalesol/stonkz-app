@@ -1,5 +1,12 @@
-import type { Net, RwaReward } from '@stonkz/shared';
-import { authHeader, ensureSession } from '../app/session.js';
+import type { CrateProof, Net, RwaReward } from '@stonkz/shared';
+import {
+  authHeader,
+  ensureSession,
+  hasSession,
+  peekStoredSession,
+  restoreSession,
+} from '../app/session.js';
+import type { ChatAccess } from '../views/chat-access.js';
 
 /**
  * Phase 5's social client.
@@ -72,14 +79,36 @@ export interface LiveProfile {
   xHandle: string | null;
   website: string | null;
   telegram: string | null;
+  /** Owner-only portfolio, PnL, actions, wall and friends. */
+  private: boolean;
   createdAtMs: number;
 }
 
 export interface LiveHolding {
   sym: string;
+  mint?: string | null;
   tok: number;
+  /** USD cost of the tokens still held; 0 when the basis is unknown. */
   cost: number;
   value: number;
+  priceUsd?: number;
+  pnlUsd?: number | null;
+  pnlPct?: number | null;
+  realisedUsd?: number;
+  /** `trades` = fully explained by fills; `partial` = some tokens arrived by transfer; `unknown` = no buys on record. */
+  basis?: 'trades' | 'partial' | 'unknown';
+}
+
+export interface LiveStaked {
+  sym: string;
+  mint: string;
+  amt: number;
+  lockDays: number;
+  mult: number;
+  untilMs: number;
+  rewardNative: number;
+  rewardTokens: number;
+  valueUsd: number;
 }
 
 export interface LiveMember {
@@ -87,16 +116,24 @@ export interface LiveMember {
   addr: string;
   resolvedFrom?: 'wallet' | 'username';
   profile: LiveProfile | null;
-  followers: number;
-  following: number;
+  /** True when the server redacted this card (private profile, viewer is not the owner). */
+  private?: boolean;
+  /** True when the authenticated caller *is* this member. */
+  own?: boolean;
+  /** `null` on a redacted card. */
+  followers: number | null;
+  following: number | null;
   /** Outgoing follow edges (wallets), when the API includes them. */
   followingWallets?: string[];
   isFollowing: boolean;
+  followsYou?: boolean;
   xp: number;
   native?: { unit: string; balance: number | null };
-  portfolioUsd?: number;
+  portfolioUsd?: number | null;
+  pnl?: { unrealisedUsd: number; realisedUsd: number };
   holdings?: LiveHolding[];
-  holdingsSource?: 'chain' | 'index';
+  holdingsSource?: 'chain' | 'index' | 'private';
+  staked?: LiveStaked[];
   launched?: Array<{
     sym: string;
     name: string;
@@ -104,17 +141,68 @@ export interface LiveMember {
     chg: number;
     age: number;
     seed: number;
+    hold?: number;
+    mint?: string;
+    net?: Net;
   }>;
 }
 
 export interface LiveWallPost {
   id?: number;
   from: string;
+  fromUsername?: string | null;
+  fromAvatarUrl?: string | null;
   text: string;
   tip: number;
   sig: string;
   likes?: number;
   createdAtMs: number;
+}
+
+export type LiveActivityKind =
+  'buy' | 'sell' | 'launch' | 'stake' | 'unstake' | 'stake_claim' | 'crate' | 'level_up' | 'follow';
+
+export interface LiveActivity {
+  id: string;
+  kind: LiveActivityKind;
+  net: Net;
+  t: number;
+  sym?: string;
+  mint?: string;
+  sig?: string;
+  native?: number;
+  usd?: number;
+  tokens?: number;
+  tier?: string;
+  label?: string;
+  level?: number;
+  target?: string;
+}
+
+export interface LiveActivityPage {
+  items: LiveActivity[];
+  nextBefore: number | null;
+}
+
+export interface LiveIdentity {
+  wallet: string;
+  username: string | null;
+  avatarUrl: string | null;
+}
+
+export interface LiveFollowEntry extends LiveIdentity {
+  createdAtMs: number;
+}
+
+export interface LiveFollowPage {
+  entries: LiveFollowEntry[];
+  nextBefore: number | null;
+}
+
+export interface LiveWall {
+  minTip: number;
+  posts: LiveWallPost[];
+  nextBefore?: number | null;
 }
 
 export interface LiveXProfile {
@@ -128,22 +216,134 @@ export interface LiveXProfile {
   source: 'x_api' | 'none' | 'placeholder';
 }
 
+/**
+ * Public member card. Sent with the session's bearer when one exists so the
+ * server can tell the owner (full card) from a visitor (redacted when private)
+ * — an anonymous read never carries a token.
+ */
 export function fetchMember(net: Net, addr: string): Promise<LiveMember> {
-  return getJson<LiveMember>(`/users/${net}/${addr}`);
+  return memberJson<LiveMember>(net, `/users/${net}/${encodeURIComponent(addr)}`);
 }
 
-export function patchMyProfile(
+/**
+ * Bearer for a *read*: a fresh token when held, a silent refresh when only
+ * the stored refresh token is (a reload), and no header at all otherwise.
+ * Never prompts the wallet to sign — a visitor stays anonymous.
+ */
+async function viewerHeaders(net: Net): Promise<Record<string, string>> {
+  if (!hasSession(net) && peekStoredSession()?.net === net) {
+    await restoreSession(BASE).catch(() => null);
+  }
+  return hasSession(net) ? authHeader(net) : {};
+}
+
+async function memberJson<T>(net: Net, path: string): Promise<T> {
+  const headers = await viewerHeaders(net);
+  const res = await fetch(BASE + path, { headers });
+  if (!res.ok) {
+    const { code, detail } = await readError(res);
+    throw new SocialApiError(code, detail);
+  }
+  return (await res.json()) as T;
+}
+
+function pageQuery(opts: { before?: number | null; limit?: number }): string {
+  const q = new URLSearchParams();
+  if (opts.before) q.set('before', String(opts.before));
+  if (opts.limit) q.set('limit', String(opts.limit));
+  const s = q.toString();
+  return s ? '?' + s : '';
+}
+
+/** Recent actions, newest first. Owner-only on a private profile (403 `private_profile`). */
+export function fetchActivity(
   net: Net,
-  patch: Partial<{
-    username: string;
-    bio: string;
-    avatarUrl: string;
-    xHandle: string;
-    website: string;
-    telegram: string;
-  }>,
+  addr: string,
+  opts: { before?: number | null; limit?: number } = {},
+): Promise<LiveActivityPage> {
+  return memberJson(net, `/users/${net}/${encodeURIComponent(addr)}/activity${pageQuery(opts)}`);
+}
+
+export function fetchFollowList(
+  net: Net,
+  addr: string,
+  direction: 'followers' | 'following',
+  opts: { before?: number | null; limit?: number } = {},
+): Promise<LiveFollowPage> {
+  return memberJson(
+    net,
+    `/users/${net}/${encodeURIComponent(addr)}/${direction}${pageQuery(opts)}`,
+  );
+}
+
+/** Mutual follows. */
+export function fetchFriends(net: Net, addr: string): Promise<{ entries: LiveFollowEntry[] }> {
+  return memberJson(net, `/users/${net}/${encodeURIComponent(addr)}/friends`);
+}
+
+/** Public username + avatar for up to 100 wallets — what holder tables and creator labels need. */
+export function fetchIdentities(
+  net: Net,
+  wallets: string[],
+): Promise<{ identities: LiveIdentity[] }> {
+  const unique = [...new Set(wallets.filter(Boolean))].slice(0, 100);
+  if (!unique.length) return Promise.resolve({ identities: [] });
+  return getJson(`/identities/${net}?wallets=${encodeURIComponent(unique.join(','))}`);
+}
+
+export interface ProfilePatch {
+  username: string;
+  bio: string;
+  avatarUrl: string;
+  xHandle: string;
+  website: string;
+  telegram: string;
+  private: boolean;
+}
+
+/**
+ * A field-level refusal from `PATCH /me`: `field` names the input the
+ * settings dialog should mark, `detail` is the copy to show under it.
+ */
+export class ProfileFieldError extends SocialApiError {
+  constructor(
+    readonly field: keyof ProfilePatch,
+    code: string,
+    detail: string,
+  ) {
+    super(code, detail);
+    this.name = 'ProfileFieldError';
+  }
+}
+
+export async function patchMyProfile(
+  net: Net,
+  patch: Partial<ProfilePatch>,
 ): Promise<{ profile: LiveProfile }> {
-  return authedJson(`/me`, net, { method: 'PATCH', body: JSON.stringify(patch) });
+  await ensureSession(BASE, net);
+  const res = await fetch(BASE + '/me', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeader(net) },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: unknown;
+      field?: unknown;
+      detail?: unknown;
+    };
+    const code = typeof body.error === 'string' ? body.error : 'request_failed';
+    const detail = typeof body.detail === 'string' ? body.detail : code;
+    if (typeof body.field === 'string')
+      throw new ProfileFieldError(body.field as keyof ProfilePatch, code, detail);
+    throw new SocialApiError(code, detail);
+  }
+  return (await res.json()) as { profile: LiveProfile };
+}
+
+/** "Sign out everywhere": revokes every other device's session for this wallet. */
+export function revokeOtherSessions(net: Net): Promise<{ ok: true; revoked: number }> {
+  return authedJson('/me/sessions/revoke-others', net, { method: 'POST', body: '{}' });
 }
 
 export function follow(net: Net, addr: string): Promise<{ following: boolean }> {
@@ -154,11 +354,13 @@ export function unfollow(net: Net, addr: string): Promise<{ following: boolean }
   return authedJson(`/follow/${net}/${addr}`, net, { method: 'DELETE' });
 }
 
+/** The wall's backscroll, newest first. Owner-only on a private profile (403 `private_profile`). */
 export function fetchWall(
   net: Net,
   addr: string,
-): Promise<{ minTip: number; posts: LiveWallPost[] }> {
-  return getJson(`/wall/${net}/${addr}`);
+  opts: { before?: number | null; limit?: number } = {},
+): Promise<LiveWall> {
+  return memberJson(net, `/wall/${net}/${encodeURIComponent(addr)}${pageQuery(opts)}`);
 }
 
 /**
@@ -172,7 +374,7 @@ export function postWallTip(
   addr: string,
   text: string,
   tipTxSig: string,
-): Promise<{ post: LiveWallPost; xpAwarded: number }> {
+): Promise<{ post: LiveWallPost; xpAwarded: number; flagged?: boolean }> {
   return authedJson(`/wall/${net}/${addr}`, net, {
     method: 'POST',
     body: JSON.stringify({ text, tipTxSig }),
@@ -221,6 +423,22 @@ export function fetchChatHistory(
   return getJson(`/chat/${net}/${encodeURIComponent(room)}/history`);
 }
 
+/**
+ * `GET /chat/:net/:room/access` — the gate snapshot behind the composer
+ * (`views/chat-access.ts`'s `ChatAccess`). Optional auth: sent with the
+ * session token when one is held, so a guest still gets the read-only view.
+ */
+export async function fetchChatAccess(net: Net, room: string): Promise<ChatAccess> {
+  const res = await fetch(BASE + `/chat/${net}/${encodeURIComponent(room)}/access`, {
+    headers: authHeader(net),
+  });
+  if (!res.ok) {
+    const { code, detail } = await readError(res);
+    throw new SocialApiError(code, detail);
+  }
+  return (await res.json()) as ChatAccess;
+}
+
 /** Multipart upload to `POST /me/avatar` → Pinata gateway URL. */
 export async function uploadAvatar(net: Net, file: File): Promise<{ avatarUrl: string }> {
   await ensureSession(BASE, net);
@@ -263,6 +481,17 @@ export async function uploadImage(
 /* Rewards — `GET /rewards`, `POST /rewards/crates/:tier/open`                 */
 /* -------------------------------------------------------------------------- */
 
+export interface LiveRwaUsd {
+  total: number | null;
+  positions: { asset: string; units: number; usd: number | null; price?: number | null }[];
+}
+
+export interface LiveClaimsState {
+  open: boolean;
+  stonkz: { open: boolean; reason: string };
+  rwa: { open: boolean; reason: string };
+}
+
 export interface LiveRewardsSnapshot {
   net: Net;
   wallet: string;
@@ -272,17 +501,43 @@ export interface LiveRewardsSnapshot {
   stonkz: number;
   /** RWA positions won from crates. */
   rwa?: RwaReward[];
+  /** USD value of `rwa` from DefiLlama; `total: null` while unpriced. */
+  rwaUsd?: LiveRwaUsd;
+  /** On-chain claim availability (`docs/rewards-claims-design.md`). */
+  claims?: LiveClaimsState;
   streak: number;
   streakMult: number;
   cratesReady: number;
   globalCooldown?: { readyAt: number; ready: boolean };
+  /** sha256 of the server seed committed for this wallet's next crate open. */
+  nextCommit?: string;
+  items?: {
+    item: string;
+    count: number;
+    expiresAt: number | null;
+    active: boolean;
+    effect: string | null;
+    implemented: boolean;
+    blurb: string | null;
+  }[];
   spLevel?: {
     level: number;
     sp: number;
+    cur?: number;
     next: number | null;
     pct: number;
     toNext: number;
     nextLevel: { level: number; sp: number; grants: Record<string, number> } | null;
+    newlyClaimed?: number[];
+    granted?: Record<string, number>;
+    claimed?: number[];
+    levels?: {
+      level: number;
+      sp: number;
+      grants: Record<string, number>;
+      claimed: boolean;
+      reached: boolean;
+    }[];
   };
   crates: {
     tier: string;
@@ -300,8 +555,11 @@ export interface LiveRewardsSnapshot {
     tier: string;
     rarity: string;
     label: string;
+    kind?: 'S' | 'I' | 'R';
     stonkz?: number;
     item: string | null;
+    xp?: number;
+    proof?: CrateProof & { clientSeeded: boolean; verifiable: boolean };
   }[];
   achievements: { key: string; unlockedAt: number }[];
 }
@@ -341,22 +599,71 @@ export interface LiveCrateOpenResult {
   readyAt: number;
   cooldownHours: number;
   inventoryLeft: number;
+  keyUsed?: boolean;
+  openId?: number;
+  proof?: CrateProof & { clientSeeded: boolean; message: string; verifiable: boolean };
+  nextCommit?: string;
+}
+
+export interface LiveCrateHistory {
+  net: Net;
+  wallet: string;
+  nextCommit: string;
+  formula: string;
+  opens: {
+    id: number;
+    at: number;
+    tier: string;
+    rarity: string;
+    dropIndex: number;
+    label: string;
+    kind: 'S' | 'I' | 'R';
+    xp: number;
+    proof: CrateProof & { clientSeeded: boolean; message: string | null; verifiable: boolean };
+  }[];
 }
 
 export function fetchRewards(net: Net): Promise<LiveRewardsSnapshot> {
   return authedJson(`/rewards`, net);
 }
 
-export function openCrateLive(net: Net, tier: string): Promise<LiveCrateOpenResult> {
+export function openCrateLive(
+  net: Net,
+  tier: string,
+  body: { clientSeed?: string; useKey?: boolean } = {},
+): Promise<LiveCrateOpenResult> {
   return authedJson(`/rewards/crates/${encodeURIComponent(tier)}/open`, net, {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify(body),
   });
+}
+
+export function fetchCrateHistory(net: Net, limit = 50): Promise<LiveCrateHistory> {
+  return authedJson(`/rewards/crates/history?limit=${limit}`, net);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Referrals                                                                   */
 /* -------------------------------------------------------------------------- */
+
+export interface LiveReferralTier {
+  tier: 1 | 2 | 3;
+  rate: number;
+  pendingNative: number;
+  lifetimeNative: number;
+  fills: number;
+}
+
+export interface LiveReferralPayout {
+  id: number;
+  amountNative: number;
+  mode: 'stonkz' | 'native';
+  status: 'requested' | 'paid' | 'void';
+  stonkz: number | null;
+  txSig: string | null;
+  requestedAt: number;
+  settledAt: number | null;
+}
 
 export interface LiveReferralSnapshot {
   code: string;
@@ -366,6 +673,13 @@ export interface LiveReferralSnapshot {
   directReferrals: number;
   pendingNative: number;
   lifetimeNative: number;
+  /** Per-tier earnings; absent on older API builds. */
+  tiers?: LiveReferralTier[];
+  /** Native payouts requested and awaiting the treasury signer. */
+  requestedNative?: number;
+  /** Native payouts settled on chain. */
+  paidNative?: number;
+  payouts?: LiveReferralPayout[];
 }
 
 export function fetchReferrals(net: Net): Promise<LiveReferralSnapshot> {
@@ -376,10 +690,25 @@ export function attachReferral(net: Net, code: string): Promise<{ ok: true; refe
   return authedJson(`/referrals/attach`, net, { method: 'POST', body: JSON.stringify({ code }) });
 }
 
+export interface LiveReferralClaim {
+  ok?: true;
+  mode?: 'stonkz' | 'native';
+  claimedNative: number;
+  stonkz: number;
+  stonkzTotal: number;
+  payoutId?: number | null;
+}
+
+/**
+ * `stonkz` converts the pending commission to `$STONKZ` credits at once;
+ * `native` books a payout request the protocol treasury signer settles from
+ * the on-chain protocol vault.
+ */
 export function claimReferralFees(
   net: Net,
-): Promise<{ ok?: true; claimedNative: number; stonkz: number; stonkzTotal: number }> {
-  return authedJson(`/referrals/claim`, net, { method: 'POST', body: '{}' });
+  payout: 'stonkz' | 'native' = 'stonkz',
+): Promise<LiveReferralClaim> {
+  return authedJson(`/referrals/claim`, net, { method: 'POST', body: JSON.stringify({ payout }) });
 }
 
 export function likeWallPost(

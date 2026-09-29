@@ -15,21 +15,30 @@ import {
   type Wallet,
   crateBy,
   RAR,
+  RANKS,
+  achOf,
   isEvm,
+  rankOf,
 } from '@stonkz/shared';
-import { NET_INFO, nativeUnit as nativeUnitOf, type EvmNet } from '@stonkz/shared';
+import {
+  NET_INFO,
+  nativeUnit as nativeUnitOf,
+  type EvmGasPreset,
+  type EvmNet,
+} from '@stonkz/shared';
 import {
   authHeader,
   clearSession,
   ensureSession,
   invalidateAccessToken,
+  restoreSession,
   sessionWallet,
 } from '../app/session.js';
 import { signAndConfirm, signPermit, type SellPermit, type SignPayload } from '../app/signer.js';
 import { emit } from '../lib/bus.js';
 import { toast } from '../fx/toast.js';
 import { explorerTxUrl } from '../wallet/chain.js';
-import { clock, shortAddr } from '../lib/fmt.js';
+import { DOT, clock, shortAddr } from '../lib/fmt.js';
 import { openSteps } from '../modals/steps.js';
 import {
   COINS,
@@ -48,6 +57,11 @@ import { ensureStake, setStakePool, stakeOf, stakePoolOf } from '../state/stake.
 import { rememberIdentity } from '../lib/identity.js';
 import {
   USER,
+  applyAchievement,
+  applyLevelUp,
+  applySpTotal,
+  applyStreak,
+  applyXpTotal,
   hydrateRewards,
   pushDrop,
   resetLiveRewards,
@@ -55,19 +69,21 @@ import {
   setRwaUnits,
   unlock,
 } from '../state/user.js';
-import { applySettings, saveSettings, settingsPayload } from '../state/settings.js';
-import { fillCandleGaps } from '../lib/candles.js';
+import { rankUp } from '../fx/rankUp.js';
 import {
-  FillLedger,
-  applyFillToSeries,
-  sigKey,
-  type FillSource,
-  type SeriesAnchor,
-} from './live-fills.js';
+  SET,
+  applySettings,
+  evmGasPreset,
+  saveSettings,
+  settingsPayload,
+} from '../state/settings.js';
+import { fillCandleGaps } from '../lib/candles.js';
+import { FillLedger, applyFillToSeries, type FillSource, type SeriesAnchor } from './live-fills.js';
 import { NATIVE_PRICE, WALLET, selectNet, nativeUsd } from '../state/wallet.js';
 import { activeWallet, isRejection, pendingSignature, requireWallet } from '../wallet/index.js';
 import { LaunchPendingError, LaunchedDevBuyError, type LaunchHooks } from './launch-errors.js';
 import { fetchRewards, openCrateLive, type LiveRewardsSnapshot } from './social.js';
+import type { OpenCrateOptions } from './types.js';
 import { simApi } from './sim.js';
 import type {
   ClaimResult,
@@ -133,11 +149,22 @@ interface ApiToken {
   image?: string;
   mint?: string;
   tradeable?: boolean;
+  /** Epoch ms; NEWEST sorts on it (the `age` minutes are too coarse to order by). */
+  launchedAt?: number;
+  /** Graduation as the chain has it — see `SerialisedToken` for the four fields. */
+  graduatedAt?: number | null;
+  poolAddress?: string | null;
+  positionAddress?: string | null;
+  curveComplete?: boolean;
+  graduationReady?: boolean;
 }
 
 interface ApiTokensResponse {
   net: string;
   tokens: ApiToken[];
+  /** Rows matching the scope across every page, and whether a page follows this one. */
+  total?: number;
+  hasMore?: boolean;
 }
 
 interface ApiCandle {
@@ -154,7 +181,9 @@ interface ApiCandlesResponse {
   candles: ApiCandle[];
 }
 
-interface ApiTradeRow {
+export interface ApiTradeRow {
+  /** Indexer row id — the "load older" cursor. */
+  id?: number;
   t: number;
   buy: boolean;
   sol: number;
@@ -178,6 +207,10 @@ interface ApiHolderRow {
   pct: number;
   costNative?: number;
   curve?: boolean;
+  /** Portion of `amount` in the stake escrow / launchpad position. */
+  staked?: number;
+  /** Program-owned balance (curve vault, LP reserve, stake escrow, creator bucket) or `wallet`. */
+  kind?: 'wallet' | 'curve' | 'lp' | 'stake' | 'bucket';
 }
 
 interface ApiHoldersResponse {
@@ -320,6 +353,19 @@ interface ApiEvmStep {
   description: string;
 }
 
+/** The settings as `/trade/prepare` actually wrote them into the Solana transaction. */
+interface ApiTradeFees {
+  slipPct: number;
+  computeUnitLimit: number;
+  computeUnitPriceMicroLamports: number;
+  maxPriorityLamports: number;
+  tipLamports: number;
+  tipAccount: string | null;
+  mevMode: 'SHIELD' | 'RELAY' | 'OFF';
+  /** `'none'` when the deployment has no Jito / private RPC for the chosen mode: no tip was written. */
+  mevRoute: 'jito' | 'private' | 'none';
+}
+
 interface ApiTradePrepareSolAtomic {
   net: 'SOL';
   atomic: true;
@@ -327,6 +373,13 @@ interface ApiTradePrepareSolAtomic {
   lastValidBlockHeight: number;
   quote: Quote;
   expiresAt: number;
+  fees?: ApiTradeFees;
+}
+
+interface ApiTradeBroadcast {
+  signature: string;
+  via: 'jito' | 'private' | 'rpc';
+  fallback?: string;
 }
 
 /**
@@ -434,15 +487,23 @@ interface ApiFeesResponse {
 }
 
 /** Both chains' `/fees/claim/prepare` are a single signable payload — no `EvmStep[]` here, unlike a trade. */
-interface ApiClaimPrepareSol {
+/** What the prepare says the program will pay — read on chain when the RPC answers. */
+interface ApiClaimPrepareAmounts {
+  claimableBase?: number;
+  baseSym?: string;
+  claimableTokens?: number;
+  claimableSource?: 'chain' | 'indexer';
+}
+
+interface ApiClaimPrepareSol extends ApiClaimPrepareAmounts {
   net: 'SOL';
   sym: string;
   transaction: string;
   lastValidBlockHeight: number;
 }
 
-interface ApiClaimPrepareRh {
-  net: 'RH';
+interface ApiClaimPrepareRh extends ApiClaimPrepareAmounts {
+  net: EvmNet;
   sym: string;
   to: string;
   data: string;
@@ -455,6 +516,10 @@ interface ApiMeResponse {
   username?: string | null;
   bio?: string | null;
   avatarUrl?: string | null;
+  website?: string | null;
+  xHandle?: string | null;
+  telegram?: string | null;
+  private?: boolean;
   native: {
     unit: string;
     balance: number | null;
@@ -509,12 +574,25 @@ function toSimCoin(t: ApiToken): SimCoin {
     ...(t.image ? { image: t.image } : {}),
     ...(t.mint ? { mint: t.mint } : {}),
     ...(t.tradeable !== undefined ? { tradeable: t.tradeable } : {}),
+    ...(t.launchedAt !== undefined ? { launchedAt: t.launchedAt } : {}),
+    ...graduationFields(t),
     el: null,
     h: null,
     hv: null,
     trades: null,
     comments: null,
     liveHolders: null,
+  };
+}
+
+/** The chain's view of graduation, copied verbatim so the token page never infers it from `mc`. */
+function graduationFields(t: ApiToken): Partial<SimCoin> {
+  return {
+    ...(t.graduatedAt !== undefined ? { graduatedAt: t.graduatedAt } : {}),
+    ...(t.poolAddress !== undefined ? { poolAddress: t.poolAddress } : {}),
+    ...(t.positionAddress !== undefined ? { positionAddress: t.positionAddress } : {}),
+    ...(t.curveComplete !== undefined ? { curveComplete: t.curveComplete } : {}),
+    ...(t.graduationReady !== undefined ? { graduationReady: t.graduationReady } : {}),
   };
 }
 
@@ -555,6 +633,8 @@ function patchCoin(c: SimCoin, t: ApiToken): void {
   if (t.tfee !== undefined) c.tfee = t.tfee;
   if (t.mint) c.mint = t.mint;
   if (t.tradeable !== undefined) c.tradeable = t.tradeable;
+  if (t.launchedAt !== undefined) c.launchedAt = t.launchedAt;
+  Object.assign(c, graduationFields(t));
   const prevLane = c.lane;
   c.lane = t.lane;
   if (prevLane !== t.lane) emit('lane', { sym: c.sym, lane: t.lane });
@@ -630,6 +710,8 @@ function applyLiveFill(c: SimCoin, f: ApiFillPayload, source: FillSource): void 
     v: venueFor(c),
     ...(hops ? { hops } : {}),
     ...(f.sig ? { sig: f.sig } : {}),
+    ...(f.v > 0 ? { usd: f.v } : {}),
+    t: new Date(t),
     pending: source !== 'authoritative' && !(f.sig && ledgerOf(c).isFinal(f.sig)),
   });
   if (c.h && c.hv && (verdict === 'add' || newest)) {
@@ -680,20 +762,6 @@ async function reconcileCoin(c: SimCoin): Promise<void> {
   if (ledger.hasPending()) scheduleReconcile(c);
 }
 
-/** Tape prints already shown, so a provisional and its indexed twin print once. */
-const tapeSeen = new Set<string>();
-function firstTapePrint(p: ApiFillPayload): boolean {
-  const key = p.fid ?? (p.sig ? sigKey(p.sig) : '');
-  if (!key) return true;
-  if (tapeSeen.has(key)) return false;
-  tapeSeen.add(key);
-  if (tapeSeen.size > 500) {
-    const oldest = tapeSeen.values().next().value;
-    if (oldest !== undefined) tapeSeen.delete(oldest);
-  }
-  return true;
-}
-
 function venueFor(c: SimCoin): string {
   if (c.lane === 'grad') return 'DEX';
   const net = c.net ?? 'SOL';
@@ -742,7 +810,7 @@ function hopsFromQuote(quote: Quote): TradeHop[] | undefined {
   }));
 }
 
-function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
+export function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
   const side = r.buy ? 'buy' : 'sell';
   const hops = hopsForTrade(c, side, r.sol, r.tok, r.base);
   return {
@@ -757,10 +825,20 @@ function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
     v: venueFor(c),
     ...(hops ? { hops } : {}),
     ...(r.sig ? { sig: r.sig } : {}),
+    ...(r.id !== undefined ? { id: r.id } : {}),
+    ...(Number.isFinite(r.v) ? { usd: r.v } : {}),
   };
 }
 
-function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Holder[] {
+/** Program-owned rows the API tags: how each reads on the tab. */
+const PROGRAM_ROW: Record<string, { w: string; tag: readonly [string, string] }> = {
+  curve: { w: 'BONDING CURVE', tag: ['CURVE', 'bc'] },
+  lp: { w: 'LP RESERVE', tag: ['LP', 'bc'] },
+  stake: { w: 'STAKE ESCROW', tag: ['STAKED', 'bc'] },
+  bucket: { w: 'CREATOR BUCKET', tag: ['BUCKET', 'bc'] },
+};
+
+export function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Holder[] {
   const curveAddr = (
     curveWallet ||
     import.meta.env['VITE_RH_LAUNCHPAD_ADDRESS'] ||
@@ -772,18 +850,28 @@ function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Hol
   const out: Holder[] = rows.map((r) => {
     covered += r.pct;
     const addr = (r.wallet || '').toLowerCase();
-    const isCurve = !!r.curve || (!!curveAddr && addr === curveAddr);
+    const kind =
+      r.kind && r.kind !== 'wallet'
+        ? r.kind
+        : !!r.curve || (!!curveAddr && addr === curveAddr)
+          ? 'curve'
+          : 'wallet';
+    const isCurve = kind === 'curve';
+    const program = PROGRAM_ROW[kind];
     if (isCurve) sawCurve = true;
     const isDev =
-      !isCurve &&
+      !program &&
       !!c.dev &&
       (r.wallet === c.dev || (!!c.mint && r.wallet === c.mint) || addr === c.dev.toLowerCase());
     return {
-      w: isCurve ? 'BONDING CURVE' : shortAddr(r.wallet),
-      ...(isCurve ? {} : { addr: r.wallet }),
+      w: program ? program.w : shortAddr(r.wallet),
+      ...(program ? {} : { addr: r.wallet }),
       p: r.pct,
-      tag: isCurve
-        ? (['CURVE', 'bc'] as const)
+      ...(Number.isFinite(r.amount) ? { amt: r.amount } : {}),
+      ...(r.staked !== undefined && r.staked > 0 ? { staked: r.staked } : {}),
+      kind,
+      tag: program
+        ? program.tag
         : isDev
           ? (['DEV', 'dev'] as const)
           : r.pct > 3
@@ -797,7 +885,7 @@ function mapHolders(c: SimCoin, rows: ApiHolderRow[], curveWallet?: string): Hol
   // unaccounted for — never invent a 0% CURVE row beside a mis-tagged whale.
   const left = 100 - covered;
   if (!sawCurve && left > 0.5) {
-    out.push({ w: 'BONDING CURVE', p: left, tag: ['CURVE', 'bc'], curve: true });
+    out.push({ w: 'BONDING CURVE', p: left, kind: 'curve', tag: ['CURVE', 'bc'], curve: true });
   }
   return out;
 }
@@ -815,6 +903,10 @@ function toFill(p: ApiFillPayload): Fill {
     v: p.v,
     ...(p.cb ? { cb: true } : {}),
     ...(p.sig ? { sig: p.sig } : {}),
+    // The strip dedupes on this (`views/tape-ledger.ts`): the REST seed, a
+    // reconnect reseed, the provisional print and the indexed one all carry it.
+    ...(p.fid ? { fid: p.fid } : {}),
+    ...(p.mint ? { mint: p.mint } : {}),
   };
 }
 
@@ -829,21 +921,50 @@ function boardScope(): BoardScope {
   return WALLET.on ? WALLET.net : 'ALL';
 }
 
+/** The first board page; LOAD MORE pages by `offset` from here (`loadMore`). */
+const BOARD_PAGE = 500;
+/** `GET /tokens` said more coins exist past what the board holds. */
+let boardHasMore = false;
+
 /** `null` when the API could not be reached at all (as opposed to an empty board). */
 async function fetchTokens(net: BoardScope): Promise<ApiToken[] | null> {
   try {
-    const res = await getJson<ApiTokensResponse>('/tokens?net=' + net + '&limit=500');
+    const res = await getJson<ApiTokensResponse>('/tokens?net=' + net + '&limit=' + BOARD_PAGE);
+    boardHasMore = res.hasMore === true;
+    noteApiUp();
     return Array.isArray(res.tokens) ? res.tokens.filter(isApiToken) : [];
   } catch {
     return null;
   }
 }
 
+/** The next page of older launches for the current scope, merged into `COINS`. */
+async function loadMoreTokens(): Promise<{ added: number; more: boolean }> {
+  const scope = boardScope();
+  const res = await getJson<ApiTokensResponse>(
+    '/tokens?net=' + scope + '&limit=' + BOARD_PAGE + '&offset=' + COINS.length,
+  );
+  if (scope !== boardScope()) return { added: 0, more: boardHasMore };
+  const before = COINS.length;
+  for (const t of Array.isArray(res.tokens) ? res.tokens.filter(isApiToken) : []) mergeToken(t);
+  boardHasMore = res.hasMore === true;
+  const added = COINS.length - before;
+  if (added > 0) emit('coins');
+  return { added, more: boardHasMore };
+}
+
+const API_DOWN_TEXT = 'API UNREACHABLE \u00b7 RETRYING';
 let apiDownToasted = false;
 function noteApiDown(): void {
   if (apiDownToasted) return;
   apiDownToasted = true;
   toast('API UNREACHABLE \u2014 THE BOARD STAYS EMPTY UNTIL IT IS BACK. RETRYING.', 'red');
+  emit('notice', { text: API_DOWN_TEXT });
+}
+function noteApiUp(): void {
+  if (!apiDownToasted) return;
+  apiDownToasted = false;
+  emit('notice', { text: null });
 }
 
 /** Footer SOL + ETH marks from `GET /native-price`. */
@@ -897,13 +1018,25 @@ function unsubscribeChannel(channel: string): void {
 }
 
 let reconnectAttempt = 0;
+/** Set after the first successful open, so a reconnect can tell itself apart from boot. */
+let wsEverOpened = false;
 
 function connectWs(): void {
   if (!streaming || socket) return;
   socket = new WebSocket(WS_URL);
   socket.addEventListener('open', () => {
+    const resumed = wsEverOpened;
+    wsEverOpened = true;
     reconnectAttempt = 0;
+    // Identify first: the private chat rooms only admit an authenticated socket.
+    wsAuthenticate(WALLET.net);
     for (const channel of subscribed) wsSend({ type: 'subscribe', channel });
+    if (resumed) {
+      // Fills and lane moves that landed while the socket was down: re-read
+      // the strip (the tape ledger drops what it already shows) and the board.
+      void seedTape(boardScope(), false);
+      void refreshBoard();
+    }
   });
   socket.addEventListener('message', (ev) => {
     try {
@@ -918,6 +1051,7 @@ function connectWs(): void {
   // 1.5s → 30s with jitter so a down API is not hammered by every open tab.
   const drop = (): void => {
     socket = null;
+    wsAuthOk = false;
     if (!streaming || reconnectTimer !== 0) return;
     const base = Math.min(30_000, 1500 * 2 ** Math.min(reconnectAttempt++, 5));
     reconnectTimer = window.setTimeout(
@@ -941,8 +1075,19 @@ function disconnectWs(): void {
   socket = null;
 }
 
-function onWsFrame(frame: { channel: string; data: Record<string, unknown> }): void {
+function onWsFrame(frame: { channel: string; data: Record<string, unknown>; type?: string }): void {
   const { channel, data } = frame;
+  // Control frames (`subscribed`, `unsubscribed`, `error`, `auth`) carry no
+  // `data`; the chat drawer wants the ones about its rooms (a refused private
+  // room, an eviction after a sell), the rest are noise.
+  if (!data) {
+    if (frame.type === 'auth') {
+      onWsAuth(frame as unknown as { ok?: boolean });
+      return;
+    }
+    if (typeof channel === 'string' && channel.startsWith('chat:')) onChatStatus(channel, frame);
+    return;
+  }
   const net = data['net'] as Net | undefined;
   const scope = boardScope();
   // Guest board is cross-chain; connected board only accepts the wallet's net.
@@ -955,13 +1100,121 @@ function onWsFrame(frame: { channel: string; data: Record<string, unknown> }): v
   if (channel.startsWith('user:')) return onUserEvent(data);
 }
 
+/* -------------------------------------------------------------------------- */
+/* `user:{net}:{wallet}` — the rewards ceremonies (plan step 121).             */
+/*                                                                            */
+/* The hub only admits this channel to an authenticated socket for that very  */
+/* address, so the subscribe is sent when the `auth` control frame comes back */
+/* ok — never blind on `open`, where it would race the server's JWT check.    */
+/* -------------------------------------------------------------------------- */
+
+/** `user:{net}:{wallet}` for the live session, or null while a guest. */
+let userChannel: string | null = null;
+let wsAuthOk = false;
+let wsAuthRetried = false;
+
+/** Called once a session exists (connect) and again after a net switch. */
+function subscribeUserChannel(net: Net, wallet: string): void {
+  const channel = 'user:' + net + ':' + wallet;
+  if (userChannel && userChannel !== channel) wsSend({ type: 'unsubscribe', channel: userChannel });
+  userChannel = channel;
+  if (wsAuthOk) wsSend({ type: 'subscribe', channel });
+  else wsAuthenticate(net);
+}
+
+function unsubscribeUserChannel(): void {
+  if (userChannel) wsSend({ type: 'unsubscribe', channel: userChannel });
+  userChannel = null;
+  wsAuthOk = false;
+}
+
+function onWsAuth(frame: { ok?: boolean }): void {
+  wsAuthOk = frame.ok === true;
+  if (wsAuthOk) {
+    wsAuthRetried = false;
+    if (userChannel) wsSend({ type: 'subscribe', channel: userChannel });
+    return;
+  }
+  // A stale access token after a long sleep: refresh silently (never a wallet
+  // prompt) and try once more. `restoreSession` returns null when the refresh
+  // token is gone too, in which case the next REST call re-logs the user in.
+  if (wsAuthRetried || !userChannel) return;
+  wsAuthRetried = true;
+  void restoreSession(BASE).then((session) => {
+    if (session) wsAuthenticate(session.net);
+  });
+}
+
+let rewardsRefreshTimer = 0;
 /**
- * `user:{net}:{wallet}` frames. Only reward balances that the rewards strip
- * and rank tooltip show are applied here; XP/rank ceremonies re-hydrate from
- * `GET /rewards` instead.
+ * Coalesce a burst of user frames (a trade pays `xp`, `sp`, maybe `level_up`
+ * and an `achievement` within milliseconds) into one `GET /rewards`, which
+ * is the authoritative read for inventory, cooldowns and the drop log.
  */
+function scheduleRewardsRefresh(delayMs = 400): void {
+  if (rewardsRefreshTimer) return;
+  rewardsRefreshTimer = window.setTimeout(() => {
+    rewardsRefreshTimer = 0;
+    if (WALLET.on) void hydrateLiveRewards(WALLET.net);
+  }, delayMs);
+}
+
+/** Applies each frame optimistically, then lets the coalesced re-hydrate settle the rest. */
 function onUserEvent(data: Record<string, unknown>): void {
   switch (data['type']) {
+    case 'xp': {
+      const total = Number(data['total']);
+      const amount = Number(data['amount']);
+      if (!Number.isFinite(total)) return;
+      const reason = typeof data['reason'] === 'string' ? data['reason'] : undefined;
+      const ranked = applyXpTotal(total, Number.isFinite(amount) ? amount : 0, reason);
+      if (amount > 0 && reason && !reason.startsWith('ach:')) {
+        toast('+' + amount + ' XP ' + DOT + ' ' + reason.replace(/_/g, ' ').toUpperCase());
+      }
+      if (ranked) playRankUp(rankOf(total).i);
+      return;
+    }
+    case 'rank_up': {
+      const i = Number(data['rankIndex']);
+      if (Number.isFinite(i)) playRankUp(i);
+      return;
+    }
+    case 'sp': {
+      const total = Number(data['total']);
+      if (!Number.isFinite(total)) return;
+      applySpTotal(total);
+      scheduleRewardsRefresh();
+      return;
+    }
+    case 'level_up': {
+      const level = Number(data['level']);
+      const totalSp = Number(data['totalSp']);
+      const grants = (data['grants'] ?? {}) as Partial<Record<CrateTier, number>>;
+      if (!Number.isFinite(level)) return;
+      applyLevelUp(level, grants, Number.isFinite(totalSp) ? totalSp : (USER.sp ?? 0));
+      scheduleRewardsRefresh();
+      return;
+    }
+    case 'achievement': {
+      const key = data['key'];
+      if (typeof key !== 'string') return;
+      const def = achOf(key as AchievementKey);
+      if (applyAchievement(key as AchievementKey) && def) {
+        toast('ACHIEVEMENT ' + DOT + ' ' + def.n + ' ' + DOT + ' +' + def.xp + ' XP', 'ach');
+      }
+      scheduleRewardsRefresh();
+      return;
+    }
+    case 'streak': {
+      const count = Number(data['count']);
+      if (!Number.isFinite(count)) return;
+      applyStreak(count);
+      return;
+    }
+    case 'crate_ready': {
+      scheduleRewardsRefresh();
+      return;
+    }
     case 'stonkz': {
       const total = Number(data['total']);
       if (!Number.isFinite(total)) return;
@@ -973,6 +1226,7 @@ function onUserEvent(data: Record<string, unknown>): void {
       const total = Number(data['total']);
       if (typeof asset !== 'string' || !Number.isFinite(total)) return;
       setRwaUnits(asset, total);
+      scheduleRewardsRefresh(); // for the USD re-price
       break;
     }
     default:
@@ -980,6 +1234,17 @@ function onUserEvent(data: Record<string, unknown>): void {
   }
   saveUser();
   emit('rank');
+}
+
+let lastRankUpAt = 0;
+/** The server sends `rank_up` and the `xp` frame can imply one; play it once. */
+function playRankUp(i: number): void {
+  const now = Date.now();
+  if (now - lastRankUpAt < 3_000) return;
+  lastRankUpAt = now;
+  const name = (RANKS[i] as (typeof RANKS)[number] | undefined)?.[0] ?? '';
+  toast('RANK UP to LV ' + (i + 1) + ' ' + name, 'gold');
+  rankUp(i);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1011,6 +1276,66 @@ function onChatFrame(channel: string, data: Record<string, unknown>): void {
     avatarUrl: data['avatarUrl'] != null ? String(data['avatarUrl']) : null,
   };
   for (const h of handlers) h(msg);
+}
+
+/**
+ * Sends the held session token over the socket, so `chat:{net}:{sym}:PRIVATE`
+ * subscribes are judged against the wallet. A no-op without a session or a
+ * socket; `open` calls it again on every (re)connect.
+ */
+export function wsAuthenticate(net: Net): void {
+  const header = authHeader(net)['Authorization'];
+  if (!header) return;
+  wsSend({ type: 'auth', token: header.replace(/^Bearer\s+/i, '') });
+}
+
+/** A control frame about one chat room: refused (`error`) or evicted (`unsubscribed`). */
+export interface LiveChatStatus {
+  type: 'subscribed' | 'unsubscribed' | 'error';
+  error?: string;
+  reason?: string;
+  message?: string;
+  access?: Record<string, unknown>;
+}
+
+const chatStatusHandlers = new Map<string, Set<(status: LiveChatStatus) => void>>();
+
+function onChatStatus(channel: string, frame: Record<string, unknown>): void {
+  const handlers = chatStatusHandlers.get(channel);
+  if (!handlers?.size) return;
+  const type = frame['type'];
+  if (type !== 'subscribed' && type !== 'unsubscribed' && type !== 'error') return;
+  // A server-side eviction must not be re-subscribed on the next reconnect.
+  if (type === 'unsubscribed' || type === 'error') subscribed.delete(channel);
+  const status: LiveChatStatus = {
+    type,
+    ...(typeof frame['error'] === 'string' ? { error: frame['error'] } : {}),
+    ...(typeof frame['reason'] === 'string' ? { reason: frame['reason'] } : {}),
+    ...(typeof frame['message'] === 'string' ? { message: frame['message'] } : {}),
+    ...(frame['access'] && typeof frame['access'] === 'object'
+      ? { access: frame['access'] as Record<string, unknown> }
+      : {}),
+  };
+  for (const h of handlers) h(status);
+}
+
+/** Watches the control frames for one chat room. Returns an unsubscribe. */
+export function onChatRoomStatus(
+  net: Net,
+  room: string,
+  handler: (status: LiveChatStatus) => void,
+): () => void {
+  const channel = `chat:${net}:${room}`;
+  let set = chatStatusHandlers.get(channel);
+  if (!set) {
+    set = new Set();
+    chatStatusHandlers.set(channel, set);
+  }
+  set.add(handler);
+  return () => {
+    set?.delete(handler);
+    if (set && set.size === 0) chatStatusHandlers.delete(channel);
+  };
 }
 
 /** Subscribes to a chat room's live messages over the shared WS. Returns an unsubscribe. */
@@ -1100,7 +1425,8 @@ function onTapeEvent(data: Record<string, unknown>): void {
     c.mc = payload.mc;
     emit('tick');
   }
-  if (firstTapePrint(payload)) emit('fill', { fill: toFill(payload), animate: true });
+  // The strip itself decides whether this print is new (`views/tape.ts`).
+  emit('fill', { fill: toFill(payload), animate: true });
 }
 
 function onTokenEvent(sym: string, data: Record<string, unknown>): void {
@@ -1210,9 +1536,13 @@ function stopPolling(): void {
   }
 }
 
-/** Seed the tape with the last real fills before the WS starts pushing more. */
-async function seedTape(net: BoardScope): Promise<void> {
-  emit('tapeClear');
+/**
+ * Seed the tape with the last real fills before the WS starts pushing more.
+ * `clear` wipes the strip first (boot, net switch); a reconnect passes
+ * `false` and lets the tape's own ledger drop the prints it already shows.
+ */
+async function seedTape(net: BoardScope, clear = true): Promise<void> {
+  if (clear) emit('tapeClear');
   try {
     const res = await getJson<ApiTapeResponse>('/tape?net=' + net + '&limit=16');
     if (net !== boardScope()) return;
@@ -1279,8 +1609,9 @@ async function fetchQuote(
 function evmPayload(
   call: { to: string; data: string; value: string },
   net: EvmNet = 'RH',
+  gas?: EvmGasPreset,
 ): SignPayload {
-  return { net, to: call.to, data: call.data, value: call.value };
+  return { net, to: call.to, data: call.data, value: call.value, ...(gas ? { gas } : {}) };
 }
 
 function solPayload(prep: { transaction: string; lastValidBlockHeight: number }): SignPayload {
@@ -1288,6 +1619,27 @@ function solPayload(prep: { transaction: string; lastValidBlockHeight: number })
     net: 'SOL',
     transaction: prep.transaction,
     lastValidBlockHeight: prep.lastValidBlockHeight,
+  };
+}
+
+/**
+ * A trade's Solana payload: `solPayload` plus the MEV route. When the trader
+ * chose `SHIELD`/`RELAY` *and* the API confirmed it has a route for it
+ * (`fees.mevRoute`), the wallet is asked to sign without sending and the
+ * bytes go to `POST /trade/broadcast`. With `mevRoute: 'none'` the tip was
+ * not written and the wallet's own send is the right path — nothing to relay.
+ */
+function solTradePayload(prep: ApiTradePrepareSolAtomic): SignPayload {
+  const route = prep.fees?.mevRoute ?? 'none';
+  const mev = SET.mev;
+  if (mev === 'OFF' || route === 'none') return solPayload(prep);
+  return {
+    net: 'SOL',
+    transaction: prep.transaction,
+    lastValidBlockHeight: prep.lastValidBlockHeight,
+    mev,
+    broadcast: (transaction) =>
+      postJson<ApiTradeBroadcast>('/trade/broadcast', { transaction, mev }, 'SOL'),
   };
 }
 
@@ -1318,7 +1670,14 @@ async function signTradePlan(
   title: string,
   sym: string,
   body: Record<string, unknown>,
-): Promise<{ quote: Quote; signature: string | null; explorerUrl?: string | undefined }> {
+): Promise<{
+  quote: Quote;
+  signature: string | null;
+  explorerUrl?: string | undefined;
+  /** Solana: how the bytes went out, and why an MEV route fell back if it did. */
+  route?: string | undefined;
+  routeFallback?: string | undefined;
+}> {
   if (!prep.atomic) {
     throw new LiveApiError(
       'rh_router_required',
@@ -1358,7 +1717,7 @@ async function signTradePlan(
             confirmed.quote = resent.quote;
             confirmed.call =
               resent.atomic && isEvm(resent.net) && 'to' in resent
-                ? evmPayload(resent, resent.net)
+                ? evmPayload(resent, resent.net, evmGasPreset())
                 : null;
           },
           payload: () => confirmed.call,
@@ -1369,11 +1728,40 @@ async function signTradePlan(
     );
     return { quote: confirmed.quote, signature: last.signature };
   }
-  const { signature, explorerUrl } = await signAndConfirm(
+  const { signature, explorerUrl, route, routeFallback } = await signAndConfirm(
     net,
-    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+    prep.net === 'SOL'
+      ? solTradePayload(prep)
+      : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH', evmGasPreset()),
   );
-  return { quote: prep.quote, signature, explorerUrl };
+  return { quote: prep.quote, signature, explorerUrl, route, routeFallback };
+}
+
+/** Once per session: the MEV mode the trader picked has no route on this deployment. */
+let mevUnavailableToasted = false;
+
+/** Tell the trader when an order they asked to protect went out unprotected. */
+function noteMevOutcome(prep: ApiTradePrepare, routeFallback: string | undefined): void {
+  if (prep.net !== 'SOL' || !prep.atomic || SET.mev === 'OFF') return;
+  const route = prep.fees?.mevRoute ?? 'none';
+  if (route === 'none') {
+    if (mevUnavailableToasted) return;
+    mevUnavailableToasted = true;
+    toast(
+      'MEV ' + SET.mev + ' NOT AVAILABLE ON THIS ENV · NO TIP PAID · SENT VIA WALLET RPC',
+      'red',
+    );
+    return;
+  }
+  if (routeFallback) {
+    toast(
+      'MEV ' +
+        SET.mev +
+        ' UNAVAILABLE · SENT VIA PUBLIC RPC · ' +
+        routeFallback.toUpperCase().slice(0, 60),
+      'red',
+    );
+  }
 }
 
 /** `/base-tokens` per net: which majors a launch can pair against on this env. */
@@ -1507,7 +1895,9 @@ async function liveTrade(quote: Quote): Promise<Fill> {
     quote: confirmedQuote,
     signature,
     explorerUrl,
+    routeFallback,
   } = await signTradePlan(net, prep, title, c.sym, body);
+  noteMevOutcome(prep, routeFallback);
   lastTx = signature ? { signature, url: explorerUrl ?? explorerTxUrl(net, signature) } : null;
   const fill = applyConfirmedTrade(
     c,
@@ -1799,26 +2189,64 @@ async function liveClaimableFees(): Promise<FeeVault[]> {
  */
 async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
   const net = WALLET.net;
-  const vaults = await fetchFeeVaults(net);
-  const targets = (sym ? vaults.filter((v) => v.sym === sym) : vaults).filter(
-    (v) => v.unclaimedNative > 0 || v.unclaimedTokens > 0,
-  );
-  if (targets.length === 0) return { native: 0, tokens: {} };
 
-  const prepareClaim = async (v: ApiFeeVaultRow): Promise<SignPayload> => {
+  const prepareClaim = async (v: {
+    sym: string;
+    mint?: string;
+  }): Promise<{
+    payload: SignPayload;
+    prep: ApiClaimPrepare;
+  }> => {
     const prep = await postJson<ApiClaimPrepare>(
       '/fees/claim/prepare',
       { sym: v.sym, ...(v.mint ? { mint: v.mint } : {}) },
       net,
     );
-    return prep.net === 'SOL'
-      ? solPayload(prep)
-      : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH');
+    return {
+      prep,
+      payload:
+        prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+    };
   };
+
+  if (sym) {
+    // One coin — the Fees tab's button. Go straight to the prepare: the
+    // server reads the program's creator ledger, which is current the moment
+    // a fill lands, where `GET /fees` (the indexer's row) trails by the
+    // confirmation depth and could say "nothing" about money that is there.
+    // A 422 `nothing_to_claim` is the honest empty answer.
+    const coin = bySym(sym);
+    let prepared: Awaited<ReturnType<typeof prepareClaim>>;
+    try {
+      prepared = await prepareClaim({ sym, ...(coin?.mint ? { mint: coin.mint } : {}) });
+    } catch (err) {
+      if (err instanceof LiveApiError && err.status === 422) return { native: 0, tokens: {} };
+      throw err;
+    }
+    await signAndConfirm(net, prepared.payload);
+    const native = prepared.prep.claimableBase ?? 0;
+    const tokens = prepared.prep.claimableTokens ?? 0;
+    const res: ClaimResult = { native, tokens: {} };
+    if (tokens > 0) {
+      res.tokens[sym] = tokens;
+      creditTokens(sym, tokens);
+    }
+    if (native > 0) {
+      WALLET.sol += native;
+      USER.feesClaimed = (USER.feesClaimed ?? 0) + native;
+      saveUser();
+      emit('wallet');
+    }
+    return res;
+  }
+
+  const vaults = await fetchFeeVaults(net);
+  const targets = vaults.filter((v) => v.unclaimedNative > 0 || v.unclaimedTokens > 0);
+  if (targets.length === 0) return { native: 0, tokens: {} };
 
   if (targets.length === 1) {
     // One vault, one signature — inline, same as an atomic Solana trade.
-    await signAndConfirm(net, await prepareClaim(targets[0] as ApiFeeVaultRow));
+    await signAndConfirm(net, (await prepareClaim(targets[0] as ApiFeeVaultRow)).payload);
   } else {
     // Each vault is its own independent transaction; `run` prepares vault
     // *i*'s payload right before it is signed, not all of them up front —
@@ -1832,7 +2260,7 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
       targets.map((v) => ({
         description: 'Claim ' + v.sym + ' fees',
         run: async () => {
-          pending.payload = await prepareClaim(v);
+          pending.payload = (await prepareClaim(v)).payload;
         },
         payload: () => pending.payload,
       })),
@@ -1858,6 +2286,48 @@ async function liveClaimCreatorFees(sym?: string): Promise<ClaimResult> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Graduate — `POST /tokens/:sym/graduate/prepare`.                            */
+/* -------------------------------------------------------------------------- */
+
+interface ApiGraduatePrepareSol {
+  net: 'SOL';
+  sym: string;
+  trigger: 'exhausted' | 'oracle';
+  transaction: string;
+  lastValidBlockHeight: number;
+}
+
+interface ApiGraduatePrepareEvm {
+  net: EvmNet;
+  sym: string;
+  trigger: 'exhausted' | 'oracle';
+  to: string;
+  data: string;
+  /** Decimal wei: the Pyth update fee on the oracle trigger, `'0'` otherwise. */
+  value: string;
+}
+
+/**
+ * The permissionless `graduate`, one signature. Curve sold out → the
+ * launchpad's own `graduate`; cap over $69K with tokens left → the router's
+ * `graduateWithPriceUpdate`, which posts a fresh Pyth price first (the
+ * launchpad's oracle bound is ~120 s). The API decides which; the wallet just
+ * signs. The coin flips to graduated when the indexer sees the event.
+ */
+async function liveGraduate(coin: SimCoin): Promise<void> {
+  const net = WALLET.net;
+  const prep = await postJson<ApiGraduatePrepareSol | ApiGraduatePrepareEvm>(
+    '/tokens/' + encodeURIComponent(coin.sym) + '/graduate/prepare',
+    coin.mint ? { mint: coin.mint } : {},
+    net,
+  );
+  await signAndConfirm(
+    net,
+    prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Rewards hydrate + crates                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -1880,16 +2350,47 @@ function applyRewardsSnap(snap: LiveRewardsSnapshot): void {
             next: snap.spLevel.next,
             pct: snap.spLevel.pct,
             toNext: snap.spLevel.toNext,
+            ...(snap.spLevel.cur !== undefined ? { cur: snap.spLevel.cur } : {}),
+            ...(snap.spLevel.claimed ? { claimed: snap.spLevel.claimed } : {}),
+            ...(snap.spLevel.newlyClaimed ? { newlyClaimed: snap.spLevel.newlyClaimed } : {}),
+            ...(snap.spLevel.granted
+              ? { granted: snap.spLevel.granted as Partial<Record<CrateTier, number>> }
+              : {}),
+            ...(snap.spLevel.levels ? { levelCount: snap.spLevel.levels.length } : {}),
           },
         }
       : {}),
-    dropLog: snap.dropLog.map((d) => ({ at: d.at, tier: d.tier, label: d.label })),
+    dropLog: snap.dropLog.map((d) => ({
+      at: d.at,
+      tier: d.tier,
+      label: d.label,
+      ...(d.rarity ? { rarity: d.rarity } : {}),
+      ...(d.proof ? { proof: d.proof } : {}),
+    })),
     achievements: snap.achievements.map((a) => ({
       key: a.key as AchievementKey,
       unlockedAt: a.unlockedAt,
     })),
+    ...(snap.rwaUsd ? { rwaUsd: snap.rwaUsd.total } : {}),
+    ...(snap.items ? { items: snap.items } : {}),
+    ...(snap.nextCommit !== undefined ? { nextCrateCommit: snap.nextCommit } : {}),
   });
+  LEVEL_LADDER = snap.spLevel?.levels ?? null;
+  CLAIMS = snap.claims ?? null;
 }
+
+/** The server's level ladder (operator override aware) — the rewards page renders this when present. */
+export let LEVEL_LADDER:
+  | {
+      level: number;
+      sp: number;
+      grants: Record<string, number>;
+      claimed: boolean;
+      reached: boolean;
+    }[]
+  | null = null;
+/** On-chain claim availability, straight from the API. Null until hydrated. */
+export let CLAIMS: LiveRewardsSnapshot['claims'] | null = null;
 
 async function hydrateLiveRewards(net: Net): Promise<void> {
   try {
@@ -1900,9 +2401,19 @@ async function hydrateLiveRewards(net: Net): Promise<void> {
   }
 }
 
-async function liveOpenCrate(tier: CrateTier): Promise<CrateResult> {
+/** 16 random bytes, hex — the wallet's half of the commit–reveal. */
+function drawClientSeed(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function liveOpenCrate(tier: CrateTier, opts: OpenCrateOptions = {}): Promise<CrateResult> {
   const net = WALLET.net;
-  const res = await openCrateLive(net, tier);
+  const res = await openCrateLive(net, tier, {
+    clientSeed: drawClientSeed(),
+    ...(opts.useKey ? { useKey: true } : {}),
+  });
   const crate = crateBy(tier);
   const dropIndex =
     res.dropIndex >= 0
@@ -1920,15 +2431,33 @@ async function liveOpenCrate(tier: CrateTier): Promise<CrateResult> {
     label: res.label,
     dropIndex,
     xp: res.xp,
+    ...(res.proof ? { proof: res.proof } : {}),
+    ...(res.keyUsed ? { keyUsed: true } : {}),
+    ...(res.nextCommit ? { nextCommit: res.nextCommit } : {}),
   };
   USER.stonkz = res.stonkzTotal;
   USER.rwa = res.rwa.map((r) => ({ asset: r.asset, units: r.units }));
+  if (res.nextCommit) USER.nextCrateCommit = res.nextCommit;
   // Global cooldown — stamp every tier before hydrate in case re-fetch fails.
   if (!USER.crates) USER.crates = {};
   for (const c of CRATES) USER.crates[c.k] = res.readyAt;
   if (!USER.crateInventory) USER.crateInventory = {};
   USER.crateInventory[tier] = res.inventoryLeft;
-  if (crate) pushDrop({ t: clock(), k: tier, r: res.label, col: crate.col });
+  if (res.keyUsed && USER.items) {
+    const key = USER.items.find((i) => i.item.startsWith('RHODIUM KEY'));
+    if (key) key.count = Math.max(0, key.count - 1);
+  }
+  if (crate) {
+    pushDrop({
+      t: clock(),
+      k: tier,
+      r: res.label,
+      col: crate.col,
+      at: Date.now(),
+      ...(res.rarity ? { rarity: res.rarity } : {}),
+      ...(res.proof ? { proof: res.proof } : {}),
+    });
+  }
   saveUser();
   // Re-hydrate rank/XP from the server so ceremonies match the ledger.
   await hydrateLiveRewards(net);
@@ -2228,6 +2757,16 @@ export const liveApi: StonkzApi = {
     unsubscribeChannel('token:' + sym);
   },
 
+  boardHasMore(): boolean {
+    return boardHasMore;
+  },
+  apiNotice(): string | null {
+    return apiDownToasted ? API_DOWN_TEXT : null;
+  },
+  async loadMore(): Promise<{ added: number; more: boolean }> {
+    return loadMoreTokens();
+  },
+
   async search(query: string): Promise<SimCoin[]> {
     const q = query.trim();
     if (!q) return [];
@@ -2285,6 +2824,10 @@ export const liveApi: StonkzApi = {
             me.settings.mev === 'OFF' || me.settings.mev === 'RELAY' || me.settings.mev === 'SHIELD'
               ? me.settings.mev
               : 'SHIELD',
+          // The row is per (net, wallet), so its cap is in this net's unit —
+          // without this a device last saved on Solana would read an Arc
+          // wallet's 2,000 USDC cap as 2,000 SOL and fall back to the default.
+          capUnit: nativeUnitOf(net),
         });
         saveSettings();
       } else if (me) {
@@ -2313,6 +2856,14 @@ export const liveApi: StonkzApi = {
         else delete USER.bio;
         if (me.avatarUrl) USER.avatarUrl = me.avatarUrl;
         else delete USER.avatarUrl;
+        if (me.website) USER.website = me.website;
+        else delete USER.website;
+        if (me.xHandle) USER.xHandle = me.xHandle;
+        else delete USER.xHandle;
+        if (me.telegram) USER.telegram = me.telegram;
+        else delete USER.telegram;
+        if (me.private) USER.private = true;
+        else delete USER.private;
         rememberIdentity(session.wallet, {
           username: me.username ?? null,
           avatarUrl: me.avatarUrl ?? null,
@@ -2322,9 +2873,14 @@ export const liveApi: StonkzApi = {
         delete USER.name;
         delete USER.bio;
         delete USER.avatarUrl;
+        delete USER.website;
+        delete USER.xHandle;
+        delete USER.telegram;
+        delete USER.private;
         saveUser();
       }
       await hydrateLiveRewards(net);
+      subscribeUserChannel(net, session.wallet);
     } catch {
       // No session yet (API unreachable, signature declined) — the board
       // still loads; every authenticated write below fails loudly on its own.
@@ -2338,6 +2894,7 @@ export const liveApi: StonkzApi = {
   disconnect(): void {
     // Tokens are cleared by `logoutSession` / `clearSession` at the call site
     // (explicit disconnect vs wallet revoke). Avoid a second logout race here.
+    unsubscribeUserChannel();
     clearSession();
     resetLiveRewards();
     simApi.disconnect();
@@ -2385,6 +2942,9 @@ export const liveApi: StonkzApi = {
   async claimCreatorFees(sym?: string): Promise<ClaimResult> {
     return liveClaimCreatorFees(sym);
   },
+  async graduate(coin: SimCoin): Promise<void> {
+    return liveGraduate(coin);
+  },
   async stake(input: StakeInput): Promise<void> {
     return liveStake(input);
   },
@@ -2403,8 +2963,12 @@ export const liveApi: StonkzApi = {
   async stakePool(sym: string): Promise<StakePoolSummary | null> {
     return hydrateLiveStakePool(sym);
   },
-  async openCrate(tier: CrateTier): Promise<CrateResult> {
-    return liveOpenCrate(tier);
+  async openCrate(tier: CrateTier, opts?: OpenCrateOptions): Promise<CrateResult> {
+    return liveOpenCrate(tier, opts);
+  },
+  async refreshRewards(): Promise<void> {
+    if (!WALLET.on) return;
+    await hydrateLiveRewards(WALLET.net);
   },
 };
 

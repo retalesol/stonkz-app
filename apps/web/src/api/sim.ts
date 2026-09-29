@@ -520,6 +520,13 @@ export const simApi: StonkzApi = {
     return res;
   },
 
+  /** The sim has no chain: graduating is flipping the lane. */
+  async graduate(coin) {
+    coin.lane = 'grad';
+    coin.graduatedAt = Date.now();
+    emit('lane', { sym: coin.sym, lane: 'grad' });
+  },
+
   /** TODO(Phase 4.B): `stake` into the coin's escrow with the lock encoded. */
   async stake({ sym, amount, days, mult }: StakeInput) {
     const c = bySym(sym);

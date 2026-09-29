@@ -46,17 +46,34 @@ describe('migration history', () => {
       '0019_launch_intent_socials',
       // 0020 rebuilds stake amounts that were summed from new-total `Staked` events.
       '0020_stake_position_totals',
+      // 0023 adds `users.private`, `wall_posts.flagged` and ordered follow indexes.
+      '0023_profile_privacy',
+      // 0024 adds the admin panel: roles, step-up challenges, the append-only audit
+      // log, platform settings, user/token moderation, notices and operator jobs.
+      '0024_admin_panel',
+      // 0025 adds crate commit–reveal (`crate_commitments`, revealed seeds) and
+      // scopes the xp_events replay index by net.
+      '0025_crate_commit_reveal',
+      // 0022 adds referral tier balances + the payout ledger and the staker
+      // token peel; numbered earlier, journaled (and applied) after 0025.
+      '0022_referral_payouts',
+      // 0026 adds the graduation pool records.
+      '0026_graduation_pool',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
-    expect(second.skipped).toHaveLength(21);
+    expect(second.skipped).toHaveLength(readMigrations().length);
   });
 
   it('journal and disk agree', () => {
     const files = readMigrations();
+    // 0022 (referral tiers / payouts, staker token peel) was numbered before
+    // 0023–0025 landed and is journaled after them: the applier runs the
+    // journal order, so its idx is 26 and 0026 follows at 27.
     expect(files.map((f) => f.idx)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 24, 25, 26, 27,
     ]);
+    expect(files.map((f) => f.tag)).toContain('0022_referral_payouts');
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);
   });
 

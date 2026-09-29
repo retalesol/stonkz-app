@@ -1,4 +1,5 @@
 import type {
+  CrateProof,
   CrateTier,
   Fill,
   Net,
@@ -101,6 +102,17 @@ export interface CrateResult {
   /** Index into the tier's drop table, which is also its `RAR` rarity. */
   dropIndex: number;
   xp: number;
+  /** Live: the commit–reveal proof behind this roll. */
+  proof?: CrateProof & { clientSeeded: boolean; message: string; verifiable: boolean };
+  /** Live: a Rhodium key was spent to skip the cooldown. */
+  keyUsed?: boolean;
+  /** Live: sha256 of the server seed committed for the next open. */
+  nextCommit?: string;
+}
+
+export interface OpenCrateOptions {
+  /** Spend a held `RHODIUM KEY · INSTANT CRATE` to open through the global cooldown. */
+  useKey?: boolean;
 }
 
 export interface StonkzApi {
@@ -123,6 +135,19 @@ export interface StonkzApi {
 
   /** Board search. Sim filters `COINS` locally; live hits `GET /tokens?q=`. */
   search(query: string): Promise<SimCoin[]>;
+  /**
+   * Live: whether `GET /tokens` had coins beyond the page the board holds,
+   * and the fetch of the next page (older launches, merged into `COINS`).
+   * Absent in sim, where the board is the whole set.
+   */
+  boardHasMore?(): boolean;
+  loadMore?(): Promise<{ added: number; more: boolean }>;
+  /**
+   * Live: the standing "API UNREACHABLE" line while `GET /tokens` keeps
+   * failing, `null` once it answers. The board reads it at init because the
+   * first failure happens in `ready()`, before any view is listening.
+   */
+  apiNotice?(): string | null;
 
   quote(input: QuoteInput): Promise<Quote>;
   trade(quote: Quote): Promise<Fill>;
@@ -135,6 +160,13 @@ export interface StonkzApi {
   /** What the claim modal has to offer, before the trader commits to anything. */
   claimableFees(): Promise<FeeVault[]>;
   claimCreatorFees(sym?: string): Promise<ClaimResult>;
+  /**
+   * The permissionless `graduate` call for a coin whose curve sold out or
+   * whose cap crossed $69K (`coin.graduationReady`). One signature; live hits
+   * `POST /tokens/:sym/graduate/prepare`, sim flips the coin. Resolves once
+   * the transaction is confirmed by the wallet; the indexer flips `graduatedAt`.
+   */
+  graduate(coin: SimCoin): Promise<void>;
 
   stake(input: StakeInput): Promise<void>;
   /** Unstake `amount` (default: the whole position). Resolves to what was unstaked. */
@@ -150,7 +182,10 @@ export interface StonkzApi {
   /** Live: the coin's pool totals (`GET /tokens/:sym/staking`), cached in `state/stake`. */
   stakePool?(sym: string): Promise<StakePoolSummary | null>;
 
-  openCrate(tier: CrateTier): Promise<CrateResult>;
+  openCrate(tier: CrateTier, opts?: OpenCrateOptions): Promise<CrateResult>;
+
+  /** Live: re-read `GET /rewards` into the local ledger (after a WS user event). Sim: no-op. */
+  refreshRewards?(): Promise<void>;
 
   /** The Fees tab: lifetime split for one coin. Sim estimates it from volume. */
   tokenFees?(coin: SimCoin): Promise<TokenFees>;

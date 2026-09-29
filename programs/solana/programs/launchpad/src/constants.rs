@@ -168,9 +168,12 @@ pub const METEORA_EVENT_AUTHORITY_SEED: &[u8] = b"__event_authority";
 #[allow(dead_code)]
 pub const METEORA_ILM_BASE: Pubkey = pubkey!("MFGQxwAmB91SwuYX36okv2Qmdc9aMuHTwWGUrp4AtB1");
 
-/// Dead owner for permanently locked DLMM positions. DLMM has no fungible LP
-/// mint; permanence is position ownership + `lock_release_point = u64::MAX`.
-pub const METEORA_DEAD_OWNER: Pubkey = pubkey!("1nc1nerator11111111111111111111111111111111");
+/// DLMM has no fungible LP mint. The graduation position is owned by the
+/// per-mint escrow PDA (`SEED_METEORA_ESCROW`), which only this program can
+/// sign for, and no instruction of this program removes its liquidity. DLMM's
+/// operator timelock (`initialize_position_by_operator`, `lock_release_point`)
+/// is whitelisted to Meteora-approved operators and unavailable here — see
+/// `graduate.rs` step 4.
 
 /// Bins per bin-array / default position width.
 pub const METEORA_MAX_BIN_PER_ARRAY: i32 = 70;
@@ -185,21 +188,21 @@ pub const METEORA_BASIS_POINT_MAX: i32 = 10_000;
 pub const METEORA_INIT_LB_PAIR2_DISCRIMINATOR: [u8; 8] = [73, 59, 36, 120, 237, 83, 108, 198];
 /// `initialize_bin_array`
 pub const METEORA_INIT_BIN_ARRAY_DISCRIMINATOR: [u8; 8] = [35, 86, 19, 185, 78, 212, 75, 211];
-/// `initialize_position_by_operator`
-pub const METEORA_INIT_POSITION_BY_OPERATOR_DISCRIMINATOR: [u8; 8] =
-    [251, 189, 190, 244, 117, 254, 35, 148];
-/// `add_liquidity_by_strategy`
-pub const METEORA_ADD_LIQUIDITY_BY_STRATEGY_DISCRIMINATOR: [u8; 8] =
-    [7, 3, 150, 127, 148, 40, 61, 200];
-/// `update_position_operator`
-pub const METEORA_UPDATE_POSITION_OPERATOR_DISCRIMINATOR: [u8; 8] =
-    [202, 184, 103, 143, 180, 191, 116, 217];
+/// `initialize_position_pda` (`sha256("global:initialize_position_pda")[..8]`).
+pub const METEORA_INIT_POSITION_PDA_DISCRIMINATOR: [u8; 8] = [46, 82, 125, 146, 85, 141, 228, 153];
+/// `add_liquidity2` (explicit per-bin distribution; bin arrays as remaining accounts).
+pub const METEORA_ADD_LIQUIDITY2_DISCRIMINATOR: [u8; 8] = [228, 162, 78, 28, 70, 219, 116, 115];
+/// `BinLiquidityDistribution.distribution_{x,y}` for "all of it", in bps.
+pub const METEORA_BPS_ALL: u16 = 10_000;
 
-/// `StrategyType::SpotBalanced` Borsh discriminant.
-pub const METEORA_STRATEGY_SPOT_BALANCED: u8 = 3;
 
-/// Rent buffer for pool + bin array + position accounts (migration_authority → escrow).
-pub const METEORA_MIGRATION_RENT_BUFFER_LAMPORTS: u64 = 80_000_000; // 0.08 SOL
+/// Rent the escrow PDA must front inside `migrate_seed_liquidity`: the bin
+/// array (10,136 B ≈ 0.0715 SOL) and the `PositionV2` (8,128 B ≈ 0.0574 SOL),
+/// ≈ 0.129 SOL together. Moved from `migration_authority` to the escrow before
+/// the CPIs and refunded net of what was spent afterwards, so the exact figure
+/// only needs to be an upper bound. (Was 0.08 SOL, which covered the bin array
+/// and then failed the position with "insufficient lamports".)
+pub const METEORA_MIGRATION_RENT_BUFFER_LAMPORTS: u64 = 150_000_000; // 0.15 SOL
 
 /// Byte offset of `LbPair.active_id` (i32), including the 8-byte Anchor discriminator.
 pub const METEORA_LB_PAIR_ACTIVE_ID_OFFSET: usize = 76;
@@ -207,11 +210,25 @@ pub const METEORA_LB_PAIR_ACTIVE_ID_OFFSET: usize = 76;
 pub const METEORA_LB_PAIR_BIN_STEP_OFFSET: usize = 80;
 /// Byte offset of `PresetParameter2.bin_step` (u16) after the 8-byte discriminator.
 pub const METEORA_PRESET2_BIN_STEP_OFFSET: usize = 8;
-/// Byte offset of `PositionV2.owner` after discriminator (see IDL layout).
-pub const METEORA_POSITION_OWNER_OFFSET: usize = 8 + 32; // after lb_pair pubkey
-/// Byte offset of `PositionV2.lock_release_point` — verified in graduate tests.
-pub const METEORA_POSITION_LOCK_RELEASE_OFFSET: usize = 8 + 32 + 32 + 4 + 4 + 8;
-// disc + lb_pair + owner + liquidity_shares start… layout used only in verify clients.
+/// `PositionV2` layout (lb_clmm IDL 0.12.0), byte offsets including the 8-byte
+/// Anchor discriminator. The three big arrays come first:
+/// `liquidity_shares: [u128; 70]` (1120 B), `reward_infos: [UserRewardInfo; 70]`
+/// (70 × 48 B) and `fee_infos: [FeeInfo; 70]` (70 × 48 B), so the scalar tail
+/// starts at 7912. `claim_dex_fees` verifies the position against these.
+pub const METEORA_POSITION_LB_PAIR_OFFSET: usize = 8;
+pub const METEORA_POSITION_OWNER_OFFSET: usize = 8 + 32;
+/// `lower_bin_id: i32` at 7912, `upper_bin_id` 7916, `last_updated_at` 7920,
+/// `total_claimed_fee_{x,y}` 7928 / 7936, `total_claimed_rewards` 7944.
+pub const METEORA_POSITION_OPERATOR_OFFSET: usize = 7960;
+pub const METEORA_POSITION_LOCK_RELEASE_OFFSET: usize = 7992;
+/// `_padding_0: u8` at 8000, then `fee_owner`.
+pub const METEORA_POSITION_FEE_OWNER_OFFSET: usize = 8001;
+pub const METEORA_POSITION_MIN_LEN: usize = 8001 + 32;
+
+/// `claim_fee2` discriminator (`sha256("global:claim_fee2")[..8]`).
+pub const METEORA_CLAIM_FEE2_DISCRIMINATOR: [u8; 8] = [112, 191, 101, 171, 28, 144, 127, 187];
+/// SPL Memo v2, a required (unused) account of every DLMM v2 instruction.
+pub const SPL_MEMO_PROGRAM_ID: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 /* -------------------------------------------------------------------------- */
 /* Metaplex Token Metadata — written once by `create_token`                   */

@@ -1,25 +1,85 @@
-import { SUPPLY, curveMc, px, usd, vol24 } from '@stonkz/shared';
-import { fmtSupply } from '../lib/fmt.js';
+import { curveMc, px, usd } from '@stonkz/shared';
+import { type Candle } from '../lib/candles.js';
 import { type Html, html } from '../lib/html.js';
 import { fitCanvas } from './pix.js';
 
+export interface ChartAxis {
+  /** Axis unit label: `USD`, or the coin's gas unit (`ETH`, `SOL`, `USDC`). */
+  unit: string;
+  /** Multiplier from USD per token to the axis unit (1 for USD, 1 / native USD mark otherwise). */
+  rate: number;
+}
+
 export interface TokenChartInput {
-  /** Market-cap series, oldest first. */
-  series: number[];
-  /** Volume series, index-aligned with `series`. */
-  volume: number[];
-  /** Candle count to show: 45 / 90 / 140 / 200. */
+  /** Ascending, gap-filled candles in USD per token (`lib/candles.ts`). */
+  candles: readonly Candle[];
+  /** Candle count to show; `Infinity` for all. */
   range: number;
   /** Crosshair x in CSS pixels, or null. */
   cross: number | null;
-  /** Only read for the static HUD line. */
-  coin: { mc: number; seed: number; supply?: number | undefined };
+  bucketMs: number;
+  axis: ChartAxis;
+  /** Fixed supply, for the MCAP readout. */
+  supply: number;
+  /** Real 24h USD volume when the API reported it; `null` hides the readout. */
+  vol24Usd: number | null;
+}
+
+const UP = '#00d26a';
+const DOWN = '#ff4c3b';
+const DIM = '#6b675c';
+const GRID = '#141a24';
+const FONT = '9px "IBM Plex Mono", monospace';
+
+/** Four significant digits without exponent notation, trailing zeros trimmed. */
+export function fmtSig(v: number, sig = 4): string {
+  if (!Number.isFinite(v)) return '—';
+  if (v === 0) return '0';
+  const mag = Math.floor(Math.log10(Math.abs(v)));
+  const decimals = Math.max(0, sig - 1 - mag);
+  return v.toFixed(Math.min(decimals, 12)).replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+}
+
+/** A price in the axis unit: `$0.004414` on USD, `1.638e-6`-style figures spelled out on native. */
+export function fmtAxisPrice(usdPrice: number, axis: ChartAxis): string {
+  if (axis.unit === 'USD') return px(usdPrice);
+  return fmtSig(usdPrice * axis.rate) + ' ' + axis.unit;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** Candle time label, as fine as the bucket needs. */
+export function fmtBucketTime(t: number, bucketMs: number): string {
+  const d = new Date(t);
+  const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  const md = pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  if (bucketMs >= 86_400_000) return md;
+  if (bucketMs >= 3_600_000) return md + ' ' + hm;
+  return hm;
+}
+
+/** Paints a centred one-line message (loading / empty states). */
+export function drawChartMessage(cvs: HTMLCanvasElement | null, text: string): void {
+  if (!cvs) return;
+  const g = fitCanvas(cvs);
+  if (!g) return;
+  const w = cvs.clientWidth;
+  const h = cvs.clientHeight;
+  g.fillStyle = '#040507';
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = DIM;
+  g.font = '11px "IBM Plex Mono", monospace';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, w / 2, h / 2);
 }
 
 /**
- * The token page chart: market-cap line with a gradient fill, volume bars,
- * hi/lo callouts, a last-price tag and an optional crosshair. Returns the HUD
- * markup so the caller owns the DOM write. `index.html:1747`
+ * The token page chart: OHLC candles with volume, a last-price tag, hi/lo
+ * callouts and an optional crosshair with a per-candle readout. Returns the
+ * HUD markup so the caller owns the DOM write. `index.html:1747`
  */
 export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartInput): Html | null {
   if (!cvs) return null;
@@ -28,58 +88,84 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   const g = fitCanvas(cvs);
   if (!g) return null;
   g.clearRect(0, 0, w, h);
+  g.fillStyle = '#040507';
+  g.fillRect(0, 0, w, h);
 
-  const d = input.series.slice(-input.range);
-  const v = input.volume.slice(-input.range);
+  const all = input.candles;
+  const count = Number.isFinite(input.range) ? Math.max(1, Math.floor(input.range)) : all.length;
+  const d = all.slice(-count);
   const n = d.length;
   if (n < 1) {
-    g.fillStyle = '#040507';
-    g.fillRect(0, 0, w, h);
-    g.fillStyle = '#6b675c';
-    g.font = '11px "IBM Plex Mono", monospace';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText('NO CANDLE HISTORY YET', w / 2, h / 2);
+    drawChartMessage(cvs, 'NO CANDLE HISTORY YET');
     return html`<span class="dm">WAITING FOR FIRST PRINT</span>`;
   }
+  const axis = input.axis;
   const pl = 6;
-  const pr = 72;
-  const pt = 16;
+  const pr = w < 420 ? 58 : 76;
+  // A narrow canvas wraps the HUD onto two lines; keep the plot clear of it.
+  const pt = w < 520 ? 30 : 18;
   const pb = 17;
-  const volH = Math.max(24, h * 0.18);
+  const volH = Math.max(22, h * 0.16);
   const plotH = h - pt - pb - volH - 6;
-  let mn = Math.min(...d);
-  let mx = Math.max(...d);
-  let rg = mx - mn || mx * 0.1 || 1;
-  mn -= rg * 0.1;
-  mx += rg * 0.1;
-  rg = mx - mn;
-  const vmx = Math.max(...v, 0) || 1;
-  const X = (i: number): number =>
-    n === 1 ? pl + (w - pl - pr) / 2 : pl + (i * (w - pl - pr)) / (n - 1);
-  const Y = (p: number): number => pt + ((mx - p) / rg) * plotH;
-  const base = h - pb;
-  const supply = input.coin.supply || SUPPLY;
+  const plotW = w - pl - pr;
 
-  g.font = '9px "IBM Plex Mono", monospace';
+  let lo = Infinity;
+  let hi = -Infinity;
+  let vmx = 0;
+  for (const k of d) {
+    if (k.l < lo) lo = k.l;
+    if (k.h > hi) hi = k.h;
+    if (k.v > vmx) vmx = k.v;
+  }
+  let rg = hi - lo;
+  if (!(rg > 0)) rg = Math.abs(hi) * 0.1 || 1e-9;
+  const mn = lo - rg * 0.08;
+  const mx = hi + rg * 0.08;
+  const span = mx - mn;
+  const slot = plotW / n;
+  const X = (i: number): number => pl + slot * (i + 0.5);
+  const Y = (p: number): number => pt + ((mx - p) / span) * plotH;
+  const base = h - pb;
+
+  // Grid + price axis.
+  g.font = FONT;
   g.textBaseline = 'middle';
   for (let i = 0; i <= 4; i++) {
     const yy = pt + (i * plotH) / 4;
-    g.strokeStyle = '#141a24';
+    g.strokeStyle = GRID;
     g.beginPath();
     g.moveTo(pl, yy + 0.5);
     g.lineTo(w - pr, yy + 0.5);
     g.stroke();
-    g.fillStyle = '#6b675c';
+    g.fillStyle = DIM;
     g.textAlign = 'left';
-    g.fillText(usd(mx - (rg * i) / 4), w - pr + 7, yy);
+    g.fillText(fmtAxisPrice(mx - (span * i) / 4, axis), w - pr + 7, yy);
   }
 
-  const bw = Math.max(1, (w - pl - pr) / n - 1);
+  // Time axis: a label roughly every 90px, on candle boundaries.
+  const every = Math.max(1, Math.ceil(90 / slot));
+  g.fillStyle = DIM;
+  g.textAlign = 'center';
+  for (let i = n - 1; i >= 0; i -= every) {
+    const k = d[i] as Candle;
+    const x = X(i);
+    if (x < pl + 24 || x > w - pr - 24) continue;
+    g.strokeStyle = GRID;
+    g.beginPath();
+    g.moveTo(Math.round(x) + 0.5, pt);
+    g.lineTo(Math.round(x) + 0.5, base);
+    g.stroke();
+    g.fillText(fmtBucketTime(k.t, input.bucketMs), x, h - 6);
+  }
+
+  // Volume.
+  const bw = Math.max(1, slot * 0.66);
   for (let i = 0; i < n; i++) {
-    const up = i === 0 || (d[i] as number) >= (d[i - 1] as number);
-    g.fillStyle = up ? 'rgba(0,210,106,.4)' : 'rgba(255,76,59,.4)';
-    const vh = ((v[i] as number) / vmx) * volH;
+    const k = d[i] as Candle;
+    if (!(k.v > 0) || !(vmx > 0)) continue;
+    const up = k.c >= k.o;
+    g.fillStyle = up ? 'rgba(0,210,106,.38)' : 'rgba(255,76,59,.38)';
+    const vh = Math.max(1, (k.v / vmx) * volH);
     g.fillRect(X(i) - bw / 2, base - vh, bw, vh);
   }
   g.strokeStyle = '#1e2431';
@@ -88,51 +174,65 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   g.lineTo(w - pr, base + 0.5);
   g.stroke();
 
-  const gr = g.createLinearGradient(0, pt, 0, pt + plotH);
-  gr.addColorStop(0, 'rgba(255,162,43,.3)');
-  gr.addColorStop(1, 'rgba(255,162,43,0)');
-  g.beginPath();
-  g.moveTo(X(0), pt + plotH);
-  for (let i = 0; i < n; i++) g.lineTo(X(i), Y(d[i] as number));
-  g.lineTo(X(n - 1), pt + plotH);
-  g.closePath();
-  g.fillStyle = gr;
-  g.fill();
-  g.beginPath();
+  // Candles. Gap candles (no fills) are a thin dim tick at the carried close,
+  // pending ones are translucent until the indexer confirms them.
+  let hiI = 0;
+  let loI = 0;
   for (let i = 0; i < n; i++) {
-    if (i) g.lineTo(X(i), Y(d[i] as number));
-    else g.moveTo(X(i), Y(d[i] as number));
+    const k = d[i] as Candle;
+    if (k.h > (d[hiI] as Candle).h) hiI = i;
+    if (k.l < (d[loI] as Candle).l) loI = i;
+    const x = X(i);
+    if (k.n === 0) {
+      g.strokeStyle = '#2b3342';
+      g.beginPath();
+      g.moveTo(x - bw / 2, Math.round(Y(k.c)) + 0.5);
+      g.lineTo(x + bw / 2, Math.round(Y(k.c)) + 0.5);
+      g.stroke();
+      continue;
+    }
+    const up = k.c >= k.o;
+    const col = up ? UP : DOWN;
+    g.globalAlpha = k.pending ? 0.45 : 1;
+    g.strokeStyle = col;
+    g.fillStyle = col;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(Math.round(x) + 0.5, Y(k.h));
+    g.lineTo(Math.round(x) + 0.5, Y(k.l));
+    g.stroke();
+    const yo = Y(k.o);
+    const yc = Y(k.c);
+    const top = Math.min(yo, yc);
+    const bh = Math.max(1, Math.abs(yo - yc));
+    if (bw >= 3) g.fillRect(Math.round(x - bw / 2), top, Math.round(bw), bh);
+    else g.fillRect(x - 0.5, top, 1, bh);
+    if (k.pending) {
+      g.setLineDash([2, 2]);
+      g.strokeRect(Math.round(x - bw / 2) + 0.5, top + 0.5, Math.max(1, Math.round(bw) - 1), bh);
+      g.setLineDash([]);
+    }
+    g.globalAlpha = 1;
   }
-  g.strokeStyle = '#ffa22b';
-  g.lineWidth = 1.5;
-  g.stroke();
 
-  let hi = 0;
-  let lo = 0;
-  for (let i = 0; i < n; i++) {
-    if ((d[i] as number) > (d[hi] as number)) hi = i;
-    if ((d[i] as number) < (d[lo] as number)) lo = i;
-  }
+  // Hi / lo callouts.
+  const hiK = d[hiI] as Candle;
+  const loK = d[loI] as Candle;
   g.fillStyle = '#cac6ba';
-  g.textAlign = hi > n * 0.75 ? 'right' : 'left';
-  g.fillText(
-    'HI ' + usd(d[hi] as number),
-    X(hi) + (hi > n * 0.75 ? -5 : 5),
-    Y(d[hi] as number) - 8,
-  );
-  g.textAlign = lo > n * 0.75 ? 'right' : 'left';
-  g.fillText(
-    'LO ' + usd(d[lo] as number),
-    X(lo) + (lo > n * 0.75 ? -5 : 5),
-    Y(d[lo] as number) + 9,
-  );
+  g.textAlign = hiI > n * 0.75 ? 'right' : 'left';
+  g.fillText('HI ' + fmtAxisPrice(hiK.h, axis), X(hiI) + (hiI > n * 0.75 ? -5 : 5), Y(hiK.h) - 8);
+  g.textAlign = loI > n * 0.75 ? 'right' : 'left';
+  g.fillText('LO ' + fmtAxisPrice(loK.l, axis), X(loI) + (loI > n * 0.75 ? -5 : 5), Y(loK.l) + 9);
 
-  const ly = Y(d[n - 1] as number);
-  g.fillStyle = '#ffa22b';
+  // Last price tag.
+  const lastK = d[n - 1] as Candle;
+  const ly = Y(lastK.c);
+  const lastUp = lastK.c >= lastK.o;
+  g.fillStyle = lastK.pending ? '#7a5a1c' : lastUp ? '#0f7a3d' : '#8c2418';
   g.fillRect(w - pr + 3, ly - 7, pr - 6, 14);
-  g.fillStyle = '#150d00';
+  g.fillStyle = '#ffffff';
   g.textAlign = 'left';
-  g.fillText(usd(d[n - 1] as number), w - pr + 7, ly + 0.5);
+  g.fillText(fmtAxisPrice(lastK.c, axis), w - pr + 7, ly + 0.5);
   g.strokeStyle = 'rgba(255,162,43,.4)';
   g.setLineDash([2, 3]);
   g.beginPath();
@@ -140,37 +240,56 @@ export function drawTokenChart(cvs: HTMLCanvasElement | null, input: TokenChartI
   g.lineTo(w - pr, ly + 0.5);
   g.stroke();
   g.setLineDash([]);
-  g.fillStyle = '#6b675c';
-  g.textAlign = 'left';
-  g.fillText('T-' + n + 'M', pl + 2, h - 6);
-  g.textAlign = 'right';
-  g.fillText('NOW', w - pr - 3, h - 6);
 
-  let hud = html`<span><b>HI</b> ${usd(d[hi] as number)}</span
-    ><span><b>LO</b> ${usd(d[lo] as number)}</span><span><b>VOL</b> ${usd(vol24(input.coin))}</span
-    ><span><b>SUPPLY</b> ${fmtSupply(input.coin.supply || SUPPLY)}</span>`;
+  const mcap = (k: Candle): string => usd(k.c * input.supply);
+  const vis = d.reduce((s, k) => s + k.v, 0);
+  let hud = html`<span><b>O</b> ${fmtAxisPrice(lastK.o, axis)}</span
+    ><span><b>H</b> ${fmtAxisPrice(lastK.h, axis)}</span
+    ><span><b>L</b> ${fmtAxisPrice(lastK.l, axis)}</span
+    ><span class="${lastUp ? 'up' : 'dn'}"><b>C</b> ${fmtAxisPrice(lastK.c, axis)}</span
+    ><span><b>MCAP</b> ${mcap(lastK)}</span
+    ><span><b>VOL</b> ${usd(vis)}</span
+    >${input.vol24Usd !== null ? html`<span><b>24H</b> ${usd(input.vol24Usd)}</span>` : ''}`;
 
   if (input.cross !== null) {
-    const step = n <= 1 ? 1 : (w - pl - pr) / (n - 1);
-    const idx = Math.max(0, Math.min(n - 1, Math.round((input.cross - pl) / step)));
-    const cx = X(idx);
-    const cy = Y(d[idx] as number);
+    const idx = Math.max(0, Math.min(n - 1, Math.floor((input.cross - pl) / slot)));
+    const k = d[idx] as Candle;
+    const cx = Math.round(X(idx)) + 0.5;
+    const cy = Y(k.c);
     g.strokeStyle = 'rgba(202,198,186,.45)';
     g.setLineDash([1, 3]);
     g.beginPath();
-    g.moveTo(cx + 0.5, pt);
-    g.lineTo(cx + 0.5, base);
+    g.moveTo(cx, pt);
+    g.lineTo(cx, base);
     g.stroke();
     g.beginPath();
-    g.moveTo(pl, cy + 0.5);
-    g.lineTo(w - pr, cy + 0.5);
+    g.moveTo(pl, Math.round(cy) + 0.5);
+    g.lineTo(w - pr, Math.round(cy) + 0.5);
     g.stroke();
     g.setLineDash([]);
     g.fillStyle = '#ffd23f';
-    g.fillRect(cx - 2, cy - 2, 4, 4);
-    hud = html`<span><b>T-</b>${n - 1 - idx}m</span><span><b>MCAP</b> ${usd(d[idx] as number)}</span
-      ><span><b>PRICE</b> ${px((d[idx] as number) / supply)}</span
-      ><span><b>VOL</b> ${usd(v[idx] as number)}</span>`;
+    g.fillRect(cx - 2.5, cy - 2, 4, 4);
+    // Time tag on the x axis.
+    const label = fmtBucketTime(k.t, input.bucketMs);
+    g.font = FONT;
+    const tw = g.measureText(label).width + 8;
+    const tx = Math.max(pl, Math.min(w - pr - tw, cx - tw / 2));
+    g.fillStyle = '#2b3342';
+    g.fillRect(tx, h - 13, tw, 12);
+    g.fillStyle = '#e8e4d8';
+    g.textAlign = 'center';
+    g.fillText(label, tx + tw / 2, h - 7);
+    const up = k.c >= k.o;
+    hud = html`<span><b>${label}</b>${k.pending ? html` <i class="am">PENDING</i>` : ''}</span
+      ><span><b>O</b> ${fmtAxisPrice(k.o, axis)}</span
+      ><span><b>H</b> ${fmtAxisPrice(k.h, axis)}</span
+      ><span><b>L</b> ${fmtAxisPrice(k.l, axis)}</span
+      ><span class="${up ? 'up' : 'dn'}"><b>C</b> ${fmtAxisPrice(k.c, axis)}</span
+      ><span><b>MCAP</b> ${mcap(k)}</span
+      ><span
+        ><b>VOL</b>
+        ${usd(k.v)}${k.n ? html` <i class="dm">${k.n} FILL${k.n === 1 ? '' : 'S'}</i>` : ''}</span
+      >`;
   }
   return hud;
 }

@@ -10,11 +10,16 @@ import type { Logger } from '../observability/logger.js';
 import type { Metrics } from '../observability/metrics.js';
 import type { Db } from '../db/client.js';
 import { users } from '../db/schema.js';
-import type { ChatService } from '../social/chat.js';
+import { CHAT_HOLDER_GATE_USD, parseChatChannel, type ChatService } from '../social/chat.js';
 import type { Publisher } from './publisher.js';
 
 /** Enough for a board, the tape, a user channel and a long browsing session of token rooms. */
 export const MAX_CHANNELS_PER_SOCKET = 64;
+
+/** The line the drawer shows on a locked holders' room; the server sends it so every client agrees. */
+export function holderLockMessage(sym: string, usd = CHAT_HOLDER_GATE_USD): string {
+  return `HOLD $${usd} OF $${sym.toUpperCase()} TO ENTER`;
+}
 
 export interface HubOptions {
   redis: RedisLike;
@@ -39,8 +44,14 @@ interface Client {
   socket: WebSocket;
   channels: Set<string>;
   alive: boolean;
-  /** Set once the socket authenticates; gates `user:` subscriptions. */
-  identity: { net: Net; wallet: string } | null;
+  /** Set once the socket authenticates; gates `user:` subscriptions and the private chat rooms. */
+  identity: { net: Net; wallet: string; jti: string } | null;
+  /**
+   * Messages from one socket are handled in arrival order. `auth` awaits a
+   * JWT verify; without this a `subscribe` sent right behind it could be
+   * judged before the identity landed.
+   */
+  queue: Promise<void>;
 }
 
 type ClientMessage =
@@ -89,7 +100,10 @@ export class WsHub {
     // per-user channels without a subscription per symbol or per wallet.
     this.unsubscribes.push(
       await this.opts.redis.subscribe(CHANNELS.board(), (m, ch) => this.deliver(ch, m)),
-      await this.opts.redis.subscribe(CHANNELS.tape(), (m, ch) => this.deliver(ch, m)),
+      await this.opts.redis.subscribe(CHANNELS.tape(), (m, ch) => {
+        this.deliver(ch, m);
+        void this.onTapeFill(m);
+      }),
       await this.opts.redis.psubscribe(CHANNEL_PATTERNS.token, (m, ch) => this.deliver(ch, m)),
       await this.opts.redis.psubscribe(CHANNEL_PATTERNS.user, (m, ch) => this.deliver(ch, m)),
       await this.opts.redis.psubscribe(CHANNEL_PATTERNS.chat, (m, ch) => this.deliver(ch, m)),
@@ -101,14 +115,26 @@ export class WsHub {
   }
 
   private onConnection(socket: WebSocket): void {
-    const client: Client = { socket, channels: new Set(), alive: true, identity: null };
+    const client: Client = {
+      socket,
+      channels: new Set(),
+      alive: true,
+      identity: null,
+      queue: Promise.resolve(),
+    };
     this.clients.set(socket, client);
     this.opts.metrics.wsConnected();
 
     socket.on('pong', () => {
       client.alive = true;
     });
-    socket.on('message', (raw) => void this.onMessage(client, raw.toString()));
+    socket.on('message', (raw) => {
+      const text = raw.toString();
+      client.queue = client.queue.then(
+        () => this.onMessage(client, text),
+        () => this.onMessage(client, text),
+      );
+    });
     socket.on('close', () => this.onClose(client));
     socket.on('error', () => this.onClose(client));
 
@@ -141,7 +167,7 @@ export class WsHub {
             this.send(client, { type: 'auth', ok: false });
             return;
           }
-          client.identity = { net: claims.net, wallet: claims.sub };
+          client.identity = { net: claims.net, wallet: claims.sub, jti: claims.jti };
           this.send(client, { type: 'auth', ok: true, net: claims.net, wallet: claims.sub });
         } catch {
           this.send(client, { type: 'auth', ok: false });
@@ -153,6 +179,11 @@ export class WsHub {
         const channel = msg.channel;
         if (!this.maySubscribe(client, channel)) {
           this.send(client, { type: 'error', error: 'forbidden', channel });
+          return;
+        }
+        const refusal = await this.chatSubscribeRefusal(client, channel);
+        if (refusal) {
+          this.send(client, { type: 'error', channel, ...refusal });
           return;
         }
         if (client.channels.has(channel)) return;
@@ -189,14 +220,37 @@ export class WsHub {
           this.send(client, { type: 'error', error: 'chat_unavailable' });
           return;
         }
-        const { net, wallet } = client.identity;
+        const { net, wallet, jti } = client.identity;
         if (msg.net !== net) {
           this.send(client, { type: 'error', error: 'net_mismatch' });
           return;
         }
+        // A logout after `auth` must not leave a live composer behind.
+        if (await isTokenBlacklisted(this.opts.redis, jti)) {
+          client.identity = null;
+          this.send(client, { type: 'send_chat', ok: false, error: 'unauthorized' });
+          return;
+        }
         const result = await this.opts.chat.send(net, msg.room, wallet, msg.text);
         if (!result.ok) {
-          this.send(client, { type: 'send_chat', ok: false, error: result.error });
+          this.send(client, {
+            type: 'send_chat',
+            ok: false,
+            error: result.error,
+            ...(result.access ? { access: result.access } : {}),
+            ...(result.retryAfterSeconds !== undefined
+              ? { retryAfterSeconds: result.retryAfterSeconds }
+              : {}),
+          });
+          // Posting is where a holder who sold gets caught: evict from the room too.
+          if (result.error === 'holder_required' && result.access) {
+            this.evict(
+              client,
+              CHANNELS.chat(net, result.access.room),
+              'holder_required',
+              holderLockMessage(result.access.sym ?? ''),
+            );
+          }
           return;
         }
         this.send(client, { type: 'send_chat', ok: true });
@@ -229,6 +283,85 @@ export class WsHub {
 
       default:
         this.send(client, { type: 'error', error: 'unknown_type' });
+    }
+  }
+
+  /**
+   * The holders' room needs an authenticated wallet on the room's net that
+   * still clears the $5 gate. `null` means the subscribe may proceed; every
+   * other lane is settled synchronously by {@link maySubscribe}.
+   */
+  private async chatSubscribeRefusal(
+    client: Client,
+    channel: string,
+  ): Promise<{ error: string; message?: string; access?: unknown } | null> {
+    const lane = parseChatChannel(channel);
+    if (!lane || lane.room.kind !== 'private') return null;
+    if (!client.identity) return { error: 'unauthorized' };
+    if (client.identity.net !== lane.net) return { error: 'net_mismatch' };
+    if (!this.opts.chat) return { error: 'chat_unavailable' };
+    const access = await this.opts.chat.access(
+      client.identity.net,
+      lane.room.key,
+      client.identity.wallet,
+    );
+    if (access.canRead) return null;
+    return {
+      error: access.reason ?? 'holder_required',
+      message: holderLockMessage(lane.room.sym),
+      access,
+    };
+  }
+
+  /** Drops one channel from a client with a reason, as a sell below the gate must. */
+  private evict(client: Client, channel: string, reason: string, message: string): void {
+    if (!client.channels.delete(channel)) return;
+    this.leaveRoom(channel, client.socket);
+    this.opts.metrics.wsSubscriptionsChanged(-1);
+    this.send(client, { type: 'unsubscribed', channel, reason, message });
+  }
+
+  /**
+   * Every fill the indexer publishes passes through here. Two cheap reactions:
+   * the trader's cached lifetime volume is dropped so the "$X SO FAR" progress
+   * moves at once, and a sell re-checks the trader's seat in that token's
+   * private room, evicting the socket when the position fell under the gate.
+   */
+  private async onTapeFill(raw: string): Promise<void> {
+    if (!this.opts.chat) return;
+    let fill: { net?: unknown; sym?: unknown; payload?: { w?: unknown; buy?: unknown } };
+    try {
+      fill = JSON.parse(raw) as typeof fill;
+    } catch {
+      return;
+    }
+    const wallet = fill.payload?.w;
+    const sym = fill.sym;
+    const net = fill.net;
+    if (typeof wallet !== 'string' || typeof sym !== 'string' || typeof net !== 'string') return;
+    const chat = this.opts.chat;
+    try {
+      await chat.invalidateVolume(wallet);
+      await chat.invalidateHolding(net as Net, sym, wallet);
+    } catch (err) {
+      this.opts.logger.warn('ws: chat cache invalidation failed', { err: String(err) });
+      return;
+    }
+    if (fill.payload?.buy === true) return;
+
+    const room = `${sym.toUpperCase()}:PRIVATE`;
+    const channel = CHANNELS.chat(net as Net, room);
+    const seated = [...(this.subscribers.get(channel) ?? [])]
+      .map((socket) => this.clients.get(socket))
+      .filter((c): c is Client => !!c && c.identity?.wallet === wallet);
+    if (!seated.length) return;
+    try {
+      const access = await chat.access(net as Net, room, wallet);
+      if (access.canRead) return;
+      for (const client of seated)
+        this.evict(client, channel, 'holder_required', holderLockMessage(sym));
+    } catch (err) {
+      this.opts.logger.warn('ws: private room re-check failed', { channel, err: String(err) });
     }
   }
 

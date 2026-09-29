@@ -148,6 +148,41 @@
       "when": 1790110000000,
       "tag": "0020_stake_position_totals",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790320000000,
+      "tag": "0023_profile_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790390000000,
+      "tag": "0024_admin_panel",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790460000000,
+      "tag": "0025_crate_commit_reveal",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790530000000,
+      "tag": "0022_referral_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790600000000,
+      "tag": "0026_graduation_pool",
+      "breakpoints": true
     }
   ]
 }

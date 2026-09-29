@@ -6,6 +6,7 @@ import {
   rankOf,
   xpMult,
   type AchievementKey,
+  type CrateProof,
   type CrateTier,
   type Net,
   type RankInfo,
@@ -27,6 +28,7 @@ import {
 } from '../db/schema.js';
 import type { Publisher } from '../ws/publisher.js';
 import { previousUtcDay, utcDayKey } from './day.js';
+import { ITEM_XP_BOOST, itemActive, itemDef } from './items.js';
 import { STREAK7_AT, achievementReason, requiresVerifiedEvent } from './rules.js';
 
 export class UnverifiedEventError extends Error {
@@ -116,14 +118,27 @@ export interface RewardsSnapshot {
   streakMult: number;
   achievements: { key: AchievementKey; unlockedAt: number }[];
   crates: { tier: CrateTier; readyAt: number; ready: boolean; opens: number }[];
-  items: { item: string; count: number; expiresAt: number | null }[];
+  items: {
+    item: string;
+    count: number;
+    expiresAt: number | null;
+    /** Held, unexpired, count > 0. */
+    active: boolean;
+    /** From the item catalogue; `null` for a label no longer in any table. */
+    effect: string | null;
+    implemented: boolean;
+    blurb: string | null;
+  }[];
   dropLog: {
     at: number;
     tier: string;
     rarity: string;
     label: string;
+    kind: 'S' | 'I' | 'R';
     stonkz: number;
     item: string | null;
+    xp: number;
+    proof: CrateProof & { clientSeeded: boolean; verifiable: boolean };
   }[];
 }
 
@@ -285,7 +300,15 @@ export class Ledger {
     const before = await this.readBalance(net, wallet);
     const rankBefore = rankOf(before.xp).i;
 
-    const multiplied = input.zeroAward ? 0 : applyXpMult(input.baseXp, streak);
+    let multiplied = input.zeroAward ? 0 : applyXpMult(input.baseXp, streak);
+
+    // `XP BOOST 2X 1H` (crate item): doubles every award while it is active,
+    // before the daily cap so a boosted wallet still cannot exceed it.
+    let boost = 1;
+    if (multiplied > 0) {
+      boost = await this.xpBoostMultiplier(net, wallet);
+      if (boost !== 1) multiplied = Math.round(multiplied * boost);
+    }
 
     let cappedBy: AwardResult['cappedBy'] = input.zeroAward ? 'dust' : 'none';
     let xp = multiplied;
@@ -317,7 +340,7 @@ export class Ledger {
           txSig: input.txSig ?? null,
           sym: input.sym ?? null,
           dayUtc,
-          meta: { mult, cappedBy, ...(input.meta ?? {}) },
+          meta: { mult, cappedBy, ...(boost !== 1 ? { boost } : {}), ...(input.meta ?? {}) },
         })
         .returning({ id: xpEvents.id });
       if (!inserted) throw new Error('xp_events insert returned no row');
@@ -701,8 +724,37 @@ export class Ledger {
       .values({ wallet, net, item, count: 1, grantedAt: new Date(this.now()), expiresAt })
       .onConflictDoUpdate({
         target: [itemFlags.wallet, itemFlags.net, itemFlags.item],
-        set: { count: sql`${itemFlags.count} + 1`, expiresAt },
+        // A timed item won again restarts its window from now; a permanent
+        // one just stacks a count (keys are spent one at a time).
+        set: { count: sql`${itemFlags.count} + 1`, expiresAt, grantedAt: new Date(this.now()) },
       });
+  }
+
+  /** Item flags that are held, unexpired and have count left. */
+  async activeItems(net: Net, wallet: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ item: itemFlags.item, count: itemFlags.count, expiresAt: itemFlags.expiresAt })
+      .from(itemFlags)
+      .where(and(eq(itemFlags.wallet, wallet), eq(itemFlags.net, net)));
+    const now = this.now();
+    return rows.filter((r) => itemActive(r, now)).map((r) => r.item);
+  }
+
+  /** `2` while an `XP BOOST 2X 1H` item is active, else `1`. */
+  async xpBoostMultiplier(net: Net, wallet: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: itemFlags.count, expiresAt: itemFlags.expiresAt })
+      .from(itemFlags)
+      .where(
+        and(
+          eq(itemFlags.wallet, wallet),
+          eq(itemFlags.net, net),
+          eq(itemFlags.item, ITEM_XP_BOOST),
+        ),
+      )
+      .limit(1);
+    if (!row || !itemActive(row, this.now())) return 1;
+    return itemDef(ITEM_XP_BOOST)?.xpMult ?? 1;
   }
 
   /* --------------------------------------------------------------- snapshot */
@@ -755,20 +807,41 @@ export class Ledger {
         ready: r.readyAt.getTime() <= now,
         opens: r.opens,
       })),
-      items: itemRows.map((r) => ({
-        item: r.item,
-        count: r.count,
-        expiresAt: r.expiresAt?.getTime() ?? null,
-      })),
+      items: itemRows.map((r) => {
+        const def = itemDef(r.item);
+        return {
+          item: r.item,
+          count: r.count,
+          expiresAt: r.expiresAt?.getTime() ?? null,
+          active: itemActive(r, now),
+          effect: def?.effect ?? null,
+          implemented: def?.implemented ?? false,
+          blurb: def?.blurb ?? null,
+        };
+      }),
       dropLog: logRows.map((r) => {
-        const payload = r.payloadJson as { label?: string };
+        const payload = r.payloadJson as { label?: string; kind?: 'S' | 'I' | 'R' };
+        const verifiable = r.serverSeed !== null;
         return {
           at: r.openedAt.getTime(),
           tier: r.tier,
           rarity: r.rarity,
           label: payload.label ?? '',
+          kind: payload.kind ?? (r.itemKey ? 'I' : 'S'),
           stonkz: r.stonkzAwarded,
           item: r.itemKey,
+          xp: r.xpAwarded,
+          proof: {
+            serverSeedHash: r.serverSeedHash,
+            serverSeed: r.serverSeed,
+            clientSeed: verifiable ? r.clientNonce : null,
+            clientSeeded: r.clientSeeded,
+            rollCommit: r.rollCommit,
+            rollValue: r.rollValue,
+            amountRoll: r.amountRoll,
+            dropIndex: r.dropIndex,
+            verifiable,
+          },
         };
       }),
     };

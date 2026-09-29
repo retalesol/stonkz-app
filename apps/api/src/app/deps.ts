@@ -28,12 +28,14 @@ import {
 import { HttpJupiterClient, type JupiterClient } from '../router/jupiter.js';
 import { OracleHopClient } from '../router/oracle-hop.js';
 import { ResilientUniswapClient } from '../router/resilient-uniswap.js';
+import { HttpSolanaBroadcaster, type SolanaBroadcaster } from '../router/solana-broadcast.js';
 import { HttpUniswapClient, type UniswapClient } from '../router/uniswap.js';
 import { V3PoolHopClient } from '../router/v3-pool-hop.js';
 import { ChatService } from '../social/chat.js';
 import { XProfileCacheService } from '../social/x-cache.js';
 import { HttpXProvider, PlaceholderXProvider, type XProvider } from '../social/x-provider.js';
 import type { AppDeps } from './context.js';
+import { buildAdminServices } from '../admin/index.js';
 
 /**
  * The RH slot of `ChainRpcs` is typed as the generic `ChainRpc`, so a test can
@@ -59,6 +61,7 @@ export interface DepsOverrides {
   jupiter?: JupiterClient;
   uniswap?: UniswapClient;
   baseMints?: BaseMintRegistry;
+  solanaBroadcaster?: SolanaBroadcaster;
   xProvider?: XProvider;
 }
 
@@ -167,7 +170,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
 
   const socialCaps = new SocialCapsService({ db, ledger, now });
   const awards = new GameAwards({ ledger, socialCaps, dust: env.dust, whaleCut: env.whaleCut });
-  const spLevels = new SpLevelService({ db, now });
+  const spLevels = new SpLevelService({ db, publisher, now });
   const referrals = new ReferralService({ db, ledger, now });
   const crates = new CrateService({
     db,
@@ -232,6 +235,15 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       return new ResilientUniswapClient(new ResilientUniswapClient(http, v3Hop), oracleHop);
     })();
 
+  const solanaBroadcaster: SolanaBroadcaster =
+    overrides.solanaBroadcaster ??
+    new HttpSolanaBroadcaster({
+      rpcUrl: env.solanaRpcUrl,
+      jitoBlockEngineUrl: env.jitoBlockEngineUrl,
+      privateRpcUrl: env.solanaPrivateRpcUrl,
+      logger,
+    });
+
   const xProvider: XProvider =
     overrides.xProvider ??
     (env.xBearerToken
@@ -243,7 +255,15 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     ttlSeconds: env.xCacheTtlSeconds,
     now,
   });
-  const chat = new ChatService({ db, redis, now });
+  const admin = await buildAdminServices({ env, db, redis, logger, now, ethCaller });
+  const chat = new ChatService({
+    db,
+    redis,
+    now,
+    rpcs,
+    settings: admin.settings,
+    moderation: admin.gate,
+  });
 
   const deps: AppDeps = {
     env,
@@ -267,8 +287,10 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     jupiter,
     uniswap,
     baseMints,
+    solanaBroadcaster,
     chat,
     xCache,
+    admin,
   };
 
   return {

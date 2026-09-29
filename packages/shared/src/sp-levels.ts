@@ -1,3 +1,4 @@
+import { CRATES } from './constants.js';
 import type { CrateTier } from './types.js';
 
 /**
@@ -7,6 +8,10 @@ import type { CrateTier } from './types.js';
  * roughly 5,000 SOL of curve volume at `xpForTrade` (`native × 50`), which at
  * a 1% curve fee yields ~50 SOL gross fees and ~10 SOL to protocol (20%).
  * Opening any crate starts a **global** cooldown equal to that tier's `cd`.
+ *
+ * Every function here takes the level table as an optional last argument so
+ * the API can serve an operator override (`getLevelTable()`) without the
+ * arithmetic drifting from the shipped default.
  */
 export type CrateGrant = Partial<Record<CrateTier, number>>;
 
@@ -16,6 +21,8 @@ export interface SpLevelDef {
   readonly sp: number;
   readonly grants: CrateGrant;
 }
+
+export type SpLevelTable = readonly SpLevelDef[];
 
 /**
  * Twenty levels stretched to a long-horizon Rhodium unlock.
@@ -58,13 +65,13 @@ export interface SpLevelInfo {
 }
 
 /** Highest level whose `sp` threshold is ≤ `totalSp`. */
-export function spLevelOf(totalSp: number): SpLevelInfo {
+export function spLevelOf(totalSp: number, levels: SpLevelTable = SP_LEVELS): SpLevelInfo {
   let i = 0;
-  for (let k = 0; k < SP_LEVELS.length; k++) {
-    if (totalSp >= SP_LEVELS[k]!.sp) i = k;
+  for (let k = 0; k < levels.length; k++) {
+    if (totalSp >= levels[k]!.sp) i = k;
   }
-  const row = SP_LEVELS[i]!;
-  const nextRow = SP_LEVELS[i + 1];
+  const row = levels[i]!;
+  const nextRow = levels[i + 1];
   const next = nextRow ? nextRow.sp : null;
   return {
     level: row.level,
@@ -81,15 +88,72 @@ export function spLevelOf(totalSp: number): SpLevelInfo {
 }
 
 /** Every level definition with `sp <= totalSp` (for catch-up grants). */
-export function spLevelsReached(totalSp: number): readonly SpLevelDef[] {
-  return SP_LEVELS.filter((l) => totalSp >= l.sp);
+export function spLevelsReached(
+  totalSp: number,
+  levels: SpLevelTable = SP_LEVELS,
+): readonly SpLevelDef[] {
+  return levels.filter((l) => totalSp >= l.sp);
 }
 
 /** Preview of the next unclaimed level's grants, or null at max. */
-export function nextSpLevelGrants(totalSp: number): SpLevelDef | null {
-  const info = spLevelOf(totalSp);
+export function nextSpLevelGrants(
+  totalSp: number,
+  levels: SpLevelTable = SP_LEVELS,
+): SpLevelDef | null {
+  const info = spLevelOf(totalSp, levels);
   if (info.next === null) return null;
-  // `next` is read off SP_LEVELS, so the lookup cannot miss.
+  // `next` is read off the table, so the lookup cannot miss.
   /* v8 ignore next */
-  return SP_LEVELS.find((l) => l.sp === info.next) ?? null;
+  return levels.find((l) => l.sp === info.next) ?? null;
+}
+
+/** Total crates a level table hands out, by tier — the "what does the ladder pay" summary. */
+export function levelGrantTotals(levels: SpLevelTable = SP_LEVELS): CrateGrant {
+  const out: CrateGrant = {};
+  for (const l of levels) {
+    for (const [tier, n] of Object.entries(l.grants) as [CrateTier, number][]) {
+      out[tier] = (out[tier] ?? 0) + (n ?? 0);
+    }
+  }
+  return out;
+}
+
+/**
+ * Structural check for a level table, shipped or operator-supplied. Returns
+ * a list of human-readable problems; empty means the table is safe to serve.
+ * Every rule here is one the ledger or the UI silently depends on.
+ */
+export function validateLevelTable(
+  levels: readonly SpLevelDef[],
+  tiers: readonly CrateTier[] = CRATES.map((c) => c.k),
+): string[] {
+  const errors: string[] = [];
+  if (levels.length === 0) return ['level table is empty'];
+  if (levels[0]!.sp !== 0) errors.push('level 1 must start at 0 SP (every wallet has a level)');
+  if (levels[0]!.level !== 1) errors.push('first level must be numbered 1');
+  const tierSet = new Set<string>(tiers);
+  for (let i = 0; i < levels.length; i++) {
+    const l = levels[i]!;
+    if (!Number.isInteger(l.level) || l.level < 1)
+      errors.push(`level ${l.level} is not a positive integer`);
+    if (!Number.isFinite(l.sp) || l.sp < 0)
+      errors.push(`level ${l.level} has an invalid SP threshold`);
+    if (i > 0) {
+      const prev = levels[i - 1]!;
+      if (l.level !== prev.level + 1) errors.push(`level ${l.level} does not follow ${prev.level}`);
+      if (l.sp <= prev.sp)
+        errors.push(
+          `level ${l.level} threshold ${l.sp} is not above level ${prev.level} (${prev.sp})`,
+        );
+    }
+    let any = false;
+    for (const [tier, n] of Object.entries(l.grants)) {
+      if (!tierSet.has(tier)) errors.push(`level ${l.level} grants unknown tier ${tier}`);
+      if (!Number.isInteger(n) || (n as number) < 0)
+        errors.push(`level ${l.level} grant for ${tier} must be a non-negative integer`);
+      if ((n as number) > 0) any = true;
+    }
+    if (!any) errors.push(`level ${l.level} grants nothing`);
+  }
+  return errors;
 }

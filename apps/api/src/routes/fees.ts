@@ -12,6 +12,7 @@ import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { encodeClaimCreatorFeesCall } from '../router/evm-launch.js';
 import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { resolveTokenRow } from './token-resolve.js';
+import { creatorClaimable, sameWallet } from './creator-claimable.js';
 
 /**
  * `GET /fees` + `POST /fees/claim/prepare` — plan step 92, creator vault
@@ -21,6 +22,11 @@ import { resolveTokenRow } from './token-resolve.js';
  * query level, not just in the contracts (`StonkzLaunchpad.claimCreatorFees`
  * has the identical separation: `docs`/`ASSUMPTIONS.md` and the Solidity
  * source both note it drains the creator ledger only).
+ *
+ * The claim prepare reads the **chain's** creator ledger first
+ * (`creator-claimable.ts`): that is what the program will pay, to the atom,
+ * and it is current the moment a fill lands, where the indexer's row trails
+ * by its confirmation depth. The row is the fallback when the RPC is down.
  */
 export function feesRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -71,20 +77,22 @@ export function feesRoutes(): Hono<AppEnv> {
     const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
     if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
 
-    const [vault] = await deps.db
-      .select()
-      .from(creatorVaults)
-      .where(
-        and(
-          eq(creatorVaults.net, net),
-          eq(creatorVaults.mint, row.mint),
-          eq(creatorVaults.creator, wallet),
-        ),
-      )
-      .limit(1);
-    if (!vault || (vault.unclaimedNative <= 0 && vault.unclaimedTokens <= 0)) {
+    // The chain's ledger when it answers, the indexer's row otherwise. Either
+    // way only the recorded creator may claim, and only when something is owed
+    // — both programs revert otherwise ("not creator" / "nothing").
+    const claimable = await creatorClaimable(deps, net, row);
+    if (
+      !sameWallet(net, claimable.wallet, wallet) ||
+      (claimable.claimableBase <= 0 && claimable.claimableTokens <= 0)
+    ) {
       return c.json({ error: 'nothing_to_claim' }, 422);
     }
+    const amounts = {
+      claimableBase: claimable.claimableBase,
+      baseSym: claimable.baseSym,
+      claimableTokens: claimable.claimableTokens,
+      claimableSource: claimable.source,
+    };
 
     if (net === 'SOL') {
       const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
@@ -108,6 +116,7 @@ export function feesRoutes(): Hono<AppEnv> {
         net,
         sym,
         mint: row.mint,
+        ...amounts,
         transaction: tx
           .serialize({ requireAllSignatures: false, verifySignatures: false })
           .toString('base64'),
@@ -123,6 +132,7 @@ export function feesRoutes(): Hono<AppEnv> {
       net,
       sym,
       mint: row.mint,
+      ...amounts,
       to: evmLaunchpadAddress(deps.env, net as EvmNet),
       data,
       value: '0',

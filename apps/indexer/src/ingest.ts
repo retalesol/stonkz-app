@@ -787,6 +787,14 @@ export class Ingestor {
       .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)))
       .limit(1);
 
+    // The pool (and, on Solana, the locked position) arrive with
+    // `LiquidityMigrated`, which on EVM is a later transaction than
+    // `Graduated`; either order must end with both persisted.
+    const pool = {
+      ...(event.poolAddress ? { poolAddress: event.poolAddress } : {}),
+      ...(event.positionAddress ? { positionAddress: event.positionAddress } : {}),
+    };
+
     // Standalone `LiquidityMigrated` reuses the Graduated event shape to attach
     // pool/position addresses after the curve flip. Do not re-run awards.
     if (existing?.graduatedAt) {
@@ -794,9 +802,17 @@ export class Ingestor {
         .update(tokens)
         .set({
           ...(event.mc > 0 ? { mc: event.mc } : {}),
+          ...pool,
           updatedAt: new Date(this.now()),
         })
         .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
+      if (event.poolAddress) {
+        await this.opts.publisher.token(event.sym, {
+          type: 'graduated',
+          net: event.net,
+          sym: event.sym,
+        });
+      }
       return;
     }
 
@@ -805,7 +821,9 @@ export class Ingestor {
       .set({
         lane: 'grad',
         graduatedAt: new Date(event.blockTimeMs),
-        mc: event.mc,
+        // A standalone migration carries no cap (`mc: 0`); keep the last one.
+        ...(event.mc > 0 ? { mc: event.mc } : {}),
+        ...pool,
         updatedAt: new Date(this.now()),
       })
       .where(and(eq(tokens.net, event.net), eq(tokens.mint, mint)));
@@ -870,7 +888,14 @@ export class Ingestor {
 
   private async onFeeAccrued(event: FeeAccruedEvent): Promise<void> {
     // Stakers' cut comes out of the creator's 69%, never out of the other legs.
-    const creatorNet = event.creatorBucket - event.stakerShare;
+    // A cashback fill whose bucket was converted pays creator and stakers in
+    // the token (`creatorTokens` / `stakerTokens`): nothing native is
+    // claimable from it, though the bucket's native value still counts
+    // towards the lifetime total the Fees tab shows.
+    const stakerTokens = event.stakerTokens ?? 0;
+    const converted = event.creatorTokens > 0 || stakerTokens > 0;
+    const creatorNet = converted ? 0 : Math.max(0, event.creatorBucket - event.stakerShare);
+    const stakerNative = converted ? 0 : event.stakerShare;
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
 
     await this.db
@@ -882,7 +907,8 @@ export class Ingestor {
         creator: event.creator,
         unclaimedNative: creatorNet,
         unclaimedTokens: event.creatorTokens,
-        stakerPoolNative: event.stakerShare,
+        stakerPoolNative: stakerNative,
+        stakerPoolTokens: stakerTokens,
         lifetimeNative: event.creatorBucket,
       })
       .onConflictDoUpdate({
@@ -890,7 +916,8 @@ export class Ingestor {
         set: {
           unclaimedNative: sql`${creatorVaults.unclaimedNative} + ${creatorNet}`,
           unclaimedTokens: sql`${creatorVaults.unclaimedTokens} + ${event.creatorTokens}`,
-          stakerPoolNative: sql`${creatorVaults.stakerPoolNative} + ${event.stakerShare}`,
+          stakerPoolNative: sql`${creatorVaults.stakerPoolNative} + ${stakerNative}`,
+          stakerPoolTokens: sql`${creatorVaults.stakerPoolTokens} + ${stakerTokens}`,
           lifetimeNative: sql`${creatorVaults.lifetimeNative} + ${event.creatorBucket}`,
           updatedAt: new Date(this.now()),
         },

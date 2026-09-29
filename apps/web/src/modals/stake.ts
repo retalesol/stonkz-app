@@ -215,6 +215,14 @@ export function renderStake(c: SimCoin): void {
               ><button type="button" class="claimbtn" id="stk-claim">CLAIM</button>
             </div>`
       }
+      ${
+        c.lane === 'grad'
+          ? html`<p class="hint am" id="stk-grad">
+              CURVE GRADUATED ${DOT} TRADING MOVED TO THE DEX, SO NO NEW CURVE FEES ACCRUE TO THIS
+              POOL ${DOT} REWARDS ALREADY EARNED STAY CLAIMABLE AND UNSTAKE WORKS ONCE A LOCK ENDS
+            </p>`
+          : ''
+      }
       <p class="hint">
         STAKE WEIGHT = AMOUNT x LOCK MULTIPLIER. THE POOL TAKES HALF THE CREATOR BUCKET WHEN ALL
         CIRCULATING SUPPLY IS STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS

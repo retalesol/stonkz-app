@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createFakeRpcs } from '../chain/fake.js';
+import type { NativeTransferVerification } from '../chain/types.js';
 import { minTipFor, verifyTip } from './tips.js';
 
 /**
@@ -223,5 +224,123 @@ describe('verifyTip', () => {
       nowMs: NOW,
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('verifyTip — nets and amounts', () => {
+  const NOW = Date.parse('2026-09-06T12:00:00.000Z');
+  const transfer = (over: Partial<NativeTransferVerification>): NativeTransferVerification => ({
+    found: true as const,
+    status: 'success' as const,
+    from: '0xAAAABBBBCCCCDDDDEEEEFFFF00001111AAAABBBB',
+    to: '0xBBBBCCCCDDDDEEEEFFFF00001111AAAABBBBCCCC',
+    amountNative: 0.001,
+    blockTimeMs: NOW - 1000,
+    ...over,
+  });
+
+  it('matches Base and Arc addresses case-insensitively too (not only Robinhood)', async () => {
+    const rpcs = createFakeRpcs();
+    rpcs.BASE.setNativeTransfer('0xbase', transfer({}));
+    rpcs.ARC.setNativeTransfer('0xarc', transfer({ amountNative: 1 }));
+    const base = await verifyTip({
+      rpc: rpcs.BASE,
+      net: 'BASE',
+      signature: '0xbase',
+      fromWallet: '0xaaaabbbbccccddddeeeeffff00001111aaaabbbb',
+      toWallet: '0xbbbbccccddddeeeeffff00001111aaaabbbbcccc',
+      nowMs: NOW,
+    });
+    expect(base).toEqual({ ok: true, amountNative: 0.001 });
+    const arc = await verifyTip({
+      rpc: rpcs.ARC,
+      net: 'ARC',
+      signature: '0xarc',
+      fromWallet: '0xaaaabbbbccccddddeeeeffff00001111aaaabbbb',
+      toWallet: '0xbbbbccccddddeeeeffff00001111aaaabbbbcccc',
+      nowMs: NOW,
+    });
+    expect(arc).toEqual({ ok: true, amountNative: 1 });
+  });
+
+  it("applies each net's own minimum: 0.0001 ETH clears Base, not Arc's 0.25 USDC", async () => {
+    const rpcs = createFakeRpcs();
+    rpcs.ARC.setNativeTransfer('0xarc-small', transfer({ amountNative: 0.1 }));
+    const arc = await verifyTip({
+      rpc: rpcs.ARC,
+      net: 'ARC',
+      signature: '0xarc-small',
+      fromWallet: '0xaaaabbbbccccddddeeeeffff00001111aaaabbbb',
+      toWallet: '0xbbbbccccddddeeeeffff00001111aaaabbbbcccc',
+      nowMs: NOW,
+    });
+    expect(arc).toEqual({ ok: false, reason: 'below_minimum' });
+    expect(minTipFor('ARC')).toBe(0.25);
+    expect(minTipFor('BASE')).toBe(0.0001);
+  });
+
+  it('a signature is only evidence on the net it was verified against', async () => {
+    const rpcs = createFakeRpcs();
+    rpcs.RH.setNativeTransfer('0xsame', transfer({}));
+    // The same hash asked of the Base RPC is simply not there.
+    const onBase = await verifyTip({
+      rpc: rpcs.BASE,
+      net: 'BASE',
+      signature: '0xsame',
+      fromWallet: '0xaaaabbbbccccddddeeeeffff00001111aaaabbbb',
+      toWallet: '0xbbbbccccddddeeeeffff00001111aaaabbbbcccc',
+      nowMs: NOW,
+    });
+    expect(onBase).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it('treats a missing, zero, negative or non-finite amount as below the minimum', async () => {
+    const rpcs = createFakeRpcs();
+    for (const [sig, amountNative] of [
+      ['sig-null', null],
+      ['sig-zero', 0],
+      ['sig-neg', -1],
+      ['sig-nan', Number.NaN],
+      ['sig-inf', Number.POSITIVE_INFINITY],
+    ] as const) {
+      rpcs.SOL.setNativeTransfer(sig, {
+        found: true,
+        status: 'success',
+        from: 'ALICE',
+        to: 'BOB',
+        amountNative,
+        blockTimeMs: NOW - 1000,
+      });
+      const r = await verifyTip({
+        rpc: rpcs.SOL,
+        net: 'SOL',
+        signature: sig,
+        fromWallet: 'ALICE',
+        toWallet: 'BOB',
+        nowMs: NOW,
+      });
+      expect(r, sig).toEqual({ ok: false, reason: 'below_minimum' });
+    }
+  });
+
+  it('refuses a self-tip whose recipient is empty and a sender that is the zero address', async () => {
+    const rpcs = createFakeRpcs();
+    rpcs.SOL.setNativeTransfer('sig-no-to', {
+      found: true,
+      status: 'success',
+      from: 'ALICE',
+      to: null,
+      amountNative: 1,
+      blockTimeMs: NOW - 1000,
+    });
+    const r = await verifyTip({
+      rpc: rpcs.SOL,
+      net: 'SOL',
+      signature: 'sig-no-to',
+      fromWallet: 'ALICE',
+      toWallet: 'BOB',
+      nowMs: NOW,
+    });
+    expect(r).toEqual({ ok: false, reason: 'wrong_recipient' });
   });
 });

@@ -46,6 +46,12 @@ export const users = pgTable(
     xHandle: text('x_handle'),
     website: text('website'),
     telegram: text('telegram'),
+    /**
+     * 0023 — private profile: portfolio, PnL, recent actions, wall and follow
+     * lists are owner-only. Identity (username, avatar, bio, links) and the
+     * tokens this wallet created stay public.
+     */
+    private: boolean('private').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -141,6 +147,15 @@ export const tokens = pgTable(
     replies: integer('replies').notNull().default(0),
     lane: text('lane').notNull().default('new'),
     graduatedAt: timestamp('graduated_at', { withTimezone: true }),
+    /**
+     * Where the graduated reserves went: the Uniswap v2 pair (EVM) or the
+     * Meteora DLMM `LbPair` (Solana). `null` until `LiquidityMigrated` lands —
+     * on EVM that is a second, authority-gated transaction after `Graduated`,
+     * so a token can be graduated with no pool yet.
+     */
+    poolAddress: text('pool_address'),
+    /** Meteora DLMM `PositionV2` holding the permanently locked liquidity (Solana only). */
+    positionAddress: text('position_address'),
     /** Deterministic seed for the pixel avatar, mirrored from the sim. */
     seed: bigint('seed', { mode: 'number' }).notNull(),
     xHandle: text('x_handle'),
@@ -392,6 +407,12 @@ export const creatorVaults = pgTable(
     unclaimedNative: doublePrecision('unclaimed_native').notNull().default(0),
     unclaimedTokens: doublePrecision('unclaimed_tokens').notNull().default(0),
     stakerPoolNative: doublePrecision('staker_pool_native').notNull().default(0),
+    /**
+     * The staker peel of cashback-window fills, in the launched token: on
+     * chain the whole bucket of such a fill is converted before it is split,
+     * so neither the creator's nor the stakers' share of it is native. 0022.
+     */
+    stakerPoolTokens: doublePrecision('staker_pool_tokens').notNull().default(0),
     lifetimeNative: doublePrecision('lifetime_native').notNull().default(0),
     claimedNative: doublePrecision('claimed_native').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -539,8 +560,11 @@ export const xpEvents = pgTable(
   },
   (t) => [
     // The plan's step-101 constraint: replayed chain events cannot double-pay.
+    // Scoped by `net` since 0025: an EVM address is the same string on RH,
+    // Base and Arc, and synthetic keys (`checkin:<day>`, `follow:<addr>`)
+    // must dedupe per net, the way the balance they credit is kept.
     uniqueIndex('xp_events_sig_reason_uq')
-      .on(t.wallet, t.txSig, t.reason)
+      .on(t.wallet, t.net, t.txSig, t.reason)
       .where(sql`${t.txSig} is not null`),
     index('xp_events_day_idx').on(t.wallet, t.net, t.dayUtc),
     index('xp_events_recent_idx').on(t.wallet, t.net, t.id),
@@ -670,10 +694,20 @@ export const crateOpens = pgTable(
     wallet: text('wallet').notNull(),
     net: text('net').notNull(),
     tier: text('tier').notNull(),
-    /** HMAC(serverSecret, wallet|net|tier|nonce) — the auditable roll commitment. */
+    /**
+     * Hex HMAC-SHA256(serverSeed, net|wallet|tier|clientSeed) — the roll
+     * itself. Rows before 0025 hold HMAC(CRATE_HMAC_SECRET, …|nonce) instead
+     * and have no `server_seed`, so they cannot be re-derived by a user.
+     */
     rollCommit: text('roll_commit').notNull(),
+    /** sha256(serverSeed), shown to the wallet BEFORE the open (`crate_commitments`). */
     serverSeedHash: text('server_seed_hash').notNull(),
+    /** The client's seed (or a server-drawn one when the client sent none). Legacy: the server nonce. */
     clientNonce: text('client_nonce').notNull(),
+    /** Revealed per-open server seed. Null on legacy rows. */
+    serverSeed: text('server_seed'),
+    /** True when the client supplied the seed — the only case the server provably could not grind. */
+    clientSeeded: boolean('client_seeded').notNull().default(false),
     rollValue: doublePrecision('roll_value').notNull(),
     amountRoll: doublePrecision('amount_roll').notNull(),
     dropIndex: integer('drop_index').notNull(),
@@ -688,6 +722,24 @@ export const crateOpens = pgTable(
     uniqueIndex('crate_opens_commit_uq').on(t.wallet, t.net, t.rollCommit),
     index('crate_opens_recent_idx').on(t.wallet, t.net, t.id),
   ],
+);
+
+/**
+ * The pending commit–reveal seed for a wallet's NEXT crate open. Its sha256 is
+ * published on `GET /rewards` before the wallet decides to open; the open
+ * consumes the row, HMACs with the seed, reveals it, and commits a fresh one.
+ */
+export const crateCommitments = pgTable(
+  'crate_commitments',
+  {
+    wallet: text('wallet').notNull(),
+    net: text('net').notNull(),
+    /** 32 random bytes, hex. Never sent to a client until the open it backed is done. */
+    seed: text('seed').notNull(),
+    seedHash: text('seed_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.wallet, t.net] })],
 );
 
 /** RWA positions won from crate `R` drops, per asset. Off-chain identity: a net reset keeps them. */
@@ -739,6 +791,9 @@ export const follows = pgTable(
   (t) => [
     primaryKey({ columns: [t.net, t.follower, t.followee] }),
     index('follows_followee_idx').on(t.net, t.followee),
+    // 0023 — newest-first follow lists.
+    index('follows_follower_time_idx').on(t.net, t.follower, t.createdAt),
+    index('follows_followee_time_idx').on(t.net, t.followee, t.createdAt),
   ],
 );
 
@@ -759,6 +814,8 @@ export const wallPosts = pgTable(
     /** Native units — SOL or ETH — actually verified on-chain, never client-asserted. */
     tipNative: doublePrecision('tip_native').notNull(),
     tipTxSig: text('tip_tx_sig').notNull(),
+    /** 0023 — blocklist hit: kept (the tip was real) but never replayed to readers. */
+    flagged: boolean('flagged').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -868,6 +925,58 @@ export const referralFeeEvents = pgTable(
   (t) => [uniqueIndex('referral_fee_events_uq').on(t.net, t.earner, t.txSig, t.tier)],
 );
 
+/**
+ * `referral_fee_balances` broken down by tier (0022). Credited alongside the
+ * wallet balance on every fill and drained with it on every claim, so
+ * `sum(pending_native)` over a wallet's three rows equals its balance.
+ */
+export const referralFeeTierBalances = pgTable(
+  'referral_fee_tier_balances',
+  {
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    tier: integer('tier').notNull(),
+    pendingNative: doublePrecision('pending_native').notNull().default(0),
+    lifetimeNative: doublePrecision('lifetime_native').notNull().default(0),
+    fills: integer('fills').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.net, t.wallet, t.tier] })],
+);
+
+/**
+ * One row per referral claim (0022). `stonkz` claims are settled at once as
+ * reward credits. `native` claims are requests: the commission sits in the
+ * on-chain protocol vault and leaves it through `withdrawTreasury(0, …)`,
+ * signed by the protocol withdraw authority in an operator batch
+ * (`scripts/referral-payouts.ts`), which then marks the row `paid`.
+ */
+export const referralPayouts = pgTable(
+  'referral_payouts',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    amountNative: doublePrecision('amount_native').notNull(),
+    /** `stonkz` | `native`. */
+    mode: text('mode').notNull(),
+    /** `requested` | `paid` | `void`. */
+    status: text('status').notNull().default('requested'),
+    /** Per-tier breakdown of `amountNative` at claim time: `{ "1": 0.1, "2": 0.02 }`. */
+    tiers: jsonb('tiers').$type<Record<string, number>>().notNull().default({}),
+    /** Reward credits granted, `stonkz` mode only. */
+    stonkz: doublePrecision('stonkz'),
+    txSig: text('tx_sig'),
+    note: text('note'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('referral_payouts_wallet_idx').on(t.net, t.wallet, t.requestedAt),
+    index('referral_payouts_status_idx').on(t.net, t.status),
+  ],
+);
+
 export const socialDaily = pgTable(
   'social_daily',
   {
@@ -893,4 +1002,153 @@ export const wallLikes = pgTable(
     primaryKey({ columns: [t.net, t.postId, t.wallet] }),
     index('wall_likes_wallet_idx').on(t.net, t.wallet),
   ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* 0024 — admin panel: roles, step-up, audit, platform settings, moderation   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Admin identity is the bare wallet address, deliberately *not* `(net, wallet)`:
+ * an operator is the same human whichever chain they signed in from, and
+ * `ADMIN_WALLETS` bootstraps `owner` the same way. Compared case-insensitively
+ * for EVM addresses (`admin/roles.ts`).
+ */
+export const adminRoles = pgTable('admin_roles', {
+  wallet: text('wallet').primaryKey(),
+  /** owner | admin | moderator | viewer */
+  role: text('role').notNull(),
+  grantedBy: text('granted_by').notNull(),
+  note: text('note'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** RFC 6238 secret, AES-256-GCM sealed under the admin secret. `enabledAt` null = enrolled but unconfirmed. */
+export const adminTotp = pgTable('admin_totp', {
+  wallet: text('wallet').primaryKey(),
+  secretEnc: text('secret_enc').notNull(),
+  enabledAt: timestamp('enabled_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One step-up challenge per admin token mint; 5-minute TTL, single use. */
+export const adminChallenges = pgTable(
+  'admin_challenges',
+  {
+    nonce: text('nonce').primaryKey(),
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    message: text('message').notNull(),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => [index('admin_challenges_expires_idx').on(t.expiresAt)],
+);
+
+/** Append-only (a trigger refuses UPDATE/DELETE). Every mutating `/admin/*` call writes one row. */
+export const adminAuditLog = pgTable(
+  'admin_audit_log',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+    actor: text('actor').notNull(),
+    actorNet: text('actor_net').notNull(),
+    role: text('role').notNull(),
+    action: text('action').notNull(),
+    target: text('target'),
+    before: jsonb('before'),
+    after: jsonb('after'),
+    ip: text('ip'),
+    requestId: text('request_id'),
+    ok: boolean('ok').notNull().default(true),
+  },
+  (t) => [
+    index('admin_audit_log_at_idx').on(t.at),
+    index('admin_audit_log_actor_idx').on(t.actor, t.id),
+    index('admin_audit_log_action_idx').on(t.action, t.id),
+  ],
+);
+
+/** DB-backed platform knobs; `admin/settings.ts` reads them with env as the fallback. */
+export const platformSettings = pgTable('platform_settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const userModeration = pgTable(
+  'user_moderation',
+  {
+    net: text('net').notNull(),
+    wallet: text('wallet').notNull(),
+    chatBanned: boolean('chat_banned').notNull().default(false),
+    commentsBanned: boolean('comments_banned').notNull().default(false),
+    launchBanned: boolean('launch_banned').notNull().default(false),
+    tradeBanned: boolean('trade_banned').notNull().default(false),
+    /** Messages persist flagged (invisible to everyone else) while the sender sees success. */
+    shadowMuted: boolean('shadow_muted').notNull().default(false),
+    reason: text('reason'),
+    until: timestamp('until', { withTimezone: true }),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.net, t.wallet] })],
+);
+
+export const tokenModeration = pgTable(
+  'token_moderation',
+  {
+    net: text('net').notNull(),
+    mint: text('mint').notNull(),
+    featured: boolean('featured').notNull().default(false),
+    /** Overrides the indexer's KOTH crown for this net while set. */
+    kothOverride: boolean('koth_override').notNull().default(false),
+    /** Off the board and search; never off the chain. */
+    hidden: boolean('hidden').notNull().default(false),
+    scamWarning: text('scam_warning'),
+    reason: text('reason'),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.net, t.mint] })],
+);
+
+/** Comms: global banner, per-net notices and scheduled maintenance windows. */
+export const adminNotices = pgTable(
+  'admin_notices',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    /** banner | notice | maintenance */
+    kind: text('kind').notNull(),
+    /** `null` = every net. */
+    net: text('net'),
+    text: text('text').notNull(),
+    severity: text('severity').notNull().default('info'),
+    startsAt: timestamp('starts_at', { withTimezone: true }),
+    endsAt: timestamp('ends_at', { withTimezone: true }),
+    active: boolean('active').notNull().default(true),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('admin_notices_active_idx').on(t.active, t.kind)],
+);
+
+/** Operator jobs handed to other processes (reindex requests to the indexer over Redis). */
+export const adminJobs = pgTable(
+  'admin_jobs',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    kind: text('kind').notNull(),
+    net: text('net').notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    status: text('status').notNull().default('queued'),
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('admin_jobs_status_idx').on(t.status, t.id)],
 );

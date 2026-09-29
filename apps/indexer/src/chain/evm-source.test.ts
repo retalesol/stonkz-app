@@ -11,7 +11,7 @@ import {
 } from '@stonkz/curve-sim';
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type FeeAccruedEvent, type TradeEvent } from '../events.js';
-import { FeeSplitMismatchError, splitFeeLegacyV1 } from './market.js';
+import { FeeSplitMismatchError } from './market.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
 import { EvmChainSource, groupByTransaction } from './evm-source.js';
 import type { RawEvmLog } from './evm-events.js';
@@ -338,6 +338,36 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     if (fee) expect(() => assertEventIntegrity(fee)).not.toThrow();
   });
 
+  it('books a converted cashback bucket in tokens, never as claimable native', async () => {
+    // Inside the window the launchpad swaps the whole 69% bucket into the
+    // token at zero fee and splits *those tokens* between creator and
+    // stakers, so `feeCreator` / `feeStakers` are token amounts. The native
+    // peel must read as zero and the token slices must be carried separately —
+    // otherwise the creator vault shows base that was never claimable.
+    const cashbackTokens = 123_456n * 10n ** 18n;
+    const stakerTokens = cashbackTokens / 4n;
+    const { source } = makeSource([
+      launchLog({ cashback: true, cbStart: 1_757_000_000n }),
+      tradeLog({
+        inCashback: true,
+        effFeeBps: 4_000,
+        cashbackTokens,
+        feeStakers: stakerTokens,
+        feeCreator: cashbackTokens - stakerTokens,
+      }),
+      feeLog(),
+    ]);
+    const { events } = await source.pollRange(999, 1_001);
+    const fee = events.find((e): e is FeeAccruedEvent => e.kind === 'FeeAccrued');
+    expect(fee).toBeDefined();
+    expect(fee?.stakerShare).toBe(0);
+    expect(fee?.creatorTokens).toBeCloseTo(123_456 * 0.75, 9);
+    expect(fee?.stakerTokens).toBeCloseTo(123_456 * 0.25, 9);
+    // The four native legs are still the exact v2 split of the fee.
+    expect(fee?.creatorBucket).toBeCloseTo(splitFee(0.012).creatorBucket, 12);
+    if (fee) expect(() => assertEventIntegrity(fee)).not.toThrow();
+  });
+
   it('takes the exact ETH leg from the router rather than reconstructing it', async () => {
     // A USDC-based curve reached through the aggregator: the launchpad's
     // `baseAmount` is USDC, so only `AtomicBuy.ethIn` knows the real ETH.
@@ -519,8 +549,15 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     await expect(source.pollRange(1_000, 1_001)).rejects.toThrow(UnknownMintError);
   });
 
-  it('still accepts a fill the contract settled under the legacy v1 split', async () => {
-    const v1 = splitFeeLegacyV1(FILL.fee);
+  it('rejects a fill the contract settled under the retired v1 split', async () => {
+    // 20 / 10 / 10 / 60 — what the programs settled before 2026-09-28. No
+    // such fill exists in any indexed history (`market.ts`), so one arriving
+    // now is a program or decoder bug and must dead-letter.
+    const fee = FILL.fee;
+    const protocol = (fee * 2_000n) / 10_000n;
+    const stonkzOps = (fee * 1_000n) / 10_000n;
+    const burn = (fee * 1_000n) / 10_000n;
+    const v1 = { protocol, stonkzOps, burn, creatorBucket: fee - protocol - stonkzOps - burn };
     expect(v1.protocol).not.toBe(LEGS.protocol);
     const { source } = makeSource([
       launchLog(),
@@ -539,23 +576,17 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
         creatorBucket: v1.creatorBucket,
       }),
     ]);
-    const { events } = await source.pollRange(999, 1_001);
-    const fee = events.find((e): e is FeeAccruedEvent => e.kind === 'FeeAccrued');
-    expect(fee?.protocol).toBeCloseTo(0.012 * 0.2, 12);
-    expect(fee?.stonkzOps).toBeCloseTo(0.012 * 0.1, 12);
-    expect(fee?.burn).toBeCloseTo(0.012 * 0.1, 12);
-    expect(fee?.creatorBucket).toBeCloseTo(0.012 * 0.6, 12);
-    for (const event of events) expect(() => assertEventIntegrity(event)).not.toThrow();
+    await expect(source.pollRange(999, 1_001)).rejects.toThrow(FeeSplitMismatchError);
   });
 
-  it('rejects a fee split the contract settled under neither v2 nor legacy v1', async () => {
+  it('rejects a fee split that is off the 15/10/6/69 schedule by one wei', async () => {
     const { source } = makeSource([
       launchLog(),
       tradeLog(),
       feeLog({ protocol: LEGS.protocol + 1n, creatorBucket: LEGS.creatorBucket - 1n }),
     ]);
     await expect(source.pollRange(999, 1_001)).rejects.toThrow(FeeSplitMismatchError);
-    await expect(source.pollRange(999, 1_001)).rejects.toThrow(/match neither/);
+    await expect(source.pollRange(999, 1_001)).rejects.toThrow(/15\/69\/10\/6/);
   });
 
   it('weights a stake against circulating supply, not against total staked', async () => {

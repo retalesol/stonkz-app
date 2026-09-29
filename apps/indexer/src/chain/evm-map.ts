@@ -344,6 +344,11 @@ export async function mapEvmTransaction(
         );
         const feeUsd = baseAtomsToUsd(feeTotal, meta.basePrice1e6, meta.baseDecimals);
         const trade = tradeFor(logs, index, token);
+        // A cashback fill whose bucket was swapped into the token reports its
+        // creator/staker peel (`feeCreator` / `feeStakers`) in **tokens**, so
+        // neither is a native amount: the native peel is zero and the token
+        // slices are carried separately.
+        const converted = trade ? big(trade.args, 'cashbackTokens') > 0n : false;
         out.push({
           ...base,
           kind: 'FeeAccrued',
@@ -360,12 +365,16 @@ export async function mapEvmTransaction(
               feeUsd,
               ctx.nativeUsdPrice,
             ),
-            trade ? big(trade.args, 'feeStakers') : 0n,
+            trade && !converted ? big(trade.args, 'feeStakers') : 0n,
             big(args, 'creatorBucket'),
             splitVersion,
           ),
           creatorTokens: toWhole(
-            trade ? big(trade.args, 'cashbackTokens') : 0n,
+            converted && trade ? big(trade.args, 'feeCreator') : 0n,
+            meta.tokenDecimals,
+          ),
+          stakerTokens: toWhole(
+            converted && trade ? big(trade.args, 'feeStakers') : 0n,
             meta.tokenDecimals,
           ),
         });
@@ -484,9 +493,30 @@ export async function mapEvmTransaction(
         break;
       }
 
-      // No read table (see `solana-map.ts` decision 2), or — for the router
-      // pair — already consumed above as the `Trade`'s exact native leg.
-      case 'LiquidityMigrated':
+      // A standalone `LiquidityMigrated` — the usual EVM shape: `graduate` is
+      // permissionless and lands first, `migrateLiquidity` is a second,
+      // authority-gated transaction — attaches the pool to the already-
+      // graduated row, exactly as `solana-map.ts` decision 2 does. Folded into
+      // the `Graduated` above when both share a transaction. `mc: 0` tells the
+      // ingestor to keep the cap it already has.
+      case 'LiquidityMigrated': {
+        if (logs.some((l) => l.event.name === 'Graduated')) break;
+        const token = addr(args, 'token');
+        const meta = await need(token);
+        out.push({
+          ...base,
+          kind: 'Graduated',
+          logIndex,
+          mint: token,
+          sym: meta.sym,
+          mc: 0,
+          poolAddress: addr(args, 'pool'),
+        });
+        break;
+      }
+
+      // No read table, or — for the router pair — already consumed above as
+      // the `Trade`'s exact native leg.
       case 'TreasuryWithdrawn':
       case 'AtomicBuy':
       case 'AtomicSell':

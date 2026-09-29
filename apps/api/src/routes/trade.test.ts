@@ -1,11 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAddress } from 'viem';
-import { PublicKey, VersionedTransaction } from '@solana/web3.js';
+import {
+  ComputeBudgetProgram,
+  PublicKey,
+  SystemProgram,
+  VersionedTransaction,
+} from '@solana/web3.js';
 import { applyBuy, buyQuote, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
 import type { Net } from '@stonkz/shared';
 import { settings, tokens } from '../db/schema.js';
 import { deriveCurveColumns } from '../router/curve-state.js';
 import { createTestApp, authed, type TestApp } from '../test/app.js';
+import { solanaWallet } from '../test/wallets.js';
+import { JITO_TIP_ACCOUNTS } from '../router/solana-fees.js';
+import { BroadcastFailedError } from '../router/solana-broadcast.js';
 import { encodeLookupTableAccount, syntheticJupiterRoute } from '../test/solana-alt-fixtures.js';
 
 let h: TestApp;
@@ -792,5 +800,376 @@ describe('POST /trade/confirm', () => {
       body: JSON.stringify({ sym: 'NOSUCHCOIN', signature: '5'.repeat(64) }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Settings → the composed Solana transaction                                  */
+/* -------------------------------------------------------------------------- */
+
+interface DecodedIx {
+  programId: string;
+  data: Buffer;
+  keys: string[];
+}
+
+/** Every instruction of a prepared transaction, program ids resolved (programs are always static keys). */
+function decodeIxs(base64: string): DecodedIx[] {
+  const vtx = VersionedTransaction.deserialize(Buffer.from(base64, 'base64'));
+  const keys = vtx.message.staticAccountKeys;
+  return vtx.message.compiledInstructions.map((ix) => ({
+    programId: keys[ix.programIdIndex]!.toBase58(),
+    data: Buffer.from(ix.data),
+    keys: ix.accountKeyIndexes.map((i) => keys[i]?.toBase58() ?? `lut:${i}`),
+  }));
+}
+
+const COMPUTE_BUDGET = ComputeBudgetProgram.programId.toBase58();
+const SYSTEM = SystemProgram.programId.toBase58();
+const cuLimits = (ixs: DecodedIx[]) =>
+  ixs
+    .filter((ix) => ix.programId === COMPUTE_BUDGET && ix.data[0] === 2)
+    .map((ix) => ix.data.readUInt32LE(1));
+const cuPrices = (ixs: DecodedIx[]) =>
+  ixs
+    .filter((ix) => ix.programId === COMPUTE_BUDGET && ix.data[0] === 3)
+    .map((ix) => Number(ix.data.readBigUInt64LE(1)));
+const tipTransfers = (ixs: DecodedIx[]) =>
+  ixs
+    .filter(
+      (ix) =>
+        ix.programId === SYSTEM &&
+        ix.data.readUInt32LE(0) === 2 &&
+        (JITO_TIP_ACCOUNTS as readonly string[]).includes(ix.keys[1] ?? ''),
+    )
+    .map((ix) => ({
+      from: ix.keys[0],
+      to: ix.keys[1],
+      lamports: Number(ix.data.readBigUInt64LE(4)),
+    }));
+
+interface FeesResponse {
+  slipPct: number;
+  computeUnitLimit: number;
+  computeUnitPriceMicroLamports: number;
+  maxPriorityLamports: number;
+  tipLamports: number;
+  tipAccount: string | null;
+  mevMode: string;
+  mevRoute: string;
+}
+
+async function prepareRaw(
+  app: TestApp,
+  token: string,
+  body: Record<string, unknown>,
+): Promise<{
+  status: number;
+  body: TradePrepareResponse & {
+    fees?: FeesResponse;
+    quote?: TradeQuote & { amountOut: number; minOut: number };
+  };
+}> {
+  const res = await app.app.request('/trade/prepare', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authed(token) },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as never };
+}
+
+function seedDirectSol(sym: string): Promise<void> {
+  return seedTradeableToken({
+    net: 'SOL',
+    sym,
+    mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+    baseSymbol: 'SOL',
+    baseMint: SOL_MINT,
+    baseDecimals: 9,
+    tokenDecimals: 6,
+    basePrice1e6: 214_080_000n,
+  });
+}
+
+describe('settings → composed Solana transaction', () => {
+  it('writes exactly one CU limit and one CU price from the priority fee, and no tip without Jito', async () => {
+    await seedDirectSol('FEES');
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+
+    const { status, body } = await prepareRaw(h, token, { sym: 'FEES', side: 'buy', amount: 1 });
+    expect(status).toBe(200);
+    // Default settings row: prio 0.0012 SOL over 400k CU = 3 lamports/CU.
+    expect(body.fees).toEqual({
+      slipPct: 2.5,
+      computeUnitLimit: 400_000,
+      computeUnitPriceMicroLamports: 3_000_000,
+      maxPriorityLamports: 1_200_000,
+      tipLamports: 0,
+      tipAccount: null,
+      mevMode: 'SHIELD',
+      mevRoute: 'none',
+    });
+    const ixs = decodeIxs(body.transaction!);
+    expect(cuLimits(ixs)).toEqual([400_000]);
+    expect(cuPrices(ixs)).toEqual([3_000_000]);
+    expect(tipTransfers(ixs)).toEqual([]);
+    // Budget first, so it applies before anything can run out of units.
+    expect(ixs[0]!.programId).toBe(COMPUTE_BUDGET);
+  });
+
+  it('the request body overrides the stored row: prio 0 writes no CU price, slip sizes min_out', async () => {
+    await seedDirectSol('OVR');
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    await h.deps.db.insert(settings).values({ net: 'SOL', wallet: address, slip: 1, prio: 0.004 });
+
+    const { body } = await prepareRaw(h, token, {
+      sym: 'OVR',
+      side: 'buy',
+      amount: 1,
+      prio: 0,
+      slip: 10,
+    });
+    expect(body.fees?.computeUnitPriceMicroLamports).toBe(0);
+    expect(body.fees?.slipPct).toBe(10);
+    const ixs = decodeIxs(body.transaction!);
+    expect(cuLimits(ixs)).toEqual([400_000]);
+    expect(cuPrices(ixs)).toEqual([]);
+    const q = body.quote!;
+    expect(q.minOut / q.amountOut).toBeCloseTo(0.9, 6);
+
+    // No override: the stored row applies.
+    const stored = await prepareRaw(h, token, { sym: 'OVR', side: 'buy', amount: 1 });
+    expect(stored.body.fees?.slipPct).toBe(1);
+    // 0.004 SOL over 400k CU = 10 lamports/CU.
+    expect(stored.body.fees?.computeUnitPriceMicroLamports).toBe(10_000_000);
+  });
+
+  it('merges Jupiter’s compute budget instead of stacking a second one', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'JUPFEE',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'BONK',
+      baseMint: BONK_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 6,
+      basePrice1e6: 1_000_000n,
+    });
+    h.jupiter.setRoute(SOL_MINT, BONK_MINT, { rate: 1_000 });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    // The synthetic route carries SetComputeUnitLimit(300k) + SetComputeUnitPrice(12,345).
+    const route = syntheticJupiterRoute({
+      user: new PublicKey(address),
+      baseMint: new PublicKey(BONK_MINT),
+      poolAccounts: 8,
+      tableCount: 1,
+    });
+    h.jupiter.setSwapInstructions(route.response);
+    for (const t of route.tables) {
+      h.rpcs.SOL.setAccountData(
+        t.key.toBase58(),
+        encodeLookupTableAccount(t.state.addresses).toString('base64'),
+      );
+    }
+
+    const { status, body } = await prepareRaw(h, token, { sym: 'JUPFEE', side: 'buy', amount: 1 });
+    expect(status).toBe(200);
+    const ixs = decodeIxs(body.transaction!);
+    // One limit: Jupiter's 300k plus the curve leg. One price: the user's, not Jupiter's 12,345.
+    expect(cuLimits(ixs)).toEqual([500_000]);
+    expect(cuPrices(ixs)).toEqual([2_400_000]);
+    expect(body.fees).toMatchObject({
+      computeUnitLimit: 500_000,
+      computeUnitPriceMicroLamports: 2_400_000,
+    });
+  });
+
+  describe('with JITO_BLOCK_ENGINE_URL configured', () => {
+    let j: TestApp;
+    let originalBroadcaster: TestApp['deps']['solanaBroadcaster'];
+
+    beforeAll(async () => {
+      j = await createTestApp({ env: { JITO_BLOCK_ENGINE_URL: 'https://jito.test' } });
+      originalBroadcaster = j.deps.solanaBroadcaster;
+    });
+    afterAll(async () => {
+      await j.close();
+    });
+    beforeEach(async () => {
+      await j.db.reset();
+      await j.clearRateLimits();
+      j.jupiter.reset();
+      j.deps.solanaBroadcaster = originalBroadcaster;
+      await j.deps.db.insert(tokens).values({
+        net: 'SOL',
+        sym: 'SHIELDED',
+        name: 'SHIELDED',
+        creator: 'Dev',
+        mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+        baseSymbol: 'SOL',
+        baseMint: SOL_MINT,
+        supply: 1e9,
+        feeBps: 250,
+        mc: 1,
+        lastMc: 1,
+        lane: 'new',
+        seed: 1,
+        launchedAt: new Date(j.now() - 600_000),
+        ...deriveCurveColumns(10n ** 15n, 214_080_000n, 9, 6)!.columns,
+      });
+    });
+
+    it('SHIELD writes a tip transfer to a Jito tip account and reports the jito route', async () => {
+      const { token, address } = await j.login('SOL');
+      j.rpcs.SOL.setBalance(address, 10);
+      const { status, body } = await prepareRaw(j, token, {
+        sym: 'SHIELDED',
+        side: 'buy',
+        amount: 1,
+      });
+      expect(status).toBe(200);
+      expect(body.fees).toMatchObject({
+        mevMode: 'SHIELD',
+        mevRoute: 'jito',
+        tipLamports: 900_000,
+      });
+      expect(JITO_TIP_ACCOUNTS).toContain(body.fees!.tipAccount);
+      const tips = tipTransfers(decodeIxs(body.transaction!));
+      expect(tips).toEqual([{ from: address, to: body.fees!.tipAccount, lamports: 900_000 }]);
+    });
+
+    it('OFF writes no tip; RELAY without a private RPC has no route and writes none either', async () => {
+      const { token, address } = await j.login('SOL');
+      j.rpcs.SOL.setBalance(address, 10);
+      const off = await prepareRaw(j, token, {
+        sym: 'SHIELDED',
+        side: 'buy',
+        amount: 1,
+        mev: 'OFF',
+      });
+      expect(off.body.fees).toMatchObject({ mevMode: 'OFF', mevRoute: 'none', tipLamports: 0 });
+      expect(tipTransfers(decodeIxs(off.body.transaction!))).toEqual([]);
+      const relay = await prepareRaw(j, token, {
+        sym: 'SHIELDED',
+        side: 'buy',
+        amount: 1,
+        mev: 'RELAY',
+      });
+      expect(relay.body.fees).toMatchObject({ mevMode: 'RELAY', mevRoute: 'none', tipLamports: 0 });
+      expect(tipTransfers(decodeIxs(relay.body.transaction!))).toEqual([]);
+    });
+
+    it('floors a dust tip to Jito’s 1000-lamport minimum', async () => {
+      const { token, address } = await j.login('SOL');
+      j.rpcs.SOL.setBalance(address, 10);
+      const { body } = await prepareRaw(j, token, {
+        sym: 'SHIELDED',
+        side: 'buy',
+        amount: 1,
+        mevTip: 0.0000001,
+      });
+      expect(body.fees?.tipLamports).toBe(1_000);
+      expect(tipTransfers(decodeIxs(body.transaction!))[0]?.lamports).toBe(1_000);
+    });
+
+    it('the tip counts toward the cap exactly when it is written', async () => {
+      const { token, address } = await j.login('SOL');
+      j.rpcs.SOL.setBalance(address, 100);
+      // 4.9985 + prio 0.0012 = 4.9997 ≤ 5; + tip 0.0009 = 5.0006 > 5.
+      const shield = await prepareRaw(j, token, { sym: 'SHIELDED', side: 'buy', amount: 4.9985 });
+      expect(shield.status).toBe(422);
+      expect(shield.body.error).toBe('cap_exceeded');
+      const off = await prepareRaw(j, token, {
+        sym: 'SHIELDED',
+        side: 'buy',
+        amount: 4.9985,
+        mev: 'OFF',
+      });
+      expect(off.status).toBe(200);
+    });
+
+    describe('POST /trade/broadcast', () => {
+      async function signedPrepared(token: string, address: string): Promise<string> {
+        j.rpcs.SOL.setBalance(address, 10);
+        const { body } = await prepareRaw(j, token, { sym: 'SHIELDED', side: 'buy', amount: 1 });
+        const vtx = VersionedTransaction.deserialize(Buffer.from(body.transaction!, 'base64'));
+        vtx.signatures[0] = new Uint8Array(64).fill(1);
+        return Buffer.from(vtx.serialize()).toString('base64');
+      }
+
+      async function broadcast(
+        token: string,
+        body: unknown,
+      ): Promise<{ status: number; body: Record<string, unknown> }> {
+        const res = await j.app.request('/trade/broadcast', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...authed(token) },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+      }
+
+      it('relays the signed-in wallet’s own signed transaction and reports the route', async () => {
+        const { token, address } = await j.login('SOL');
+        const transaction = await signedPrepared(token, address);
+        const calls: { tx: string; mode: string }[] = [];
+        j.deps.solanaBroadcaster = {
+          routeFor: () => 'jito',
+          send: async (tx, mode) => {
+            calls.push({ tx, mode });
+            return { signature: 'sigJito', via: 'jito' };
+          },
+        };
+        const { status, body } = await broadcast(token, { transaction, mev: 'SHIELD' });
+        expect(status).toBe(200);
+        expect(body).toEqual({ signature: 'sigJito', via: 'jito' });
+        expect(calls).toEqual([{ tx: transaction, mode: 'SHIELD' }]);
+      });
+
+      it('refuses an unsigned transaction, another wallet’s transaction, and a non-protected mode', async () => {
+        const { token, address } = await j.login('SOL');
+        j.deps.solanaBroadcaster = {
+          routeFor: () => 'jito',
+          send: async () => {
+            throw new Error('must not be reached');
+          },
+        };
+        const signed = await signedPrepared(token, address);
+        const unsignedVtx = VersionedTransaction.deserialize(Buffer.from(signed, 'base64'));
+        unsignedVtx.signatures[0] = new Uint8Array(64);
+        const unsigned = Buffer.from(unsignedVtx.serialize()).toString('base64');
+
+        expect(
+          (await broadcast(token, { transaction: unsigned, mev: 'SHIELD' })).body,
+        ).toMatchObject({
+          error: 'bad_transaction',
+        });
+        expect((await broadcast(token, { transaction: signed, mev: 'OFF' })).status).toBe(400);
+        expect((await broadcast(token, { transaction: 'zz', mev: 'SHIELD' })).body).toMatchObject({
+          error: 'bad_transaction',
+        });
+        const other = await j.login('SOL', solanaWallet('someone-else'));
+        const foreign = await broadcast(other.token, { transaction: signed, mev: 'SHIELD' });
+        expect(foreign.status).toBe(400);
+        expect(foreign.body).toMatchObject({ error: 'bad_transaction' });
+      });
+
+      it('maps a total broadcast failure to 502 broadcast_failed', async () => {
+        const { token, address } = await j.login('SOL');
+        const transaction = await signedPrepared(token, address);
+        j.deps.solanaBroadcaster = {
+          routeFor: () => 'jito',
+          send: async () => {
+            throw new BroadcastFailedError('jito: down; rpc: down');
+          },
+        };
+        const { status, body } = await broadcast(token, { transaction, mev: 'SHIELD' });
+        expect(status).toBe(502);
+        expect(body).toEqual({ error: 'broadcast_failed', detail: 'jito: down; rpc: down' });
+      });
+    });
   });
 });

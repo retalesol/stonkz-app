@@ -12,7 +12,6 @@ import {
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type TradeEvent } from '../events.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
-import { splitFeeLegacyV1 } from './market.js';
 import {
   SolanaChainSource,
   SolanaRangeTooBusyError,
@@ -323,8 +322,15 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
     await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(UnknownMintError);
   });
 
-  it('still accepts a fill settled under the legacy v1 split during the upgrade window', async () => {
-    const v1 = splitFeeLegacyV1(FILL.fee);
+  it('rejects a fill settled under the retired v1 split', async () => {
+    // The pre-upgrade 20 / 10 / 10 / 60 split. No such fill exists in any
+    // indexed history (see `market.ts`), so one arriving now is a program or
+    // decoder bug and must dead-letter rather than skew the treasuries.
+    const fee = FILL.fee;
+    const protocol = (fee * 2_000n) / 10_000n;
+    const stonkzOps = (fee * 1_000n) / 10_000n;
+    const burn = (fee * 1_000n) / 10_000n;
+    const v1 = { protocol, stonkzOps, burn, creatorBucket: fee - protocol - stonkzOps - burn };
     // Guard the fixture: v1 legs genuinely differ from v2 for this fill.
     expect(v1.protocol).not.toBe(CHAIN_LEGS.protocol);
     const { source } = makeSource([
@@ -332,16 +338,7 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
       { signature: 'sigV1', slot: 1_150, blockTimeSecs: 1_757_000_100, logs: fillLogs(v1) },
     ]);
 
-    const { events } = await source.pollRange(1_000, 1_200);
-    expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
-    const fee = events.find((e) => e.kind === 'FeeAccrued');
-    if (fee?.kind !== 'FeeAccrued') throw new Error('expected FeeAccrued');
-    // Rescaled by the ratios the chain actually used, not the v2 ones.
-    expect(fee.protocol).toBeCloseTo(0.0375 * 0.2, 12);
-    expect(fee.stonkzOps).toBeCloseTo(0.0375 * 0.1, 12);
-    expect(fee.burn).toBeCloseTo(0.0375 * 0.1, 12);
-    expect(fee.creatorBucket).toBeCloseTo(0.0375 * 0.6, 12);
-    for (const event of events) expect(() => assertEventIntegrity(event)).not.toThrow();
+    await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(/15\/69\/10\/6/);
   });
 
   it('rejects a fee split the chain settled under neither v2 nor legacy v1', async () => {
@@ -365,7 +362,7 @@ describe('SolanaChainSource — decoding a launch and a fill', () => {
       { signature: 'sigBent', slot: 1_150, blockTimeSecs: 1_757_000_100, logs: bent },
     ]);
     await expect(source.pollRange(1_000, 1_200)).rejects.toThrow(
-      /match neither the integer 15\/69\/10\/6 split .* nor the legacy 20\/60\/10\/10 split/,
+      /are not the integer 15\/69\/10\/6 split/,
     );
   });
 
