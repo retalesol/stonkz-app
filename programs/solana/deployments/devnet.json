@@ -4,10 +4,17 @@
   "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
   "lastUpgradedSlot": 505228004,
   "upgradeSignature": null,
-  "upgradedAt": "2026-09-29",
+  "upgradedAt": "2026-09-30",
   "note": "v2 fee split (69 creator bucket / 15 platform / 10 $STONKZ buyback / 6 RWA crate fund); vault seeds unchanged. Mint PDA seeds are creator+salt; duplicate tickers allowed. Program ID unchanged.",
-  "upgradeSlot": 505315826,
+  "upgradeSlot": 505697751,
   "notes": [
-    "2026-09-29: create_token writes immutable Metaplex metadata (update authority = curve PDA); 17-account create. Upgraded at slot 505315826."
-  ]
+    "2026-09-29: create_token writes immutable Metaplex metadata (update authority = curve PDA); 17-account create. Upgraded at slot 505315826.",
+    "2026-09-30: upgraded at slot 505697751 (Meteora migration fixes, claim_dex_fees, pauser, referral vault/claims); ProgramData extended to 859,656 B. Referral vault (wSOL) 4gtgiR1buzGWBvWf1w3zBYGEFCMvoi9Us4rf7dfeyGz1, signer rwp1sFwu9gvCHWdeiyVGoXivJXuqDtFTgGn6yhsr3rP."
+  ],
+  "referral": {
+    "vaultWsol": "4gtgiR1buzGWBvWf1w3zBYGEFCMvoi9Us4rf7dfeyGz1",
+    "config": "BiDP3XCAAZpcP4zzNjcLU5B2LkLjmSReikiqYiFnWJSN",
+    "signer": "rwp1sFwu9gvCHWdeiyVGoXivJXuqDtFTgGn6yhsr3rP",
+    "maxPerDaySol": 1
+  }
 }
