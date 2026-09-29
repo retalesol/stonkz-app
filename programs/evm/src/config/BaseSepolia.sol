@@ -24,6 +24,12 @@ library BaseSepolia {
     /// PushPriceSource on testnet (Chainlink is mainnet cutover work).
     uint64 internal constant ORACLE_MAX_AGE_SECS = 90_000;
 
+    /// Pyth Core (Base Sepolia). Launches carry a Hermes update for it in-tx.
+    address internal constant PYTH = 0xA2aa501b19aff244D90cc15a4Cf739D2725B5729;
+    /// Pyth ETH/USD price feed id (the same on every chain).
+    bytes32 internal constant PYTH_ETH_USD =
+        0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
+
     function isTestnet() internal view returns (bool) {
         return block.chainid == CHAIN_ID;
     }

@@ -1,3 +1,4 @@
+import { PublicKey } from '@solana/web3.js';
 import { withChainsFile } from './chains-file.js';
 import type { Net } from '@stonkz/shared';
 import { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
@@ -124,6 +125,13 @@ export interface ApiEnv {
   /** `Anchor.toml`'s `[programs.localnet]` id — override per environment. */
   solanaLaunchpadProgramId: string;
   /**
+   * `SOLANA_LAUNCH_ALT`: comma-separated address lookup tables holding the
+   * launchpad's static accounts (created by
+   * `programs/solana/scripts/create-launch-alt.ts`). Optional — every v0
+   * launch/trade compiles against them on top of Jupiter's own tables.
+   */
+  solanaLaunchAlts: string[];
+  /**
    * No `StonkzLaunchpad` deployment address is recorded anywhere in this
    * repo yet (`programs/evm` has no deploy script/address file at the time
    * of this phase). The zero address is a loud placeholder, not a guess —
@@ -160,6 +168,16 @@ export interface ApiEnv {
    * Zero address disables the V3 pool hop (Trading API / oracle only).
    */
   rhV3QuoterAddress: string;
+
+  /**
+   * Pyth Hermes (`PYTH_HERMES_URL`, `PYTH_HERMES_API_KEY`, sent as
+   * `Authorization: Bearer`). EVM launches fetch a signed ETH/USD update here
+   * and submit it in the launch transaction (`router/evm-pyth.ts`). Both
+   * optional: unset, launches send an empty update and work while the
+   * on-chain price is still fresh.
+   */
+  pythHermesUrl: string | undefined;
+  pythHermesApiKey: string | undefined;
 
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
@@ -432,6 +450,17 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       'SOLANA_LAUNCHPAD_PROGRAM_ID',
       'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg',
     ),
+    solanaLaunchAlts: (() => {
+      try {
+        return [
+          ...new Set(list(src, 'SOLANA_LAUNCH_ALT', []).map((a) => new PublicKey(a).toBase58())),
+        ];
+      } catch {
+        throw new Error(
+          `env SOLANA_LAUNCH_ALT must be comma-separated base58 addresses, got ${JSON.stringify(src['SOLANA_LAUNCH_ALT'])}`,
+        );
+      }
+    })(),
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
     rhV3FeeTierOverrides: (() => {
@@ -452,6 +481,9 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
         : '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
     ),
     rhV3QuoterAddress: str(src, 'RH_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
+
+    pythHermesUrl: src['PYTH_HERMES_URL']?.trim() || undefined,
+    pythHermesApiKey: src['PYTH_HERMES_API_KEY']?.trim() || undefined,
 
     launchIntentTtlSeconds: int(src, 'LAUNCH_INTENT_TTL_SECONDS', 120),
     launchRateLimitPerWallet: int(src, 'LAUNCH_RATE_LIMIT_PER_WALLET', 5),

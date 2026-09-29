@@ -11,6 +11,7 @@ import {RobinhoodChain} from "../src/config/RobinhoodChain.sol";
 import {MockERC20} from "./mocks/Mocks.sol";
 import {MockUniversalRouter, MockWETH, MockSwapRouter02} from "./mocks/MockUniversalRouter.sol";
 import {DeployPad} from "../script/DeployPad.sol";
+import {IPyth} from "../src/oracle/IPyth.sol";
 
 /// @notice Atomic native-in / native-out trading, the gap
 /// `docs/rh-trade-atomicity-gap.md` was opened to track.
@@ -64,7 +65,8 @@ contract RouterTest is Test {
             pad,
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
-            0 // no per-buy cap
+            0, // no per-buy cap
+            IPyth(address(0))
         );
 
         vm.prank(oracleAuth);
@@ -532,7 +534,12 @@ contract RouterTest is Test {
     function test_CappedRouterRefusesABuyAboveTheCap() public {
         MockSwapRouter02 sr02 = new MockSwapRouter02(weth, base, RATE);
         StonkzRouter capped = new StonkzRouter(
-            IUniversalRouter(address(ur)), pad, IWETH9(address(weth)), ISwapRouter02(address(sr02)), 1 ether
+            IUniversalRouter(address(ur)),
+            pad,
+            IWETH9(address(weth)),
+            ISwapRouter02(address(sr02)),
+            1 ether,
+            IPyth(address(0))
         );
         assertEq(capped.maxBuyNative(), 1 ether);
 

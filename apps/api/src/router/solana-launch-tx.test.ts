@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { ComputeBudgetProgram, Keypair, PublicKey, Transaction } from '@solana/web3.js';
+import {
+  ComputeBudgetProgram,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  TransactionMessage,
+  VersionedTransaction,
+  type AddressLookupTableAccount,
+  type TransactionInstruction,
+} from '@solana/web3.js';
 import { NATIVE_MINT } from '@solana/spl-token';
 import type { JupiterInstruction } from './jupiter.js';
 import type { JupiterHop } from './solana-tx.js';
@@ -11,8 +20,21 @@ import {
   launchComputeUnitLimit,
   type SolanaLaunchComposition,
 } from './solana-launch-tx.js';
-import { buildCreateTokenInstruction } from './solana-instructions.js';
-import { TOKEN_METADATA_PROGRAM_ID, deriveMetadataPda } from './solana-idl.js';
+import {
+  buildCreateTokenInstruction,
+  buildSyncPriceFromPythInstruction,
+} from './solana-instructions.js';
+import {
+  TOKEN_METADATA_PROGRAM_ID,
+  anchorDiscriminator,
+  deriveMetadataPda,
+  derivePdas,
+  pinnedPythFeedId,
+  pythPriceFeedAccount,
+} from './solana-idl.js';
+import { SolanaTransactionTooLargeError } from './errors.js';
+import { stonkzLaunchAltAddresses, wireMessageBase64 } from './solana-alt.js';
+import { syntheticJupiterRoute, syntheticLookupTable } from '../test/solana-alt-fixtures.js';
 
 /** Solana's wire limit for one transaction (IPv6 MTU minus headers). */
 const PACKET_DATA_SIZE = 1232;
@@ -20,6 +42,11 @@ const PACKET_DATA_SIZE = 1232;
 const programId = new PublicKey('FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg');
 const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const blockhash = { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1 };
+/** Sponsored Pyth push-feed accounts `sync_price_from_pyth` reads. */
+const SOL_USD_FEED = pythPriceFeedAccount(pinnedPythFeedId(NATIVE_MINT)!);
+const USDC_USD_FEED = pythPriceFeedAccount(pinnedPythFeedId(USDC)!);
+const SYNC_DISC = anchorDiscriminator('sync_price_from_pyth');
+const isSync = (ix: TransactionInstruction) => ix.data.subarray(0, 8).equals(SYNC_DISC);
 
 /** Longest create args the program accepts: 32-byte name, 10-byte ticker, 200-byte uri. */
 function maxArgs() {
@@ -82,11 +109,21 @@ function jupiterHop(accounts: number, budget: JupiterInstruction[]): JupiterHop 
   } as JupiterHop;
 }
 
-function decode(base64: string): Transaction {
-  return Transaction.from(Buffer.from(base64, 'base64'));
+/** Legacy or v0 — the instructions back, resolving any table lookups against `tables`. */
+function decode(
+  base64: string,
+  tables: AddressLookupTableAccount[] = [],
+): { version: 'legacy' | 0; instructions: TransactionInstruction[] } {
+  const vtx = VersionedTransaction.deserialize(Buffer.from(base64, 'base64'));
+  return {
+    version: vtx.version,
+    instructions: TransactionMessage.decompile(vtx.message, {
+      addressLookupTableAccounts: tables,
+    }).instructions,
+  };
 }
 
-function limitsIn(tx: Transaction): number[] {
+function limitsIn(tx: { instructions: TransactionInstruction[] }): number[] {
   return tx.instructions
     .filter((ix) => ix.programId.equals(ComputeBudgetProgram.programId) && ix.data[0] === 2)
     .map((ix) => ix.data.readUInt32LE(1));
@@ -161,6 +198,9 @@ describe('composeSolanaLaunchTransaction — compute budget', () => {
       blockhash,
     );
     const tx = decode(out.base64);
+    // A Jupiter hop always compiles to v0, even with no tables to resolve.
+    expect(tx.version).toBe(0);
+    expect(out.version).toBe(0);
     const u = LAUNCH_COMPUTE_UNITS;
     const want = u.createToken + 2 * u.ataCreate + u.devBuy + 300_000;
     // Exactly one limit: two would be rejected by the runtime.
@@ -211,41 +251,370 @@ describe('composeSolanaLaunchTransaction — wire size', () => {
     expect(createOnly).toBeLessThanOrEqual(PACKET_DATA_SIZE);
     expect(withBuy).toBeLessThanOrEqual(PACKET_DATA_SIZE);
   });
+});
 
-  it('reports the Jupiter-hop headroom (legacy message, no ALT)', () => {
+describe('composeSolanaLaunchTransaction — v0 with address lookup tables', () => {
+  const stonkzAlt = () =>
+    syntheticLookupTable(stonkzLaunchAltAddresses(programId, [NATIVE_MINT, USDC]));
+
+  /** A USDC-based launch with a Jupiter-routed dev buy over a realistic route. */
+  function jupiterLaunch(opts: {
+    uriLen: number;
+    poolAccounts: number;
+    withStonkzAlt: boolean;
+    withJupiterAlts?: boolean;
+    jupiterTables?: number;
+    pythSync?: boolean;
+  }) {
+    const creator = Keypair.generate().publicKey;
+    const route = syntheticJupiterRoute({
+      user: creator,
+      baseMint: USDC,
+      poolAccounts: opts.poolAccounts,
+      ...(opts.jupiterTables ? { tableCount: opts.jupiterTables } : {}),
+    });
+    const tables = [
+      ...(opts.withJupiterAlts === false ? [] : route.tables),
+      ...(opts.withStonkzAlt ? [stonkzAlt()] : []),
+    ];
+    const out = composeSolanaLaunchTransaction(
+      composition({
+        creator,
+        baseMint: USDC,
+        createArgs: { ...maxArgs(), uri: `https://${'u'.repeat(opts.uriLen - 8)}` },
+        devBuy: {
+          curveAmountIn: 1_000_000n,
+          curveMinOut: 1n,
+          jupiter: { response: route.response },
+        },
+        lookupTables: tables,
+        ...(opts.pythSync ? { pythPriceUpdate: USDC_USD_FEED } : {}),
+      }),
+      blockhash,
+    );
+    return { out, route, tables, creator };
+  }
+
+  it('fits one packet with the default pinned-metadata URI and a 24-account, one-table route', () => {
+    const { out, route, tables } = jupiterLaunch({
+      uriLen: 113,
+      poolAccounts: 15,
+      jupiterTables: 1,
+      withStonkzAlt: true,
+    });
+    expect(route.swapAccounts).toBe(24);
+    expect(out.version).toBe(0);
+    expect(out.bytes).toBe(wireSize(out.base64));
+    expect(out.bytes).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+
+    const vtx = VersionedTransaction.deserialize(Buffer.from(out.base64, 'base64'));
+    // Jupiter's two tables and the Stonkz table are all referenced.
+    const used = vtx.message.addressTableLookups.map((l) => l.accountKey.toBase58()).sort();
+    expect(used).toEqual(tables.map((t) => t.key.toBase58()).sort());
+    // The fee payer is the one signer, and it and every invoked program stay static.
+    expect(vtx.message.header.numRequiredSignatures).toBe(1);
+    const statics = vtx.message.staticAccountKeys.map((k) => k.toBase58());
+    for (const ix of vtx.message.compiledInstructions) {
+      expect(ix.programIdIndex).toBeLessThan(statics.length);
+    }
+    expect(statics).toContain(programId.toBase58());
+  });
+
+  it("keeps the compute budget to one SetComputeUnitLimit and keeps Jupiter's price", () => {
+    const { out, tables } = jupiterLaunch({ uriLen: 80, poolAccounts: 22, withStonkzAlt: true });
+    const tx = decode(out.base64, tables);
+    const u = LAUNCH_COMPUTE_UNITS;
+    expect(limitsIn(tx)).toEqual([u.createToken + 2 * u.ataCreate + u.devBuy + 300_000]);
+    const prices = tx.instructions.filter(
+      (ix) => ix.programId.equals(ComputeBudgetProgram.programId) && ix.data[0] === 3,
+    );
+    expect(prices).toHaveLength(1);
+    // Order: budget, base ATA, Jupiter setup/swap/cleanup, create_token, token ATA, buy.
+    const createIdx = tx.instructions.findIndex((ix) =>
+      ix.data.subarray(0, 8).equals(anchorDiscriminator('create_token')),
+    );
+    const buyIdx = tx.instructions.findIndex((ix) =>
+      ix.data.subarray(0, 8).equals(anchorDiscriminator('buy')),
+    );
+    const swapIdx = tx.instructions.findIndex(
+      (ix) => ix.programId.toBase58() === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
+    );
+    expect(swapIdx).toBeGreaterThan(0);
+    expect(createIdx).toBeGreaterThan(swapIdx);
+    expect(buyIdx).toBe(tx.instructions.length - 1);
+    // The decompiled create_token still names all 17 accounts, table-loaded or not.
+    expect(tx.instructions[createIdx]!.keys).toHaveLength(17);
+  });
+
+  it('stores the v0 message verbatim, lookups included, and /launch/confirm re-derives it from the wire', () => {
+    const { out } = jupiterLaunch({ uriLen: 80, poolAccounts: 20, withStonkzAlt: true });
+    const message = Buffer.from(out.messageBase64, 'base64');
+    // Version prefix: high bit set, version 0.
+    expect(message[0]).toBe(0x80);
+    expect(wireMessageBase64(Buffer.from(out.base64, 'base64'))).toBe(out.messageBase64);
+  });
+
+  it('reports wire sizes (legacy before, v0 after) for the rollout notes', () => {
     const sizes: Record<string, number> = {};
-    // web3.js refuses to serialize past 1232 bytes; recover the size it reports.
-    const sized = (f: () => string): number => {
+    const measure = (f: () => { bytes: number }): number => {
       try {
-        return wireSize(f());
+        return f().bytes;
       } catch (e) {
-        const m = /Transaction too large: (\d+)/.exec(String(e));
-        if (!m) throw e;
-        return Number(m[1]);
+        if (e instanceof SolanaTransactionTooLargeError && e.bytes !== null) return e.bytes;
+        throw e;
       }
     };
-    const build = (uriLen: number, jupAccounts: number) =>
-      sized(
-        () =>
-          composeSolanaLaunchTransaction(
-            composition({
-              baseMint: USDC,
-              createArgs: { ...maxArgs(), uri: `https://${'u'.repeat(uriLen - 8)}` },
-              devBuy: {
-                curveAmountIn: 1n,
-                curveMinOut: 1n,
-                jupiter: jupiterHop(jupAccounts, [setLimitIx(300_000), setPriceIx(1)]),
-              },
-            }),
-            blockhash,
-          ).base64,
-      );
-    for (const uriLen of [200, 80]) {
-      for (const n of [0, 4, 8, 16]) sizes[`uri${uriLen}_jup${n}`] = build(uriLen, n);
+    // 113 = the default Pinata gateway URL + a CIDv1 (`https://…mypinata.cloud/ipfs/bafkrei…`).
+    for (const uriLen of [200, 113, 80]) {
+      for (const swapAccounts of [20, 24, 30]) {
+        for (const jupiterTables of [1, 2]) {
+          const key = `uri${uriLen}_swap${swapAccounts}_jt${jupiterTables}`;
+          const run = (withStonkzAlt: boolean, withJupiterAlts = true) =>
+            measure(
+              () =>
+                jupiterLaunch({
+                  uriLen,
+                  poolAccounts: swapAccounts - 9,
+                  jupiterTables,
+                  withStonkzAlt,
+                  withJupiterAlts,
+                }).out,
+            );
+          sizes[`${key}_noTables`] = run(false, false);
+          sizes[`${key}_jupAlts`] = run(false);
+          sizes[`${key}_jupAlts+stonkzAlt`] = run(true);
+          sizes[`${key}_pythSync_jupAlts+stonkzAlt`] = measure(
+            () =>
+              jupiterLaunch({
+                uriLen,
+                poolAccounts: swapAccounts - 9,
+                jupiterTables,
+                withStonkzAlt: true,
+                pythSync: true,
+              }).out,
+          );
+        }
+      }
     }
-    // Recorded for the rollout notes; the assertion is only that the numbers
-    // move the way the byte accounting says they must.
-    console.info('solana launch tx sizes (bytes):', JSON.stringify(sizes));
-    expect(sizes['uri200_jup4']! - sizes['uri200_jup0']!).toBeGreaterThanOrEqual(4 * 33);
+    console.info('solana launch v0 tx sizes (bytes):', JSON.stringify(sizes));
+    for (const swapAccounts of [20, 24]) {
+      // Default pinned metadata, a route within LAUNCH_JUPITER_MAX_ACCOUNTS: fits.
+      expect(sizes[`uri113_swap${swapAccounts}_jt1_jupAlts+stonkzAlt`]).toBeLessThanOrEqual(
+        PACKET_DATA_SIZE,
+      );
+      // Without any table the same launch is hundreds of bytes over.
+      expect(sizes[`uri113_swap${swapAccounts}_jt1_noTables`]).toBeGreaterThan(
+        PACKET_DATA_SIZE + 300,
+      );
+    }
+    // A shorter URI leaves room for a 30-account, two-table route.
+    expect(sizes['uri80_swap30_jt2_jupAlts+stonkzAlt']).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+    // The Pyth sync costs 18 bytes in v0 (the feed account comes from the
+    // Stonkz table), so the default route shape still fits.
+    for (const swapAccounts of [20, 24]) {
+      const key = `uri113_swap${swapAccounts}_jt1`;
+      expect(sizes[`${key}_pythSync_jupAlts+stonkzAlt`]).toBe(
+        sizes[`${key}_jupAlts+stonkzAlt`]! + 18,
+      );
+      expect(sizes[`${key}_pythSync_jupAlts+stonkzAlt`]).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+    }
+    // Each table actually saves bytes.
+    expect(sizes['uri113_swap24_jt1_jupAlts+stonkzAlt']).toBeLessThan(
+      sizes['uri113_swap24_jt1_jupAlts']!,
+    );
+  });
+
+  it('a no-Jupiter launch stays legacy even when tables are available', () => {
+    const out = composeSolanaLaunchTransaction(
+      composition({
+        devBuy: { curveAmountIn: 1n, curveMinOut: 1n },
+        lookupTables: [stonkzAlt()],
+      }),
+      blockhash,
+    );
+    expect(out.version).toBe('legacy');
+    expect(decode(out.base64).version).toBe('legacy');
+  });
+
+  it('throws a structured error, not a raw one, when even v0 cannot fit', () => {
+    expect(() =>
+      jupiterLaunch({ uriLen: 200, poolAccounts: 60, withStonkzAlt: true, withJupiterAlts: false }),
+    ).toThrow(SolanaTransactionTooLargeError);
+  });
+});
+
+describe('composeSolanaLaunchTransaction — Pyth price sync', () => {
+  const stonkzAlt = () =>
+    syntheticLookupTable(stonkzLaunchAltAddresses(programId, [NATIVE_MINT, USDC]));
+
+  it('opens the transaction with sync_price_from_pyth, paid by the creator', () => {
+    const creator = Keypair.generate().publicKey;
+    const out = composeSolanaLaunchTransaction(
+      composition({
+        creator,
+        // The common case: 20-byte name, default Pinata URI (113 bytes).
+        createArgs: { ...maxArgs(), name: 'N'.repeat(20), uri: `https://${'u'.repeat(105)}` },
+        devBuy: { curveAmountIn: 1_000_000_000n, curveMinOut: 1n },
+        pythPriceUpdate: SOL_USD_FEED,
+      }),
+      blockhash,
+    );
+    expect(out.version).toBe('legacy');
+    const tx = decode(out.base64);
+    const sync = tx.instructions[0]!;
+    expect(isSync(sync)).toBe(true);
+    expect(sync.data).toHaveLength(8);
+    expect(sync.programId.equals(programId)).toBe(true);
+    const pdas = derivePdas(programId, PublicKey.default, NATIVE_MINT);
+    const want = [
+      { pubkey: pdas.global, isSigner: false, isWritable: false },
+      { pubkey: pdas.oracle, isSigner: false, isWritable: true },
+      { pubkey: NATIVE_MINT, isSigner: false, isWritable: false },
+      { pubkey: SOL_USD_FEED, isSigner: false, isWritable: false },
+      { pubkey: creator, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ];
+    // The builder's own metas, exactly (`SyncPriceFromPyth`'s account order)...
+    expect(
+      buildSyncPriceFromPythInstruction({
+        programId,
+        baseMint: NATIVE_MINT,
+        priceUpdate: SOL_USD_FEED,
+        payer: creator,
+      }).keys,
+    ).toEqual(want);
+    // ...and the same accounts in the composed message (a legacy message
+    // merges writability across instructions, e.g. `global` for create_token).
+    expect(sync.keys.map((k) => k.pubkey.toBase58())).toEqual(want.map((k) => k.pubkey.toBase58()));
+    expect(sync.keys[4]!.isSigner).toBe(true);
+    // Before create_token, which reads the BaseOracle the sync just wrote.
+    const createIdx = tx.instructions.findIndex((ix) =>
+      ix.data.subarray(0, 8).equals(anchorDiscriminator('create_token')),
+    );
+    expect(createIdx).toBeGreaterThan(0);
+    expect(tx.instructions.filter(isSync)).toHaveLength(1);
+    // The sync's 200k implicit share covers its own budget: still no limit ix.
+    expect(limitsIn(tx)).toEqual([]);
+    const u = LAUNCH_COMPUTE_UNITS;
+    expect(out.computeUnitLimit).toBeGreaterThanOrEqual(
+      u.pythSync + u.createToken + 2 * u.ataCreate + u.nativeWrap + u.devBuy,
+    );
+  });
+
+  it('create-only: the sync makes the explicit limit unnecessary (implicit 400k)', () => {
+    const out = composeSolanaLaunchTransaction(
+      composition({ pythPriceUpdate: SOL_USD_FEED }),
+      blockhash,
+    );
+    const tx = decode(out.base64);
+    expect(tx.instructions.map(isSync)).toEqual([true, false]);
+    expect(limitsIn(tx)).toEqual([]);
+    expect(out.computeUnitLimit).toBe(400_000);
+    expect(out.computeUnitLimit).toBeGreaterThanOrEqual(
+      LAUNCH_COMPUTE_UNITS.pythSync + LAUNCH_COMPUTE_UNITS.createToken,
+    );
+  });
+
+  it('without a price update the composition is unchanged (no sync)', () => {
+    const c = composition({ devBuy: { curveAmountIn: 1n, curveMinOut: 1n } });
+    const a = composeSolanaLaunchTransaction(c, blockhash);
+    expect(decode(a.base64).instructions.some(isSync)).toBe(false);
+    expect(launchComputeUnitLimit({ devBuy: true, nativeWrap: true, pythSync: false })).toBe(
+      launchComputeUnitLimit({ devBuy: true, nativeWrap: true }),
+    );
+  });
+
+  it("Jupiter hop: the sync's units are folded into the one explicit limit", () => {
+    const hop = jupiterHop(0, [setLimitIx(300_000), setPriceIx(1_000)]);
+    const out = composeSolanaLaunchTransaction(
+      composition({
+        baseMint: USDC,
+        createArgs: { ...maxArgs(), name: 'N', uri: '' },
+        devBuy: { curveAmountIn: 1_000_000n, curveMinOut: 1n, jupiter: hop },
+        pythPriceUpdate: USDC_USD_FEED,
+      }),
+      blockhash,
+    );
+    const tx = decode(out.base64);
+    const u = LAUNCH_COMPUTE_UNITS;
+    expect(limitsIn(tx)).toEqual([
+      u.pythSync + u.createToken + 2 * u.ataCreate + u.devBuy + 300_000,
+    ]);
+    const syncIdx = tx.instructions.findIndex(isSync);
+    const swapIdx = tx.instructions.findIndex(
+      (ix) => ix.programId.toBase58() === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
+    );
+    expect(syncIdx).toBeGreaterThan(0);
+    expect(syncIdx).toBeLessThan(swapIdx);
+    expect(tx.instructions[syncIdx]!.keys[3]!.pubkey.equals(USDC_USD_FEED)).toBe(true);
+  });
+
+  it('reports legacy sizes with the sync, and the ALT fallback for the worst case', () => {
+    const measure = (f: () => { bytes: number; version: 'legacy' | 0 }): string => {
+      try {
+        const r = f();
+        return `${r.version}:${r.bytes}`;
+      } catch (e) {
+        if (e instanceof SolanaTransactionTooLargeError) return `over:${e.bytes}`;
+        throw e;
+      }
+    };
+    const run = (o: { name: number; uri: number; devBuy: boolean; sync: boolean; alt: boolean }) =>
+      measure(() =>
+        composeSolanaLaunchTransaction(
+          composition({
+            createArgs: {
+              ...maxArgs(),
+              name: 'N'.repeat(o.name),
+              uri: `https://${'u'.repeat(o.uri - 8)}`,
+            },
+            ...(o.devBuy ? { devBuy: { curveAmountIn: 1n, curveMinOut: 1n } } : {}),
+            ...(o.sync ? { pythPriceUpdate: SOL_USD_FEED } : {}),
+            ...(o.alt ? { lookupTables: [stonkzAlt()] } : {}),
+          }),
+          blockhash,
+        ),
+      );
+    const sizes: Record<string, string> = {};
+    // 113 = default Pinata gateway + CIDv1; 200 = the program's uri maximum.
+    for (const [name, uri] of [
+      [32, 200],
+      [20, 200],
+      [32, 113],
+      [20, 113],
+      [20, 150],
+    ] as const) {
+      for (const devBuy of [false, true]) {
+        const key = `name${name}_uri${uri}_${devBuy ? 'nativeBuy' : 'createOnly'}`;
+        sizes[`${key}_noSync`] = run({ name, uri, devBuy, sync: false, alt: false });
+        sizes[`${key}_sync`] = run({ name, uri, devBuy, sync: true, alt: false });
+        sizes[`${key}_sync+stonkzAlt`] = run({ name, uri, devBuy, sync: true, alt: true });
+      }
+    }
+    console.info('solana launch legacy tx sizes with Pyth sync:', JSON.stringify(sizes));
+
+    // Before the sync the worst case fit legacy with 7 bytes to spare...
+    expect(sizes['name32_uri200_nativeBuy_noSync']).toBe('legacy:1225');
+    // ...the sync costs 49 bytes (one 32-byte key + a 17-byte instruction),
+    expect(sizes['name32_uri200_nativeBuy_sync']).toBe('over:1274');
+    // so the worst case needs the operator ALT, and fits with it (v0).
+    expect(sizes['name32_uri200_nativeBuy_sync+stonkzAlt']).toMatch(/^0:/);
+    expect(
+      Number(sizes['name32_uri200_nativeBuy_sync+stonkzAlt']!.split(':')[1]),
+    ).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+    // The common case (name <= 20, Pinata URI, native dev buy) stays legacy
+    // without any table.
+    expect(sizes['name20_uri113_nativeBuy_sync']).toMatch(/^legacy:/);
+    expect(sizes['name20_uri113_nativeBuy_sync+stonkzAlt']).toBe(
+      sizes['name20_uri113_nativeBuy_sync'],
+    );
+    // Legacy with the sync and a native dev buy fits while name + ticker +
+    // uri stay within 200 bytes (42 under the 32 + 10 + 200 maxima).
+    expect(sizes['name20_uri150_nativeBuy_sync']).toBe('legacy:1212');
+    // Create-only drops the explicit compute limit (41 bytes) for the sync.
+    expect(sizes['name32_uri200_createOnly_sync']).toMatch(/^legacy:/);
+    for (const [k, v] of Object.entries(sizes)) {
+      if (k.endsWith('+stonkzAlt')) expect(v, k).not.toMatch(/^over/);
+    }
   });
 });

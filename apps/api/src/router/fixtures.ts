@@ -34,9 +34,28 @@ export class FakeJupiterClient implements JupiterClient {
   private forcedPlatformFeeBps = 0;
   private failing = false;
   private noRouteFor: string | null = null;
+  private swapResponse:
+    | JupiterSwapInstructionsResponse
+    | ((quote: JupiterQuoteResponseRaw) => JupiterSwapInstructionsResponse)
+    | null = null;
+  /** Every quote request, in order — e.g. to see a narrower re-quote. */
+  readonly quoteRequests: AggregatorQuoteRequest[] = [];
 
   setRoute(inMint: string, outMint: string, route: FakePriceRoute): void {
     this.routes.set(routeKey(inMint, outMint), route);
+  }
+
+  /**
+   * Overrides what `swapInstructions` returns — e.g. a route that indexes
+   * into lookup tables; a function sees the (fixture) quote it is for.
+   */
+  setSwapInstructions(
+    response:
+      | JupiterSwapInstructionsResponse
+      | ((quote: JupiterQuoteResponseRaw) => JupiterSwapInstructionsResponse)
+      | null,
+  ): void {
+    this.swapResponse = response;
   }
 
   /** Simulates the fee trap the real API is documented to sometimes attach. */
@@ -58,9 +77,12 @@ export class FakeJupiterClient implements JupiterClient {
     this.forcedPlatformFeeBps = 0;
     this.failing = false;
     this.noRouteFor = null;
+    this.swapResponse = null;
+    this.quoteRequests.length = 0;
   }
 
   async quote(req: AggregatorQuoteRequest): Promise<AggregatorQuote> {
+    this.quoteRequests.push(req);
     if (this.failing)
       throw new NoRouteError(req.inMint, req.outMint, new Error('simulated outage'));
     if (this.noRouteFor === routeKey(req.inMint, req.outMint)) {
@@ -84,14 +106,18 @@ export class FakeJupiterClient implements JupiterClient {
       inAmountAtoms: req.inAmountAtoms,
       outAmountAtoms: outAtoms,
       priceImpactPct: route.impactPct ?? 0,
-      raw: { fixture: true, inMint: req.inMint, outMint: req.outMint } satisfies Record<
-        string,
-        unknown
-      >,
+      raw: {
+        fixture: true,
+        inMint: req.inMint,
+        outMint: req.outMint,
+        onlyDirectRoutes: req.onlyDirectRoutes ?? false,
+      } satisfies Record<string, unknown>,
     };
   }
 
-  async swapInstructions(): Promise<JupiterSwapInstructionsResponse> {
+  async swapInstructions(quote: JupiterQuoteResponseRaw): Promise<JupiterSwapInstructionsResponse> {
+    if (typeof this.swapResponse === 'function') return this.swapResponse(quote);
+    if (this.swapResponse) return this.swapResponse;
     // A single no-op-shaped placeholder instruction — real bytes never
     // matter in a test that only asserts the composed transaction's shape,
     // and no test in this phase submits a fixture-built transaction to a

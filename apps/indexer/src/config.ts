@@ -63,6 +63,11 @@ export interface IndexerConfig {
   /* ----------------------------------------------------------------- RH */
   rhLaunchpadAddress: string;
   rhRouterAddress: string;
+  /**
+   * Every router whose `AtomicBuy`/`AtomicSell` are ingested on RH (current +
+   * predecessors) — see {@link routerAddressList}.
+   */
+  rhRouterAddresses: string[];
   rhStartBlock: number;
   /** `eth_getLogs` window; providers commonly cap this well below `batchSize`. */
   rhLogWindow: number;
@@ -70,12 +75,14 @@ export interface IndexerConfig {
   /* --------------------------------------------------------------- Base */
   baseLaunchpadAddress: string;
   baseRouterAddress: string;
+  baseRouterAddresses: string[];
   baseStartBlock: number;
   baseLogWindow: number;
 
   /* ---------------------------------------------------------------- Arc */
   arcLaunchpadAddress: string;
   arcRouterAddress: string;
+  arcRouterAddresses: string[];
   arcStartBlock: number;
   arcLogWindow: number;
 }
@@ -111,6 +118,52 @@ function bool(src: ConfigSource, key: string, fallback: boolean): boolean {
  * sharing one database.
  */
 export const DEFAULT_LOCK_KEY = 0x53_74_6f_6e_6b_7a; // "Stonkz"
+
+/**
+ * Routers that were live before the current one, by chain id. `StonkzRouter`
+ * is immutable, so the atomic-launch redeploy (`UpgradeAtomicLaunch.s.sol`)
+ * leaves the previous router trading: its `AtomicBuy`/`AtomicSell` must still
+ * be attributed to the wallet (and carry the exact ETH leg) until nobody
+ * routes through it. Pinned per chain id so a mainnet indexer never trusts a
+ * testnet address.
+ */
+export const LEGACY_ROUTERS: Readonly<Record<number, readonly string[]>> = {
+  // Robinhood Chain testnet — deployments/46630.json, 2026-09-27 redeploy.
+  46630: ['0xC98F8214999220CE06E04ca8739A34Cb8AF5779c'],
+  // Base Sepolia — deployments/84532.json, 2026-09-27 redeploy.
+  84532: ['0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d'],
+};
+
+/**
+ * `<NET>_ROUTER_ADDRESSES` (comma list) when set, else the chain's
+ * {@link LEGACY_ROUTERS}; always plus `<NET>_ROUTER_ADDRESS`, the router the
+ * API sends trades to. Lowercased, de-duplicated, zero address dropped. The
+ * emitter check stays strict: only these addresses' router events count.
+ */
+export function routerAddressList(
+  src: ConfigSource,
+  listKey: string,
+  current: string,
+  chainId: number,
+): string[] {
+  const raw = src[listKey];
+  const listed =
+    raw !== undefined && raw.trim() !== '' ? raw.split(',') : [...(LEGACY_ROUTERS[chainId] ?? [])];
+  const out: string[] = [];
+  for (const [i, a] of [current, ...listed].entries()) {
+    const v = a.trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(v)) {
+      // A typo in the list must not silently drop a router's fills.
+      if (i > 0 && v !== '') {
+        throw new Error(`env ${listKey}: ${JSON.stringify(a.trim())} is not an address`);
+      }
+      continue;
+    }
+    if (v === ZERO_EVM_ADDRESS || out.includes(v)) continue;
+    out.push(v);
+  }
+  return out;
+}
 
 export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env): IndexerConfig {
   const mode = str(src, 'INDEXER_SOURCE', 'chain');
@@ -180,16 +233,34 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
 
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', env.rhLaunchpadAddress),
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', env.rhRouterAddress),
+    rhRouterAddresses: routerAddressList(
+      src,
+      'RH_ROUTER_ADDRESSES',
+      str(src, 'RH_ROUTER_ADDRESS', env.rhRouterAddress),
+      env.rhChainId,
+    ),
     rhStartBlock: int(src, 'INDEXER_RH_START_BLOCK', 0),
     rhLogWindow: int(src, 'INDEXER_RH_LOG_WINDOW', 2_000),
 
     baseLaunchpadAddress: str(src, 'BASE_LAUNCHPAD_ADDRESS', env.baseLaunchpadAddress),
     baseRouterAddress: str(src, 'BASE_ROUTER_ADDRESS', env.baseRouterAddress),
+    baseRouterAddresses: routerAddressList(
+      src,
+      'BASE_ROUTER_ADDRESSES',
+      str(src, 'BASE_ROUTER_ADDRESS', env.baseRouterAddress),
+      env.baseChainId,
+    ),
     baseStartBlock: int(src, 'INDEXER_BASE_START_BLOCK', 0),
     baseLogWindow: int(src, 'INDEXER_BASE_LOG_WINDOW', 2_000),
 
     arcLaunchpadAddress: str(src, 'ARC_LAUNCHPAD_ADDRESS', env.arcLaunchpadAddress),
     arcRouterAddress: str(src, 'ARC_ROUTER_ADDRESS', env.arcRouterAddress),
+    arcRouterAddresses: routerAddressList(
+      src,
+      'ARC_ROUTER_ADDRESSES',
+      str(src, 'ARC_ROUTER_ADDRESS', env.arcRouterAddress),
+      env.arcChainId,
+    ),
     arcStartBlock: int(src, 'INDEXER_ARC_START_BLOCK', 0),
     arcLogWindow: int(src, 'INDEXER_ARC_LOG_WINDOW', 2_000),
   };

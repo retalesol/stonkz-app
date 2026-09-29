@@ -117,24 +117,29 @@ export class BaseMintNotAllowedError extends RouterError {
 }
 
 /**
+ * The composed Solana transaction does not fit one packet (1232 bytes) even
+ * after compiling it as a v0 message against every available address lookup
+ * table — Jupiter's own plus the operator's `SOLANA_LAUNCH_ALT`. Usually a
+ * very long route; a shorter metadata `uri` or a smaller route fixes it.
+ */
+export class SolanaTransactionTooLargeError extends RouterError {
+  readonly code = 'solana_tx_too_large';
+  readonly httpStatus = 422;
+
+  constructor(readonly bytes: number | null) {
+    super(
+      `composed Solana transaction ${bytes === null ? 'exceeds' : `is ${bytes} bytes, over`} ` +
+        'the 1232-byte packet limit even with address lookup tables',
+    );
+    this.name = 'SolanaTransactionTooLargeError';
+  }
+}
+
+/**
  * RH trades are atomic-only. Missing `RH_ROUTER_ADDRESS` or a pinned
  * `RH_V3_FEE_TIER_OVERRIDES` entry used to fall back to a multi-signature
  * `EvmStep[]` plan that can strand intermediate assets — that path is gone.
  */
-/** Jupiter returned a route that needs address lookup tables — not supported on legacy transactions yet. */
-export class JupiterAltRequiredError extends RouterError {
-  readonly code = 'jupiter_alt_required';
-  readonly httpStatus = 422;
-
-  constructor(detail?: string) {
-    super(
-      detail ??
-        'Jupiter route requires address lookup tables; VersionedTransaction support is not implemented yet',
-    );
-    this.name = 'JupiterAltRequiredError';
-  }
-}
-
 export class RhAtomicRouterRequiredError extends RouterError {
   readonly code = 'rh_router_required';
   readonly httpStatus = 422;

@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter} from "../src/StonkzRouter.sol";
+import {IPyth} from "../src/oracle/IPyth.sol";
 import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 import {IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
@@ -13,6 +14,9 @@ import {IUniswapV2Factory} from "../src/UniswapV2Migrator.sol";
 import {Arc} from "../src/config/Arc.sol";
 import {StonkzV2Factory} from "../src/testnet/StonkzV2Factory.sol";
 import {DeployPad} from "./DeployPad.sol";
+import {GovernanceLib} from "./GovernanceLib.sol";
+import {MainnetGuard} from "./MainnetGuard.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 /// @title Circle Arc (5042) deployment — mainnet, capped.
 ///
@@ -22,32 +26,32 @@ import {DeployPad} from "./DeployPad.sol";
 /// so no single buy can exceed 25 USDC regardless of what the API or UI do.
 ///
 /// ```
-/// export PRIVATE_KEY=0x...                       # fresh key, funded with USDC on Arc
-/// export STONKZ_ADMIN=0x...
+/// export PRIVATE_KEY=0x...                       # fresh key, funded with USDC on Arc; admin only during the broadcast
 /// export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
-/// export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...     # must differ from protocol
+/// # governance (MainnetGuard; Arc is mainnet):
+/// export PROPOSERS=0xSAFE MIN_DELAY=86400 PAUSER=0x...
+/// export NEW_OPS_WITHDRAW_AUTHORITY=0x...        # must differ from protocol
+/// export NEW_MIGRATION_AUTHORITY=0x...
+/// export STONKZ_ORACLE_AUTHORITY=0x...           # optional price pusher; default: the deployer
 /// forge script script/DeployArc.s.sol:DeployArc \
 ///   --rpc-url $ARC_RPC_URL --broadcast -vvv
 /// ```
 contract DeployArc is Script {
     function run() external {
         require(Arc.isArc(), "DeployArc: not chain 5042");
+        // Arc is mainnet: the governance env is checked before anything else.
+        MainnetGuard.Governance memory g = MainnetGuard.requireOnMainnet();
         require(Arc.pinned(), "DeployArc: fill in src/config/Arc.sol first (placeholders are zero)");
 
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(pk);
 
-        address admin = vm.envOr("STONKZ_ADMIN", deployer);
         address protocolWithdrawAuthority = vm.envAddress("STONKZ_PROTOCOL_WITHDRAW_AUTHORITY");
-        address opsWithdrawAuthority = vm.envAddress("STONKZ_OPS_WITHDRAW_AUTHORITY");
-        address migrationAuthority = vm.envOr("STONKZ_MIGRATION_AUTHORITY", admin);
-        address oracleAuthority = vm.envOr("STONKZ_ORACLE_AUTHORITY", admin);
+        address oracleAuthority = vm.envOr("STONKZ_ORACLE_AUTHORITY", deployer);
 
         require(protocolWithdrawAuthority != address(0), "zero protocol");
-        require(opsWithdrawAuthority != address(0), "zero ops");
         require(
-            protocolWithdrawAuthority != opsWithdrawAuthority,
-            "protocol and ops withdraw authorities must differ"
+            protocolWithdrawAuthority != g.opsAuthority, "protocol and ops withdraw authorities must differ"
         );
 
         _requireCode(Arc.WRAPPED_NATIVE, "WRAPPED_NATIVE");
@@ -60,11 +64,11 @@ contract DeployArc is Script {
 
         vm.startBroadcast(pk);
 
-        PushPriceSource priceSource =
-            DeployPad.pushOracle(admin, oracleAuthority, Arc.ORACLE_MAX_AGE_SECS);
+        // The deployer is admin (and oracle authority) only for this broadcast.
+        PushPriceSource priceSource = DeployPad.pushOracle(deployer, deployer, Arc.ORACLE_MAX_AGE_SECS);
 
         StonkzLaunchpad launchpad = DeployPad.launchpad(
-            admin, protocolWithdrawAuthority, opsWithdrawAuthority, priceSource, migrationAuthority
+            deployer, protocolWithdrawAuthority, g.opsAuthority, priceSource, g.migrationAuthority
         );
 
         // Same Stonkz-owned V2 factory as the testnets until a public V2 on
@@ -73,7 +77,7 @@ contract DeployArc is Script {
         UniswapV2Migrator migrator =
             new UniswapV2Migrator(IUniswapV2Factory(address(v2Factory)), address(launchpad));
 
-        launchpad.setMigrator(IGraduationMigrator(address(migrator)), migrationAuthority);
+        launchpad.setMigrator(IGraduationMigrator(address(migrator)), g.migrationAuthority);
         launchpad.setMaxOracleStaleness(Arc.ORACLE_MAX_AGE_SECS);
 
         StonkzRouter router = new StonkzRouter(
@@ -81,23 +85,47 @@ contract DeployArc is Script {
             StonkzLaunchpad(address(launchpad)),
             IWETH9(Arc.WRAPPED_NATIVE),
             ISwapRouter02(Arc.UNISWAP_V3_SWAP_ROUTER02),
-            Arc.MAX_BUY_NATIVE
+            Arc.MAX_BUY_NATIVE,
+            IPyth(address(0)) // no Pyth pin on Arc
         );
+        // The implementation that trusts this router for atomic launches.
+        launchpad.upgradeToAndCall(address(new StonkzLaunchpad(address(router))), "");
 
         priceSource.pushPrice(Arc.WRAPPED_NATIVE, usdcUsd1e6, 0);
         priceSource.pushPrice(Arc.USDC_ERC20, usdcUsd1e6, 0);
+        if (oracleAuthority != deployer) priceSource.setOracleAuthority(oracleAuthority);
+
+        // Every admin power to the timelock; the pauser beside it.
+        GovernanceLib.Config memory c;
+        c.launchpad = address(launchpad);
+        c.priceSources = new address[](1);
+        c.priceSources[0] = address(priceSource);
+        c.proposers = g.proposers;
+        c.executors = g.executors;
+        c.minDelay = g.minDelay;
+        c.protocolAuthority = protocolWithdrawAuthority;
+        c.opsAuthority = g.opsAuthority;
+        c.migrationAuthority = g.migrationAuthority;
+        c.migrator = address(migrator);
+        c.pauser = g.pauser;
+        c.atomic = true;
+        GovernanceLib.preflight(c, deployer);
+        TimelockController timelock = GovernanceLib.handover(c, deployer);
 
         vm.stopBroadcast();
 
+        GovernanceLib.verify(c, deployer, timelock);
+
         console2.log("");
-        console2.log("=== Arc 5042 deployed (MAINNET, capped) ===");
+        console2.log("=== Arc 5042 deployed (MAINNET, capped, governed) ===");
         console2.log("PushPriceSource      :", address(priceSource));
         console2.log("StonkzLaunchpad      :", address(launchpad));
         console2.log("StonkzV2Factory      :", address(v2Factory));
         console2.log("UniswapV2Migrator    :", address(migrator));
         console2.log("StonkzRouter         :", address(router));
         console2.log("router.maxBuyNative  :", router.maxBuyNative());
-        console2.log("deployer/admin       :", deployer);
+        console2.log("oracle authority     :", oracleAuthority);
+        GovernanceLib.report(c, timelock);
         console2.log("");
         console2.log("=== apps/api + indexer env ===");
         console2.log("ARC_CHAIN_ID=5042");

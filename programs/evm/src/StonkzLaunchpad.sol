@@ -96,7 +96,11 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint16 lockDays;
     }
 
-    mapping(address => Coin) public coins;
+    /// @dev Was `public coins`; the getter is now written out below (`coins`)
+    /// because the auto-generated 38-output getter cost ~850 B of runtime and
+    /// the contract sits at the EIP-170 ceiling. Same slot (0), same selector,
+    /// same return bytes.
+    mapping(address => Coin) internal _coins;
     mapping(address => mapping(address => Position)) public positions;
     mapping(bytes32 => address) public tokenByTicker;
 
@@ -150,11 +154,18 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// `_lock`, below), never next to its siblings.
     mapping(address => uint256) public stonkzBurn;
 
-    /// Reentrancy guard, slot 15. Keep this the LAST declared variable: a
-    /// variable inserted above it shifts it to an empty slot and every
+    /// Reentrancy guard, slot 15. Nothing may ever be declared above it: a
+    /// variable inserted there shifts it to an empty slot and every
     /// `nonReentrant` entry point reverts. `test_StorageLayoutIsAppendOnly`
-    /// pins the slot; move the pin when appending after it.
+    /// pins it. New state goes *below*, one slot at a time.
     uint256 private _lock;
+
+    /// @notice Emergency pauser, slot 16 (appended after `_lock`). May only
+    /// *set* pause flags, through `pause` — never clear them, withdraw,
+    /// upgrade or change configuration. Unpausing stays with `admin` (the
+    /// timelock after the governance handover), so a leaked pauser key can
+    /// at worst halt the launchpad until governance unpauses it. Zero: none.
+    address public pauser;
 
     /* -------------------------------------------------------------- events */
 
@@ -231,23 +242,46 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     );
     event Unstaked(address indexed token, address indexed owner, uint256 amount);
     event StakeClaimed(address indexed token, address indexed owner, uint256 base, uint256 tokens);
+    event PauserSet(address pauser);
 
     /* ------------------------------------------------------------ modifiers */
 
+    // The checks live in functions rather than inline in the modifiers so
+    // they are emitted once, not per entry point: the contract sits at the
+    // EIP-170 ceiling. Behaviour and revert strings are unchanged.
     modifier nonReentrant() {
-        require(_lock == 1, "reentrant");
-        _lock = 2;
+        _enter();
         _;
         _lock = 1;
     }
 
     modifier onlyAdmin() {
-        require(msg.sender == admin, "not admin");
+        _onlyAdmin();
         _;
     }
 
+    function _enter() private {
+        require(_lock == 1, "reentrant");
+        _lock = 2;
+    }
+
+    function _onlyAdmin() private view {
+        require(msg.sender == admin, "not admin");
+    }
+
+    /// @notice The one router allowed to call `createTokenFor`, i.e. to launch a
+    /// coin on a user's behalf and dev-buy it in the same transaction.
+    /// @dev An `immutable`, so it lives in the implementation's bytecode and
+    /// takes **no storage slot** (the proxy layout is append-only and pinned by
+    /// `test_StorageLayoutIsAppendOnly`). Changing it means deploying a new
+    /// implementation and `upgradeToAndCall` — the same admin gate as any
+    /// other logic change. `address(0)` disables `createTokenFor` entirely.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
+    address public immutable trustedRouter;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address _trustedRouter) {
+        trustedRouter = _trustedRouter;
         _disableInitializers();
     }
 
@@ -288,6 +322,29 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         protocolWithdrawalsPaused = protocolWithdrawals;
         opsWithdrawalsPaused = opsWithdrawals;
         oracleGraduationPaused = oracleGraduation;
+    }
+
+    function setPauser(address p) external onlyAdmin {
+        pauser = p;
+        emit PauserSet(p);
+    }
+
+    /// @notice Emergency stop for the pauser (or admin): each `true` sets that
+    /// flag; `false` leaves it as it is. Nothing here can unpause — that is
+    /// `setPause`, admin only.
+    function pause(
+        bool trading,
+        bool launch,
+        bool protocolWithdrawals,
+        bool opsWithdrawals,
+        bool oracleGraduation
+    ) external {
+        require(msg.sender == pauser || msg.sender == admin, "not pauser");
+        if (trading) tradingPaused = true;
+        if (launch) launchPaused = true;
+        if (protocolWithdrawals) protocolWithdrawalsPaused = true;
+        if (opsWithdrawals) opsWithdrawalsPaused = true;
+        if (oracleGraduation) oracleGraduationPaused = true;
     }
 
     function setMigrator(IGraduationMigrator m, address authority) external onlyAdmin {
@@ -425,7 +482,41 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         address baseToken,
         uint16 feeBps,
         bool cashback
-    ) external nonReentrant returns (address token) {
+    ) external nonReentrant returns (address) {
+        return _create(msg.sender, name, ticker, uri, supply, baseToken, feeBps, cashback);
+    }
+
+    /// @notice `createToken` on behalf of `creator`, callable only by
+    /// `trustedRouter`. Lets the router create a coin and dev-buy it in one
+    /// transaction, so there is no block in which the coin exists and the
+    /// creator has not bought — the window snipers otherwise use.
+    /// @dev `creator` is recorded, and emitted in `TokenCreated`, exactly as if
+    /// they had called `createToken` themselves: creator fees and
+    /// `claimCreatorFees` belong to them, never to the router.
+    function createTokenFor(
+        address creator,
+        string calldata name,
+        string calldata ticker,
+        string calldata uri,
+        uint256 supply,
+        address baseToken,
+        uint16 feeBps,
+        bool cashback
+    ) external nonReentrant returns (address) {
+        require(msg.sender == trustedRouter, "not router");
+        return _create(creator, name, ticker, uri, supply, baseToken, feeBps, cashback);
+    }
+
+    function _create(
+        address creator,
+        string calldata name,
+        string calldata ticker,
+        string calldata uri,
+        uint256 supply,
+        address baseToken,
+        uint16 feeBps,
+        bool cashback
+    ) private returns (address token) {
         require(!launchPaused, "launch paused");
         require(_validTicker(ticker), "ticker");
         require(feeBps >= CurveMath.MIN_FEE_BPS && feeBps <= CurveMath.MAX_FEE_BPS, "fee");
@@ -434,7 +525,6 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         // mid-curve, so `graduate` always reverts and buyers' base is frozen
         // once the curve completes. See test/LaunchSupply.t.sol.
         require(supply <= CurveMath.MAX_SUPPLY, "supply");
-        bytes32 key = keccak256(bytes(ticker));
         // Latest-by-ticker pointer only — duplicate tickers are allowed; the
         // app enforces a short cooldown, not a permanent bind.
 
@@ -444,13 +534,13 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         CurveMath.CurveParams memory p = CurveMath.deriveCurve(supplyAtoms, price, baseDecimals);
 
         token = address(new StonkzToken(name, ticker, uri, supplyAtoms));
-        tokenByTicker[key] = token;
+        tokenByTicker[keccak256(bytes(ticker))] = token;
         tokenCount += 1;
 
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         c.token = token;
         c.baseToken = baseToken;
-        c.creator = msg.sender;
+        c.creator = creator;
         c.baseDecimals = baseDecimals;
         c.feeBps = feeBps;
         c.cashback = cashback;
@@ -470,7 +560,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         emit TokenCreated(
             token,
             baseToken,
-            msg.sender,
+            creator,
             ticker,
             supplyAtoms,
             feeBps,
@@ -494,7 +584,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         nonReentrant
         returns (uint256 tokensOut)
     {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         _tradeGuard(c);
         _positive(amountBase);
 
@@ -577,7 +667,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         nonReentrant
         returns (uint256 baseOut)
     {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         _tradeGuard(c);
         _positive(amountToken);
 
@@ -623,7 +713,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// @notice Drains the creator ledger only. There is no path from here to
     /// `protocolRevenue`, `stonkzOps`, or the staker pool's share of the bucket.
     function claimCreatorFees(address token) external nonReentrant {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         require(msg.sender == c.creator, "not creator");
         uint256 base = c.creatorClaimableBase;
         uint256 tokens = c.creatorClaimableToken;
@@ -641,7 +731,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     function stake(address token, uint256 amount, uint16 lockDays) external nonReentrant {
         _positive(amount);
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         _known(c);
         Position storage p = positions[token][msg.sender];
 
@@ -672,7 +762,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     function unstake(address token, uint256 amount) external nonReentrant {
         _positive(amount);
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         Position storage p = positions[token][msg.sender];
         require(p.amount >= amount, "insufficient");
         // FLEX has a zero-day term so this passes immediately; every other term
@@ -690,7 +780,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     }
 
     function claimStake(address token) external nonReentrant {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         Position storage p = positions[token][msg.sender];
         _settle(c, p);
         uint256 base = p.unclaimedBase;
@@ -711,7 +801,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// a token hostage on the curve, and a dead oracle can only remove the
     /// early trigger — never block an exhausted curve from graduating.
     function graduate(address token) external nonReentrant {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         _known(c);
         _notGraduated(c);
 
@@ -759,7 +849,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     function migrateLiquidity(address token) external nonReentrant {
         require(msg.sender == migrationAuthority, "not migration authority");
         require(address(migrator) != address(0), "no migrator");
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         require(c.graduated, "not graduated");
 
         uint256 base = c.realBase;
@@ -783,7 +873,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         view
         returns (CurveMath.BuyFill memory fill, CurveMath.FeeShares memory shares, uint16 bps)
     {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
         fill = CurveMath.buyQuote(_state(c), bps, amountBase);
         shares = CurveMath.splitFee(fill.fee);
@@ -794,7 +884,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         view
         returns (CurveMath.SellFill memory fill, CurveMath.FeeShares memory shares, uint16 bps)
     {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
         fill = CurveMath.sellQuote(_state(c), bps, amountToken);
         shares = CurveMath.splitFee(fill.fee);
@@ -805,7 +895,16 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// which is unusable from both the indexer and the test suite. This returns
     /// the struct.
     function coinInfo(address token) external view returns (Coin memory) {
-        return coins[token];
+        return _coins[token];
+    }
+
+    /// @notice The former auto-generated getter, byte-for-byte: `Coin` holds
+    /// only value types, so returning the struct ABI-encodes as the same flat
+    /// 38-word tuple under the same `coins(address)` selector. Existing
+    /// callers (the API's `curve-sync`) decode it unchanged; pinned by
+    /// `test_CoinsGetterMatchesCoinInfoBytes`.
+    function coins(address token) external view returns (Coin memory) {
+        return _coins[token];
     }
 
     function positionInfo(address token, address owner) external view returns (Position memory) {
@@ -813,7 +912,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     }
 
     function marketCap(address token) external view returns (uint256 base, uint256 usd1e6) {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         base = CurveMath.mcapBase(_state(c), c.supply);
         usd1e6 = CurveMath.mcapUsd1e6(base, c.creationPrice1e6, c.baseDecimals);
     }
@@ -823,7 +922,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         view
         returns (uint256 base, uint256 tokens)
     {
-        Coin storage c = coins[token];
+        Coin storage c = _coins[token];
         Position storage p = positions[token][owner];
         base = p.unclaimedBase;
         tokens = p.unclaimedToken;

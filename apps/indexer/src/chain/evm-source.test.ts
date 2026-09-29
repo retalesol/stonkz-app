@@ -227,6 +227,7 @@ function makeSource(
     logWindow?: number;
     nativeUsd?: number | Error;
     router?: string;
+    routers?: string[];
   } = {},
 ) {
   const rpc = new FakeEvmRpc(opts.head ?? 1_020, logs, blockMap(BLOCKS));
@@ -235,6 +236,7 @@ function makeSource(
     rpc,
     launchpadAddress: LAUNCHPAD,
     routerAddress: opts.router ?? ROUTER,
+    ...(opts.routers ? { routerAddresses: opts.routers } : {}),
     startBlock: 990,
     registry,
     baseMints,
@@ -410,6 +412,78 @@ describe('EvmChainSource — decoding a launch and a fill', () => {
     const { events } = await source.pollRange(999, 1_001);
     const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
     expect(trade?.trader).toBe(TRADER);
+  });
+
+  describe('atomic launches through the new router, with the old one still live', () => {
+    const NEW_ROUTER = '0x00000000000000000000000000000000000a70e1';
+    /** `createAndBuyWithEth`: TokenCreated, the curve fill (trader = router), then AtomicBuy — one tx. */
+    function atomicLaunch(router: string, txHash = TX_FILL): RawEvmLog[] {
+      const at = { blockNumber: 1_001, txHash };
+      return [
+        launchLog({ creator: TRADER }, { ...at, logIndex: 1 }),
+        tradeLog({ trader: router }, { ...at, logIndex: 4 }),
+        feeLog({}, { ...at, logIndex: 5 }),
+        encodeLog(
+          'AtomicBuy',
+          {
+            trader: TRADER,
+            token: DOGGO,
+            ethIn: FILL.grossBase,
+            baseFromAggregator: FILL.grossBase,
+            tokensOut: FILL.tokensOut,
+          },
+          { address: router, blockHash: hash32('b1001'), ...at, logIndex: 7 },
+        ),
+      ];
+    }
+
+    it('lists the coin and credits the creator for a createAndBuyWithEth from the new router', async () => {
+      const { source } = makeSource(atomicLaunch(NEW_ROUTER), {
+        router: NEW_ROUTER,
+        routers: [ROUTER],
+      });
+      const { events } = await source.pollRange(999, 1_001);
+      expect(events.map((e) => e.kind)).toEqual(['TokenCreated', 'Trade', 'FeeAccrued']);
+      const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
+      expect(trade?.trader).toBe(TRADER);
+      expect(trade?.nativeAmount).toBeCloseTo(0.4, 12);
+    });
+
+    it('still attributes fills routed through the previous router', async () => {
+      const { source } = makeSource(atomicLaunch(ROUTER), {
+        router: NEW_ROUTER,
+        routers: [ROUTER],
+      });
+      const { events } = await source.pollRange(999, 1_001);
+      const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
+      expect(trade?.trader).toBe(TRADER);
+    });
+
+    it('drops AtomicBuy from a router that is not listed, so it cannot claim the fill', async () => {
+      const stranger = '0x000000000000000000000000000000000000bad2';
+      const { source } = makeSource(atomicLaunch(stranger), {
+        router: NEW_ROUTER,
+        routers: [ROUTER],
+      });
+      const { events } = await source.pollRange(999, 1_001);
+      const trade = events.find((e): e is TradeEvent => e.kind === 'Trade');
+      // Trade.trader is the (unlisted) router address; no wallet is credited.
+      expect(trade?.trader.toLowerCase()).toBe(stranger);
+    });
+
+    it('asks the provider for every listed router, deduplicated', async () => {
+      const { source, rpc } = makeSource([], {
+        router: NEW_ROUTER,
+        routers: [ROUTER, NEW_ROUTER.toUpperCase().replace('0X', '0x'), '0x' + '0'.repeat(40)],
+      });
+      await source.pollRange(999, 1_001);
+      const call = rpc.calls.find((c) => c.method === 'eth_getLogs');
+      expect((call?.params as { addresses: string[] }).addresses).toEqual([
+        LAUNCHPAD.toLowerCase(),
+        NEW_ROUTER,
+        ROUTER.toLowerCase(),
+      ]);
+    });
   });
 
   it('reconstructs the ETH leg through the oracle when no router log is present', async () => {
@@ -618,7 +692,7 @@ describe('groupByTransaction', () => {
 });
 
 describe('EvmChainSource — the launch path end to end', () => {
-  const EMITTERS = { launchpad: LAUNCHPAD.toLowerCase(), router: ROUTER.toLowerCase() };
+  const EMITTERS = { launchpad: LAUNCHPAD.toLowerCase(), routers: [ROUTER.toLowerCase()] };
 
   it('ignores a byte-identical TokenCreated emitted by any other contract', () => {
     const spoof = { ...launchLog(), address: '0x000000000000000000000000000000000000bad1' };
@@ -646,7 +720,7 @@ describe('EvmChainSource — the launch path end to end', () => {
     expect(
       groupByTransaction([atomicFromLaunchpad], logger, {
         launchpad: EMITTERS.launchpad,
-        router: null,
+        routers: [],
       }),
     ).toHaveLength(0);
   });

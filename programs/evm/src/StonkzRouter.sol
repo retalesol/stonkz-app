@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {SafeErc20} from "./SafeErc20.sol";
 import {StonkzLaunchpad} from "./StonkzLaunchpad.sol";
 import {StonkzToken} from "./StonkzToken.sol";
+import {IPyth} from "./oracle/IPyth.sol";
 
 interface IERC20 {
     function transfer(address to, uint256 value) external returns (bool);
@@ -118,6 +119,11 @@ contract StonkzRouter {
     /// 18 decimals at the EVM layer, so 25 USDC is `25e18`). The API and the UI
     /// enforce the same number; this is the layer that cannot be bypassed.
     uint256 public immutable maxBuyNative;
+    /// @notice Pyth Core, for the in-transaction price update every launch
+    /// entry point accepts. `address(0)` where the chain has none (the launch
+    /// then relies on whatever price is already on chain; a non-empty update
+    /// reverts `NoPyth`).
+    IPyth public immutable pyth;
 
     /// @notice Ceiling on the tolerance a caller may declare against the
     /// aggregator's quote.
@@ -160,6 +166,18 @@ contract StonkzRouter {
         bytes32 s;
     }
 
+    /// @notice Launch parameters for `createAndBuyWithEth`: the arguments of
+    /// `StonkzLaunchpad.createToken`, in the same order.
+    struct CreateParams {
+        string name;
+        string ticker;
+        string uri;
+        uint256 supply;
+        address baseToken;
+        uint16 feeBps;
+        bool cashback;
+    }
+
     error AggregatorShortfall(uint256 quoted, uint256 floor, uint256 received);
     error SlippageTooWide(uint256 requested, uint256 max);
     error UnknownToken(address token);
@@ -167,6 +185,8 @@ contract StonkzRouter {
     error NothingIn();
     error CurveShortfall(uint256 needed, uint256 available);
     error EthTransferFailed();
+    error NoPyth();
+    error UpdateFeeUnpaid(uint256 fee, uint256 value);
 
     event AtomicBuy(
         address indexed trader,
@@ -200,7 +220,8 @@ contract StonkzRouter {
         StonkzLaunchpad _launchpad,
         IWETH9 _weth,
         ISwapRouter02 _swapRouter02,
-        uint256 _maxBuyNative
+        uint256 _maxBuyNative,
+        IPyth _pyth
     ) {
         require(
             address(_universalRouter) != address(0) && address(_launchpad) != address(0)
@@ -212,6 +233,7 @@ contract StonkzRouter {
         weth = _weth;
         swapRouter02 = _swapRouter02;
         maxBuyNative = _maxBuyNative;
+        pyth = _pyth;
     }
 
     /// @dev Every native-in entry point runs through this before touching a curve.
@@ -234,18 +256,98 @@ contract StonkzRouter {
         returns (uint256 tokensOut)
     {
         if (msg.value == 0) revert NothingIn();
-        address base = _baseOf(token);
-        require(base == address(weth), "not weth pair");
+        require(_baseOf(token) == address(weth), "not weth pair");
+        tokensOut = _buyWithWeth(token, msg.value, minTokenOut);
+    }
 
-        weth.deposit{value: msg.value}();
-        SafeErc20.safeApprove(address(weth), address(launchpad), msg.value);
+    /// @notice Launch a WETH-based coin with the caller as its creator and
+    /// dev-buy it with `msg.value`, in one transaction.
+    ///
+    /// Tokens are deployed with CREATE, so a coin's address is unknown until
+    /// its creation lands; a dev buy sent as a second transaction therefore
+    /// leaves a window in which anyone watching `TokenCreated` can buy first.
+    /// Here the creation and the buy share a transaction, so the creator's
+    /// fill is the first fill the curve ever sees.
+    ///
+    /// The launchpad records — and emits in `TokenCreated` — `msg.sender` as
+    /// the creator, not this router (`StonkzLaunchpad.createTokenFor`, which
+    /// only this router may call). The curve's own `Trade` names the router as
+    /// trader, exactly as on `buyWithEth`; `AtomicBuy` names the user.
+    ///
+    /// @param p Launch parameters; `p.baseToken` must be this router's `weth`.
+    /// @param priceUpdate Signed Pyth (Hermes) price updates, submitted before
+    ///        the launch so it snapshots a seconds-old price. Its fee
+    ///        (`pyth.getUpdateFee`) comes out of `msg.value`. Empty: no update,
+    ///        the launch uses the price already on chain.
+    /// @param minTokenOut Floor on the dev buy, enforced by the launchpad.
+    ///        Ignored when nothing is left for a buy after the update fee.
+    /// @param deadline Wall-clock bound on the whole transaction.
+    /// @return token The new coin.
+    /// @return tokensOut Tokens delivered to the caller; `0` when `msg.value`
+    ///         only covered the update fee (a plain launch, still attributed to
+    ///         the caller).
+    function createAndBuyWithEth(
+        CreateParams calldata p,
+        bytes[] calldata priceUpdate,
+        uint256 minTokenOut,
+        uint256 deadline
+    ) external payable underCap nonReentrant before(deadline) returns (address token, uint256 tokensOut) {
+        require(p.baseToken == address(weth), "not weth pair");
+        uint256 fee = _updatePrice(priceUpdate);
+        token = _create(p);
+        uint256 amount = msg.value - fee;
+        if (amount > 0) tokensOut = _buyWithWeth(token, amount, minTokenOut);
+    }
+
+    /// @notice Launch a coin on any base with the caller as its creator and no
+    /// dev buy, after an optional in-transaction Pyth update — so every app
+    /// launch, with or without a buy, goes through the router.
+    /// @param priceUpdate As in `createAndBuyWithEth`; empty for none.
+    /// @dev `msg.value` pays the update fee; anything above it is refunded.
+    function createWithPriceUpdate(CreateParams calldata p, bytes[] calldata priceUpdate, uint256 deadline)
+        external
+        payable
+        nonReentrant
+        before(deadline)
+        returns (address token)
+    {
+        uint256 fee = _updatePrice(priceUpdate);
+        token = _create(p);
+        if (msg.value > fee) _sendEth(msg.sender, msg.value - fee);
+    }
+
+    /// @dev Submit `priceUpdate` to Pyth, paying its fee from `msg.value`.
+    function _updatePrice(bytes[] calldata priceUpdate) private returns (uint256 fee) {
+        if (priceUpdate.length == 0) return 0;
+        if (address(pyth) == address(0)) revert NoPyth();
+        fee = pyth.getUpdateFee(priceUpdate);
+        if (fee > msg.value) revert UpdateFeeUnpaid(fee, msg.value);
+        pyth.updatePriceFeeds{value: fee}(priceUpdate);
+    }
+
+    function _create(CreateParams calldata p) private returns (address) {
+        return launchpad.createTokenFor(
+            msg.sender, p.name, p.ticker, p.uri, p.supply, p.baseToken, p.feeBps, p.cashback
+        );
+    }
+
+    /// @dev Wrap `amount` of `msg.value`, buy `token` on the curve, hand the
+    /// caller the tokens and any unspent ETH, and emit `AtomicBuy` (`ethIn` =
+    /// `amount`, i.e. net of any Pyth update fee). The caller has checked that
+    /// `token`'s base is `weth`.
+    function _buyWithWeth(address token, uint256 amount, uint256 minTokenOut)
+        private
+        returns (uint256 tokensOut)
+    {
+        weth.deposit{value: amount}();
+        SafeErc20.safeApprove(address(weth), address(launchpad), amount);
         uint256 spent;
-        (spent, tokensOut) = _buyMeasured(address(weth), token, msg.value, minTokenOut);
+        (spent, tokensOut) = _buyMeasured(address(weth), token, amount, minTokenOut);
         SafeErc20.safeApprove(address(weth), address(launchpad), 0);
 
         require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
-        _refundBase(address(weth), msg.value - spent);
-        emit AtomicBuy(msg.sender, token, msg.value, spent, tokensOut);
+        _refundBase(address(weth), amount - spent);
+        emit AtomicBuy(msg.sender, token, amount, spent, tokensOut);
     }
 
     /// @notice Native ETH → local WETH → SwapRouter02 V3 → curve buy.

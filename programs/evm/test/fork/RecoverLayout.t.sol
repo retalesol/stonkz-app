@@ -27,7 +27,7 @@ contract RecoverLayoutForkTest is Test {
         assertEq(pad.protocolWithdrawAuthority(), opsAuth, "shift: protocol reads slot 8");
 
         // Step 1, signed by the old protocol authority.
-        StonkzLaunchpad impl = new StonkzLaunchpad();
+        StonkzLaunchpad impl = new StonkzLaunchpad(address(0));
         vm.startPrank(protocolAuth);
         pad.acceptAdmin();
         assertEq(pad.admin(), protocolAuth, "acceptAdmin wrote slot 6");
@@ -56,7 +56,7 @@ contract RecoverLayoutForkTest is Test {
         assertEq(pad.stonkzBurn(address(0)), 0);
 
         // The admin can still upgrade afterwards: the proxy is not bricked.
-        StonkzLaunchpad again = new StonkzLaunchpad();
+        StonkzLaunchpad again = new StonkzLaunchpad(address(0));
         vm.prank(realAdmin);
         pad.upgradeToAndCall(address(again), "");
         assertEq(pad.admin(), realAdmin);

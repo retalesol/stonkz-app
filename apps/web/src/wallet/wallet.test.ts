@@ -32,7 +32,16 @@ import {
   practiceWalletChoice,
   practiceWalletEnabled,
 } from './practice.js';
-import { openSolanaWallet, solanaWalletChoice } from './solana.js';
+import { openSolanaWallet, solanaTransactionVersion, solanaWalletChoice } from './solana.js';
+import {
+  AddressLookupTableAccount,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js';
 import type { WalletChoice } from './types.js';
 
 /**
@@ -377,6 +386,8 @@ describe('toHexWei', () => {
     expect(toHexWei('1000000000000000000')).toBe('0xde0b6b3a7640000');
     // Beyond Number.MAX_SAFE_INTEGER, so this has to go through BigInt.
     expect(toHexWei('123456789012345678901234567890')).toBe('0x18ee90ff6c373e0ee4e3f0ad2');
+    // An atomic EVM launch: Pyth update fee (3 wei) + a 0.01 ETH dev buy, one value.
+    expect(toHexWei((10n ** 16n + 3n).toString())).toBe('0x2386f26fc10003');
   });
 
   it('passes hex through untouched', () => {
@@ -814,5 +825,132 @@ describe('openSolanaWallet', () => {
       connect: async () => ({ accounts: [] }),
     };
     await expect(openSolanaWallet(w)).rejects.toMatchObject({ kind: 'rejected' });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Solana legacy / v0 signing                                                 */
+/* -------------------------------------------------------------------------- */
+
+const payer = new PublicKey('So11111111111111111111111111111111111111112');
+const BLOCKHASH = Keypair.generate().publicKey.toBase58();
+
+function transferIx(to: PublicKey) {
+  return SystemProgram.transfer({ fromPubkey: payer, toPubkey: to, lamports: 1 });
+}
+
+function legacyBase64(): string {
+  const tx = new Transaction({ feePayer: payer, blockhash: BLOCKHASH, lastValidBlockHeight: 1 });
+  tx.add(transferIx(Keypair.generate().publicKey));
+  return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+}
+
+/** An unsigned v0 transaction that loads its recipients from a lookup table. */
+function v0Base64(): string {
+  const recipients = Array.from({ length: 3 }, () => Keypair.generate().publicKey);
+  const table = new AddressLookupTableAccount({
+    key: Keypair.generate().publicKey,
+    state: {
+      deactivationSlot: 0xffff_ffff_ffff_ffffn,
+      lastExtendedSlot: 0,
+      lastExtendedSlotStartIndex: 0,
+      addresses: recipients,
+    },
+  });
+  const message = new TransactionMessage({
+    payerKey: payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: recipients.map(transferIx),
+  }).compileToV0Message([table]);
+  expect(message.addressTableLookups).toHaveLength(1);
+  return Buffer.from(new VersionedTransaction(message).serialize()).toString('base64');
+}
+
+function bytesOf(base64: string): Uint8Array {
+  return Uint8Array.from(Buffer.from(base64, 'base64'));
+}
+
+/** A wallet whose send feature records the bytes it was handed, then declines (no RPC poll). */
+function recordingWallet(opts: {
+  method: 'signAndSend' | 'signTransaction';
+  versions?: ('legacy' | 0)[];
+}): { wallet: Wallet; seen: Uint8Array[] } {
+  const wallet = standardWallet({
+    signAndSend: opts.method === 'signAndSend',
+    signTransaction: opts.method === 'signTransaction',
+  });
+  const seen: Uint8Array[] = [];
+  const name =
+    opts.method === 'signAndSend' ? 'solana:signAndSendTransaction' : 'solana:signTransaction';
+  const fn = opts.method === 'signAndSend' ? 'signAndSendTransaction' : 'signTransaction';
+  (wallet.features as Record<string, unknown>)[name] = {
+    version: '1.0.0',
+    ...(opts.versions ? { supportedTransactionVersions: opts.versions } : {}),
+    [fn]: async (input: { transaction: Uint8Array }) => {
+      seen.push(input.transaction);
+      throw { code: 4001, message: 'User rejected the request.' };
+    },
+  };
+  return { wallet, seen };
+}
+
+describe('solanaTransactionVersion', () => {
+  it('reads legacy and v0 off the message prefix', () => {
+    expect(solanaTransactionVersion(bytesOf(legacyBase64()))).toBe('legacy');
+    expect(solanaTransactionVersion(bytesOf(v0Base64()))).toBe(0);
+  });
+
+  it('refuses truncated or corrupt bytes before any wallet prompt', () => {
+    const v0 = bytesOf(v0Base64());
+    expect(() => solanaTransactionVersion(v0.subarray(0, 70))).toThrow(/malformed/);
+    expect(() => solanaTransactionVersion(new Uint8Array([1]))).toThrow(/malformed/);
+  });
+
+  it('refuses a message version it does not know', () => {
+    const v0 = bytesOf(v0Base64());
+    v0[1 + 64] = 0x81;
+    expect(() => solanaTransactionVersion(v0)).toThrow(/version 1/);
+  });
+});
+
+describe('Solana signing, legacy and v0', () => {
+  for (const method of ['signAndSend', 'signTransaction'] as const) {
+    it(`${method}: hands the wallet the exact v0 bytes it declared support for`, async () => {
+      const { wallet: w, seen } = recordingWallet({ method, versions: ['legacy', 0] });
+      const wallet = await openSolanaWallet(w);
+      const tx = v0Base64();
+      await expect(wallet.signAndSend({ net: 'SOL', transaction: tx })).rejects.toMatchObject({
+        kind: 'rejected',
+      });
+      expect(seen).toHaveLength(1);
+      expect(Buffer.from(seen[0]!).toString('base64')).toBe(tx);
+      // The bytes are a real versioned transaction, lookups intact.
+      const back = VersionedTransaction.deserialize(seen[0]!);
+      expect(back.version).toBe(0);
+      expect(back.message.addressTableLookups).toHaveLength(1);
+    });
+  }
+
+  it('refuses v0 up front for a wallet that only declares legacy', async () => {
+    const { wallet: w, seen } = recordingWallet({ method: 'signAndSend', versions: ['legacy'] });
+    const wallet = await openSolanaWallet(w);
+    await expect(wallet.signAndSend({ net: 'SOL', transaction: v0Base64() })).rejects.toMatchObject(
+      { kind: 'unsupported_method', message: expect.stringContaining('v0') },
+    );
+    expect(seen).toHaveLength(0);
+    // Legacy still goes through to the wallet.
+    await expect(
+      wallet.signAndSend({ net: 'SOL', transaction: legacyBase64() }),
+    ).rejects.toMatchObject({ kind: 'rejected' });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('lets a wallet that declares no versions decide for itself', async () => {
+    const { wallet: w, seen } = recordingWallet({ method: 'signAndSend' });
+    const wallet = await openSolanaWallet(w);
+    await expect(wallet.signAndSend({ net: 'SOL', transaction: v0Base64() })).rejects.toMatchObject(
+      { kind: 'rejected' },
+    );
+    expect(seen).toHaveLength(1);
   });
 });

@@ -101,6 +101,40 @@ export function buildCreateTokenInstruction(
   };
 }
 
+export interface SyncPriceFromPythAccounts {
+  programId: PublicKey;
+  baseMint: PublicKey;
+  /** The `PriceUpdateV2` to copy — normally the sponsored push-feed account. */
+  priceUpdate: PublicKey;
+  /** Pays the `BaseOracle`'s rent if this is its first write (the launch creator). */
+  payer: PublicKey;
+}
+
+/**
+ * `sync_price_from_pyth()` — permissionless: copies the base mint's pinned
+ * Pyth feed into its `BaseOracle` (creating it on first use), and is a no-op
+ * when the update is not newer than what is stored, so it is always safe to
+ * bundle in front of `create_token`.
+ */
+export function buildSyncPriceFromPythInstruction(
+  accounts: SyncPriceFromPythAccounts,
+): TransactionInstruction {
+  const pdas = derivePdas(accounts.programId, PublicKey.default, accounts.baseMint);
+  const keys = [
+    { pubkey: pdas.global, isSigner: false, isWritable: false },
+    { pubkey: pdas.oracle, isSigner: false, isWritable: true },
+    { pubkey: accounts.baseMint, isSigner: false, isWritable: false },
+    { pubkey: accounts.priceUpdate, isSigner: false, isWritable: false },
+    { pubkey: accounts.payer, isSigner: true, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+  return new TransactionInstruction({
+    programId: accounts.programId,
+    keys,
+    data: anchorDiscriminator('sync_price_from_pyth'),
+  });
+}
+
 export interface TradeAccounts {
   programId: PublicKey;
   mint: PublicKey;

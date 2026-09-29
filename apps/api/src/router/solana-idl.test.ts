@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
 import {
+  PRICE_UPDATE_V2_DISCRIMINATOR,
+  PYTH_FEEDS,
   TOKEN_METADATA_PROGRAM_ID,
   anchorDiscriminator,
+  decodePythPriceUpdateV2,
   deriveMetadataPda,
   derivePdas,
   deriveMintPda,
+  encodePythPriceUpdateV2,
+  pinnedPythFeedId,
+  pythPriceFeedAccount,
+  pythTo1e6,
 } from './solana-idl.js';
 
 /**
@@ -25,6 +32,7 @@ const KNOWN_DISCRIMINATORS: Record<string, number[]> = {
   stake: [206, 176, 202, 18, 200, 209, 179, 108],
   unstake: [90, 95, 107, 42, 205, 124, 50, 225],
   claim_stake: [62, 145, 133, 242, 244, 59, 53, 139],
+  sync_price_from_pyth: [246, 192, 23, 109, 3, 214, 88, 150],
 };
 
 describe('anchorDiscriminator', () => {
@@ -97,5 +105,76 @@ describe('deriveMetadataPda', () => {
     expect(TOKEN_METADATA_PROGRAM_ID.toBase58()).toBe(
       'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
     );
+  });
+});
+
+describe('Pyth PriceUpdateV2', () => {
+  const SOL_USD = 'ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d';
+  /** Real devnet `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`, fetched 2026-09-29 (same vector as `pyth.rs`). */
+  const DEVNET_SOL_USD =
+    'IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1bS3zG8QCAAAA6pEJAAAAAAD4////J/66agAAAAAm/rpqAAAAAPJCtcICAAAAwtcTAAAAAACbxh4eAAAAAAA=';
+
+  it('pins the same feeds as the program and derives the sponsored feed accounts', () => {
+    expect(PYTH_FEEDS).toEqual({
+      So11111111111111111111111111111111111111112: SOL_USD,
+      EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v:
+        'eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
+      Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB:
+        '2b89b9dc8fdf9f34709a5b106b472f0f39bb6ca9ce04b0fd7f2e971688e2e53b',
+    });
+    const wsol = new PublicKey('So11111111111111111111111111111111111111112');
+    expect(pinnedPythFeedId(wsol)!.toString('hex')).toBe(SOL_USD);
+    expect(pinnedPythFeedId(new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'))).toBe(
+      null,
+    );
+    expect(pythPriceFeedAccount(pinnedPythFeedId(wsol)!).toBase58()).toBe(
+      '7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE',
+    );
+    expect([...PRICE_UPDATE_V2_DISCRIMINATOR]).toEqual([34, 241, 35, 99, 157, 126, 244, 205]);
+  });
+
+  it('decodes the real devnet SOL/USD account (Full verification, 1-byte level)', () => {
+    const u = decodePythPriceUpdateV2(Buffer.from(DEVNET_SOL_USD, 'base64'))!;
+    expect(u.fullyVerified).toBe(true);
+    expect(u.feedId.toString('hex')).toBe(SOL_USD);
+    expect(u.exponent).toBe(-8);
+    expect(u.price).toBeGreaterThan(0n);
+    expect(u.publishTime).toBeGreaterThan(1_700_000_000);
+  });
+
+  it('round-trips both verification-level encodings', () => {
+    const feedId = Buffer.from(SOL_USD, 'hex');
+    const base = { feedId, price: 15_012_345_678n, conf: 7n, exponent: -8, publishTime: 1_800 };
+    const full = decodePythPriceUpdateV2(encodePythPriceUpdateV2(base))!;
+    expect(full).toEqual({ fullyVerified: true, ...base });
+    const partial = decodePythPriceUpdateV2(
+      encodePythPriceUpdateV2({ ...base, partialSignatures: 5 }),
+    )!;
+    // Partial shifts every later field by one byte; decoded the same, flagged unverified.
+    expect(partial).toEqual({ fullyVerified: false, ...base });
+  });
+
+  it('refuses anything that is not a PriceUpdateV2', () => {
+    const good = encodePythPriceUpdateV2({
+      feedId: Buffer.alloc(32, 1),
+      price: 1n,
+      exponent: -8,
+      publishTime: 1,
+    });
+    const badDisc = Buffer.from(good);
+    badDisc[0] ^= 1;
+    expect(decodePythPriceUpdateV2(badDisc)).toBeNull();
+    const badLevel = Buffer.from(good);
+    badLevel[40] = 2;
+    expect(decodePythPriceUpdateV2(badLevel)).toBeNull();
+    expect(decodePythPriceUpdateV2(good.subarray(0, 100))).toBeNull();
+    expect(decodePythPriceUpdateV2(Buffer.alloc(0))).toBeNull();
+  });
+
+  it('rescales to 1e6 the way the program does (floor)', () => {
+    expect(pythTo1e6(15_012_345_678n, -8)).toBe(150_123_456n);
+    expect(pythTo1e6(1_234n, -6)).toBe(1_234n);
+    expect(pythTo1e6(3n, 2)).toBe(300_000_000n);
+    expect(pythTo1e6(2n ** 63n, 0)).toBeNull();
   });
 });

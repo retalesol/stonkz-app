@@ -35,6 +35,7 @@ import { asErc20BalanceSource } from '../chain/types.js';
 import { SolanaRpc } from '../chain/solana.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import { asSolanaBlockhashSource, composeSolanaTradeTransaction } from '../router/solana-tx.js';
+import { composeWithLookupTables } from '../router/solana-alt.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import {
   evmChainId as evmChainIdFor,
@@ -418,21 +419,34 @@ export function tradeRoutes(): Hono<AppEnv> {
             }
           : undefined;
 
-        const composed = composeSolanaTradeTransaction(
+        const composition = {
+          side,
+          programId,
+          trader,
+          mint,
+          baseMint,
+          curveAmountIn: trade.curveAmountInAtoms,
+          curveMinOut: trade.curveMinOutAtoms,
+          prioSol: s.prio,
+          mevOn: s.mev !== 'OFF',
+          mevTipSol: s.mevTip,
+          ...(jupiter ? { jupiter } : {}),
+        } as const;
+        // Jupiter routes compile to v0 against Jupiter's lookup tables plus
+        // the operator's; the direct pair stays legacy.
+        const composed = await composeWithLookupTables(
+          (lookupTables) =>
+            composeSolanaTradeTransaction(
+              { ...composition, ...(lookupTables ? { lookupTables } : {}) },
+              blockhash,
+            ),
           {
-            side,
-            programId,
-            trader,
-            mint,
-            baseMint,
-            curveAmountIn: trade.curveAmountInAtoms,
-            curveMinOut: trade.curveMinOutAtoms,
-            prioSol: s.prio,
-            mevOn: s.mev !== 'OFF',
-            mevTipSol: s.mevTip,
-            ...(jupiter ? { jupiter } : {}),
+            source: asSolanaAccountSource(deps.rpcs.SOL),
+            ...(jupiter ? { jupiterAlts: jupiter.response.addressLookupTableAddresses ?? [] } : {}),
+            stonkzAlts: deps.env.solanaLaunchAlts,
+            onMissing: (address) =>
+              deps.logger.warn('trade/prepare: address lookup table unavailable', { address }),
           },
-          blockhash,
         );
 
         return c.json({

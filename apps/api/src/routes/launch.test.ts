@@ -1,5 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PublicKey, Transaction } from '@solana/web3.js';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  MessageV0,
+  PublicKey,
+  Transaction,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js';
+import { NATIVE_MINT } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { and, eq } from 'drizzle-orm';
 import {
@@ -14,7 +21,19 @@ import { launchIntents, tokens } from '../db/schema.js';
 import { LAUNCHPAD_ABI, TOKEN_CREATED_EVENT_ABI } from '../router/evm-abi.js';
 import { deriveCurveColumns } from '../router/curve-state.js';
 import { encodeSolanaBaseOracle, solanaOraclePda } from '../router/launch-preflight.js';
+import {
+  anchorDiscriminator,
+  encodePythPriceUpdateV2,
+  pinnedPythFeedId,
+  pythPriceFeedAccount,
+} from '../router/solana-idl.js';
 import { createTestApp, authed, type TestApp } from '../test/app.js';
+import {
+  encodeLookupTableAccount,
+  syntheticJupiterRoute,
+  syntheticLookupTable,
+} from '../test/solana-alt-fixtures.js';
+import { stonkzLaunchAltAddresses, wireMessageBase64 } from '../router/solana-alt.js';
 import { evmWallet, solanaWallet } from '../test/wallets.js';
 import { LAUNCH_CONFIRM_GRACE_MS } from './launch.js';
 
@@ -240,6 +259,198 @@ describe('POST /launch/prepare + /launch/confirm', () => {
       expect(status).toBe(200);
       expect(body.devBuy).toMatchObject({ native: 0.05, atomic: true });
       expect(body.transaction).toBeTruthy();
+    } finally {
+      await mainnet.close();
+    }
+  });
+
+  it('composes a Jupiter dev buy as v0 against Jupiter + operator lookup tables, and confirm verifies it', async () => {
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const programId = new PublicKey('FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg');
+    const stonkzAlt = syntheticLookupTable(
+      stonkzLaunchAltAddresses(programId, [NATIVE_MINT, new PublicKey(USDC_MINT)]),
+    );
+    const mainnet = await createTestApp({
+      env: {
+        SOLANA_CLUSTER: 'mainnet-beta',
+        SOLANA_LAUNCHPAD_PROGRAM_ID: programId.toBase58(),
+        SOLANA_LAUNCH_ALT: stonkzAlt.key.toBase58(),
+      },
+    });
+    try {
+      const { token, address } = await mainnet.login('SOL');
+      mainnet.jupiter.setRoute(NATIVE_MINT.toBase58(), USDC_MINT, { rate: 200 });
+      const route = syntheticJupiterRoute({
+        user: new PublicKey(address),
+        baseMint: new PublicKey(USDC_MINT),
+        poolAccounts: 14,
+        tableCount: 1,
+      });
+      mainnet.jupiter.setSwapInstructions(route.response);
+      for (const t of [stonkzAlt, ...route.tables]) {
+        mainnet.rpcs.SOL.setAccountData(
+          t.key.toBase58(),
+          encodeLookupTableAccount(t.state.addresses).toString('base64'),
+        );
+      }
+      const simulated: string[] = [];
+      mainnet.rpcs.SOL.setSimulation(({ data }) => {
+        simulated.push(data);
+        return { ok: true };
+      });
+
+      const { status, body } = await prepare(
+        token,
+        { ...SOL_TICKER_BODY, ticker: 'usdcvzero', baseSymbol: 'USDC', devBuyNative: 0.05 },
+        mainnet,
+      );
+      expect(status).toBe(200);
+      const wire = Buffer.from(body.transaction!, 'base64');
+      expect(wire.length).toBeLessThanOrEqual(1232);
+      const vtx = VersionedTransaction.deserialize(wire);
+      expect(vtx.version).toBe(0);
+      // Both the operator table and Jupiter's are referenced.
+      expect(vtx.message.addressTableLookups.map((l) => l.accountKey.toBase58()).sort()).toEqual(
+        [stonkzAlt.key.toBase58(), route.tables[0]!.key.toBase58()].sort(),
+      );
+      // The preflight simulated exactly the v0 wire transaction.
+      expect(simulated).toEqual([body.transaction]);
+      // The mint prediction is unchanged by the message version.
+      const ixs = TransactionMessage.decompile(vtx.message, {
+        addressLookupTableAccounts: [stonkzAlt, ...route.tables],
+      }).instructions;
+      const create = ixs.find((ix) => ix.programId.equals(programId) && ix.keys.length === 17)!;
+      expect(create.keys[1]!.pubkey.toBase58()).toBe(body.predictedMint);
+
+      const [intent] = await mainnet.deps.db
+        .select()
+        .from(launchIntents)
+        .where(eq(launchIntents.id, body.intentId))
+        .limit(1);
+      // The stored message is the v0 message verbatim (version prefix 0x80).
+      expect(Buffer.from(intent!.unsignedPayload, 'base64')[0]).toBe(0x80);
+      expect(wireMessageBase64(wire)).toBe(intent!.unsignedPayload);
+
+      const confirmOn = async (signature: string) => {
+        const res = await mainnet.app.request('/launch/confirm', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...authed(token) },
+          body: JSON.stringify({ intentId: body.intentId, signature }),
+        });
+        return { status: res.status, body: (await res.json()) as LaunchConfirmResponse };
+      };
+
+      // Same message, different lookup table: refused.
+      const tampered = new VersionedTransaction(
+        new MessageV0({
+          header: vtx.message.header,
+          staticAccountKeys: vtx.message.staticAccountKeys,
+          recentBlockhash: vtx.message.recentBlockhash,
+          compiledInstructions: vtx.message.compiledInstructions,
+          addressTableLookups: vtx.message.addressTableLookups.map((l, i) =>
+            i === 0 ? { ...l, accountKey: PublicKey.unique() } : l,
+          ),
+        }),
+      );
+      mainnet.rpcs.SOL.setSolanaTransactionMessage(
+        solSig(41),
+        wireMessageBase64(tampered.serialize()),
+      );
+      const bad = await confirmOn(solSig(41));
+      expect(bad.status).toBe(409);
+      expect(bad.body.error).toBe('signature_mismatch');
+
+      // What the node returns for the submitted transaction re-derives to the stored message.
+      mainnet.rpcs.SOL.setSolanaTransactionMessage(solSig(42), wireMessageBase64(wire));
+      const ok = await confirmOn(solSig(42));
+      expect(ok.status).toBe(200);
+      expect(ok.body.mint).toBe(body.predictedMint);
+    } finally {
+      await mainnet.close();
+    }
+  });
+
+  it('re-quotes a dev-buy route that overflows as a narrower direct route, which fits', async () => {
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const programId = new PublicKey('FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg');
+    const stonkzAlt = syntheticLookupTable(
+      stonkzLaunchAltAddresses(programId, [NATIVE_MINT, new PublicKey(USDC_MINT)]),
+    );
+    const mainnet = await createTestApp({
+      env: {
+        SOLANA_CLUSTER: 'mainnet-beta',
+        SOLANA_LAUNCHPAD_PROGRAM_ID: programId.toBase58(),
+        SOLANA_LAUNCH_ALT: stonkzAlt.key.toBase58(),
+      },
+    });
+    try {
+      const { token, address } = await mainnet.login('SOL');
+      mainnet.jupiter.setRoute(NATIVE_MINT.toBase58(), USDC_MINT, { rate: 200 });
+      const user = new PublicKey(address);
+      const baseMint = new PublicKey(USDC_MINT);
+      // The first (multi-hop) route spans three Jupiter tables and 30 accounts
+      // and cannot fit; the direct one uses one table and 14 accounts.
+      const wide = syntheticJupiterRoute({ user, baseMint, poolAccounts: 21, tableCount: 3 });
+      const direct = syntheticJupiterRoute({ user, baseMint, poolAccounts: 5, tableCount: 1 });
+      mainnet.jupiter.setSwapInstructions((quote) =>
+        (quote as unknown as { onlyDirectRoutes: boolean }).onlyDirectRoutes
+          ? direct.response
+          : wide.response,
+      );
+      for (const t of [stonkzAlt, ...wide.tables, ...direct.tables]) {
+        mainnet.rpcs.SOL.setAccountData(
+          t.key.toBase58(),
+          encodeLookupTableAccount(t.state.addresses).toString('base64'),
+        );
+      }
+      const { status, body } = await prepare(
+        token,
+        {
+          ...SOL_TICKER_BODY,
+          ticker: 'usdcretry',
+          baseSymbol: 'USDC',
+          devBuyNative: 0.05,
+          // As long as the default pinned-metadata URL (pinning is off in tests).
+          uri: `https://example.com/${'u'.repeat(93)}`,
+        },
+        mainnet,
+      );
+      expect([status, body.error, body.detail]).toEqual([200, undefined, undefined]);
+      expect(mainnet.jupiter.quoteRequests.map((q) => q.onlyDirectRoutes ?? false)).toEqual([
+        false,
+        true,
+      ]);
+      expect(mainnet.jupiter.quoteRequests.map((q) => q.maxAccounts)).toEqual([24, 16]);
+      const vtx = VersionedTransaction.deserialize(Buffer.from(body.transaction!, 'base64'));
+      expect(vtx.message.addressTableLookups.map((l) => l.accountKey.toBase58()).sort()).toEqual(
+        [stonkzAlt.key.toBase58(), direct.tables[0]!.key.toBase58()].sort(),
+      );
+    } finally {
+      await mainnet.close();
+    }
+  });
+
+  it('refuses a Jupiter dev buy whose route cannot fit one packet, with a structured error', async () => {
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const mainnet = await createTestApp({ env: { SOLANA_CLUSTER: 'mainnet-beta' } });
+    try {
+      const { token, address } = await mainnet.login('SOL');
+      mainnet.jupiter.setRoute(NATIVE_MINT.toBase58(), USDC_MINT, { rate: 200 });
+      // No tables served: every route account is a static key.
+      mainnet.jupiter.setSwapInstructions(
+        syntheticJupiterRoute({
+          user: new PublicKey(address),
+          baseMint: new PublicKey(USDC_MINT),
+          poolAccounts: 20,
+        }).response,
+      );
+      const { status, body } = await prepare(
+        token,
+        { ...SOL_TICKER_BODY, ticker: 'usdcbig', baseSymbol: 'USDC', devBuyNative: 0.05 },
+        mainnet,
+      );
+      expect(status).toBe(422);
+      expect(body.error).toBe('solana_tx_too_large');
     } finally {
       await mainnet.close();
     }
@@ -1100,11 +1311,147 @@ describe('Solana dev buy pricing', () => {
       const curve = deriveCurveColumns(1_000_000_000n * 10n ** 6n, 150_000_000n, 9, 6, 'SOL')!;
       const exact = buyQuote(freshState(curve.params), 250, amountIn)!.tokensOut;
       expect(minOut).toBe((exact * 9_900n) / 10_000n);
+      // No Pyth feed account on this RPC: no sync is bundled.
+      expect(tx.instructions.some((ix) => ix.data.subarray(0, 8).equals(SYNC_DISC))).toBe(false);
     } finally {
       h.rpcs.SOL.setAccountData(pda, null);
     }
   });
+
+  describe('with the Pyth SOL/USD push feed', () => {
+    const programId = () => new PublicKey(h.deps.env.solanaLaunchpadProgramId);
+    const wsol = new PublicKey('So11111111111111111111111111111111111111112');
+    const feedId = pinnedPythFeedId(wsol)!;
+    const feed = pythPriceFeedAccount(feedId).toBase58();
+    const oraclePda = () => solanaOraclePda(programId(), wsol).toBase58();
+    /** SOL at $118.61091823 (1e-8), published at t = 1_800. */
+    const pythUpdate = (o: { publishTime?: number; partialSignatures?: number } = {}) =>
+      encodePythPriceUpdateV2({
+        feedId,
+        price: 11_861_091_823n,
+        conf: 5_000_000n,
+        exponent: -8,
+        publishTime: o.publishTime ?? 1_800,
+        ...(o.partialSignatures !== undefined ? { partialSignatures: o.partialSignatures } : {}),
+      }).toString('base64');
+
+    async function devBuy(ticker: string) {
+      const { token } = await h.login('SOL');
+      const { status, body } = await prepare(token, {
+        ...SOL_TICKER_BODY,
+        ticker,
+        devBuyNative: 0.5,
+      });
+      expect(status).toBe(200);
+      const tx = Transaction.from(Buffer.from(body.transaction!, 'base64'));
+      const buy = tx.instructions[tx.instructions.length - 1]!;
+      return { tx, minOut: buy.data.readBigUInt64LE(16), amountIn: buy.data.readBigUInt64LE(8) };
+    }
+
+    function expectedMinOut(price1e6: bigint, amountIn: bigint): bigint {
+      const curve = deriveCurveColumns(1_000_000_000n * 10n ** 6n, price1e6, 9, 6, 'SOL')!;
+      const exact = buyQuote(freshState(curve.params), 250, amountIn)!.tokensOut;
+      return (exact * 9_900n) / 10_000n;
+    }
+
+    afterEach(() => {
+      h.rpcs.SOL.setAccountData(feed, null);
+      h.rpcs.SOL.setAccountData(oraclePda(), null);
+    });
+
+    it('bundles the sync first and sizes minOut off Pyth when the BaseOracle was never pushed', async () => {
+      h.rpcs.SOL.setAccountData(feed, pythUpdate());
+      const { tx, minOut, amountIn } = await devBuy('pythnew');
+      // The sync opens the transaction (no compute-limit ix on this path).
+      const sync = tx.instructions[0]!;
+      expect(sync.programId.equals(programId())).toBe(true);
+      expect(sync.data.equals(SYNC_DISC)).toBe(true);
+      expect(sync.keys[1]!.pubkey.toBase58()).toBe(oraclePda());
+      expect(sync.keys[3]!.pubkey.toBase58()).toBe(feed);
+      expect(sync.keys[4]!.isSigner).toBe(true);
+      expect(tx.instructions.filter((ix) => ix.data.equals(SYNC_DISC))).toHaveLength(1);
+      // $118.610918 at 1e6, not the off-chain $214.08.
+      expect(minOut).toBe(expectedMinOut(118_610_918n, amountIn));
+    });
+
+    it('prices off Pyth when it is newer than the stored BaseOracle, off the BaseOracle otherwise', async () => {
+      h.rpcs.SOL.setAccountData(feed, pythUpdate({ publishTime: 1_800 }));
+      h.rpcs.SOL.setAccountData(
+        oraclePda(),
+        encodeSolanaBaseOracle(wsol, {
+          price1e6: 150_000_000n,
+          baseDecimals: 9,
+          publishTime: 1_700,
+        }).toString('base64'),
+      );
+      const newer = await devBuy('pythwin');
+      expect(newer.minOut).toBe(expectedMinOut(118_610_918n, newer.amountIn));
+
+      // A pushed price at/after Pyth's publish time wins: the sync will no-op.
+      h.rpcs.SOL.setAccountData(
+        oraclePda(),
+        encodeSolanaBaseOracle(wsol, {
+          price1e6: 150_000_000n,
+          baseDecimals: 9,
+          publishTime: 1_800,
+        }).toString('base64'),
+      );
+      const older = await devBuy('pushwin');
+      expect(older.minOut).toBe(expectedMinOut(150_000_000n, older.amountIn));
+      // Still bundled — it is harmless when it no-ops.
+      expect(older.tx.instructions[0]!.data.equals(SYNC_DISC)).toBe(true);
+    });
+
+    it('does not bundle a partially verified update', async () => {
+      h.rpcs.SOL.setAccountData(feed, pythUpdate({ partialSignatures: 3 }));
+      const { tx } = await devBuy('pythpart');
+      expect(tx.instructions.some((ix) => ix.data.subarray(0, 8).equals(SYNC_DISC))).toBe(false);
+    });
+
+    it('drops the sync (and prices off the BaseOracle) when it would push a legacy launch over the packet', async () => {
+      h.rpcs.SOL.setAccountData(feed, pythUpdate({ publishTime: 1_800 }));
+      h.rpcs.SOL.setAccountData(
+        oraclePda(),
+        encodeSolanaBaseOracle(wsol, {
+          price1e6: 150_000_000n,
+          baseDecimals: 9,
+          publishTime: 1_700,
+        }).toString('base64'),
+      );
+      const { token } = await h.login('SOL');
+      // No PINATA_JWT and no SOLANA_LAUNCH_ALT here: a 200-byte image URL goes
+      // on-chain as-is, and name + ticker + uri (242 bytes) leave the sync no room.
+      const { status, body } = await prepare(token, {
+        ...SOL_TICKER_BODY,
+        ticker: 'LONGESTTKR',
+        name: 'N'.repeat(32),
+        uri: `https://img.example/${'a'.repeat(200 - 20)}`,
+        devBuyNative: 0.5,
+      });
+      expect(status).toBe(200);
+      const tx = Transaction.from(Buffer.from(body.transaction!, 'base64'));
+      expect(tx.instructions.some((ix) => ix.data.subarray(0, 8).equals(SYNC_DISC))).toBe(false);
+      const buy = tx.instructions[tx.instructions.length - 1]!;
+      expect(buy.data.readBigUInt64LE(16)).toBe(
+        expectedMinOut(150_000_000n, buy.data.readBigUInt64LE(8)),
+      );
+    });
+
+    it('bundles the sync on a launch without a dev buy too', async () => {
+      h.rpcs.SOL.setAccountData(feed, pythUpdate());
+      const { token } = await h.login('SOL');
+      const { status, body } = await prepare(token, { ...SOL_TICKER_BODY, ticker: 'pythonly' });
+      expect(status).toBe(200);
+      const tx = Transaction.from(Buffer.from(body.transaction!, 'base64'));
+      expect(tx.instructions.map((ix) => ix.data.subarray(0, 8).equals(SYNC_DISC))).toEqual([
+        true,
+        false,
+      ]);
+    });
+  });
 });
+
+const SYNC_DISC = anchorDiscriminator('sync_price_from_pyth');
 
 describe('Solana Metaplex metadata JSON', () => {
   it('pins the metadata JSON and puts its URL on-chain, keeping the image for display', async () => {

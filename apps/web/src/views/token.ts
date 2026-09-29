@@ -1449,8 +1449,8 @@ async function submitTrade(c: SimCoin): Promise<void> {
         msg.includes('not_tradeable')
       ) {
         toast('ORDER BLOCKED — FIXTURE TOKEN. OPEN A LIVE-CURVE TOKEN TO TRADE.', 'red');
-      } else if (code === 'jupiter_alt_required' || msg.includes('jupiter_alt_required')) {
-        toast('JUPITER ROUTE NEEDS ADDRESS LOOKUP TABLES — NOT SUPPORTED ON STAGING YET.', 'red');
+      } else if (code === 'solana_tx_too_large') {
+        toast('THAT JUPITER ROUTE WON\'T FIT ONE TRANSACTION RIGHT NOW — TRY AGAIN OR A SMALLER AMOUNT.', 'red');
       } else if (code === 'graduated_not_supported' || msg.includes('graduated_not_supported')) {
         toast('GRADUATED — TRADE ON THE DEX; STONKZ CURVE PREPARE IS CLOSED.', 'red');
       } else if (code === 'max_trade_usd_exceeded') {

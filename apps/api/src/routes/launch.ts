@@ -17,7 +17,7 @@ import {
   RH_STOCKS,
   type Net,
 } from '@stonkz/shared';
-import { evmLaunchpadAddress } from '../chain/evm-net.js';
+import { evmLaunchpadAddress, evmRouterAddress } from '../chain/evm-net.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import { buyQuote, freshState, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
 import { launchIntents, tokens } from '../db/schema.js';
@@ -28,7 +28,7 @@ import { RpcError, type SolanaTransactionStatusSource } from '../chain/types.js'
 import { aggregatorFor, nativeAggregatorMint, nativeDecimalsFor } from '../router/compose.js';
 import { basePriceFor } from '../router/base-price.js';
 import { deriveCurveColumns, type CurveStateColumns } from '../router/curve-state.js';
-import { RouterError } from '../router/errors.js';
+import { RouterError, SolanaTransactionTooLargeError } from '../router/errors.js';
 import { moderateLaunch } from '../router/moderation.js';
 import { toAtoms } from '../router/units.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
@@ -37,13 +37,22 @@ import {
   asSolanaTransactionSource,
   type JupiterHop,
 } from '../router/solana-tx.js';
-import { composeSolanaLaunchTransaction } from '../router/solana-launch-tx.js';
+import {
+  composeSolanaLaunchTransaction,
+  type ComposedSolanaLaunch,
+  type SolanaLaunchComposition,
+} from '../router/solana-launch-tx.js';
+import { composeWithLookupTables } from '../router/solana-alt.js';
+import {
+  decodePythPriceUpdateV2,
+  pinnedPythFeedId,
+  pythPriceFeedAccount,
+  pythTo1e6,
+} from '../router/solana-idl.js';
 import { asEvmTransactionSource } from '../router/evm-tx.js';
-import { encodeCreateTokenCall, decodeTokenCreated } from '../router/evm-launch.js';
 import { buildSolanaTokenMetadata } from '../router/solana-metadata.js';
 import { uploadJsonToPinata } from '../social/pinata.js';
 import {
-  asEvmCallSimulator,
   asSolanaAccountDataSource,
   asSolanaTransactionSimulator,
   mapLaunchFailure,
@@ -52,6 +61,7 @@ import {
   type SolanaBaseOracle,
 } from '../router/launch-preflight.js';
 import { findLaunchCooldown } from './token-resolve.js';
+import { prepareEvmLaunch, verifyEvmLaunchReceipt, type EvmConfirmedDevBuy } from './launch-evm.js';
 import {
   EVM_MAX_NAME_CHARS,
   MAX_DESCR_CHARS,
@@ -78,6 +88,25 @@ const EVM_TOKEN_DECIMALS = 18;
  * used to strand a token that really launched with a 410.
  */
 export const LAUNCH_CONFIRM_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * Jupiter route shapes for a launch's dev buy, tried in order (`maxAccounts`
+ * is Jupiter's own quote parameter). The route shares one v0 transaction with
+ * `create_token`, whose per-launch accounts cannot come from any lookup
+ * table; a small route (typically a single pool, one Jupiter table) keeps a
+ * launch with a pinned metadata URI under 1232 bytes — see
+ * `solana-launch-tx.test.ts`'s size report.
+ */
+interface LaunchJupiterRoute {
+  maxAccounts: number;
+  onlyDirectRoutes?: boolean;
+}
+const LAUNCH_JUPITER_ROUTES: readonly LaunchJupiterRoute[] = [
+  { maxAccounts: 24 },
+  // Retry shape when the first route still overflows: one pool, which
+  // usually also means one Jupiter lookup table instead of two or three.
+  { maxAccounts: 16, onlyDirectRoutes: true },
+];
 
 /** Dev-buy `minOut` tolerance when the client sends none (percent). */
 const DEFAULT_DEV_BUY_SLIPPAGE_PCT = 1;
@@ -191,24 +220,25 @@ const walletLaunchQuota: MiddlewareHandler<AppEnv> = async (c, next) => {
  * `/launch/prepare` validates everything the plan lists, derives the curve
  * with the same `@stonkz/curve-sim` the chain settles against, builds the
  * unsigned create transaction (Solana: one atomic tx, optionally with a dev
- * buy; EVM: `createToken` calldata alone — see the dev-buy note below),
+ * buy; EVM: one `StonkzRouter` call carrying a Pyth price update and, on a
+ * WETH curve, the dev buy — `launch-evm.ts`),
  * **simulates it as the creator** so a launch that can only revert is refused
  * with an actionable code before anyone signs, and records a
  * `launch_intents` row `/launch/confirm` reads back.
  *
  * `/launch/confirm` verifies the signed, submitted transaction actually
  * matches what was prepared — byte-for-byte on the compiled message
- * (Solana) or `to`+`data` (EVM), sent by this wallet and actually executed —
+ * (Solana), or on EVM the router call's `CreateParams` (legacy launchpad
+ * `createToken`: `to`+`data`), sent by this wallet and actually executed —
  * rather than trusting client-reported ticker/supply/fee after the fact, then
  * upserts the `tokens` row.
  *
- * **Dev-buy atomicity asymmetry, by chain, not by choice**: on Solana the
- * mint is a PDA of creator+salt, known before signing, so `buy` can follow
- * `create_token` in the same transaction. On EVM, `StonkzToken` is deployed
- * with plain `CREATE` — the address is unknowable until the transaction
- * executes — so a dev buy there is necessarily a *second*, separate
- * `POST /trade/prepare` call made after `/launch/confirm` returns the real
- * token address.
+ * **Dev buys are atomic on both chains**: on Solana the mint is a PDA of
+ * creator+salt, known before signing, so `buy` follows `create_token` in the
+ * same transaction. On EVM the token address (plain `CREATE`) is unknowable
+ * before execution, so `StonkzRouter.createAndBuyWithEth` creates and buys in
+ * one call. Only a non-WETH EVM base, or a router that predates atomic
+ * launches, still leaves the dev buy to a separate `POST /trade/prepare`.
  */
 export function launchRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -577,17 +607,68 @@ export function launchRoutes(): Hono<AppEnv> {
           const creator = new PublicKey(wallet);
           const baseMint = new PublicKey(baseMintAddress);
 
+          const accounts = asSolanaAccountDataSource(deps.rpcs.SOL);
+
+          // Pyth sync: when the program pins a Pyth feed to this base mint,
+          // the launch opens with `sync_price_from_pyth` reading Pyth's
+          // sponsored push-feed account, so `create_token` prices off a price
+          // at most one Pyth heartbeat old (measured ~35 s devnet, ~55 s
+          // mainnet) rather than whatever a keeper last pushed —
+          // and works even if the BaseOracle was never pushed at all. The
+          // account is read here to (a) bundle the sync only when it holds a
+          // fully verified update for the pinned feed (a missing or foreign
+          // account would make the sync revert a launch the stored price
+          // could still carry) and (b) size the dev buy off it.
+          const pythFeed = pinnedPythFeedId(baseMint);
+          let pythPriceUpdate: PublicKey | undefined;
+          let pythPrice: { price1e6: bigint; publishTime: number } | null = null;
+          if (pythFeed) {
+            const feedAccount = pythPriceFeedAccount(pythFeed);
+            let bundle = true;
+            if (accounts) {
+              try {
+                const b64 = await accounts.getAccountDataBase64(feedAccount.toBase58());
+                const update = b64 ? decodePythPriceUpdateV2(Buffer.from(b64, 'base64')) : null;
+                if (!update || !update.fullyVerified || !update.feedId.equals(pythFeed)) {
+                  bundle = false;
+                  deps.logger.warn('launch/prepare: Pyth feed account unusable; no price sync', {
+                    baseSymbol,
+                    account: feedAccount.toBase58(),
+                    present: b64 !== null,
+                  });
+                } else {
+                  const price1e6 =
+                    update.price > 0n ? pythTo1e6(update.price, update.exponent) : null;
+                  if (price1e6 !== null && price1e6 > 0n) {
+                    pythPrice = { price1e6, publishTime: update.publishTime };
+                  }
+                }
+              } catch (err) {
+                // Transport failure: bundle anyway — the program verifies the
+                // account itself, and the preflight simulation below reports
+                // a sync that cannot run.
+                deps.logger.warn('launch/prepare: Pyth feed read failed; bundling the sync', {
+                  baseSymbol,
+                  err: String(err),
+                });
+              }
+            }
+            if (bundle) pythPriceUpdate = feedAccount;
+          }
+
           // Dev buy preview against the token's own *fresh* curve — nobody
           // else can trade it before this atomic transaction's `buy` runs. The
           // program derives that curve from its on-chain BaseOracle price,
           // not the API's off-chain one, so read the same account; any drift
           // left between prepare and landing is what the slippage covers.
-          let devBuyAtoms: bigint | null = null;
-          let devBuyMinOutAtoms: bigint | null = null;
-          let devBuyJupiterQuoteRaw: JupiterQuoteResponseRaw | null = null;
+          // With a bundled sync, that BaseOracle price is the Pyth update
+          // whenever it is newer than what is stored (the program's own
+          // rule), so the curve is priced off whichever of the two wins.
+          let devBuyCurve: ReturnType<typeof deriveCurveColumns> = null;
+          /** The curve without the sync — used if the sync has to be dropped for size. */
+          let storedDevBuyCurve: ReturnType<typeof deriveCurveColumns> = null;
           if (devBuyNative > 0) {
             let onChain: SolanaBaseOracle | null = null;
-            const accounts = asSolanaAccountDataSource(deps.rpcs.SOL);
             if (accounts) {
               onChain = await readSolanaBaseOracle(accounts, programId, baseMint).catch(
                 (err: unknown) => {
@@ -602,15 +683,23 @@ export function launchRoutes(): Hono<AppEnv> {
                 },
               );
             }
-            const devBuyCurve = onChain
-              ? deriveCurveColumns(
-                  supplyAtoms,
-                  onChain.price1e6,
-                  basePrice.baseDecimals,
-                  tokenDecimals,
-                  net,
-                )
-              : derived;
+            const curveAt = (price1e6: bigint | null) =>
+              price1e6 !== null
+                ? deriveCurveColumns(
+                    supplyAtoms,
+                    price1e6,
+                    basePrice.baseDecimals,
+                    tokenDecimals,
+                    net,
+                  )
+                : derived;
+            storedDevBuyCurve = curveAt(onChain?.price1e6 ?? null);
+            devBuyCurve =
+              pythPriceUpdate &&
+              pythPrice &&
+              (!onChain || pythPrice.publishTime > onChain.publishTime)
+                ? curveAt(pythPrice.price1e6)
+                : storedDevBuyCurve;
             if (!devBuyCurve) {
               return c.json(
                 {
@@ -620,71 +709,98 @@ export function launchRoutes(): Hono<AppEnv> {
                 422,
               );
             }
-
-            let baseAtoms: bigint;
-            if (aggregatorFor(net, baseSymbol)) {
-              const agg = await deps.jupiter.quote({
-                inMint: nativeAggregatorMint(net),
-                outMint: baseMintAddress,
-                inAmountAtoms: toAtoms(devBuyNative, nativeDecimalsFor(net)),
-                slippagePct: devBuySlipPct,
-              });
-              devBuyJupiterQuoteRaw = agg.raw as JupiterQuoteResponseRaw;
-              // Spend only what the swap is guaranteed to deliver, or the
-              // curve `buy` could ask for more base than landed in the ATA.
-              let threshold = 0n;
-              try {
-                threshold = BigInt(devBuyJupiterQuoteRaw.otherAmountThreshold || '0');
-              } catch {
-                threshold = 0n;
-              }
-              baseAtoms = threshold > 0n ? threshold : agg.outAmountAtoms;
-            } else {
-              baseAtoms = toAtoms(devBuyNative, basePrice.baseDecimals);
-            }
-            const fill = buyQuote(freshState(devBuyCurve.params), feeBps, baseAtoms);
-            if (!fill || fill.tokensOut <= 0n) {
-              return c.json(
-                {
-                  error: 'dev_buy_failed',
-                  detail: 'the dev buy amount could not be filled against a fresh curve',
-                },
-                422,
-              );
-            }
-            const slipBps = BigInt(Math.round(devBuySlipPct * 100));
-            devBuyAtoms = baseAtoms;
-            devBuyMinOutAtoms = (fill.tokensOut * (10_000n - slipBps)) / 10_000n;
           }
 
-          const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
-          if (!blockhashSource)
-            throw new Error('launch/prepare: Solana RPC does not implement latestBlockhash()');
-          const blockhash = await blockhashSource.latestBlockhash();
-
-          let jupiterHop: JupiterHop | undefined;
-          if (devBuyJupiterQuoteRaw) {
-            jupiterHop = {
-              response: await deps.jupiter.swapInstructions(devBuyJupiterQuoteRaw, wallet),
-            };
-          }
-
-          // The on-chain `uri` feeds an immutable Metaplex metadata account,
-          // which wallets and explorers read as metadata JSON, not as an
-          // image. Pin that JSON and put its URL on-chain; the image stays on
-          // the intent for the board. Storage missing or failing falls back
-          // to the old behaviour (image on-chain) rather than blocking.
+          // A Jupiter-routed dev buy is quoted, composed and size-checked per
+          // route shape, narrowest last: a route that leaves the v0 message
+          // over 1232 bytes is re-quoted once as a direct, smaller route.
+          const routeShapes: readonly (LaunchJupiterRoute | null)[] =
+            devBuyNative > 0 && aggregatorFor(net, baseSymbol) ? LAUNCH_JUPITER_ROUTES : [null];
+          let blockhash: { blockhash: string; lastValidBlockHeight: number } | null = null;
           let onChainUri = uri;
           let metadataUri: string | null = null;
-          const pinned = await pinSolanaMetadata();
-          if (pinned) {
-            onChainUri = pinned;
-            metadataUri = pinned;
-          }
-
+          let pinnedOnce = false;
           const mintSalt = BigInt(now);
-          const composed = composeSolanaLaunchTransaction(
-            {
+          let composed: ComposedSolanaLaunch | null = null;
+          for (let attempt = 0; composed === null; attempt++) {
+            const route = routeShapes[attempt] ?? null;
+            // Dev buy preview against the token's own *fresh* curve — nobody
+            // else can trade it before this atomic transaction's `buy` runs.
+            // `devBuyCurve` is priced the way the program will price it (the
+            // BaseOracle after the bundled Pyth sync, if any); any drift left
+            // between prepare and landing is what the slippage covers.
+            let devBuyAtoms: bigint | null = null;
+            let devBuyMinOutAtoms: bigint | null = null;
+            let devBuyJupiterQuoteRaw: JupiterQuoteResponseRaw | null = null;
+            if (devBuyCurve) {
+              let baseAtoms: bigint;
+              if (route) {
+                const agg = await deps.jupiter.quote({
+                  inMint: nativeAggregatorMint(net),
+                  outMint: baseMintAddress,
+                  inAmountAtoms: toAtoms(devBuyNative, nativeDecimalsFor(net)),
+                  slippagePct: devBuySlipPct,
+                  // The route shares one packet with create_token's 17 accounts.
+                  maxAccounts: route.maxAccounts,
+                  ...(route.onlyDirectRoutes ? { onlyDirectRoutes: true } : {}),
+                });
+                devBuyJupiterQuoteRaw = agg.raw as JupiterQuoteResponseRaw;
+                // Spend only what the swap is guaranteed to deliver, or the
+                // curve `buy` could ask for more base than landed in the ATA.
+                let threshold = 0n;
+                try {
+                  threshold = BigInt(devBuyJupiterQuoteRaw.otherAmountThreshold || '0');
+                } catch {
+                  threshold = 0n;
+                }
+                baseAtoms = threshold > 0n ? threshold : agg.outAmountAtoms;
+              } else {
+                baseAtoms = toAtoms(devBuyNative, basePrice.baseDecimals);
+              }
+              const fill = buyQuote(freshState(devBuyCurve.params), feeBps, baseAtoms);
+              if (!fill || fill.tokensOut <= 0n) {
+                return c.json(
+                  {
+                    error: 'dev_buy_failed',
+                    detail: 'the dev buy amount could not be filled against a fresh curve',
+                  },
+                  422,
+                );
+              }
+              const slipBps = BigInt(Math.round(devBuySlipPct * 100));
+              devBuyAtoms = baseAtoms;
+              devBuyMinOutAtoms = (fill.tokensOut * (10_000n - slipBps)) / 10_000n;
+            }
+
+            if (!blockhash) {
+              const blockhashSource = asSolanaBlockhashSource(deps.rpcs.SOL);
+              if (!blockhashSource)
+                throw new Error('launch/prepare: Solana RPC does not implement latestBlockhash()');
+              blockhash = await blockhashSource.latestBlockhash();
+            }
+
+            let jupiterHop: JupiterHop | undefined;
+            if (devBuyJupiterQuoteRaw) {
+              jupiterHop = {
+                response: await deps.jupiter.swapInstructions(devBuyJupiterQuoteRaw, wallet),
+              };
+            }
+
+            // The on-chain `uri` feeds an immutable Metaplex metadata account,
+            // which wallets and explorers read as metadata JSON, not as an
+            // image. Pin that JSON and put its URL on-chain; the image stays
+            // on the intent for the board. Storage missing or failing falls
+            // back to the old behaviour (image on-chain) rather than blocking.
+            if (!pinnedOnce) {
+              pinnedOnce = true;
+              const pinned = await pinSolanaMetadata();
+              if (pinned) {
+                onChainUri = pinned;
+                metadataUri = pinned;
+              }
+            }
+
+            const composition: SolanaLaunchComposition = {
               programId,
               creator,
               baseMint,
@@ -697,6 +813,7 @@ export function launchRoutes(): Hono<AppEnv> {
                 cashback,
                 salt: mintSalt,
               },
+              ...(pythPriceUpdate ? { pythPriceUpdate } : {}),
               ...(devBuyAtoms !== null && devBuyMinOutAtoms !== null
                 ? {
                     devBuy: {
@@ -706,9 +823,64 @@ export function launchRoutes(): Hono<AppEnv> {
                     },
                   }
                 : {}),
-            },
-            blockhash,
-          );
+            };
+            const hopBlockhash = blockhash;
+            try {
+              // A Jupiter hop compiles to a v0 message against Jupiter's
+              // lookup tables plus the operator's; the plain path stays legacy.
+              composed = await composeWithLookupTables(
+                (lookupTables) =>
+                  composeSolanaLaunchTransaction(
+                    { ...composition, ...(lookupTables ? { lookupTables } : {}) },
+                    hopBlockhash,
+                  ),
+                {
+                  source: asSolanaAccountDataSource(deps.rpcs.SOL),
+                  ...(jupiterHop
+                    ? { jupiterAlts: jupiterHop.response.addressLookupTableAddresses ?? [] }
+                    : {}),
+                  stonkzAlts: deps.env.solanaLaunchAlts,
+                  onMissing: (address) =>
+                    deps.logger.warn('launch/prepare: address lookup table unavailable', {
+                      address,
+                    }),
+                },
+              );
+            } catch (err) {
+              if (
+                err instanceof SolanaTransactionTooLargeError &&
+                jupiterHop &&
+                attempt + 1 < routeShapes.length
+              ) {
+                deps.logger.warn('launch/prepare: dev-buy route too large; re-quoting narrower', {
+                  baseSymbol,
+                  bytes: err.bytes,
+                  lookupTables: jupiterHop.response.addressLookupTableAddresses?.length ?? 0,
+                });
+                continue;
+              }
+              if (
+                err instanceof SolanaTransactionTooLargeError &&
+                pythPriceUpdate &&
+                (devBuyCurve === null || storedDevBuyCurve !== null)
+              ) {
+                // The sync is an optimisation, not a requirement: rather than
+                // refuse a launch whose legacy form the sync's 49 bytes push
+                // over the packet (no `SOLANA_LAUNCH_ALT` to fall back on),
+                // compose it as before — priced off the stored BaseOracle —
+                // and retry the same route shape.
+                deps.logger.warn('launch/prepare: dropping the Pyth sync to fit one packet', {
+                  baseSymbol,
+                  bytes: err.bytes,
+                });
+                pythPriceUpdate = undefined;
+                devBuyCurve = storedDevBuyCurve;
+                attempt--;
+                continue;
+              }
+              throw err;
+            }
+          }
 
           const simulator = asSolanaTransactionSimulator(deps.rpcs.SOL);
           if (simulator) {
@@ -739,48 +911,31 @@ export function launchRoutes(): Hono<AppEnv> {
           });
         }
 
-        // EVM (Robinhood, Base). Arc was refused at the top.
-        const to = launchpad as Address;
-        const data = encodeCreateTokenCall({
+        // EVM (Robinhood, Base). Arc was refused at the top. One transaction
+        // through `StonkzRouter` with a Pyth update (and, on a WETH curve, the
+        // dev buy) — or the legacy `createToken` — see `launch-evm.ts`.
+        if (!isEvm(net)) return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
+        return await prepareEvmLaunch(c, {
+          net,
+          wallet,
+          unit,
+          launchpad: launchpad as Address,
           name,
           ticker,
           uri,
-          supply: BigInt(Math.round(supply)),
-          baseToken: baseMintAddress as Address,
+          supply,
           feeBps,
           cashback,
-        });
-
-        const simulator = asEvmCallSimulator(deps.rpcs[net]);
-        if (simulator) {
-          const refusal = await preflight(() => simulator.simulateCall({ from: wallet, to, data }));
-          if (refusal) return refuse(c, refusal);
-        }
-
-        const [intent] = await deps.db
-          .insert(launchIntents)
-          .values({ ...intentValues, predictedMint: null, unsignedPayload: data })
-          .returning({ id: launchIntents.id });
-
-        return c.json({
-          net,
-          intentId: intent!.id,
-          ticker,
-          predictedMint: null,
-          to,
-          data,
-          value: '0x0',
-          devBuy:
-            devBuyNative > 0
-              ? {
-                  native: devBuyNative,
-                  atomic: false,
-                  note:
-                    'EVM token addresses are only known once /launch/confirm decodes the on-chain TokenCreated event ' +
-                    '(CREATE, not CREATE2). Call POST /trade/prepare with side=buy for the returned token after confirming.',
-                }
-              : null,
-          expiresAt: expiresAt.getTime(),
+          baseSymbol,
+          baseMintAddress,
+          devBuyNative,
+          devBuySlipPct,
+          supplyAtoms,
+          baseDecimals: basePrice.baseDecimals,
+          basePrice1e6: basePrice.price1e6,
+          intentValues,
+          expiresAt,
+          now,
         });
       } catch (err) {
         if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
@@ -894,6 +1049,8 @@ export function launchRoutes(): Hono<AppEnv> {
       }
 
       let mint: string;
+      /** EVM router launch: the `AtomicBuy` that landed with it. */
+      let evmDevBuy: EvmConfirmedDevBuy | null = null;
       let curveColumns: CurveStateColumns;
       let mcValue: number;
 
@@ -1015,28 +1172,27 @@ export function launchRoutes(): Hono<AppEnv> {
               403,
             );
           }
-          if (
-            !receipt.to ||
-            receipt.to.toLowerCase() !== launchpadAddr.toLowerCase() ||
-            receipt.input.toLowerCase() !== intent.unsignedPayload.toLowerCase()
-          ) {
-            return c.json(
-              {
-                error: 'signature_mismatch',
-                detail: 'the confirmed transaction does not match what was prepared',
-              },
-              409,
-            );
+          // `to` the launchpad (legacy `createToken`, exact calldata) or the
+          // configured router (atomic launch, `CreateParams` = the intent);
+          // `TokenCreated` must name this wallet (`launch-evm.ts`).
+          const verified = verifyEvmLaunchReceipt(receipt, {
+            wallet,
+            launchpad: launchpadAddr,
+            router: evmRouterAddress(deps.env, net),
+            intent,
+          });
+          if (!verified.ok) {
+            return c.json({ error: verified.error, detail: verified.detail }, verified.status);
           }
-          const decoded = decodeTokenCreated(receipt.logs, launchpadAddr as Address);
-          if (!decoded || decoded.creator.toLowerCase() !== wallet.toLowerCase()) {
-            return c.json(
-              {
-                error: 'token_created_event_missing',
-                detail: 'the transaction did not emit a TokenCreated event for this wallet',
-              },
-              422,
-            );
+          const decoded = verified.created;
+          evmDevBuy = verified.devBuy;
+          if (evmDevBuy) {
+            deps.logger.info('launch/confirm: atomic dev buy landed with the launch', {
+              net,
+              token: decoded.token,
+              ethInWei: evmDevBuy.ethInWei,
+              tokensOutAtoms: evmDevBuy.tokensOutAtoms,
+            });
           }
 
           const baseDecimals =
@@ -1153,7 +1309,13 @@ export function launchRoutes(): Hono<AppEnv> {
           deps.logger.warn('launch/confirm: board publish failed', { net, mint, err: String(err) }),
         );
 
-      return c.json({ net, sym: intent.ticker, mint, mc: mcValue });
+      return c.json({
+        net,
+        sym: intent.ticker,
+        mint,
+        mc: mcValue,
+        ...(evmDevBuy ? { devBuy: evmDevBuy } : {}),
+      });
     },
   );
 

@@ -23,6 +23,7 @@ pub mod events;
 pub mod instructions;
 pub mod math;
 pub mod metaplex;
+pub mod pyth;
 pub mod state;
 
 #[cfg(test)]
@@ -185,5 +186,14 @@ pub mod launchpad {
 
     pub fn claim_stake(ctx: Context<ClaimStake>) -> Result<()> {
         instructions::stake::claim_stake(ctx)
+    }
+
+    /* ------------------------------------------------------------- oracle */
+
+    /// Permissionless: copy the base mint's pinned Pyth feed (a verified
+    /// `PriceUpdateV2`) into its `BaseOracle`. A not-newer update is a no-op.
+    /// Appended last so every existing instruction keeps its position.
+    pub fn sync_price_from_pyth(ctx: Context<SyncPriceFromPyth>) -> Result<()> {
+        instructions::sync_price::sync_price_from_pyth(ctx)
     }
 }

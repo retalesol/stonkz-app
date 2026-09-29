@@ -10,6 +10,7 @@ import {
   checkWebsite,
   checkXHandle,
   devBuyPresets,
+  evmDevBuyIsAtomic,
   fmtBuy,
   fmtWait,
   launchErrorCopy,
@@ -121,6 +122,13 @@ describe('dev buy', () => {
     expect(fmtBuy(0.1 + 0.2)).toBe('0.3');
     expect(fmtBuy(0)).toBe('');
   });
+
+  it('knows an EVM dev buy is one transaction only on an ETH/WETH curve', () => {
+    expect(evmDevBuyIsAtomic('ETH')).toBe(true);
+    expect(evmDevBuyIsAtomic('weth')).toBe(true);
+    expect(evmDevBuyIsAtomic('USDG')).toBe(false);
+    expect(evmDevBuyIsAtomic('TSLA')).toBe(false);
+  });
 });
 
 describe('launch failure copy', () => {
@@ -143,6 +151,20 @@ describe('launch failure copy', () => {
     expect(launchErrorCopy(apiErr('invalid_curve_params', '', 422), ctx).step).toBe(1);
     expect(launchErrorCopy(apiErr('cashback_dev_buy_conflict', '', 422), ctx).step).toBe(2);
     expect(launchErrorCopy(apiErr('dev_buy_failed', '', 422), ctx).step).toBe(2);
+  });
+
+  it('explains the atomic-launch router refusals', () => {
+    const eth = { ...ctx, unit: 'ETH' as const, netName: 'ROBINHOOD' };
+    const fee = launchErrorCopy(apiErr('oracle_fee_changed', '', 409), eth);
+    expect(fee.msg).toMatch(/PRICE-UPDATE FEE CHANGED/);
+    expect(fee.msg).toMatch(/NOTHING WAS SENT/);
+    const noPyth = launchErrorCopy(apiErr('oracle_update_unavailable', '', 503, 60_000), eth);
+    expect(noPyth.msg).toMatch(/LIVE PRICES ARE UNAVAILABLE ON ROBINHOOD/);
+    expect(noPyth.msg).toContain('60S');
+    expect(launchErrorCopy(apiErr('launch_expired', '', 409), eth).msg).toMatch(/EXPIRED/);
+    const cap = launchErrorCopy(apiErr('dev_buy_too_large', '', 422), eth);
+    expect(cap.step).toBe(2);
+    expect(cap.msg).toMatch(/DEV BUY/);
   });
 
   it('never blames the user for a server fault', () => {

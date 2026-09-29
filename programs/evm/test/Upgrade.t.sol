@@ -11,6 +11,8 @@ import {IPriceSource} from "../src/oracle/IPriceSource.sol";
 
 /// @dev Minimal V2 implementation that only adds a version tag for upgrade smoke.
 contract StonkzLaunchpadV2 is StonkzLaunchpad {
+    constructor() StonkzLaunchpad(address(0)) {}
+
     function version() external pure returns (string memory) {
         return "v2-beta";
     }
@@ -27,7 +29,7 @@ contract UpgradeTest is Test {
 
     /// @notice Pins the live storage layout behind the RH 46630 and Base 84532
     /// proxies. Every slot here is already written on chain; a new state
-    /// variable may only ever land after the last one (`_lock`). The 2026-09-27 upgrade
+    /// variable may only ever land after the last one (`_lock`, then `pauser`). The 2026-09-27 upgrade
     /// put `stonkzBurn` before `admin` and shifted every later slot by one.
     function test_StorageLayoutIsAppendOnly() public {
         vm.warp(1_800_000_000);
@@ -65,6 +67,17 @@ contract UpgradeTest is Test {
         // it would shift it to an empty slot and freeze the whole launchpad.
         // New state goes after `_lock`, and this pin moves with it.
         assertEq(uint256(vm.load(p, bytes32(uint256(15)))), 1, "slot 15 = _lock, unlocked");
+
+        // `pauser` is the first variable appended after `_lock`: slot 16.
+        // Anything appended later goes to 17+, and this pin moves with it.
+        assertEq(uint256(vm.load(p, bytes32(uint256(16)))), 0, "slot 16 = pauser, unset");
+        vm.prank(admin);
+        pad.setPauser(address(0x9A05E));
+        assertEq(
+            address(uint160(uint256(vm.load(p, bytes32(uint256(16)))))), address(0x9A05E), "slot 16 = pauser"
+        );
+        assertEq(uint256(vm.load(p, bytes32(uint256(17)))), 0, "nothing after pauser");
+        assertEq(uint256(vm.load(p, bytes32(uint256(15)))), 1, "_lock untouched by setPauser");
     }
 
     function test_LaunchpadUpgradePreservesState() public {

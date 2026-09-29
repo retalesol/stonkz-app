@@ -1,4 +1,9 @@
-import { PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
+import {
+  PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+  type AddressLookupTableAccount,
+} from '@solana/web3.js';
 import {
   NATIVE_MINT,
   createAssociatedTokenAccountIdempotentInstruction,
@@ -7,7 +12,7 @@ import {
 } from '@solana/spl-token';
 import type { ChainRpc, SolanaBlockhashSource, SolanaTransactionSource } from '../chain/types.js';
 import type { JupiterInstruction, JupiterSwapInstructionsResponse } from './jupiter.js';
-import { JupiterAltRequiredError } from './errors.js';
+import { compileSolanaTransaction } from './solana-alt.js';
 import { buildSolanaFeeInstructions } from './solana-fees.js';
 import { buildBuyInstruction, buildSellInstruction, traderAtas } from './solana-instructions.js';
 
@@ -61,12 +66,23 @@ export interface SolanaTradeComposition {
   mevOn?: boolean;
   /** MEV tip in whole SOL (settings `mevTip`). */
   mevTipSol?: number;
+  /**
+   * Loaded lookup tables (Jupiter's `addressLookupTableAddresses` plus the
+   * operator's `SOLANA_LAUNCH_ALT`). A Jupiter hop always compiles to a v0
+   * message against these; the direct-pair path stays legacy unless it
+   * would not fit one packet.
+   */
+  lookupTables?: readonly AddressLookupTableAccount[];
 }
 
 export interface ComposedSolanaTransaction {
   /** Base64 of the serialized, *unsigned* transaction message + empty signature slots. */
   base64: string;
   lastValidBlockHeight: number;
+  /** `'legacy'` or `0` — the web wallet reads the same thing off the version byte. */
+  version: 'legacy' | 0;
+  /** Wire size in bytes, at most 1232. */
+  bytes: number;
 }
 
 function toTransactionInstruction(ix: JupiterInstruction): TransactionInstruction {
@@ -83,14 +99,9 @@ function toTransactionInstruction(ix: JupiterInstruction): TransactionInstructio
 
 function jupiterInstructions(hop: JupiterHop): TransactionInstruction[] {
   const r = hop.response;
-  if (r.addressLookupTableAddresses.length > 0) {
-    // A legacy `Transaction` cannot resolve ALT-indexed accounts. Building a
-    // `VersionedTransaction` here would need the looked-up table contents
-    // (`getAddressLookupTable`), which is a live RPC read this composer does
-    // not have wired in. Refusing loudly beats emitting a transaction that
-    // fails to simulate with an opaque account-not-found error.
-    throw new JupiterAltRequiredError();
-  }
+  // Jupiter's routes index into its lookup tables; the caller has already
+  // read them (`solana-alt.ts`'s `fetchAddressLookupTables`) and passes them
+  // as `lookupTables`, so the v0 compile below resolves them.
   const out: TransactionInstruction[] = [];
   if (r.tokenLedgerInstruction) out.push(toTransactionInstruction(r.tokenLedgerInstruction));
   out.push(...r.computeBudgetInstructions.map(toTransactionInstruction));
@@ -104,11 +115,7 @@ export function composeSolanaTradeTransaction(
   c: SolanaTradeComposition,
   blockhash: { blockhash: string; lastValidBlockHeight: number },
 ): ComposedSolanaTransaction {
-  const tx = new Transaction({
-    feePayer: c.trader,
-    blockhash: blockhash.blockhash,
-    lastValidBlockHeight: blockhash.lastValidBlockHeight,
-  });
+  const ixs: TransactionInstruction[] = [];
 
   // Priority / tip first so they apply even if a later ix fails simulation
   // after CU accounting. Skip CU ixs when Jupiter already packed them.
@@ -119,7 +126,7 @@ export function composeSolanaTradeTransaction(
     payer: c.trader,
     skipComputeBudget: !!c.jupiter,
   });
-  if (feeIxs.length) tx.add(...feeIxs);
+  if (feeIxs.length) ixs.push(...feeIxs);
 
   const atas = traderAtas({
     programId: c.programId,
@@ -131,7 +138,7 @@ export function composeSolanaTradeTransaction(
   // unconditionally rather than after an extra `getAccountInfo` round trip —
   // one wasted, cheap instruction is preferable to a second RPC hop on the
   // 8-second quote-to-prepare budget.
-  tx.add(
+  ixs.push(
     createAssociatedTokenAccountIdempotentInstruction(c.trader, atas.base, c.trader, c.baseMint),
     createAssociatedTokenAccountIdempotentInstruction(c.trader, atas.token, c.trader, c.mint),
   );
@@ -162,7 +169,7 @@ export function composeSolanaTradeTransaction(
     if (isDirectNativePair) {
       // Fund the WSOL ATA with exactly the lamports the curve buy will pull,
       // then sync so the SPL balance reflects the transfer.
-      tx.add(
+      ixs.push(
         SystemProgram.transfer({
           fromPubkey: c.trader,
           toPubkey: atas.base,
@@ -172,13 +179,13 @@ export function composeSolanaTradeTransaction(
       );
     }
     // native -> base (Jupiter, into the trader's own base ATA) -> curve buy.
-    if (c.jupiter) tx.add(...jupiterInstructions(c.jupiter));
-    tx.add(curveIx);
+    if (c.jupiter) ixs.push(...jupiterInstructions(c.jupiter));
+    ixs.push(curveIx);
   } else {
     // curve sell (token -> base, into the trader's own base ATA) -> base -> native (Jupiter).
-    tx.add(curveIx);
+    ixs.push(curveIx);
     if (c.jupiter) {
-      tx.add(...jupiterInstructions(c.jupiter));
+      ixs.push(...jupiterInstructions(c.jupiter));
     } else if (isDirectNativePair) {
       // No aggregator leg to unwrap for us. Closing the WSOL ATA sweeps its
       // *entire* balance back to native lamports, not just this trade's
@@ -190,12 +197,22 @@ export function composeSolanaTradeTransaction(
       // direct-pair trade). A trader who deliberately keeps a long-term WSOL
       // balance in this exact ATA outside of Stonkz trades would have it
       // swept too — a documented edge case, not a silent one.
-      tx.add(createCloseAccountInstruction(atas.base, c.trader, c.trader));
+      ixs.push(createCloseAccountInstruction(atas.base, c.trader, c.trader));
     }
   }
 
-  const base64 = tx
-    .serialize({ requireAllSignatures: false, verifySignatures: false })
-    .toString('base64');
-  return { base64, lastValidBlockHeight: blockhash.lastValidBlockHeight };
+  const compiled = compileSolanaTransaction({
+    payer: c.trader,
+    blockhash: blockhash.blockhash,
+    lastValidBlockHeight: blockhash.lastValidBlockHeight,
+    instructions: ixs,
+    ...(c.lookupTables ? { lookupTables: c.lookupTables } : {}),
+    forceV0: !!c.jupiter,
+  });
+  return {
+    base64: compiled.base64,
+    lastValidBlockHeight: blockhash.lastValidBlockHeight,
+    version: compiled.version,
+    bytes: compiled.bytes,
+  };
 }

@@ -356,15 +356,25 @@ interface ApiLaunchPrepareSol {
   expiresAt: number;
 }
 
+/**
+ * RH / Base. `to` is `StonkzRouter` (`createAndBuyWithEth` /
+ * `createWithPriceUpdate`, carrying a Pyth price update; `value` = the update
+ * fee plus any dev buy, decimal wei) — or, while the router predates atomic
+ * launches, the launchpad's plain `createToken` (`value` `0x0`).
+ * `devBuy.atomic` says whether the dev buy is inside this one transaction.
+ */
 interface ApiLaunchPrepareRh {
-  net: 'RH';
+  net: EvmNet;
   intentId: string;
   ticker: string;
   predictedMint: null;
   to: string;
   data: string;
   value: string;
-  devBuy: { native: number; atomic: false; note: string } | null;
+  devBuy:
+    | { native: number; atomic: true; minTokenOut: string }
+    | { native: number; atomic: false; note: string }
+    | null;
   expiresAt: number;
 }
 
@@ -375,6 +385,8 @@ interface ApiLaunchConfirm {
   sym: string;
   mint: string;
   mc: number;
+  /** EVM router launch: the dev buy that landed in the same transaction (`AtomicBuy`). */
+  devBuy?: { ethInWei: string; tokensOutAtoms: string; native: number; tokens: number };
 }
 
 interface ApiFeeVaultRow {
@@ -1386,7 +1398,9 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
       feePct: draft.tfee,
       cashback: draft.cashback,
       baseSymbol: draft.base,
-      devBuyNative: net === 'SOL' ? draft.buy : 0,
+      // Every chain now prepares the dev buy with the launch: Solana and a
+      // WETH-curve EVM launch sign it in the same transaction.
+      devBuyNative: draft.buy,
       // Token socials, under the `tokens` column names. `/launch/prepare`
       // does not read them yet (they are ignored, not rejected); sending them
       // now means they persist the moment the route does.
@@ -1396,15 +1410,16 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
     },
     net,
   );
-  // Solana's create and Robinhood's `createToken` calldata are each a
-  // single signable payload — one signature, inline, the same as an atomic
-  // trade. Only a Robinhood dev buy (below) is ever a second one.
+  // Solana's create and the EVM router call (`to`/`data`/`value`, the Pyth
+  // fee and any dev buy included) are each a single signable payload — one
+  // wallet prompt, inline, the same as an atomic trade. Only a non-atomic EVM
+  // dev buy (below) is ever a second one.
   hooks.onPhase?.('sign');
   let signature: string;
   try {
     ({ signature } = await signAndConfirm(
       net,
-      prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
+      prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, prep.net),
     ));
   } catch (err) {
     // Broadcast, but the wallet's own confirmation poll gave up. It may
@@ -1455,11 +1470,13 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
   };
   COINS.unshift(c);
 
-  // Robinhood's mint address is only known after `/launch/confirm` decodes
-  // the `TokenCreated` log (plain `CREATE`, not `CREATE2` — `routes/launch.ts`'s
-  // header comment), so a dev buy there is necessarily a *second*,
-  // independent `/trade/prepare` call, not part of the launch transaction.
-  if (isEvm(net) && draft.buy > 0) {
+  // An EVM dev buy is inside the launch transaction when the API says so
+  // (`StonkzRouter.createAndBuyWithEth`, WETH curves). Otherwise — another
+  // base, or a router that predates atomic launches — the mint address is
+  // only known after `/launch/confirm` decodes `TokenCreated` (plain
+  // `CREATE`), so the dev buy is a second, independent `/trade/prepare`.
+  const atomicDevBuy = prep.net === 'SOL' || prep.devBuy?.atomic === true;
+  if (isEvm(net) && draft.buy > 0 && !atomicDevBuy) {
     hooks.onPhase?.('devbuy');
     try {
       const quote = await fetchQuote(net, c.sym, 'buy', draft.buy);
@@ -1484,11 +1501,13 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
       );
     }
   } else if (draft.buy > 0) {
-    // Solana's dev buy is atomic with the create — it already landed by the
-    // time `/launch/confirm` returned, so mirror it into the trades tab.
+    // The dev buy is atomic with the create — it already landed by the time
+    // `/launch/confirm` returned, so mirror it into the trades tab (on EVM at
+    // the ETH the router actually spent, when the receipt carried it).
+    const spent = confirmed.devBuy?.native ?? draft.buy;
     c.hold = 1;
-    pushTrade(c, { buy: true, sol: draft.buy, mine: true });
-    noteTrade(c, true, draft.buy);
+    pushTrade(c, { buy: true, sol: spent, mine: true });
+    noteTrade(c, true, spent);
   }
 
   unlock('deploy');

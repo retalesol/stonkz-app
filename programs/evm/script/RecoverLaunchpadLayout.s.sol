@@ -61,7 +61,7 @@ contract RecoverLaunchpadLayout is Script {
         // (slot 6), then swaps the implementation for the append-only one.
         vm.startBroadcast(recoveryPk);
         pad.acceptAdmin();
-        StonkzLaunchpad impl = new StonkzLaunchpad();
+        StonkzLaunchpad impl = new StonkzLaunchpad(address(0));
         pad.upgradeToAndCall(address(impl), "");
         vm.stopBroadcast();
 

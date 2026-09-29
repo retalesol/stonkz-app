@@ -2,19 +2,21 @@ import {
   ComputeBudgetProgram,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
+  type AddressLookupTableAccount,
 } from '@solana/web3.js';
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
   createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
 } from '@solana/spl-token';
-import { JupiterAltRequiredError } from './errors.js';
+import { compileSolanaTransaction } from './solana-alt.js';
 import type { JupiterHop } from './solana-tx.js';
 import {
   buildBuyInstruction,
   buildCreateTokenInstruction,
+  buildSyncPriceFromPythInstruction,
   traderAtas,
   type CreateTokenArgs,
 } from './solana-instructions.js';
@@ -27,9 +29,19 @@ import {
  * earlier in the *same* transaction, since only ordering — not confirmation —
  * matters within one atomic tx.
  *
- * Instruction order when a dev buy is present:
+ * Price sync: when the base mint has a Pyth feed pinned on chain, the
+ * transaction opens with `sync_price_from_pyth`, which copies Pyth's
+ * sponsored push-feed price into the base mint's `BaseOracle` (creating it on
+ * first use). `create_token` then reads a price at most one Pyth heartbeat
+ * old (measured ~35 s devnet, ~55 s mainnet, inside the 90 s default
+ * staleness) instead of whatever a keeper last pushed. The sync is a no-op when the stored price is
+ * already as new, so bundling it never fails a launch that would otherwise
+ * land.
+ *
+ * Instruction order when a dev buy is present (after the optional sync):
  *  1. Idempotent-create the creator's **base** ATA (needs to exist before
- *     either a native-SOL wrap or a Jupiter swap can land funds in it).
+ *     either a native-SOL wrap or a Jupiter swap can land funds in it) —
+ *     skipped when Jupiter's setup instructions already create it.
  *  2. Fund it — either a direct SOL wrap (base is native) or a Jupiter
  *     swap (base is anything else; `jupiter.ts`'s `wrapAndUnwrapSol: true`
  *     already handles unwrapping the *input* SOL on that path).
@@ -48,6 +60,20 @@ import {
  * it sent one) is folded into ours rather than kept: the runtime rejects a
  * transaction carrying two, and Jupiter's figure alone would cap the whole
  * launch at the swap's estimate. Its `SetComputeUnitPrice` is kept as-is.
+ *
+ * Message version: a launch without a Jupiter hop stays a legacy
+ * transaction whenever it fits — without the Pyth sync it always does (1225
+ * bytes at the longest name/ticker/uri with a native dev buy). The sync adds
+ * 49 bytes (one 32-byte key and a 17-byte instruction; create-only it nets
+ * +8, since it makes the explicit compute limit unnecessary), so with a
+ * native dev buy a legacy launch fits while name + ticker + uri ≤ 200 bytes —
+ * always, with the pinned Pinata metadata URI (113 bytes). Past that it
+ * compiles v0 against `SOLANA_LAUNCH_ALT` (1062 bytes worst case), and with
+ * no table `/launch/prepare` drops the sync rather than refuse the launch.
+ * See `solana-launch-tx.test.ts`'s size report. A Jupiter hop always
+ * compiles to a v0 message against Jupiter's lookup tables plus the
+ * operator's `SOLANA_LAUNCH_ALT` — see `solana-alt.ts` — and so does a
+ * legacy launch that would not fit, when a table is available.
  */
 
 /**
@@ -66,6 +92,8 @@ export const LAUNCH_COMPUTE_UNITS = {
   /** SystemProgram.transfer + SyncNative. */
   nativeWrap: 10_000,
   devBuy: 100_000,
+  /** `sync_price_from_pyth`, worst case (first sync creates the BaseOracle). */
+  pythSync: 30_000,
   /** Used only if Jupiter's response carries no `SetComputeUnitLimit`. */
   jupiterFallback: 400_000,
 } as const;
@@ -99,11 +127,14 @@ export function implicitComputeUnitLimit(ixs: readonly TransactionInstruction[])
 export function launchComputeUnitLimit(opts: {
   devBuy: boolean;
   nativeWrap: boolean;
+  /** A `sync_price_from_pyth` precedes `create_token`. */
+  pythSync?: boolean;
   /** Jupiter's requested limit; `null` for a Jupiter hop that did not set one. */
   jupiterUnits?: number | null;
 }): number {
   const u = LAUNCH_COMPUTE_UNITS;
   let units = u.createToken;
+  if (opts.pythSync) units += u.pythSync;
   if (opts.devBuy) {
     units += 2 * u.ataCreate + u.devBuy;
     if (opts.nativeWrap) units += u.nativeWrap;
@@ -125,13 +156,30 @@ export interface SolanaLaunchComposition {
   baseMint: PublicKey;
   createArgs: CreateTokenArgs;
   devBuy?: SolanaLaunchDevBuy;
+  /**
+   * The Pyth `PriceUpdateV2` to sync the base mint's `BaseOracle` from ahead
+   * of `create_token` (the sponsored push-feed account for the feed the
+   * program pins to `baseMint`). Absent: no sync, the launch prices off
+   * whatever the `BaseOracle` already holds.
+   */
+  pythPriceUpdate?: PublicKey;
+  /**
+   * Loaded lookup tables — Jupiter's `addressLookupTableAddresses` and the
+   * operator's `SOLANA_LAUNCH_ALT`, already read from chain. Only used when
+   * the transaction compiles as v0.
+   */
+  lookupTables?: readonly AddressLookupTableAccount[];
 }
 
 export interface ComposedSolanaLaunch {
   /** Full wire-format unsigned transaction — what the client's wallet actually signs. */
   base64: string;
-  /** Compiled message only (signatures stripped), base64 — what `launch_intents.unsignedPayload` stores and `/launch/confirm` re-derives from the signed, submitted transaction to verify a match. */
+  /** Compiled message only (signatures stripped), base64 — what `launch_intents.unsignedPayload` stores and `/launch/confirm` re-derives from the signed, submitted transaction to verify a match. A v0 message includes its version prefix and lookup-table references. */
   messageBase64: string;
+  /** `'legacy'` unless a Jupiter hop (or the packet limit) required a v0 message. */
+  version: 'legacy' | 0;
+  /** Wire size in bytes, at most 1232. */
+  bytes: number;
   lastValidBlockHeight: number;
   mint: PublicKey;
   curve: PublicKey;
@@ -180,9 +228,6 @@ function jupiterInstructions(hop: JupiterHop): {
   units: number | null;
 } {
   const r = hop.response;
-  if (r.addressLookupTableAddresses.length > 0) {
-    throw new JupiterAltRequiredError();
-  }
   let units: number | null = null;
   const budget: TransactionInstruction[] = [];
   for (const ix of r.computeBudgetInstructions.map(toIx)) {
@@ -197,16 +242,17 @@ function jupiterInstructions(hop: JupiterHop): {
   return { budget, swap, units };
 }
 
+/** Whether `ixs` already includes an Associated Token Account create for `ata`. */
+function createsAta(ixs: readonly TransactionInstruction[], ata: PublicKey): boolean {
+  return ixs.some(
+    (ix) => ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID) && !!ix.keys[1]?.pubkey.equals(ata),
+  );
+}
+
 export function composeSolanaLaunchTransaction(
   c: SolanaLaunchComposition,
   blockhash: { blockhash: string; lastValidBlockHeight: number },
 ): ComposedSolanaLaunch {
-  const tx = new Transaction({
-    feePayer: c.creator,
-    blockhash: blockhash.blockhash,
-    lastValidBlockHeight: blockhash.lastValidBlockHeight,
-  });
-
   const {
     instruction: createIx,
     mint,
@@ -224,6 +270,17 @@ export function composeSolanaLaunchTransaction(
 
   // Everything after the compute-budget prefix, in execution order.
   const body: TransactionInstruction[] = [];
+  const pythSync = c.pythPriceUpdate !== undefined;
+  if (c.pythPriceUpdate) {
+    body.push(
+      buildSyncPriceFromPythInstruction({
+        programId: c.programId,
+        baseMint: c.baseMint,
+        priceUpdate: c.pythPriceUpdate,
+        payer: c.creator,
+      }),
+    );
+  }
   let jup: ReturnType<typeof jupiterInstructions> | null = null;
   let budgetUnits: number;
   if (c.devBuy) {
@@ -238,17 +295,22 @@ export function composeSolanaLaunchTransaction(
     budgetUnits = launchComputeUnitLimit({
       devBuy: true,
       nativeWrap: isDirectNativePair,
+      pythSync,
       ...(jup ? { jupiterUnits: jup.units } : {}),
     });
 
-    body.push(
-      createAssociatedTokenAccountIdempotentInstruction(
-        c.creator,
-        atas.base,
-        c.creator,
-        c.baseMint,
-      ),
-    );
+    // Jupiter's own setup usually creates the destination (base) ATA; a
+    // second idempotent create is ~10 bytes the v0 packet cannot spare.
+    if (!(jup && createsAta(jup.swap, atas.base))) {
+      body.push(
+        createAssociatedTokenAccountIdempotentInstruction(
+          c.creator,
+          atas.base,
+          c.creator,
+          c.baseMint,
+        ),
+      );
+    }
     if (isDirectNativePair) {
       body.push(
         SystemProgram.transfer({
@@ -272,7 +334,7 @@ export function composeSolanaLaunchTransaction(
       ),
     );
   } else {
-    budgetUnits = launchComputeUnitLimit({ devBuy: false, nativeWrap: false });
+    budgetUnits = launchComputeUnitLimit({ devBuy: false, nativeWrap: false, pythSync });
     body.push(createIx);
   }
 
@@ -285,18 +347,26 @@ export function composeSolanaLaunchTransaction(
   const implicit = implicitComputeUnitLimit(body);
   const explicit = (jup !== null && jup.units !== null) || implicit < budgetUnits;
   const computeUnitLimit = explicit ? budgetUnits : implicit;
-  if (explicit) tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }));
-  // `Transaction.add()` throws on an empty spread, and Jupiter often sends no budget ixs.
-  if (jup && jup.budget.length > 0) tx.add(...jup.budget);
-  tx.add(...body);
+  const instructions: TransactionInstruction[] = [];
+  if (explicit) {
+    instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }));
+  }
+  if (jup) instructions.push(...jup.budget);
+  instructions.push(...body);
 
-  const base64 = tx
-    .serialize({ requireAllSignatures: false, verifySignatures: false })
-    .toString('base64');
-  const messageBase64 = tx.compileMessage().serialize().toString('base64');
+  const compiled = compileSolanaTransaction({
+    payer: c.creator,
+    blockhash: blockhash.blockhash,
+    lastValidBlockHeight: blockhash.lastValidBlockHeight,
+    instructions,
+    ...(c.lookupTables ? { lookupTables: c.lookupTables } : {}),
+    forceV0: jup !== null,
+  });
   return {
-    base64,
-    messageBase64,
+    base64: compiled.base64,
+    messageBase64: compiled.messageBase64,
+    version: compiled.version,
+    bytes: compiled.bytes,
     lastValidBlockHeight: blockhash.lastValidBlockHeight,
     mint,
     curve,

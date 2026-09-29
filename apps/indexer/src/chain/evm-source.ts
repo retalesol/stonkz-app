@@ -36,6 +36,12 @@ export interface EvmChainSourceOptions {
   rpc: EvmIndexRpc;
   launchpadAddress: string;
   routerAddress: string;
+  /**
+   * Every `StonkzRouter` whose `AtomicBuy`/`AtomicSell` count on this chain —
+   * the current one and any predecessor still trading (a router is immutable,
+   * so a redeploy leaves the old one live). Unioned with `routerAddress`.
+   */
+  routerAddresses?: readonly string[];
   /** Deployment block. A fresh cursor starts here, never at 0. */
   startBlock: number;
   registry: TokenRegistry;
@@ -60,17 +66,20 @@ export class EvmChainSource implements EventSource {
     this.net = opts.net ?? 'RH';
     this.confirmations = Math.max(0, opts.confirmations ?? 12);
     this.logWindow = Math.max(1, opts.logWindow ?? 2_000);
-    // The router is optional: on a deployment without it every fill is a
+    // Routers are optional: on a deployment without one every fill is a
     // direct curve call, and filtering on the zero address would make the
     // provider return the (many) logs of accounts that burn to it.
-    const router = opts.routerAddress.toLowerCase();
-    const hasRouter = router !== '' && !/^0x0{40}$/.test(router);
-    this.addresses = hasRouter
-      ? [opts.launchpadAddress.toLowerCase(), router]
-      : [opts.launchpadAddress.toLowerCase()];
+    const routers = [
+      ...new Set(
+        [opts.routerAddress, ...(opts.routerAddresses ?? [])]
+          .map((a) => a.trim().toLowerCase())
+          .filter((a) => a !== '' && !/^0x0{40}$/.test(a)),
+      ),
+    ];
+    this.addresses = [opts.launchpadAddress.toLowerCase(), ...routers];
     this.emitters = {
       launchpad: opts.launchpadAddress.toLowerCase(),
-      router: hasRouter ? router : null,
+      routers,
     };
   }
 
@@ -239,8 +248,8 @@ export interface EvmTxGroup {
 export interface LogEmitters {
   /** Lowercased launchpad address. */
   launchpad: string;
-  /** Lowercased router address, or `null` when this deployment has none. */
-  router: string | null;
+  /** Lowercased router addresses (current and predecessors); empty when this deployment has none. */
+  routers: readonly string[];
 }
 
 const ROUTER_EVENTS = new Set(['AtomicBuy', 'AtomicSell']);
@@ -283,8 +292,10 @@ export function groupByTransaction(
     // that into a listed token or a paid trade.
     if (emitters) {
       const from = log.address.toLowerCase();
-      const expected = ROUTER_EVENTS.has(decoded.name) ? emitters.router : emitters.launchpad;
-      if (expected === null || from !== expected) {
+      const allowed = ROUTER_EVENTS.has(decoded.name)
+        ? emitters.routers.includes(from)
+        : from === emitters.launchpad;
+      if (!allowed) {
         foreign++;
         continue;
       }

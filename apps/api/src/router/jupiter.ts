@@ -125,11 +125,12 @@ export class HttpJupiterClient implements JupiterClient {
       outputMint: req.outMint,
       amount: req.inAmountAtoms.toString(),
       slippageBps: String(Math.max(0, Math.round(req.slippagePct * 100))),
-      onlyDirectRoutes: 'false',
+      onlyDirectRoutes: req.onlyDirectRoutes ? 'true' : 'false',
       // Prefer the highest-liquidity multi-hop path Jupiter can build.
       // Never `platformFeeBps` — plan step 84 forbids Stonkz taking a cut on
       // this hop, and asking Jupiter for one is how that would happen.
     });
+    if (req.maxAccounts !== undefined) params.set('maxAccounts', String(req.maxAccounts));
 
     let raw: JupiterQuoteResponseRaw;
     try {

@@ -30,6 +30,12 @@ contract PushPriceSource is Initializable, UUPSUpgradeable, IPriceSource {
     mapping(address => uint64) public maxAge;
 
     uint64 public defaultMaxAge;
+    /// Two-step admin handover (appended for the governance handover; see
+    /// `docs/governance-handover.md`). Declared after every live variable, so
+    /// it takes the unused high bytes of `defaultMaxAge`'s slot (4, offset 8),
+    /// which the live proxies have never written. Pinned by
+    /// `test_PushPriceSourceLayoutIsAppendOnly`. New state goes after this.
+    address public pendingAdmin;
     /// Widest confidence interval, in bps of the price, that still counts as an
     /// answer. Mirrors the Solana program's `MAX_ORACLE_CONF_BPS`.
     uint256 public constant MAX_CONF_BPS = 200;
@@ -42,7 +48,10 @@ contract PushPriceSource is Initializable, UUPSUpgradeable, IPriceSource {
         _disableInitializers();
     }
 
-    function initialize(address _admin, address _oracleAuthority, uint64 _defaultMaxAge) external initializer {
+    function initialize(address _admin, address _oracleAuthority, uint64 _defaultMaxAge)
+        external
+        initializer
+    {
         require(_admin != address(0), "zero admin");
         require(_defaultMaxAge > 0, "maxAge");
         admin = _admin;
@@ -56,6 +65,18 @@ contract PushPriceSource is Initializable, UUPSUpgradeable, IPriceSource {
     }
 
     function _authorizeUpgrade(address) internal override onlyAdmin {}
+
+    /// @notice Step one of the same two-step handover `StonkzLaunchpad` and
+    /// `ChainlinkPriceSource` use: nothing changes until `a` accepts.
+    function proposeAdmin(address a) external onlyAdmin {
+        pendingAdmin = a;
+    }
+
+    function acceptAdmin() external {
+        require(pendingAdmin != address(0) && msg.sender == pendingAdmin, "not pending");
+        admin = pendingAdmin;
+        pendingAdmin = address(0);
+    }
 
     function setOracleAuthority(address a) external onlyAdmin {
         oracleAuthority = a;

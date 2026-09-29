@@ -22,6 +22,13 @@ export interface AggregatorQuoteRequest {
   inAmountAtoms: bigint;
   /** Percent, e.g. `1` = 1%. Only used to size `otherAmountThreshold`/`minOut` on the venue's own leg. */
   slippagePct: number;
+  /**
+   * Jupiter only: cap on the accounts the route may use, so it still fits one
+   * transaction next to the caller's own instructions. Omitted = Jupiter's default.
+   */
+  maxAccounts?: number;
+  /** Jupiter only: a single-pool route. Omitted = multi-hop allowed. */
+  onlyDirectRoutes?: boolean;
 }
 
 /**

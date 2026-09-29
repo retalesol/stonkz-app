@@ -1,4 +1,4 @@
-import { Transaction } from '@solana/web3.js';
+import { wireMessageBase64 } from '../router/solana-alt.js';
 import type { NativeUnit, Net } from '@stonkz/shared';
 import { jsonRpc } from './jsonrpc.js';
 import {
@@ -132,9 +132,11 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
 
   /**
    * The compiled message plus whether the transaction executed. `null` when
-   * the signature is unknown at `confirmed`. A versioned (v0) transaction —
-   * which nothing in this router emits — reads back as an empty message, so
-   * it can never equal a prepared payload.
+   * the signature is unknown at `confirmed`. Legacy and v0 transactions both
+   * read back in the encoding `router/solana-alt.ts` stores at prepare time
+   * (a v0 message verbatim, lookup-table references included); bytes that
+   * parse as neither read back as an empty message, which can never equal a
+   * prepared payload.
    */
   async getTransactionOutcome(
     signature: string,
@@ -148,13 +150,11 @@ export class SolanaRpc implements ChainRpc, NativeTransferSource {
     ]);
     if (!res?.transaction) return null;
     const raw = Buffer.from(res.transaction[0], 'base64');
-    // Every transaction this router builds is a legacy `Transaction`
-    // (`solana-tx.ts`/`solana-launch-tx.ts` both refuse to emit versioned
-    // ones — see their address-lookup-table guard), so parsing as legacy is
-    // exactly what a real submitted tx is expected to be.
+    // `maxSupportedTransactionVersion: 0` above makes the node return v0
+    // transactions instead of erroring on them.
     let messageBase64 = '';
     try {
-      messageBase64 = Transaction.from(raw).compileMessage().serialize().toString('base64');
+      messageBase64 = wireMessageBase64(raw);
     } catch {
       messageBase64 = '';
     }

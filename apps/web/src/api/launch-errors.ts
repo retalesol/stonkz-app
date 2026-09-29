@@ -8,7 +8,10 @@ import type { Net } from '@stonkz/shared';
  *   its confirmation or `/launch/confirm` never came back. It may well have
  *   landed; relaunching would mint a second coin.
  * - `LaunchedDevBuyError` — the coin exists on chain; only the separate
- *   Robinhood/Base dev buy that follows it failed or was cancelled.
+ *   Robinhood/Base dev buy that follows it failed or was cancelled. Legacy
+ *   only: a WETH-curve EVM launch carries its dev buy in the same
+ *   transaction (`StonkzRouter.createAndBuyWithEth`); a non-WETH base, or a
+ *   router that predates atomic launches, still takes this second step.
  *
  * Kept free of DOM and transport imports so `modals/launch.ts` and
  * `api/live.ts` can share them without a cycle.

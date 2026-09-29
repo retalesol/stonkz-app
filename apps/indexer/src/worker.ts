@@ -108,6 +108,8 @@ if (config.mode === 'chain') {
     solanaStartSlot: config.solanaStartSlot,
     rhLaunchpad: config.rhLaunchpadAddress,
     rhRouter: config.rhRouterAddress,
+    rhRouters: config.rhRouterAddresses,
+    baseRouters: config.baseRouterAddresses,
     rhStartBlock: config.rhStartBlock,
     confirmations: config.confirmations,
     reorgDepth: config.reorgDepth,

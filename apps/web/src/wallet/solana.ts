@@ -5,8 +5,9 @@ import {
   type SolanaSignAndSendTransactionMethod,
   type SolanaSignMessageMethod,
   type SolanaSignTransactionMethod,
+  type SolanaTransactionVersion,
 } from '@solana/wallet-standard-features';
-import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { getWallets } from '@wallet-standard/app';
 import type { Wallet, WalletAccount } from '@wallet-standard/base';
 import {
@@ -44,6 +45,13 @@ import type { BroadcastResult, ConnectedWallet, SignPayload, WalletChoice } from
  * Either way this module then polls for a *real* confirmation before
  * resolving, so a caller that awaits `signAndSend()` knows the transaction
  * landed rather than merely that a wallet accepted it.
+ *
+ * The API hands over legacy transactions for plain launches and trades and
+ * v0 (`VersionedTransaction`, address lookup tables) whenever a Jupiter hop
+ * is in the route. Both go to the wallet as the same raw bytes — Wallet
+ * Standard's transaction features take serialized bytes of either version —
+ * but a wallet that declares it cannot sign v0 is refused up front with a
+ * clear message rather than failing inside its own popup.
  */
 
 /** The transaction confirmation poll gives up after this long. */
@@ -57,6 +65,19 @@ interface SolanaWalletFeatures {
   signMessage: SolanaSignMessageMethod;
   signAndSendTransaction: SolanaSignAndSendTransactionMethod | undefined;
   signTransaction: SolanaSignTransactionMethod | undefined;
+  /** Each method's declared `supportedTransactionVersions`; `null` when the wallet does not say. */
+  signAndSendVersions: readonly SolanaTransactionVersion[] | null;
+  signTransactionVersions: readonly SolanaTransactionVersion[] | null;
+}
+
+function declaredVersions(
+  wallet: Wallet,
+  name: string,
+): readonly SolanaTransactionVersion[] | null {
+  const f = (wallet.features as Record<string, unknown>)[name] as
+    { supportedTransactionVersions?: unknown } | undefined;
+  const v = f?.supportedTransactionVersions;
+  return Array.isArray(v) ? (v as SolanaTransactionVersion[]) : null;
 }
 
 function feature<T>(wallet: Wallet, name: string, method: string): T | undefined {
@@ -96,6 +117,8 @@ function readFeatures(wallet: Wallet): SolanaWalletFeatures | null {
     on: feature<StandardEventsOnMethod>(wallet, StandardEvents, 'on'),
     signAndSendTransaction,
     signTransaction,
+    signAndSendVersions: declaredVersions(wallet, SolanaSignAndSendTransaction),
+    signTransactionVersions: declaredVersions(wallet, SolanaSignTransaction),
   };
 }
 
@@ -155,6 +178,39 @@ function toBytes(base64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/**
+ * The message version of a serialized transaction: after the compact-u16
+ * signature count and the signatures, a legacy message starts with its
+ * header's signer count (< 0x80); a versioned one with `0x80 | version`.
+ * The bytes are then fully deserialized, so a truncated or corrupt payload
+ * fails here with a readable error instead of inside the wallet.
+ */
+export function solanaTransactionVersion(bytes: Uint8Array): SolanaTransactionVersion {
+  let offset = 0;
+  let sigCount = 0;
+  for (let shift = 0; offset < bytes.length; shift += 7) {
+    const b = bytes[offset++]!;
+    sigCount |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+  }
+  const prefix = bytes[offset + sigCount * 64];
+  if (prefix === undefined) {
+    throw new WalletError('unknown', 'The prepared transaction is malformed. Prepare it again.');
+  }
+  if (prefix & 0x80 && (prefix & 0x7f) !== 0) {
+    throw new WalletError(
+      'unsupported_method',
+      `Transaction version ${prefix & 0x7f} is not supported. Prepare it again.`,
+    );
+  }
+  try {
+    VersionedTransaction.deserialize(bytes);
+  } catch {
+    throw new WalletError('unknown', 'The prepared transaction is malformed. Prepare it again.');
+  }
+  return prefix & 0x80 ? 0 : 'legacy';
 }
 
 let connection: Connection | null = null;
@@ -265,6 +321,19 @@ class SolanaStandardWallet implements ConnectedWallet {
     }
     const bytes = toBytes(payload.transaction);
     const chain = solanaWalletStandardChain() as `${string}:${string}`;
+    const version = solanaTransactionVersion(bytes);
+    const declared = this.features.signAndSendTransaction
+      ? this.features.signAndSendVersions
+      : this.features.signTransactionVersions;
+    if (declared && !declared.includes(version)) {
+      throw new WalletError(
+        'unsupported_method',
+        version === 0
+          ? `${this.wallet.name} cannot sign versioned (v0) transactions, which this route needs. ` +
+              'Update the wallet, or use Phantom, Solflare or Backpack.'
+          : `${this.wallet.name} cannot sign legacy transactions.`,
+      );
+    }
 
     let signature: string;
     if (this.features.signAndSendTransaction) {

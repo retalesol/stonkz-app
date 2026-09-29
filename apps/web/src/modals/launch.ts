@@ -41,6 +41,7 @@ import {
   checkWebsite,
   checkXHandle,
   devBuyPresets,
+  evmDevBuyIsAtomic,
   fmtBuy,
   launchErrorCopy,
   parseDevBuy,
@@ -464,7 +465,9 @@ function ncStep3(): Html {
   const unit = nativeUnit();
   const n = netOf();
   const lock = launching ? html`disabled` : html``;
-  const twoTx = isEvm(WALLET.net) && NEW.buy > 0;
+  // A WETH-curve dev buy rides in the launch transaction (one wallet prompt);
+  // only another EVM base still needs a second transaction for it.
+  const twoTx = isEvm(WALLET.net) && NEW.buy > 0 && !evmDevBuyIsAtomic(NEW.base);
   return html`<div><canvas class="nc-chart" id="nc-chart" aria-hidden="true"></canvas></div>
     <div class="fee-row nc-buy-row">
       <label class="lbl" for="f-buy" style="margin:0;flex:0 0 88px">DEV BUY (${unit})</label
@@ -511,8 +514,8 @@ function ncStep3(): Html {
       YOUR BUY IS THE FIRST TRADE ON THE CURVE. IT SETS THE OPENING PRICE FOR EVERYONE ELSE.
       ${
         twoTx
-          ? html`${DOT} ON ${n.name} THE DEV BUY IS A SECOND TRANSACTION RIGHT AFTER THE CREATE:
-            EXPECT TWO WALLET PROMPTS.`
+          ? html`${DOT} ON ${n.name} A DEV BUY IN ${NEW.base} IS A SECOND TRANSACTION RIGHT AFTER
+            THE CREATE: EXPECT TWO WALLET PROMPTS. PAIR WITH ETH FOR A ONE-PROMPT LAUNCH.`
           : ''
       }
     </p>

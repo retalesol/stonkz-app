@@ -147,6 +147,17 @@ export function devBuyPresets(unit: NativeUnit): readonly number[] {
   return [0, 0.1, 0.5, 1, 2];
 }
 
+/**
+ * Whether an EVM dev buy on this base rides in the launch transaction itself
+ * (`StonkzRouter.createAndBuyWithEth`, WETH curves only — native ETH launches
+ * as a WETH curve). Any other EVM base still takes a second transaction. The
+ * API's `devBuy.atomic` is the final word; this only drives the dialog copy.
+ */
+export function evmDevBuyIsAtomic(base: string): boolean {
+  const b = base.trim().toUpperCase();
+  return b === 'ETH' || b === 'WETH';
+}
+
 /** A number in the box's own format: no float noise, no forced two decimals. */
 export function fmtBuy(v: number): string {
   if (!(v > 0)) return '';
@@ -265,6 +276,12 @@ export function launchErrorCopy(err: unknown, ctx: LaunchErrorContext): LaunchFa
           tone: 'red',
           step: 2,
         };
+      case 'solana_tx_too_large':
+        return {
+          msg: `THE ${ctx.base} DEV-BUY ROUTE WON'T FIT ONE TRANSACTION RIGHT NOW · LOWER THE DEV BUY, SET IT TO 0, OR TRY AGAIN · NOTHING WAS SENT`,
+          tone: 'red',
+          step: 2,
+        };
       case 'launchpad_not_configured':
         return {
           msg: `LAUNCHES AREN'T LIVE ON ${ctx.netName} IN THIS ENVIRONMENT YET`,
@@ -310,6 +327,27 @@ export function launchErrorCopy(err: unknown, ctx: LaunchErrorContext): LaunchFa
           msg: `NOT ENOUGH ${ctx.unit} FOR ${ctx.buy > 0 ? 'THE DEV BUY PLUS ' : ''}FEES AND RENT · TOP UP OR LOWER THE DEV BUY`,
           tone: 'red',
           ...(ctx.buy > 0 ? { step: 2 as const } : {}),
+        };
+      case 'dev_buy_too_large':
+        return {
+          msg: detail || `THE DEV BUY IS ABOVE THE ${ctx.netName} LIMIT · LOWER IT`,
+          tone: 'red',
+          step: 2,
+        };
+      case 'oracle_fee_changed':
+        return {
+          msg: 'THE PRICE-UPDATE FEE CHANGED · NOTHING WAS SENT · PRESS LAUNCH AGAIN',
+          tone: 'red',
+        };
+      case 'oracle_update_unavailable':
+        return {
+          msg: `LIVE PRICES ARE UNAVAILABLE ON ${ctx.netName} RIGHT NOW · NOTHING WAS SENT · TRY AGAIN IN ${fmtWait(api.retryAfterMs)}`,
+          tone: 'red',
+        };
+      case 'launch_expired':
+        return {
+          msg: 'THE PREPARED LAUNCH EXPIRED BEFORE IT WAS SENT · NOTHING WAS CREATED · PRESS LAUNCH AGAIN',
+          tone: 'red',
         };
       case 'dev_buy_slippage':
         return {

@@ -25,7 +25,7 @@ library DeployPad {
         IPriceSource priceSource,
         address migrationAuthority
     ) internal returns (StonkzLaunchpad pad) {
-        StonkzLaunchpad impl = new StonkzLaunchpad();
+        StonkzLaunchpad impl = new StonkzLaunchpad(address(0));
         bytes memory data = abi.encodeCall(
             StonkzLaunchpad.initialize,
             (admin, protocolWithdrawAuthority, opsWithdrawAuthority, priceSource, migrationAuthority)

@@ -26,6 +26,12 @@ library RobinhoodChainTestnet {
     /// @dev No Chainlink directory for 46630 — use PushPriceSource.
     uint64 internal constant ORACLE_MAX_AGE_SECS = 90_000;
 
+    /// Pyth Core (RH testnet). Launches carry a Hermes update for it in-tx.
+    address internal constant PYTH = 0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a;
+    /// Pyth ETH/USD price feed id (the same on every chain).
+    bytes32 internal constant PYTH_ETH_USD =
+        0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
+
     function isTestnet() internal view returns (bool) {
         return block.chainid == CHAIN_ID;
     }

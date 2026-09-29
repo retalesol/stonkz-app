@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAddress } from 'viem';
+import { PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { applyBuy, buyQuote, mcapBase, mcapUsd1e6 } from '@stonkz/curve-sim';
 import type { Net } from '@stonkz/shared';
 import { settings, tokens } from '../db/schema.js';
 import { deriveCurveColumns } from '../router/curve-state.js';
 import { createTestApp, authed, type TestApp } from '../test/app.js';
+import { encodeLookupTableAccount, syntheticJupiterRoute } from '../test/solana-alt-fixtures.js';
 
 let h: TestApp;
 
@@ -187,6 +189,45 @@ describe('POST /trade/prepare', () => {
     expect(quote.hops[0]).toMatchObject({ venue: 'JUPITER', feeBps: 0, feeAmount: 0 });
     expect(quote.hops[1]?.venue).toBe('CURVE');
     expect(quote.hops[1]?.feeBps).toBe(250);
+  });
+
+  it('composes a Jupiter hop whose route uses lookup tables as one v0 transaction', async () => {
+    await seedTradeableToken({
+      net: 'SOL',
+      sym: 'ALTBONK',
+      mint: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
+      baseSymbol: 'BONK',
+      baseMint: BONK_MINT,
+      baseDecimals: 6,
+      tokenDecimals: 6,
+      basePrice1e6: 1_000_000n,
+    });
+    h.jupiter.setRoute(SOL_MINT, BONK_MINT, { rate: 1_000 });
+    const { token, address } = await h.login('SOL');
+    h.rpcs.SOL.setBalance(address, 10);
+    const route = syntheticJupiterRoute({
+      user: new PublicKey(address),
+      baseMint: new PublicKey(BONK_MINT),
+      poolAccounts: 21,
+      tableCount: 2,
+    });
+    h.jupiter.setSwapInstructions(route.response);
+    for (const t of route.tables) {
+      h.rpcs.SOL.setAccountData(
+        t.key.toBase58(),
+        encodeLookupTableAccount(t.state.addresses).toString('base64'),
+      );
+    }
+
+    const { status, body } = await tradePrepare(token, { sym: 'ALTBONK', side: 'buy', amount: 1 });
+    expect(status).toBe(200);
+    const wire = Buffer.from(body.transaction!, 'base64');
+    expect(wire.length).toBeLessThanOrEqual(1232);
+    const vtx = VersionedTransaction.deserialize(wire);
+    expect(vtx.version).toBe(0);
+    expect(vtx.message.addressTableLookups.map((l) => l.accountKey.toBase58()).sort()).toEqual(
+      route.tables.map((t) => t.key.toBase58()).sort(),
+    );
   });
 
   it('fails closed when RH has no StonkzRouter (non-atomic EvmStep[] is disabled)', async () => {

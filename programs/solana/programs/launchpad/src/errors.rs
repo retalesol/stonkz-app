@@ -63,4 +63,12 @@ pub enum LaunchpadError {
     /// Appended, never inserted: error codes are positional.
     #[msg("Launched mints must use the classic SPL Token program")]
     UnsupportedTokenProgram,
+    #[msg("Price update is not a Pyth PriceUpdateV2 account")]
+    PythAccountInvalid,
+    #[msg("Pyth price update is only partially verified")]
+    PythNotFullyVerified,
+    #[msg("Pyth price update is for a different feed than the one pinned for this base mint")]
+    PythFeedMismatch,
+    #[msg("No Pyth feed is pinned for this base mint")]
+    PythFeedNotPinned,
 }
