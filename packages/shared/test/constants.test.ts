@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACH,
+  BASE_STOCKS,
   CB_MS,
   CB_START_FEE,
   CRATES,
@@ -11,9 +12,12 @@ import {
   MAX_TICKER_LEN,
   RANKS,
   RAR,
+  RH_STOCKS,
   STOCKS,
   SUPPLIES,
   SUPPLY,
+  isStockBase,
+  stockBasesFor,
 } from '../src/constants.js';
 import { BUYBACK_SPLIT, FEE_SPLIT } from '../src/fees.js';
 
@@ -140,5 +144,23 @@ describe('base mints', () => {
     expect(MAJORS.RH.length).toBeGreaterThanOrEqual(10);
     expect(MAJORS.BASE).toHaveLength(10);
     expect(MAJORS.ARC).toHaveLength(10);
+  });
+});
+
+describe('stock bases per net', () => {
+  it('is config-driven: RH lists its stocks, Base has none yet, Arc never', () => {
+    expect(stockBasesFor('SOL')).toBe(STOCKS);
+    expect(stockBasesFor('RH')).toBe(RH_STOCKS);
+    expect(stockBasesFor('BASE')).toBe(BASE_STOCKS);
+    expect(BASE_STOCKS).toHaveLength(0);
+    expect(stockBasesFor('ARC')).toHaveLength(0);
+  });
+
+  it('recognises a stock base in any case, and nothing else', () => {
+    expect(isStockBase('RH', 'TSLA')).toBe(true);
+    expect(isStockBase('RH', 'tsla')).toBe(true);
+    expect(isStockBase('RH', 'WETH')).toBe(false);
+    expect(isStockBase('BASE', 'TSLA')).toBe(false);
+    expect(isStockBase('SOL', 'TSLAx')).toBe(true);
   });
 });

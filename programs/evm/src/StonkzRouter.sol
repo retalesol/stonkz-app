@@ -364,22 +364,85 @@ contract StonkzRouter {
         if (msg.value == 0) revert NothingIn();
         address base = _baseOf(token);
 
-        weth.deposit{value: msg.value}();
-        SafeErc20.safeApprove(address(weth), address(swapRouter02), msg.value);
-        uint256 delivered = swapRouter02.exactInputSingle(
+        uint256 delivered = _swapEthViaV3(base, fee, msg.value);
+        _requireQuoteHonouredValues(quotedBaseOut, maxSlippageBps, delivered);
+        tokensOut = _buyWithBase(base, token, msg.value, delivered, minTokenOut);
+    }
+
+    /// @notice Launch a coin on a non-WETH base (a stock token, USDG, …) with
+    /// the caller as its creator and dev-buy it with ETH, in one transaction:
+    /// Pyth update → wrap → SwapRouter02 WETH→`p.baseToken` → `createTokenFor`
+    /// → curve buy with everything the swap delivered.
+    ///
+    /// The `createAndBuyWithEth` anti-snipe guarantee, for bases that are not
+    /// WETH: nobody can buy ahead of the creator, because nobody knows the
+    /// coin's address until this transaction lands. The swap runs before the
+    /// launch reads its price, but in the same block, so it cannot move a
+    /// Uniswap TWAP that `StockPriceSource` may price the base from (the
+    /// cumulative for the current block is written with the pre-swap tick).
+    ///
+    /// @param p Launch parameters; `p.baseToken` must not be `weth` (use
+    ///        `createAndBuyWithEth` for that).
+    /// @param priceUpdate Signed Pyth updates, posted first; the fee comes out
+    ///        of `msg.value`. For a stock base, include ETH/USD (it prices the
+    ///        TWAP's WETH leg) and, in market hours, the equity feed.
+    /// @param poolFee Fee tier of the WETH/`p.baseToken` V3 pool.
+    /// @param minBaseOut Floor on the base the swap delivers (measured here).
+    /// @param minTokenOut Floor on the dev buy, enforced by the launchpad.
+    /// @param deadline Wall-clock bound on the whole transaction.
+    /// @return token The new coin.
+    /// @return tokensOut Tokens delivered to the caller; `0` when `msg.value`
+    ///         only covered the update fee (a plain launch).
+    /// @dev Unspent base is refunded as the base token and any stray ETH as
+    /// ETH. Emits `AtomicBuy` with `ethIn = msg.value - fee` and
+    /// `baseFromAggregator` = base delivered by the swap.
+    function createAndBuyViaV3(
+        CreateParams calldata p,
+        bytes[] calldata priceUpdate,
+        uint24 poolFee,
+        uint256 minBaseOut,
+        uint256 minTokenOut,
+        uint256 deadline
+    ) external payable underCap nonReentrant before(deadline) returns (address token, uint256 tokensOut) {
+        require(p.baseToken != address(weth), "weth pair");
+        uint256 fee = _updatePrice(priceUpdate);
+        uint256 amount = msg.value - fee;
+        uint256 delivered;
+        if (amount > 0) {
+            delivered = _swapEthViaV3(p.baseToken, poolFee, amount);
+            if (delivered < minBaseOut) revert AggregatorShortfall(minBaseOut, minBaseOut, delivered);
+        }
+        token = _create(p);
+        if (amount > 0) tokensOut = _buyWithBase(p.baseToken, token, amount, delivered, minTokenOut);
+    }
+
+    /// @dev Wrap `amount` of this call's ETH and swap it to `base` on
+    /// SwapRouter02, returning what actually arrived here.
+    function _swapEthViaV3(address base, uint24 fee, uint256 amount) private returns (uint256 delivered) {
+        weth.deposit{value: amount}();
+        SafeErc20.safeApprove(address(weth), address(swapRouter02), amount);
+        uint256 baseBefore = IERC20(base).balanceOf(address(this));
+        swapRouter02.exactInputSingle(
             ISwapRouter02.ExactInputSingleParams({
                 tokenIn: address(weth),
                 tokenOut: base,
                 fee: fee,
                 recipient: address(this),
-                amountIn: msg.value,
+                amountIn: amount,
                 amountOutMinimum: 0,
                 sqrtPriceLimitX96: 0
             })
         );
         SafeErc20.safeApprove(address(weth), address(swapRouter02), 0);
-        _requireQuoteHonouredValues(quotedBaseOut, maxSlippageBps, delivered);
+        delivered = IERC20(base).balanceOf(address(this)) - baseBefore;
+    }
 
+    /// @dev Spend `delivered` base on `token`'s curve, hand the caller the
+    /// tokens, the unspent base and any ETH here, and emit `AtomicBuy`.
+    function _buyWithBase(address base, address token, uint256 ethIn, uint256 delivered, uint256 minTokenOut)
+        private
+        returns (uint256 tokensOut)
+    {
         SafeErc20.safeApprove(base, address(launchpad), delivered);
         uint256 spent;
         (spent, tokensOut) = _buyMeasured(base, token, delivered, minTokenOut);
@@ -388,7 +451,7 @@ contract StonkzRouter {
         require(StonkzToken(token).transfer(msg.sender, tokensOut), "token transfer");
         _refundBase(base, delivered - spent);
         if (address(this).balance > 0) _sendEth(msg.sender, address(this).balance);
-        emit AtomicBuy(msg.sender, token, msg.value, delivered, tokensOut);
+        emit AtomicBuy(msg.sender, token, ethIn, delivered, tokensOut);
     }
 
     /// @notice Curve sell → SwapRouter02 V3 → local WETH unwrap → ETH.

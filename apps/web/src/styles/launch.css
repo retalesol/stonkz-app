@@ -22,6 +22,7 @@
   color:var(--gold);display:block;line-height:1.15}
 .base-opt.on .bs{color:var(--amber)}
 .base-opt .bn{font-size:9.5px;color:var(--dim);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.base-opt .b247{font-size:8.5px;color:var(--up);display:block;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .base-empty{grid-column:1/-1;background:var(--pnl2);padding:14px;text-align:center;font-size:11px;color:var(--dim)}
 .supply-row{display:flex;gap:5px;flex-wrap:wrap}
 .supply-row .chipm{flex:1;text-align:center;padding:4px 0;border:1px solid var(--line2);background:#12161f;color:var(--txt2);letter-spacing:.05em;cursor:pointer}

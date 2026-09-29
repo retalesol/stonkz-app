@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACH, CRATES, RANKS, RWA_ASSETS } from '@stonkz/shared';
 import { authed, createTestApp, FROZEN_NOW, type TestApp } from '../test/app.js';
 import { solanaWallet } from '../test/wallets.js';
+import { resetDefiLlamaClients } from '../router/defillama.js';
 
 let h: TestApp;
 
@@ -263,5 +264,70 @@ describe('GET /achievements', () => {
     // The same achievement on Robinhood is a separate unlock.
     const rhKeys = await h.deps.ledger.unlockedKeys('RH', wallet.address);
     expect(rhKeys).not.toContain('crate');
+  });
+});
+
+describe('GET /rewards RWA USD values', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetDefiLlamaClients();
+  });
+
+  it('prices held RWA rewards from DefiLlama', async () => {
+    const { token, address } = await h.login('SOL', solanaWallet('rwa-usd'));
+    await h.deps.ledger.creditRwa('SOL', address, 'PAXG', 0.5, 'test', 'rwa-usd-1');
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(String(url));
+      return new Response(
+        JSON.stringify({
+          coins: {
+            'coingecko:pax-gold': {
+              price: 4000,
+              symbol: 'PAXG',
+              timestamp: Math.floor(Date.now() / 1000),
+              confidence: 0.99,
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    const res = await h.app.request('/rewards', { headers: authed(token) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rwaUsd: {
+        total: number | null;
+        positions: { asset: string; units: number; usd: number | null }[];
+      };
+    };
+    expect(calls.some((u) => u.includes('coingecko:pax-gold'))).toBe(true);
+    expect(body.rwaUsd.total).toBeCloseTo(2000, 6);
+    expect(body.rwaUsd.positions).toEqual([{ asset: 'PAXG', units: 0.5, usd: 2000 }]);
+  });
+
+  it('degrades to null USD when DefiLlama is down', async () => {
+    const { token, address } = await h.login('SOL', solanaWallet('rwa-usd-down'));
+    await h.deps.ledger.creditRwa('SOL', address, 'PAXG', 1, 'test', 'rwa-usd-2');
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('network down');
+    });
+    const res = await h.app.request('/rewards', { headers: authed(token) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rwaUsd: { total: number | null; positions: { usd: number | null }[] };
+    };
+    expect(body.rwaUsd.total).toBeNull();
+    expect(body.rwaUsd.positions[0]?.usd).toBeNull();
+  });
+
+  it('skips DefiLlama entirely when no RWA is held', async () => {
+    const { token } = await h.login('SOL', solanaWallet('rwa-usd-none'));
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const res = await h.app.request('/rewards', { headers: authed(token) });
+    const body = (await res.json()) as { rwaUsd: { total: number | null; positions: unknown[] } };
+    expect(body.rwaUsd).toEqual({ total: null, positions: [] });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

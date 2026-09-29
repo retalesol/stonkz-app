@@ -212,13 +212,89 @@ Example: to unpause, schedule a call to `launchpad.setPause(false, false, false,
 
 The Safe can `cancel(id)` anything pending. Changing the delay is itself a timelocked `updateDelay`, and so is changing the pauser (`setPauser`).
 
+## Stock bases (TSLA, AMZN, PLTR, NFLX, AMD)
+
+Stock tokens trade on DEXs 24/7, but Pyth's `Equity.US.*` feeds only publish in US market hours. `StockPriceSource` prices a stock base from a Uniswap V3 TWAP (stock/WETH, 30 min, times Pyth ETH/USD) and cross-checks it against the equity feed when that is fresh; if the two disagree by more than `MAX_DEVIATION_BPS` it returns no price. It sits behind the live `PythPriceSource` as its `fallbackSource`, so the launchpad needs no call and no storage change, and nobody has to push prices. The old `PushPriceSource` stays behind it as the last resort. `createAndBuyViaV3` on a new router launches a stock-base coin and dev-buys it with ETH in one transaction.
+
+**Off hours, the last close is an anchor.** When the equity feed is stale but its last print is at most 4 days old (`ANCHOR_MAX_AGE`, long enough to cover a long weekend), two things change:
+
+- The TWAP runs over 2 hours (`OFF_HOURS_TWAP_SECS`) instead of 30 minutes.
+- The TWAP must stay within 15% (`OFF_HOURS_MAX_MOVE_BPS`) of that last print. Outside that range the source returns no price and does not fall back. Launches and the oracle graduation trigger then refuse (`stale oracle`) until the pool comes back.
+
+If the pool's observation history does not reach 2 hours back, the TWAP counts as unavailable off hours. No shorter window is tried: anyone could churn the history to force one. For a pool that trades in most blocks, raise `OBSERVATION_CARDINALITY` in step 2. With no anchor at all (the feed was never posted, as on RH testnet today, or the last print is over 4 days old), the TWAP prices as before: 30 minutes, gated by the liquidity floor and the band.
+
+The steps run from `programs/evm`, with the same `PRIVATE_KEY`, `RPC`, `LAUNCHPAD_ADDRESS` and `EXPECT_CHAIN_ID` exports as the rollout above. Do a dry run first, then append `--broadcast`.
+
+**0. Tests, and a rehearsal on a fork of the live chain.**
+
+```sh
+forge build --sizes && forge test
+STOCK_FORK_RPC=$RPC forge test --match-path test/fork/StockLaunchFork.t.sol -vv
+```
+
+**1. New router and implementation** (`createAndBuyViaV3`). Only the implementation's `trustedRouter` changes, and the storage layout does not:
+
+```sh
+forge script script/UpgradeStockLaunch.s.sol:UpgradeStockLaunch --rpc-url $RPC -vvv
+```
+
+As soon as this lands, the previous router can no longer launch (`not router`). Switch `RH_ROUTER_ADDRESS` in the API and web to `NEW StonkzRouter` in the same window. Also add it to the indexer's `AtomicBuy` sources and record it, with the new implementation, in `deployments/46630.json`.
+
+**2. Deploy the stock price source.** This configures the five stocks from `src/config/StockBases.sol`, calls `increaseObservationCardinalityNext(64)` on each pool, and sets `PythPriceSource.setFallbackSource`:
+
+```sh
+forge script script/DeployStockPriceSource.s.sol:DeployStockPriceSource --rpc-url $RPC -vvv
+```
+
+Steps 1 and 2 are independent. Until a pool is seeded, its stock falls through to the push oracle exactly as it does today.
+
+Step 2's defaults per stock come from `src/config/StockBases.sol`. Each env var below overrides the value for every stock:
+
+| Env                       | Default         |
+| ------------------------- | --------------- |
+| `TWAP_SECS`               | 1800            |
+| `MIN_LIQUIDITY`           | `1e17`          |
+| `STOCK_PYTH_MAX_AGE`      | 120             |
+| `MAX_DEVIATION_BPS`       | 500             |
+| `ANCHOR_MAX_AGE`          | 345600 (4 days) |
+| `OFF_HOURS_MAX_MOVE_BPS`  | 1500            |
+| `OFF_HOURS_TWAP_SECS`     | 7200            |
+| `OBSERVATION_CARDINALITY` | 64              |
+
+**3. Seed each pool.** The testnet pools exist but sit at a placeholder 1:1 price with no liquidity. Get stock tokens from Robinhood's testnet faucet into the signer's wallet. Then, for each stock, give the current share price and the ETH price:
+
+```sh
+STOCK_TOKEN=0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E STOCK_USD_1E6=250000000 QUOTE_USD_1E6=4000000000 \
+STOCK_PRICE_SOURCE=0x<NEW StockPriceSource> \
+  forge script script/SeedStockPool.s.sol:SeedStockPool --rpc-url $RPC -vvv
+```
+
+The script does two things:
+
+- It moves an empty pool to the reference price at no cost.
+- It mints a full-range position from the whole stock balance (`STOCK_AMOUNT`) plus the matching WETH, wrapping ETH for any shortfall. The signer owns the position.
+
+The log says whether the liquidity clears `MIN_LIQUIDITY` (default `1e17`). **Wait 30 minutes** after seeding: a pool counts only once its whole TWAP window has had liquidity in it.
+
+**4. Check.** Each `legs` call returns the TWAP and Pyth prices. `priceUsd1e6` returns what a launch would snapshot:
+
+```sh
+cast call 0x<NEW StockPriceSource> "legs(address)" 0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E --rpc-url $RPC
+cast call 0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA "priceUsd1e6(address)(uint256,uint256,uint256)" 0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E --rpc-url $RPC
+```
+
+The WETH leg comes from Pyth ETH/USD, which has a 120 s tolerance. The app's `priceUpdate` for a stock-base launch must therefore include **ETH/USD**, and, in market hours, the stock's equity feed.
+
+**Base, later.** Add a branch for the chain to `StockBases.forChain()` with each stock token's address and its stock/WETH V3 pool. Create a pool with `UniswapV3Factory.createPool` if none exists, then seed it. The feed ids and bands are the same on every chain. Then run steps 1 to 3 against Base. On Base mainnet (8453), `MainnetGuard` applies: the scripts deploy and configure, then print the `setFallbackSource` and `acceptAdmin` calls for the timelock. `SeedStockPool` is a testnet-only tool.
+
 ## Mainnet guard
 
 Testnets may skip the multisig, but mainnet may not. Every deploy or upgrade script that can target a mainnet chain (RH 4663, Base 8453, Arc 5042) calls `MainnetGuard.requireOnMainnet()` before anything else. The scripts are:
 
 - `Deploy`, `DeployArc`
 - `DeployRouter`, `DeployMigrator`
-- `UpgradeAtomicLaunch`, `UpgradeLaunchpad`, `SwitchPriceSource`
+- `UpgradeAtomicLaunch`, `UpgradeStockLaunch`, `UpgradeLaunchpad`, `SwitchPriceSource`
+- `DeployStockPriceSource`
 - `GovernanceHandover`
 
 The guard reverts with the name of what is missing, for example `MainnetGuard: PAUSER is required on mainnet`. It requires:
@@ -235,7 +311,7 @@ How the two kinds of script behave on mainnet:
   - They wire everything, including the feeds, migrator and trusted router.
   - Then they run `GovernanceLib.handover` in atomic mode, so when the broadcast lands, admin is held by the timelock and no EOA holds any role.
   - `Deploy` on 4663 needs a single signer (`--ledger`, `--private-key`, or `--account` with `--sender`) and also reads `STONKZ_PROTOCOL_WITHDRAW_AUTHORITY`.
-- **Upgrade scripts** (`UpgradeAtomicLaunch`, `UpgradeLaunchpad`, `DeployMigrator`, `SwitchPriceSource`, and `DeployRouter`, which binds to the proxy) first require `MainnetGuard.requireTimelockAdmin`. That check requires:
+- **Upgrade scripts** (`UpgradeAtomicLaunch`, `UpgradeStockLaunch`, `UpgradeLaunchpad`, `DeployMigrator`, `SwitchPriceSource`, `DeployStockPriceSource`, and `DeployRouter`, which binds to the proxy) first require `MainnetGuard.requireTimelockAdmin`. That check requires:
   - the launchpad admin is a `TimelockController` with a delay of at least 24 h;
   - `PROPOSERS` hold the proposer role;
   - the launchpad's ops and migration authorities and its pauser match the env.

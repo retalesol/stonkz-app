@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { MAJORS, STOCKS, RH_STOCKS, nativeUnit, parseNet, type Net } from '@stonkz/shared';
+import { MAJORS, isEvm, nativeUnit, parseNet, stockBasesFor, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
 import { basePriceFor } from '../router/base-price.js';
+import { evmRouterAddress } from '../chain/evm-net.js';
+import { asEthCallSource, readRouterViaV3Support } from '../router/evm-pyth.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
@@ -91,8 +93,9 @@ export function marketRoutes(): Hono<AppEnv> {
   });
 
   /**
-   * Plan step 60 — majors per net, plus tokenized stocks.
-   * Solana uses `STOCKS` (xStock tickers); Robinhood uses `RH_STOCKS`.
+   * Plan step 60 — majors per net, plus tokenized stocks (`STOCK_BASES`,
+   * config-driven per net: Solana `STOCKS`, Robinhood `RH_STOCKS`, Base
+   * `BASE_STOCKS`).
    */
   app.get('/base-tokens', async (c) => {
     const deps = c.get('deps');
@@ -105,6 +108,11 @@ export function marketRoutes(): Hono<AppEnv> {
       const price = await basePriceFor(net, symbol, deps.oracle).catch(() => null);
       return price !== null;
     };
+    // An EVM stock base trades 24/7 on its V3 pool and is priced on-chain
+    // from it (`StockPriceSource`), so a pinned address is all it needs —
+    // never whether US equity markets happen to be open right now.
+    const stockAvailable = async (symbol: string): Promise<boolean> =>
+      isEvm(net) ? deps.baseMints.mintFor(net, symbol) !== null : available(symbol);
     const majors = await Promise.all(
       MAJORS[net].map(async ([symbol, name]) => ({
         symbol,
@@ -113,15 +121,38 @@ export function marketRoutes(): Hono<AppEnv> {
         available: await available(symbol),
       })),
     );
-    // Base has no stock bases (see MAJORS.BASE): advertising RH_STOCKS there
-    // would offer symbols /launch/prepare then refuses with base_mint_not_allowed.
-    const stockList = net === 'SOL' ? STOCKS : net === 'RH' ? RH_STOCKS : [];
+    // Whether a stock-base dev buy rides in the launch transaction
+    // (`StonkzRouter.createAndBuyViaV3`), so the stepper can stop warning
+    // about a second wallet prompt. One cached probe per router.
+    const stockList = stockBasesFor(net);
+    let atomicStockDevBuy = false;
+    if (isEvm(net) && stockList.length > 0) {
+      const caller = asEthCallSource(deps.rpcs[net]);
+      atomicStockDevBuy = caller
+        ? await readRouterViaV3Support(
+            caller,
+            evmRouterAddress(deps.env, net),
+            deps.now(),
+            deps.logger,
+          ).catch(() => false)
+        : false;
+    }
+    // Each net advertises only its own list (Base: `BASE_STOCKS`, empty
+    // until it lists stocks) — never another net's symbols, which
+    // /launch/prepare would refuse with base_mint_not_allowed.
     const stocks = await Promise.all(
       stockList.map(async ([symbol, name]) => ({
         symbol,
         name,
         kind: 'stock' as const,
-        available: await available(symbol),
+        available: await stockAvailable(symbol),
+        ...(isEvm(net)
+          ? {
+              tradesAllHours: true,
+              priceSource: 'dex' as const,
+              atomicDevBuy: atomicStockDevBuy,
+            }
+          : {}),
       })),
     );
 

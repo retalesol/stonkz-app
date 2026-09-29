@@ -150,4 +150,11 @@ export interface StonkzApi {
    * fine (sim). The stepper greys out the rest instead of failing at step 3.
    */
   availableBases?(net: Net): Promise<ReadonlySet<string> | null>;
+  /**
+   * Stock-token bases whose dev buy the API has said rides in the launch
+   * transaction on `net` (`/base-tokens` `atomicDevBuy`, or a prepare that
+   * answered `devBuy.atomic: true`); `null` while unknown. Drives only the
+   * "two wallet prompts" hint — the prepare's `devBuy.atomic` is the truth.
+   */
+  atomicDevBuyBases?(net: Net): ReadonlySet<string> | null;
 }

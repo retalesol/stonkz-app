@@ -4,6 +4,7 @@ import { CrateError } from '../game/crates.js';
 import { limit, optionalAuth, requireAuth } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
+import { defiLlamaClientFor, rwaUsdValues, type RwaUsdValues } from '../router/defillama.js';
 
 function parseTier(raw: string): CrateTier | null {
   const upper = raw.toUpperCase();
@@ -35,6 +36,13 @@ export function rewardsRoutes(): Hono<AppEnv> {
         .then((b) => deps.spLevels.snapshot(user.net, user.wallet, b.sp)),
     ]);
 
+    // USD value of RWA crate rewards, from DefiLlama. Priced only when the
+    // wallet holds any; a DefiLlama outage leaves `usd: null`, never an error.
+    const rwaUsd: RwaUsdValues =
+      snapshot.rwa.length > 0
+        ? await rwaUsdValues(defiLlamaClientFor(deps.env, deps.logger), snapshot.rwa)
+        : { total: null, positions: [] };
+
     const globalReadyAt = states[0]?.readyAt ?? Date.now();
     const globalReady = states[0]?.ready ?? true;
     const lastTier = states[0]?.lastTier ?? null;
@@ -47,6 +55,7 @@ export function rewardsRoutes(): Hono<AppEnv> {
       sp: snapshot.sp,
       stonkz: snapshot.stonkz,
       rwa: snapshot.rwa,
+      rwaUsd,
       streak: snapshot.streak,
       streakMult: snapshot.streakMult,
       achievementCount: snapshot.achievements.length,

@@ -27,3 +27,8 @@ programs/
 # eslint still covers them.
 apps/web/src/views/profile.ts
 apps/web/src/views/token.ts
+
+# Local Claude Code state, not project source.
+.claude/
+.agents/
+skills-lock.json

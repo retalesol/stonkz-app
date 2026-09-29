@@ -9,6 +9,7 @@ import {
   checkTicker,
   checkWebsite,
   checkXHandle,
+  STOCK_BASE_NOTE,
   devBuyPresets,
   evmDevBuyIsAtomic,
   fmtBuy,
@@ -123,11 +124,23 @@ describe('dev buy', () => {
     expect(fmtBuy(0)).toBe('');
   });
 
-  it('knows an EVM dev buy is one transaction only on an ETH/WETH curve', () => {
+  it('knows an EVM dev buy is one transaction on an ETH/WETH curve', () => {
     expect(evmDevBuyIsAtomic('ETH')).toBe(true);
     expect(evmDevBuyIsAtomic('weth')).toBe(true);
     expect(evmDevBuyIsAtomic('USDG')).toBe(false);
     expect(evmDevBuyIsAtomic('TSLA')).toBe(false);
+  });
+
+  it('stops warning about two prompts for a stock base once the API says atomic', () => {
+    const atomic = new Set(['TSLA']);
+    expect(evmDevBuyIsAtomic('tsla', atomic)).toBe(true);
+    expect(evmDevBuyIsAtomic('AMZN', atomic)).toBe(false);
+    expect(evmDevBuyIsAtomic('USDG', atomic)).toBe(false);
+    expect(evmDevBuyIsAtomic('TSLA', null)).toBe(false);
+  });
+
+  it('labels stock bases as trading around the clock', () => {
+    expect(STOCK_BASE_NOTE).toBe('24/7 · DEX-priced');
   });
 });
 
@@ -165,6 +178,21 @@ describe('launch failure copy', () => {
     const cap = launchErrorCopy(apiErr('dev_buy_too_large', '', 422), eth);
     expect(cap.step).toBe(2);
     expect(cap.msg).toMatch(/DEV BUY/);
+  });
+
+  it('explains the stock-base dev-buy refusals', () => {
+    const tsla = { ...ctx, unit: 'ETH' as const, netName: 'ROBINHOOD', base: 'TSLA', buy: 0.01 };
+    const thin = launchErrorCopy(apiErr('stock_pool_too_thin', '', 422), tsla);
+    expect(thin.msg).toBe(
+      'STOCK POOL TOO THIN RIGHT NOW · LOWER THE DEV BUY OR LAUNCH WITHOUT ONE',
+    );
+    expect(thin.step).toBe(2);
+    const moved = launchErrorCopy(apiErr('stock_swap_slippage', '', 409), tsla);
+    expect(moved.msg).toMatch(/TSLA POOL PRICE MOVED/);
+    expect(moved.msg).toMatch(/NOTHING WAS SENT/);
+    const off = launchErrorCopy(apiErr('stock_price_diverged', '', 503, 60_000), tsla);
+    expect(off.msg).toMatch(/TSLA POOL PRICE LOOKS OFF RIGHT NOW/);
+    expect(off.msg).toContain('60S');
   });
 
   it('never blames the user for a server fault', () => {

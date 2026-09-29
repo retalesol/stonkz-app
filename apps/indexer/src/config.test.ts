@@ -3,7 +3,10 @@ import { readEnv } from '@stonkz/api/env';
 import { LEGACY_ROUTERS, readIndexerConfig, routerAddressList } from './config.js';
 
 const NEW_RH_ROUTER = '0x00000000000000000000000000000000000A70e1';
-const RH_LEGACY = '0xc98f8214999220ce06e04ca8739a34cb8af5779c';
+const RH_LEGACY = [
+  '0xc98f8214999220ce06e04ca8739a34cb8af5779c',
+  '0x985877acdf01a21527e093bc4fce513eb180c775',
+];
 const BASE_LEGACY = '0x05b245fbdf5acbffc3ceefffb1648e1dcbf5413d';
 
 const base = {
@@ -18,7 +21,7 @@ describe('router address lists (atomic-launch router + its predecessor)', () => 
   it('defaults to the current router plus the testnet predecessors', () => {
     const env = readEnv({ ...base, RH_ROUTER_ADDRESS: NEW_RH_ROUTER });
     const config = readIndexerConfig(env, fixtures);
-    expect(config.rhRouterAddresses).toEqual([NEW_RH_ROUTER.toLowerCase(), RH_LEGACY]);
+    expect(config.rhRouterAddresses).toEqual([NEW_RH_ROUTER.toLowerCase(), ...RH_LEGACY]);
     // No BASE_ROUTER_ADDRESS: the zero default is dropped, the predecessor kept.
     expect(config.baseRouterAddresses).toEqual([BASE_LEGACY]);
     expect(config.arcRouterAddresses).toEqual([]);
@@ -26,7 +29,7 @@ describe('router address lists (atomic-launch router + its predecessor)', () => 
 
   it('dedupes when the current router still is the predecessor', () => {
     const env = readEnv({ ...base, RH_ROUTER_ADDRESS: LEGACY_ROUTERS[46630]![0]! });
-    expect(readIndexerConfig(env, fixtures).rhRouterAddresses).toEqual([RH_LEGACY]);
+    expect(readIndexerConfig(env, fixtures).rhRouterAddresses).toEqual(RH_LEGACY);
   });
 
   it('never trusts testnet addresses on mainnet', () => {

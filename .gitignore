@@ -54,3 +54,9 @@ apps/api/loadtest/results/
 # agent / editor scratch
 .codex/
 .cursor/
+
+# Local Claude Code state: per-machine settings and third-party skills.
+.claude/settings.local.json
+.claude/skills/
+.agents/
+skills-lock.json

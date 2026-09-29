@@ -15,6 +15,7 @@ import { LAUNCHPAD_ABI, TOKEN_CREATED_EVENT_ABI } from '../router/evm-abi.js';
 import { deriveCurveColumns } from '../router/curve-state.js';
 import {
   PYTH_ABI,
+  PYTH_EQUITY_FEED_IDS,
   PYTH_ETH_USD_FEED_ID,
   ROUTER_LAUNCH_ABI,
   encodeCreateAndBuyWithEth,
@@ -22,6 +23,10 @@ import {
   resetEvmPythCaches,
   type CreateParams,
 } from '../router/evm-pyth.js';
+import { JsonRpcError } from '../chain/jsonrpc.js';
+import { resetDefiLlamaClients } from '../router/defillama.js';
+import { resetStockPriceCaches } from '../router/stock-price.js';
+import { V3_POOL_ABI, V3_QUOTER_ABI, tickToPrice } from '../router/v3-pool-reads.js';
 import { createTestApp, authed, type TestApp } from '../test/app.js';
 
 /**
@@ -47,6 +52,11 @@ const HERMES_PRICE_1E6 = 4000123456n;
 let h: TestApp;
 let hermesCalls: { url: string; auth: string | undefined }[];
 let hermesMode: 'ok' | 'down';
+let llamaCalls: string[];
+let llamaTslaUsd: number | null;
+
+const TSLA_FEED = PYTH_EQUITY_FEED_IDS['TSLA']!;
+const LLAMA = 'https://llama.test';
 
 function hermesBody() {
   return {
@@ -56,9 +66,40 @@ function hermesBody() {
         id: PYTH_ETH_USD_FEED_ID.slice(2),
         price: { price: '400012345678', conf: '1000000', expo: -8, publish_time: 1_788_700_000 },
       },
+      // Market closed: last published well before the frozen clock.
+      {
+        id: TSLA_FEED.slice(2),
+        price: { price: '24900000', conf: '1000', expo: -5, publish_time: 1_788_600_000 },
+      },
     ],
   };
 }
+
+function llamaBody() {
+  return {
+    coins:
+      llamaTslaUsd === null
+        ? {}
+        : {
+            'coingecko:tesla-xstock': {
+              price: llamaTslaUsd,
+              symbol: 'TSLAX',
+              timestamp: Math.floor(Date.now() / 1000) - 60,
+              confidence: 0.99,
+            },
+          },
+  };
+}
+
+const RH_FACTORY = '0x00000000000000000000000000000000000fac70';
+const RH_QUOTER = '0x00000000000000000000000000000000000c0de1';
+const RH_TSLA = '0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E';
+const TSLA_POOL = '0x00000000000000000000000000000000000b001e';
+/** WETH (0x79…) is token0: 16 TSLA per WETH ≈ $250 at the Hermes $4000 ETH. */
+const TSLA_TICK = 27_726;
+const TSLA_SQRT_PRICE_X96 = 4n * 2n ** 96n;
+const TSLA_SPOT_OUT = (DEV_BUY_WEI * 16n * 997n) / 1000n;
+const TSLA_QUOTED = (TSLA_SPOT_OUT * 998n) / 1000n;
 
 const SEL_PYTH = '0xf98d06f0';
 const SEL_FEE = '0xd47eed45';
@@ -91,6 +132,9 @@ beforeAll(async () => {
       BASE_ROUTER_ADDRESS: BASE_ROUTER,
       PYTH_HERMES_URL: HERMES,
       PYTH_HERMES_API_KEY: 'test-hermes-key',
+      RH_V3_FACTORY_ADDRESS: RH_FACTORY,
+      RH_V3_QUOTER_ADDRESS: RH_QUOTER,
+      DEFILLAMA_COINS_URL: LLAMA,
     },
   });
 });
@@ -101,11 +145,22 @@ beforeEach(async () => {
   await h.db.reset();
   await h.clearRateLimits();
   resetEvmPythCaches();
+  resetStockPriceCaches();
+  resetDefiLlamaClients();
   hermesCalls = [];
   hermesMode = 'ok';
+  llamaCalls = [];
+  llamaTslaUsd = 252;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith(LLAMA)) {
+        llamaCalls.push(String(url));
+        return new Response(JSON.stringify(llamaBody()), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       hermesCalls.push({
         url: String(url),
         auth: (init?.headers as Record<string, string> | undefined)?.['authorization'],
@@ -221,7 +276,8 @@ function launchParams(data: Hex): CreateParams {
   const call = decodeFunctionData({ abi: ROUTER_LAUNCH_ABI, data });
   if (
     call.functionName !== 'createAndBuyWithEth' &&
-    call.functionName !== 'createWithPriceUpdate'
+    call.functionName !== 'createWithPriceUpdate' &&
+    call.functionName !== 'createAndBuyViaV3'
   ) {
     throw new Error(`not a router launch: ${call.functionName}`);
   }
@@ -554,5 +610,214 @@ describe('EVM /launch/confirm of a router launch', () => {
     const res = await confirm(token, p.body.intentId, sig);
     expect(res.status).toBe(200);
     expect(res.body.devBuy).toBeUndefined();
+  });
+});
+
+/* ------------------------------------------------ stock bases: 24/7 launches */
+
+/**
+ * A router that also has `createAndBuyViaV3` (`viaV3`), plus the TSLA/WETH
+ * pool, its factory and the quoter on the fake RH RPC.
+ */
+function wireStockChain(opts: { viaV3?: boolean; pool?: boolean } = {}): void {
+  const rpc = h.rpcs.RH;
+  rpc.setContract(RH_ROUTER, (data) => {
+    if (data.slice(0, 10) === SEL_PYTH) {
+      return encodeFunctionResult({
+        abi: ROUTER_LAUNCH_ABI,
+        functionName: 'pyth',
+        result: PYTH as Address,
+      });
+    }
+    // The createAndBuyViaV3 probe: DeadlineExpired() if the router has it,
+    // a data-less revert (no such function) if not.
+    throw new JsonRpcError(3, 'execution reverted', opts.viaV3 === false ? '0x' : '0x1ab7da6b');
+  });
+  rpc.setContract(RH_FACTORY, () =>
+    encodeAbiParameters(
+      [{ type: 'address' }],
+      [(opts.pool === false ? `0x${'0'.repeat(40)}` : TSLA_POOL) as Address],
+    ),
+  );
+  rpc.setContract(TSLA_POOL, (data) => {
+    const call = decodeFunctionData({ abi: V3_POOL_ABI, data: data as Hex });
+    switch (call.functionName) {
+      case 'liquidity':
+        return encodeFunctionResult({
+          abi: V3_POOL_ABI,
+          functionName: 'liquidity',
+          result: 10n ** 24n,
+        });
+      case 'slot0':
+        return encodeFunctionResult({
+          abi: V3_POOL_ABI,
+          functionName: 'slot0',
+          result: [TSLA_SQRT_PRICE_X96, TSLA_TICK, 0, 10, 10, 0, true],
+        });
+      case 'observe':
+        return encodeFunctionResult({
+          abi: V3_POOL_ABI,
+          functionName: 'observe',
+          result: [
+            [0n, BigInt(TSLA_TICK) * 1800n],
+            [0n, 0n],
+          ],
+        });
+    }
+  });
+  rpc.setContract(RH_QUOTER, (data) => {
+    const call = decodeFunctionData({ abi: V3_QUOTER_ABI, data: data as Hex });
+    expect(call.args).toEqual([RH_WETH, RH_TSLA, 3000, DEV_BUY_WEI]);
+    return encodeFunctionResult({
+      abi: V3_QUOTER_ABI,
+      functionName: 'quoteExactInputSingle',
+      result: TSLA_QUOTED,
+    });
+  });
+}
+
+const TSLA_BODY = { ...ETH_BODY, baseSymbol: 'TSLA' };
+
+describe('EVM /launch/prepare on a stock-token base (24/7)', () => {
+  it('builds one createAndBuyViaV3 call: ETH/USD + TSLA in one Hermes update, 1% minBaseOut, floor at the lower of DefiLlama and TWAP', async () => {
+    wireStockChain();
+    const { token, address } = await h.login('RH');
+    let simulated: Record<string, unknown> | null = null;
+    h.rpcs.RH.setSimulation((payload) => {
+      simulated = payload;
+      return { ok: true };
+    });
+    const { status, body } = await prepare(token, {
+      ...TSLA_BODY,
+      ticker: 'tsla24',
+      devBuyNative: 0.01,
+    });
+    expect(status).toBe(200);
+    expect(body.to).toBe(RH_ROUTER);
+    expect(body.value).toBe((FEE + DEV_BUY_WEI).toString());
+    expect(body.devBuy).toMatchObject({ native: 0.01, atomic: true });
+    expect(body.devBuy?.note).toBeUndefined();
+
+    // One Hermes request for both feeds (pricing and the update share it).
+    expect(hermesCalls.map((c) => c.url)).toEqual([
+      `${HERMES}/v2/updates/price/latest?ids[]=${PYTH_ETH_USD_FEED_ID.slice(2)}&ids[]=${TSLA_FEED.slice(2)}`,
+    ]);
+    expect(llamaCalls).toEqual([`${LLAMA}/prices/current/coingecko:tesla-xstock?searchWidth=4h`]);
+
+    const call = decodeFunctionData({ abi: ROUTER_LAUNCH_ABI, data: body.data });
+    expect(call.functionName).toBe('createAndBuyViaV3');
+    const minBaseOut = (TSLA_QUOTED * 9_900n) / 10_000n;
+    // DefiLlama says $252, the pool TWAP × Hermes ETH ≈ $250.0: the floor is
+    // quoted at the lower (fewer tokens per TSLA).
+    const twap1e6 = BigInt(
+      Math.round(
+        tickToPrice(TSLA_TICK, RH_TSLA, RH_WETH, 18, 18) * (Number(HERMES_PRICE_1E6) / 1e6) * 1e6,
+      ),
+    );
+    expect(twap1e6 < 252_000_000n).toBe(true);
+    const curve = deriveCurveColumns(1_000_000_000n * 10n ** 18n, twap1e6, 18, 18, 'RH')!;
+    const fill = buyQuote(freshState(curve.params), 250, minBaseOut)!;
+    const minTokenOut = (fill.tokensOut * 9_900n) / 10_000n;
+    expect(call.args).toEqual([
+      { ...launchParams(body.data), baseToken: RH_TSLA },
+      [`0x${UPDATE_HEX}`],
+      3000,
+      minBaseOut,
+      minTokenOut,
+      BigInt(Math.floor(h.now() / 1000) + 600),
+    ]);
+    expect(body.devBuy).toMatchObject({
+      minTokenOut: minTokenOut.toString(),
+      minBaseOut: minBaseOut.toString(),
+      poolFee: 3000,
+    });
+    expect(simulated).toMatchObject({ from: address, to: RH_ROUTER, data: body.data });
+  });
+
+  it('keeps the dev buy a second step (atomic: false) on a router without createAndBuyViaV3', async () => {
+    wireStockChain({ viaV3: false });
+    const { token } = await h.login('RH');
+    const { status, body } = await prepare(token, {
+      ...TSLA_BODY,
+      ticker: 'tslaold',
+      devBuyNative: 0.01,
+    });
+    expect(status).toBe(200);
+    const call = decodeFunctionData({ abi: ROUTER_LAUNCH_ABI, data: body.data });
+    expect(call.functionName).toBe('createWithPriceUpdate');
+    expect(call.args?.[1]).toEqual([`0x${UPDATE_HEX}`]);
+    expect(body.value).toBe(FEE.toString());
+    expect(body.devBuy).toMatchObject({ native: 0.01, atomic: false });
+  });
+
+  it('refuses stock_pool_too_thin when there is no pool to swap through', async () => {
+    wireStockChain({ pool: false });
+    const { token } = await h.login('RH');
+    const { status, body } = await prepare(token, {
+      ...TSLA_BODY,
+      ticker: 'tslathin',
+      devBuyNative: 0.01,
+    });
+    expect(status).toBe(422);
+    expect(body.error).toBe('stock_pool_too_thin');
+  });
+
+  it('refuses stock_price_diverged when DefiLlama and the pool TWAP disagree by > 5%', async () => {
+    wireStockChain();
+    llamaTslaUsd = 358.4; // vs a ~$250 pool TWAP
+    const { token } = await h.login('RH');
+    const res = await prepare(token, { ...TSLA_BODY, ticker: 'tsladiv' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('stock_price_diverged');
+    const rows = await h.deps.db
+      .select()
+      .from(launchIntents)
+      .where(eq(launchIntents.ticker, 'TSLADIV'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('prices off the pool TWAP when DefiLlama has nothing (no divergence to check)', async () => {
+    wireStockChain();
+    llamaTslaUsd = null;
+    const { token } = await h.login('RH');
+    const { status, body } = await prepare(token, { ...TSLA_BODY, ticker: 'tslatwap' });
+    expect(status).toBe(200);
+    expect(decodeFunctionData({ abi: ROUTER_LAUNCH_ABI, data: body.data }).functionName).toBe(
+      'createWithPriceUpdate',
+    );
+  });
+
+  it.each([
+    ['execution reverted: Too little received', 409, 'stock_swap_slippage'],
+    ['execution reverted: SPL', 422, 'stock_pool_too_thin'],
+    ['execution reverted: slippage', 409, 'dev_buy_slippage'],
+  ])('maps the swap-leg revert %j to %i %s', async (reason, code, error) => {
+    wireStockChain();
+    const { token } = await h.login('RH');
+    h.rpcs.RH.setSimulation({ ok: false, reason });
+    const res = await prepare(token, { ...TSLA_BODY, ticker: 'tslarev', devBuyNative: 0.01 });
+    expect(res.status).toBe(code);
+    expect(res.body.error).toBe(error);
+  });
+
+  it('confirms a createAndBuyViaV3 launch and records its AtomicBuy as the dev buy', async () => {
+    wireStockChain();
+    const { token, address } = await h.login('RH');
+    const p = await prepare(token, { ...TSLA_BODY, ticker: 'tslacnf', devBuyNative: 0.01 });
+    expect(p.status).toBe(200);
+    const sig = evmHash('f9');
+    h.rpcs.RH.setEvmReceipt(sig, {
+      status: 'success',
+      from: address,
+      to: RH_ROUTER,
+      input: p.body.data,
+      logs: [
+        tokenCreatedLog(TOKEN, address as Address, RH_TSLA as Address, 'TSLACNF'),
+        atomicBuyLog(RH_ROUTER, address as Address, TOKEN, 777n * 10n ** 18n),
+      ],
+    });
+    const res = await confirm(token, p.body.intentId, sig);
+    expect(res.status).toBe(200);
+    expect(res.body.devBuy).toMatchObject({ ethInWei: DEV_BUY_WEI.toString(), tokens: 777 });
   });
 });

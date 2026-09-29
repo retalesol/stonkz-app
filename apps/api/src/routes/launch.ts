@@ -13,8 +13,7 @@ import {
   MAJORS,
   MAX_TRADE_CAP,
   NET_INFO,
-  STOCKS,
-  RH_STOCKS,
+  stockBasesFor,
   type Net,
 } from '@stonkz/shared';
 import { evmLaunchpadAddress, evmRouterAddress } from '../chain/evm-net.js';
@@ -61,7 +60,12 @@ import {
   type SolanaBaseOracle,
 } from '../router/launch-preflight.js';
 import { findLaunchCooldown } from './token-resolve.js';
-import { prepareEvmLaunch, verifyEvmLaunchReceipt, type EvmConfirmedDevBuy } from './launch-evm.js';
+import {
+  prepareEvmLaunch,
+  stockPricerFor,
+  verifyEvmLaunchReceipt,
+  type EvmConfirmedDevBuy,
+} from './launch-evm.js';
 import {
   EVM_MAX_NAME_CHARS,
   MAX_DESCR_CHARS,
@@ -140,9 +144,8 @@ interface LaunchPrepareBody {
 function isAllowedBaseSymbol(net: Net, symbol: string): boolean {
   const upper = symbol.toUpperCase();
   if (MAJORS[net].some(([sym]) => sym === upper)) return true;
-  if (net === 'SOL' && STOCKS.some(([sym]) => sym === upper)) return true;
-  if (net === 'RH' && RH_STOCKS.some(([sym]) => sym === upper)) return true;
-  return false;
+  // Config-driven per net (`STOCK_BASES`): SOL xStocks, RH stocks, Base later.
+  return stockBasesFor(net).some(([sym]) => sym === upper);
 }
 
 function str(v: unknown): string {
@@ -418,7 +421,22 @@ export function launchRoutes(): Hono<AppEnv> {
           400,
         );
       }
-      const basePrice = await basePriceFor(net, baseSymbol, deps.oracle).catch(() => null);
+      // EVM stock bases are priced live, from the inputs `StockPriceSource`
+      // reads on-chain (fresh Pyth equity, else pool TWAP × ETH/USD) — 24/7.
+      const basePrice = await basePriceFor(
+        net,
+        baseSymbol,
+        deps.oracle,
+        isEvm(net) ? { stock: stockPricerFor(deps, net) } : {},
+      ).catch(() => null);
+      if (basePrice?.source) {
+        deps.logger.info('launch/prepare: stock base priced', {
+          net,
+          base: baseSymbol,
+          source: basePrice.source,
+          price1e6: basePrice.price1e6.toString(),
+        });
+      }
       if (!basePrice) {
         return c.json(
           {
@@ -426,6 +444,31 @@ export function launchRoutes(): Hono<AppEnv> {
             detail: `no USD price is available for ${baseSymbol} right now`,
           },
           422,
+        );
+      }
+      // Divergence guard: DefiLlama and the pool's on-chain TWAP (what the
+      // contract prices off when Pyth equity is stale) must roughly agree, or
+      // the curve the chain builds would not be the one priced here.
+      const maxDivergenceBps = deps.env.stockPriceMaxDivergenceBps;
+      if (
+        maxDivergenceBps > 0 &&
+        basePrice.divergenceBps != null &&
+        basePrice.divergenceBps > maxDivergenceBps
+      ) {
+        deps.logger.warn('launch/prepare: stock price sources diverge; refusing', {
+          net,
+          base: baseSymbol,
+          divergenceBps: basePrice.divergenceBps,
+          maxDivergenceBps,
+        });
+        c.header('Retry-After', '60');
+        return c.json(
+          {
+            error: 'stock_price_diverged',
+            detail: 'the stock pool price looks off right now, try again shortly',
+            retryAfter: 60,
+          },
+          503,
         );
       }
 
@@ -933,6 +976,7 @@ export function launchRoutes(): Hono<AppEnv> {
           supplyAtoms,
           baseDecimals: basePrice.baseDecimals,
           basePrice1e6: basePrice.price1e6,
+          basePriceFloor1e6: basePrice.floorPrice1e6,
           intentValues,
           expiresAt,
           now,

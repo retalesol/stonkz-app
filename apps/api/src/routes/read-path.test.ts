@@ -580,6 +580,30 @@ describe('GET /base-tokens', () => {
     );
   });
 
+  it('offers the pinned RH stock bases at any hour: available from their address alone, DEX-priced', async () => {
+    const { body } = await get<{
+      baseTokens: {
+        symbol: string;
+        kind: string;
+        available: boolean;
+        tradesAllHours?: boolean;
+        priceSource?: string;
+      }[];
+    }>('/base-tokens?network=RH');
+    const stocks = new Map(
+      body.baseTokens.filter((t) => t.kind === 'stock').map((t) => [t.symbol, t]),
+    );
+    for (const sym of ['TSLA', 'AMZN', 'PLTR', 'NFLX', 'AMD']) {
+      expect(stocks.get(sym)).toMatchObject({
+        available: true,
+        tradesAllHours: true,
+        priceSource: 'dex',
+      });
+    }
+    // No testnet address pinned: still greyed out, for that reason only.
+    expect(stocks.get('AAPL')?.available).toBe(false);
+  });
+
   it('returns majors only on Base, which has no stock bases', async () => {
     const { body } = await get<{ nativeUnit: string; baseTokens: { kind: string }[] }>(
       '/base-tokens?network=BASE',

@@ -18,6 +18,8 @@ import {DeployMigrator} from "../script/DeployMigrator.s.sol";
 import {UpgradeAtomicLaunch} from "../script/UpgradeAtomicLaunch.s.sol";
 import {UpgradeLaunchpad} from "../script/UpgradeLaunchpad.s.sol";
 import {SwitchPriceSource} from "../script/SwitchPriceSource.s.sol";
+import {UpgradeStockLaunch} from "../script/UpgradeStockLaunch.s.sol";
+import {DeployStockPriceSource} from "../script/DeployStockPriceSource.s.sol";
 import {MockAggregator} from "./mocks/Mocks.sol";
 
 contract GuardHarness {
@@ -70,6 +72,8 @@ contract MainnetGuardTest is Test {
         UpgradeLaunchpad upgradeLaunchpad = new UpgradeLaunchpad();
         GovernanceHandover handover = new GovernanceHandover();
         SwitchPriceSource switchSource = new SwitchPriceSource();
+        UpgradeStockLaunch upgradeStock = new UpgradeStockLaunch();
+        DeployStockPriceSource deployStock = new DeployStockPriceSource();
 
         vm.chainId(4663);
         vm.expectRevert(bytes(MISSING));
@@ -86,10 +90,16 @@ contract MainnetGuardTest is Test {
         handover.run();
         vm.expectRevert(bytes(MISSING));
         switchSource.run();
+        vm.expectRevert(bytes(MISSING));
+        upgradeStock.run();
+        vm.expectRevert(bytes(MISSING));
+        deployStock.run();
 
         vm.chainId(8453);
         vm.expectRevert(bytes(MISSING));
         upgradeLaunchpad.run();
+        vm.expectRevert(bytes(MISSING));
+        deployStock.run();
         vm.expectRevert(bytes(MISSING));
         deployMigrator.run();
 
@@ -203,6 +213,19 @@ contract MainnetGuardTest is Test {
         p.gov = _gov();
         vm.expectRevert(bytes("MainnetGuard: launchpad admin is an EOA; run GovernanceHandover first"));
         s.execute(p, EOA_KEY);
+    }
+
+    /// Same for `UpgradeStockLaunch`: deploy, print, never call the proxy.
+    function test_UpgradeStockLaunchOnMainnetOnlyEmitsCalldata() public {
+        (StonkzLaunchpad pad,) = _governedPad();
+        vm.chainId(4663);
+        UpgradeStockLaunch s = new UpgradeStockLaunch();
+        UpgradeStockLaunch.Params memory p = s.defaults(address(pad));
+        p.gov = _gov();
+        UpgradeStockLaunch.Result memory r = s.execute(p, EOA_KEY);
+        assertTrue(r.router.code.length > 0 && r.impl.code.length > 0, "deployed");
+        assertFalse(r.upgraded);
+        assertEq(pad.trustedRouter(), address(0), "proxy untouched");
     }
 
     function test_DeployMigratorOnMainnetOnlyEmitsCalldata() public {

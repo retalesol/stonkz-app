@@ -407,6 +407,42 @@ export const MAJORS = {
   ],
 } as const satisfies Record<Net, readonly (readonly [symbol: string, name: string])[]>;
 
+/**
+ * Coinbase Base stock-token bases. Empty until Base lists tokenized stocks:
+ * adding a row here, plus its address (`apps/api/src/router/base-mints.ts` or
+ * `BASE_MINT_OVERRIDES_BASE`), is all it takes for the launch picker, the
+ * API's allow-list and its stock pricing to pick it up (`STOCK_BASES`).
+ */
+export const BASE_STOCKS = [] as const satisfies readonly (readonly [
+  symbol: string,
+  name: string,
+])[];
+
+/**
+ * Which tokenized-stock bases each net offers, config-driven per net. EVM
+ * stock bases trade 24/7 on DEX pools (Uniswap V3 against WETH) and are priced
+ * on-chain from those pools, so they are never gated on US market hours.
+ */
+export const STOCK_BASES: Readonly<
+  Record<Net, readonly (readonly [symbol: string, name: string])[]>
+> = {
+  SOL: STOCKS,
+  RH: RH_STOCKS,
+  BASE: BASE_STOCKS,
+  ARC: [],
+};
+
+/** The stock-base list for `net` (empty when it has none). */
+export function stockBasesFor(net: Net): readonly (readonly [symbol: string, name: string])[] {
+  return STOCK_BASES[net];
+}
+
+/** Whether `symbol` (any case) is one of `net`'s stock bases. */
+export function isStockBase(net: Net, symbol: string): boolean {
+  const upper = symbol.trim().toUpperCase();
+  return STOCK_BASES[net].some(([sym]) => sym.toUpperCase() === upper);
+}
+
 /** `[value, label]` — the four fixed supplies. `index.html:3724` */
 export const SUPPLIES = [
   [1e6, '1M'],

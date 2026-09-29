@@ -76,6 +76,8 @@ export async function createTestApp(opts: CreateTestAppOptions = {}): Promise<Te
     JWT_SECRET: 'test-secret-that-is-at-least-32-chars-long',
     CRATE_HMAC_SECRET: 'test-crate-secret-at-least-32-chars-long',
     SIWS_DOMAIN: 'ston.kz',
+    // Never reach the real DefiLlama from tests; suites that need it pass their own URL.
+    DEFILLAMA_COINS_URL: 'http://127.0.0.1:9',
     ...opts.env,
   });
 

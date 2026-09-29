@@ -13,6 +13,7 @@ interface EvmNetEnv {
   routerAddress: string;
   v3FeeTierOverrides: Record<string, number>;
   v3FactoryAddress: string;
+  v3QuoterAddress: string;
   explorerUrl: string;
 }
 
@@ -25,6 +26,7 @@ function evmNetEnv(env: ApiEnv, net: EvmNet): EvmNetEnv {
         routerAddress: env.baseRouterAddress,
         v3FeeTierOverrides: env.baseV3FeeTierOverrides,
         v3FactoryAddress: env.baseV3FactoryAddress,
+        v3QuoterAddress: env.baseV3QuoterAddress,
         explorerUrl: env.baseExplorerUrl,
       };
     case 'ARC':
@@ -34,6 +36,7 @@ function evmNetEnv(env: ApiEnv, net: EvmNet): EvmNetEnv {
         routerAddress: env.arcRouterAddress,
         v3FeeTierOverrides: env.arcV3FeeTierOverrides,
         v3FactoryAddress: env.arcV3FactoryAddress,
+        v3QuoterAddress: env.arcV3QuoterAddress,
         explorerUrl: env.arcExplorerUrl,
       };
     case 'RH':
@@ -43,6 +46,7 @@ function evmNetEnv(env: ApiEnv, net: EvmNet): EvmNetEnv {
         routerAddress: env.rhRouterAddress,
         v3FeeTierOverrides: env.rhV3FeeTierOverrides,
         v3FactoryAddress: env.rhV3FactoryAddress,
+        v3QuoterAddress: env.rhV3QuoterAddress,
         explorerUrl: env.rhExplorerUrl,
       };
   }
@@ -66,6 +70,11 @@ export function evmV3FeeTierOverrides(env: ApiEnv, net: EvmNet): Record<string, 
 
 export function evmV3FactoryAddress(env: ApiEnv, net: EvmNet): string {
   return evmNetEnv(env, net).v3FactoryAddress;
+}
+
+/** The exact-input V3 quoter; the zero address when none is deployed. */
+export function evmV3QuoterAddress(env: ApiEnv, net: EvmNet): string {
+  return evmNetEnv(env, net).v3QuoterAddress;
 }
 
 export function evmExplorerUrl(env: ApiEnv, net: EvmNet): string {

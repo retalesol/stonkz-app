@@ -2,14 +2,13 @@ import {
   FEE_SPLIT,
   GRAD,
   MAJORS,
-  STOCKS,
-  RH_STOCKS,
   SUPPLIES,
   type SupplyOption,
   curveMc,
   isEvm,
   num,
   px,
+  stockBasesFor,
   usd,
 } from '@stonkz/shared';
 import { NET_INFO, type Net } from '@stonkz/shared';
@@ -41,6 +40,7 @@ import {
   checkWebsite,
   checkXHandle,
   devBuyPresets,
+  STOCK_BASE_NOTE,
   evmDevBuyIsAtomic,
   fmtBuy,
   launchErrorCopy,
@@ -156,10 +156,14 @@ function invalid(id: string): Html {
   return errField === id ? html` aria-invalid="true" aria-describedby="nc-err"` : html``;
 }
 
+/** Whether `net` offers stock-token bases at all (`STOCK_BASES`, config-driven per net). */
+function hasStocks(net: Net): boolean {
+  return stockBasesFor(net).length > 0;
+}
+
 function baseList(): ReadonlyArray<readonly [string, string]> {
   const net = WALLET.net;
-  const stocks = NET_INFO[net].stocks;
-  const list = NEW.tab === 'majors' || !stocks ? MAJORS[net] : stocks === 'rh' ? RH_STOCKS : STOCKS;
+  const list = NEW.tab === 'majors' || !hasStocks(net) ? MAJORS[net] : stockBasesFor(net);
   const q = NEW.q.trim().toUpperCase();
   if (!q) return list;
   return list.filter(
@@ -170,9 +174,7 @@ function baseList(): ReadonlyArray<readonly [string, string]> {
 /** Every base this net lists, whatever tab/filter is showing. */
 function allBases(): ReadonlyArray<readonly [string, string]> {
   const net = WALLET.net;
-  const stocks = NET_INFO[net].stocks;
-  const extra = !stocks ? [] : stocks === 'rh' ? RH_STOCKS : STOCKS;
-  return [...MAJORS[net], ...extra];
+  return [...MAJORS[net], ...stockBasesFor(net)];
 }
 
 /* --------------------------------- steps ---------------------------------- */
@@ -344,6 +346,11 @@ function baseAvailable(sym: string): boolean {
   return liveBases === null || liveBases.has(sym.toUpperCase());
 }
 
+function isStockOption(sym: string): boolean {
+  const upper = sym.toUpperCase();
+  return stockBasesFor(WALLET.net).some(([s]) => s.toUpperCase() === upper);
+}
+
 function ncStep2(): Html {
   const n = netOf();
   ensureLiveBases();
@@ -363,7 +370,7 @@ function ncStep2(): Html {
           >
             TOP 10</button
           >${
-            !NET_INFO[WALLET.net].stocks
+            !hasStocks(WALLET.net)
               ? ''
               : html`<button
                   type="button"
@@ -388,8 +395,11 @@ function ncStep2(): Html {
         ${
           list.length
             ? list.map((t) => {
+                // Availability is only "pinned address + a price source" —
+                // never US market hours: EVM stock bases trade and price 24/7.
                 const avail = baseAvailable(t[0]);
                 const on = NEW.base === t[0];
+                const allHours = isEvm(WALLET.net) && isStockOption(t[0]);
                 return html`<button
                   type="button"
                   role="radio"
@@ -398,7 +408,9 @@ function ncStep2(): Html {
                   data-base="${attr(t[0])}"
                   ${avail ? html`` : html`disabled title="NOT AVAILABLE ON THIS NET YET"`}
                 >
-                  <span class="bs">${t[0]}</span><span class="bn">${t[1]}</span>
+                  <span class="bs">${t[0]}</span><span class="bn">${t[1]}</span>${
+                    allHours ? html`<span class="b247">${STOCK_BASE_NOTE}</span>` : ''
+                  }
                 </button>`;
               })
             : html`<div class="base-empty">NO MATCH ${DOT} CLEAR THE FILTER</div>`
@@ -414,7 +426,7 @@ function ncStep2(): Html {
       <p class="hint" style="margin-top:4px">
         PAIRS AGAINST ${NEW.tab === 'stocks' ? 'A TOKENIZED STOCK' : 'A MAJOR'} ON
         ${n.name}${
-          !NET_INFO[WALLET.net].stocks
+          !hasStocks(WALLET.net)
             ? '.'
             : html` ${DOT} STOCK LIST MIRRORS GECKOTERMINAL TOKENIZED STOCKS.`
         }
@@ -465,9 +477,13 @@ function ncStep3(): Html {
   const unit = nativeUnit();
   const n = netOf();
   const lock = launching ? html`disabled` : html``;
-  // A WETH-curve dev buy rides in the launch transaction (one wallet prompt);
-  // only another EVM base still needs a second transaction for it.
-  const twoTx = isEvm(WALLET.net) && NEW.buy > 0 && !evmDevBuyIsAtomic(NEW.base);
+  // A WETH-curve dev buy rides in the launch transaction (one wallet prompt),
+  // and so does a stock-base one once the API says the router can
+  // (`createAndBuyViaV3`); only another EVM base still needs a second one.
+  const twoTx =
+    isEvm(WALLET.net) &&
+    NEW.buy > 0 &&
+    !evmDevBuyIsAtomic(NEW.base, api.atomicDevBuyBases?.(WALLET.net) ?? null);
   return html`<div><canvas class="nc-chart" id="nc-chart" aria-hidden="true"></canvas></div>
     <div class="fee-row nc-buy-row">
       <label class="lbl" for="f-buy" style="margin:0;flex:0 0 88px">DEV BUY (${unit})</label

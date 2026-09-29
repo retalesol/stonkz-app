@@ -179,6 +179,28 @@ export interface ApiEnv {
   pythHermesUrl: string | undefined;
   pythHermesApiKey: string | undefined;
 
+  /**
+   * Stock-token bases' atomic dev buy (`StonkzRouter.createAndBuyViaV3`):
+   * the ETH → stock swap's `minBaseOut` tolerance (`STOCK_SWAP_SLIPPAGE_BPS`,
+   * default 100 = 1 %) and the most that swap may move the pool before the
+   * prepare refuses `stock_pool_too_thin` (`STOCK_DEV_BUY_MAX_IMPACT_BPS`,
+   * default 500 = 5 %; needs a quoter, `*_V3_QUOTER_ADDRESS`).
+   */
+  stockSwapSlippageBps: number;
+  stockDevBuyMaxImpactBps: number;
+  /**
+   * `/launch/prepare` refuses a stock base (`stock_price_diverged`) when
+   * DefiLlama and the pool's on-chain TWAP disagree by more than this
+   * (`STOCK_PRICE_MAX_DIVERGENCE_BPS`, default 500 = 5 %; `0` disables).
+   */
+  stockPriceMaxDivergenceBps: number;
+  /**
+   * DefiLlama coins API (`DEFILLAMA_COINS_URL`, default
+   * `https://coins.llama.fi`; free, no key): off-chain USD for stock bases
+   * and RWA crate rewards (`router/defillama.ts`).
+   */
+  defillamaCoinsUrl: string;
+
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
   launchRateLimitWindowSeconds: number;
@@ -232,6 +254,13 @@ function int(src: EnvSource, key: string, fallback: number): number {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n))
     throw new Error(`env ${key} must be an integer, got ${JSON.stringify(raw)}`);
+  return n;
+}
+
+/** Basis points, `0`–`10000`. */
+function bps(src: EnvSource, key: string, fallback: number): number {
+  const n = int(src, key, fallback);
+  if (n < 0 || n > 10_000) throw new Error(`env ${key} must be 0-10000 bps, got ${n}`);
   return n;
 }
 
@@ -484,6 +513,13 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
 
     pythHermesUrl: src['PYTH_HERMES_URL']?.trim() || undefined,
     pythHermesApiKey: src['PYTH_HERMES_API_KEY']?.trim() || undefined,
+    stockSwapSlippageBps: bps(src, 'STOCK_SWAP_SLIPPAGE_BPS', 100),
+    stockDevBuyMaxImpactBps: bps(src, 'STOCK_DEV_BUY_MAX_IMPACT_BPS', 500),
+    stockPriceMaxDivergenceBps: bps(src, 'STOCK_PRICE_MAX_DIVERGENCE_BPS', 500),
+    defillamaCoinsUrl: str(src, 'DEFILLAMA_COINS_URL', 'https://coins.llama.fi').replace(
+      /\/+$/,
+      '',
+    ),
 
     launchIntentTtlSeconds: int(src, 'LAUNCH_INTENT_TTL_SECONDS', 120),
     launchRateLimitPerWallet: int(src, 'LAUNCH_RATE_LIMIT_PER_WALLET', 5),

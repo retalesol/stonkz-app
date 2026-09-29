@@ -358,7 +358,8 @@ interface ApiLaunchPrepareSol {
 
 /**
  * RH / Base. `to` is `StonkzRouter` (`createAndBuyWithEth` /
- * `createWithPriceUpdate`, carrying a Pyth price update; `value` = the update
+ * `createAndBuyViaV3` (stock base) / `createWithPriceUpdate`, carrying a Pyth
+ * price update; `value` = the update
  * fee plus any dev buy, decimal wei) — or, while the router predates atomic
  * launches, the launchpad's plain `createToken` (`value` `0x0`).
  * `devBuy.atomic` says whether the dev buy is inside this one transaction.
@@ -372,7 +373,14 @@ interface ApiLaunchPrepareRh {
   data: string;
   value: string;
   devBuy:
-    | { native: number; atomic: true; minTokenOut: string }
+    | {
+        native: number;
+        atomic: true;
+        minTokenOut: string;
+        /** `createAndBuyViaV3` (stock base): the ETH → stock swap's floor and pool fee. */
+        minBaseOut?: string;
+        poolFee?: number;
+      }
     | { native: number; atomic: false; note: string }
     | null;
   expiresAt: number;
@@ -1207,6 +1215,16 @@ async function signTradePlan(
 
 /** `/base-tokens` per net: which majors a launch can pair against on this env. */
 const BASES_BY_NET = new Map<Net, ReadonlySet<string>>();
+/** Stock bases whose dev buy the API says is atomic (`createAndBuyViaV3`), per net. */
+const ATOMIC_DEV_BUY_BY_NET = new Map<Net, Set<string>>();
+
+function noteAtomicDevBuy(net: Net, base: string, atomic: boolean): void {
+  const b = base.trim().toUpperCase();
+  const set = ATOMIC_DEV_BUY_BY_NET.get(net) ?? new Set<string>();
+  if (atomic) set.add(b);
+  else set.delete(b);
+  ATOMIC_DEV_BUY_BY_NET.set(net, set);
+}
 
 /** The explorer page of the fill `trade()` last settled, for the success toast. */
 let lastTx: { signature: string; url: string } | null = null;
@@ -1398,8 +1416,9 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
       feePct: draft.tfee,
       cashback: draft.cashback,
       baseSymbol: draft.base,
-      // Every chain now prepares the dev buy with the launch: Solana and a
-      // WETH-curve EVM launch sign it in the same transaction.
+      // Every chain now prepares the dev buy with the launch: Solana, a
+      // WETH-curve and (on a router with `createAndBuyViaV3`) a stock-base
+      // EVM launch sign it in the same transaction.
       devBuyNative: draft.buy,
       // Token socials, under the `tokens` column names. `/launch/prepare`
       // does not read them yet (they are ignored, not rejected); sending them
@@ -1410,6 +1429,9 @@ async function liveLaunch(draft: LaunchDraft, hooks: LaunchHooks = {}): Promise<
     },
     net,
   );
+  // Remember what the API said, so the dialog stops warning about a second
+  // wallet prompt for this base (`atomicDevBuyBases`).
+  if (prep.net !== 'SOL' && prep.devBuy) noteAtomicDevBuy(net, draft.base, prep.devBuy.atomic);
   // Solana's create and the EVM router call (`to`/`data`/`value`, the Pyth
   // fee and any dev buy included) are each a single signable payload — one
   // wallet prompt, inline, the same as an atomic trade. Only a non-atomic EVM
@@ -2054,17 +2076,24 @@ export const liveApi: StonkzApi = {
     const hit = BASES_BY_NET.get(net);
     if (hit) return hit;
     try {
-      const res = await getJson<{ baseTokens: { symbol: string; available?: boolean }[] }>(
-        '/base-tokens?net=' + net,
-      );
+      const res = await getJson<{
+        baseTokens: { symbol: string; available?: boolean; atomicDevBuy?: boolean }[];
+      }>('/base-tokens?net=' + net);
       const set = new Set(
         res.baseTokens.filter((b) => b.available !== false).map((b) => b.symbol.toUpperCase()),
       );
+      for (const b of res.baseTokens) {
+        if (b.atomicDevBuy !== undefined) noteAtomicDevBuy(net, b.symbol, b.atomicDevBuy);
+      }
       BASES_BY_NET.set(net, set);
       return set;
     } catch {
       return null; // Unknown is not "nothing": let the stepper offer the registry list.
     }
+  },
+
+  atomicDevBuyBases(net: Net): ReadonlySet<string> | null {
+    return ATOMIC_DEV_BUY_BY_NET.get(net) ?? null;
   },
 
   async tokenFees(c: SimCoin): Promise<TokenFees> {

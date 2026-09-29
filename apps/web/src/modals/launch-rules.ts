@@ -148,15 +148,24 @@ export function devBuyPresets(unit: NativeUnit): readonly number[] {
 }
 
 /**
- * Whether an EVM dev buy on this base rides in the launch transaction itself
- * (`StonkzRouter.createAndBuyWithEth`, WETH curves only — native ETH launches
- * as a WETH curve). Any other EVM base still takes a second transaction. The
- * API's `devBuy.atomic` is the final word; this only drives the dialog copy.
+ * Whether an EVM dev buy on this base rides in the launch transaction itself:
+ * always for a WETH curve (`StonkzRouter.createAndBuyWithEth` — native ETH
+ * launches as a WETH curve), and for a stock-token base once the API has said
+ * so (`atomicBases`: `/base-tokens`' `atomicDevBuy`, or a prepare that came
+ * back `devBuy.atomic: true` — `createAndBuyViaV3`). Any other EVM base still
+ * takes a second transaction. The API's `devBuy.atomic` is the final word;
+ * this only drives the dialog copy.
  */
-export function evmDevBuyIsAtomic(base: string): boolean {
+export function evmDevBuyIsAtomic(
+  base: string,
+  atomicBases: ReadonlySet<string> | null = null,
+): boolean {
   const b = base.trim().toUpperCase();
-  return b === 'ETH' || b === 'WETH';
+  return b === 'ETH' || b === 'WETH' || (atomicBases?.has(b) ?? false);
 }
+
+/** The base-picker note on an EVM stock base: it trades, and prices, around the clock. */
+export const STOCK_BASE_NOTE = '24/7 · DEX-priced';
 
 /** A number in the box's own format: no float noise, no forced two decimals. */
 export function fmtBuy(v: number): string {
@@ -347,6 +356,23 @@ export function launchErrorCopy(err: unknown, ctx: LaunchErrorContext): LaunchFa
       case 'launch_expired':
         return {
           msg: 'THE PREPARED LAUNCH EXPIRED BEFORE IT WAS SENT · NOTHING WAS CREATED · PRESS LAUNCH AGAIN',
+          tone: 'red',
+        };
+      case 'stock_pool_too_thin':
+        return {
+          msg: 'STOCK POOL TOO THIN RIGHT NOW · LOWER THE DEV BUY OR LAUNCH WITHOUT ONE',
+          tone: 'red',
+          step: 2,
+        };
+      case 'stock_swap_slippage':
+        return {
+          msg: `THE ${ctx.base} POOL PRICE MOVED BEFORE THE DEV BUY COULD SWAP · NOTHING WAS SENT · PRESS LAUNCH AGAIN`,
+          tone: 'red',
+          step: 2,
+        };
+      case 'stock_price_diverged':
+        return {
+          msg: `THE ${ctx.base} POOL PRICE LOOKS OFF RIGHT NOW · NOTHING WAS SENT · TRY AGAIN IN ${fmtWait(api.retryAfterMs)}`,
           tone: 'red',
         };
       case 'dev_buy_slippage':

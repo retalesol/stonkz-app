@@ -1,8 +1,14 @@
 import type { Context } from 'hono';
 import type { Address } from 'viem';
-import { type EvmNet, type NativeUnit } from '@stonkz/shared';
-import type { AppEnv } from '../app/context.js';
-import { evmRouterAddress } from '../chain/evm-net.js';
+import { isStockBase, type EvmNet, type NativeUnit } from '@stonkz/shared';
+import type { AppDeps, AppEnv } from '../app/context.js';
+import {
+  evmChainId,
+  evmRouterAddress,
+  evmV3FactoryAddress,
+  evmV3FeeTierOverrides,
+  evmV3QuoterAddress,
+} from '../chain/evm-net.js';
 import type { EvmTransactionReceipt } from '../chain/types.js';
 import { launchIntents } from '../db/schema.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
@@ -23,9 +29,14 @@ import {
   toRpcQuantity,
   type CreateParams,
   type DecodedAtomicBuy,
+  type StockLaunchContext,
 } from '../router/evm-pyth.js';
+import { defiLlamaClientFor, stockDefiLlamaCoins } from '../router/defillama.js';
+import { pinnedV3FeeTierFor } from '../router/evm-router.js';
 import { asEvmCallSimulator, type PreflightRefusal } from '../router/launch-preflight.js';
+import { stockPriceCacheFor, stockPricer, type StockPrice } from '../router/stock-price.js';
 import { toAtoms } from '../router/units.js';
+import { DEFAULT_STOCK_POOL_FEE } from '../router/v3-pool-reads.js';
 
 /**
  * `/launch/prepare` and `/launch/confirm`, EVM half (Robinhood, Base). Kept
@@ -35,9 +46,10 @@ import { toAtoms } from '../router/units.js';
  *
  * **Atomic path** (the router answers `pyth()`): one transaction to
  * `StonkzRouter` — `createAndBuyWithEth` for a WETH curve with a dev buy,
- * `createWithPriceUpdate` otherwise — carrying a Hermes price update, so the
- * creator's dev buy is the curve's first fill and the launch prices off a
- * seconds-old oracle read (`router/evm-pyth.ts`).
+ * `createAndBuyViaV3` for a stock-token curve with a dev buy (when the router
+ * has it), `createWithPriceUpdate` otherwise — carrying a Hermes price
+ * update, so the creator's dev buy is the curve's first fill and the launch
+ * prices off a seconds-old oracle read (`router/evm-pyth.ts`).
  *
  * **Legacy path** (no router configured, or the configured one predates
  * atomic launches): `launchpad.createToken` alone, as before; a dev buy is a
@@ -66,14 +78,72 @@ export interface EvmLaunchPrepareInput {
   supplyAtoms: bigint;
   baseDecimals: number;
   basePrice1e6: bigint;
+  /** Stock base: the lowest price among its inputs (`BasePriceInfo.floorPrice1e6`). */
+  basePriceFloor1e6?: bigint | undefined;
   intentValues: IntentValues;
   expiresAt: Date;
   now: number;
 }
 
 const NON_ATOMIC_DEV_BUY_NOTE =
-  'This launch cannot carry the dev buy in the same transaction (the base is not WETH, or the router ' +
-  'predates atomic launches). Call POST /trade/prepare with side=buy for the token /launch/confirm returns.';
+  'This launch cannot carry the dev buy in the same transaction (the base is neither WETH nor a stock ' +
+  'token, or the router predates atomic launches). Call POST /trade/prepare with side=buy for the token ' +
+  '/launch/confirm returns.';
+
+/**
+ * Live USD pricing for `net`'s stock-token bases (`router/stock-price.ts`):
+ * Pyth equity when fresh, else DefiLlama, else the WETH pool TWAP × ETH/USD,
+ * else the static table. What `/launch/prepare` sizes a stock-base curve with.
+ */
+export function stockPricerFor(
+  deps: AppDeps,
+  net: EvmNet,
+): (symbol: string) => Promise<StockPrice | null> {
+  const rpc = deps.rpcs[net];
+  const overrides = evmV3FeeTierOverrides(deps.env, net);
+  return stockPricer(
+    net,
+    {
+      hermes: hermesClientFor(deps.env, deps.logger),
+      defiLlama: defiLlamaClientFor(deps.env, deps.logger),
+      defiLlamaCoins: (symbol, token) =>
+        stockDefiLlamaCoins(net, evmChainId(deps.env, net), symbol, token),
+      eth: asEthCallSource(rpc),
+      weth: deps.baseMints.mintFor(net, 'WETH'),
+      factory: evmV3FactoryAddress(deps.env, net),
+      feeTierFor: (symbol, token) =>
+        pinnedV3FeeTierFor(token, symbol, overrides) ?? DEFAULT_STOCK_POOL_FEE,
+      ethUsdFallback: () => deps.oracle.nativeUsd('ETH'),
+      logger: deps.logger,
+      now: deps.now,
+      cache: stockPriceCacheFor(rpc),
+    },
+    (symbol) => deps.baseMints.mintFor(net, symbol),
+  );
+}
+
+/** The `createAndBuyViaV3` context for a stock base, or `null` for any other base. */
+function stockLaunchContext(
+  deps: AppDeps,
+  net: EvmNet,
+  baseSymbol: string,
+  baseMint: string,
+): StockLaunchContext | null {
+  if (!isStockBase(net, baseSymbol)) return null;
+  const weth = deps.baseMints.mintFor(net, 'WETH');
+  if (!weth) return null;
+  const quoter = evmV3QuoterAddress(deps.env, net);
+  return {
+    weth: weth as Address,
+    factory: evmV3FactoryAddress(deps.env, net),
+    quoter: quoter.toLowerCase() === ZERO_EVM_ADDRESS ? null : quoter,
+    poolFee:
+      pinnedV3FeeTierFor(baseMint, baseSymbol, evmV3FeeTierOverrides(deps.env, net)) ??
+      DEFAULT_STOCK_POOL_FEE,
+    swapSlipBps: BigInt(deps.env.stockSwapSlippageBps),
+    maxImpactBps: BigInt(deps.env.stockDevBuyMaxImpactBps),
+  };
+}
 
 function refuse(c: Context<AppEnv>, r: PreflightRefusal): Response {
   if (r.retryAfter !== undefined) c.header('Retry-After', String(r.retryAfter));
@@ -123,11 +193,13 @@ export async function prepareEvmLaunch(
       params,
       baseSymbol: a.baseSymbol,
       isWethBase,
+      stock: isWethBase ? null : stockLaunchContext(deps, a.net, a.baseSymbol, a.baseMintAddress),
       devBuyWei: a.devBuyNative > 0 ? toAtoms(a.devBuyNative, 18) : 0n,
       supplyAtoms: a.supplyAtoms,
       baseDecimals: a.baseDecimals,
       tokenDecimals: EVM_TOKEN_DECIMALS,
       fallbackPrice1e6: a.basePrice1e6,
+      ...(a.basePriceFloor1e6 !== undefined ? { floorPrice1e6: a.basePriceFloor1e6 } : {}),
       slipBps: BigInt(Math.round(a.devBuySlipPct * 100)),
       nowMs: a.now,
       logger: deps.logger,
@@ -137,13 +209,23 @@ export async function prepareEvmLaunch(
     const plan = planned.plan;
 
     if (simulator) {
-      const refusal = await runEvmLaunchPreflight({
+      let refusal = await runEvmLaunchPreflight({
         simulator,
         tx: { from: a.wallet, to: plan.to, data: plan.data, value: toRpcQuantity(plan.value) },
         unit: a.unit,
         logger: deps.logger,
         log: { ...log, fn: plan.fn, priceUpdate: plan.priceUpdate !== null },
       });
+      // Priced off `slot0` (no quoter), a swap that misses its floor moments
+      // after pricing is missing depth, not a moving market.
+      if (refusal?.error === 'stock_swap_slippage' && plan.devBuy?.swap?.source === 'slot0') {
+        refusal = {
+          status: 422,
+          error: 'stock_pool_too_thin',
+          detail:
+            'the stock pool is too thin for this dev buy right now; lower the dev buy or launch without one',
+        };
+      }
       if (refusal) return refuse(c, refusal);
     }
 
@@ -168,6 +250,12 @@ export async function prepareEvmLaunch(
                 native: a.devBuyNative,
                 atomic: true,
                 minTokenOut: plan.devBuy.minTokenOut.toString(),
+                ...(plan.devBuy.swap
+                  ? {
+                      minBaseOut: plan.devBuy.swap.minBaseOut.toString(),
+                      poolFee: plan.devBuy.swap.poolFee,
+                    }
+                  : {}),
               }
             : { native: a.devBuyNative, atomic: false, note: NON_ATOMIC_DEV_BUY_NOTE }
           : null,
