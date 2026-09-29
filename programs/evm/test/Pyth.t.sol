@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -63,7 +64,8 @@ contract PythTest is Test {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             0,
-            IPyth(address(pyth))
+            IPyth(address(pyth)),
+            IStockAttestationSink(address(0))
         );
         StonkzLaunchpad impl = new StonkzLaunchpad(address(router));
         vm.startPrank(admin);
@@ -304,7 +306,13 @@ contract PythTest is Test {
     /// silently ignoring it.
     function test_ARouterWithoutPythRefusesAnUpdate() public {
         StonkzRouter bare = new StonkzRouter(
-            router.universalRouter(), pad, IWETH9(address(weth)), router.swapRouter02(), 0, IPyth(address(0))
+            router.universalRouter(),
+            pad,
+            IWETH9(address(weth)),
+            router.swapRouter02(),
+            0,
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
         bytes[] memory u = _update(3_000e8, 1e8, block.timestamp);
         vm.prank(user);

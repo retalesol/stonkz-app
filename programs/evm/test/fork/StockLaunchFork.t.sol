@@ -14,6 +14,9 @@ import {RobinhoodChainTestnet} from "../../src/config/RobinhoodChainTestnet.sol"
 import {UpgradeStockLaunch} from "../../script/UpgradeStockLaunch.s.sol";
 import {DeployStockPriceSource} from "../../script/DeployStockPriceSource.s.sol";
 import {SeedStockPool} from "../../script/SeedStockPool.s.sol";
+import {UpgradeAttestedStockLaunch} from "../../script/UpgradeAttestedStockLaunch.s.sol";
+import {StockPriceSourceV2} from "../../src/oracle/StockPriceSourceV2.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 interface IERC20Fork {
     function balanceOf(address) external view returns (uint256);
@@ -55,7 +58,11 @@ contract StockLaunchForkTest is Test {
         address me = vm.addr(KEY);
         StonkzLaunchpad pad = StonkzLaunchpad(proxy);
         PythPriceSource pps = PythPriceSource(address(pad.priceSource()));
+        // The push oracle: PythPriceSource's fallback, or the fallback of the
+        // stock source already sitting there (after the first rollout).
         address push = address(pps.fallbackSource());
+        (bool isStock, bytes memory ret) = push.staticcall(abi.encodeWithSignature("quotePriceSource()"));
+        if (isStock && ret.length == 32) push = address(StockPriceSource(push).fallbackSource());
 
         // Stand the test key in for the live admin EOA: launchpad slot 5,
         // PythPriceSource slot 0.
@@ -135,6 +142,68 @@ contract StockLaunchForkTest is Test {
         assertEq(StonkzToken(token).balanceOf(user), out);
         assertEq(IERC20Fork(tsla).balanceOf(address(router)), 0, "router keeps no TSLA");
         assertEq(address(router).balance, 0, "router keeps no ETH");
+        assertEq(pad.tokenCount(), tokenCount + 1);
+    }
+
+    /// Signed per-launch prices on the live chain: `UpgradeAttestedStockLaunch`
+    /// against today's wiring (V1 stock source, empty pools), then a TSLA-base
+    /// launch whose only TSLA price is an attestation in `priceUpdate`
+    /// (`createWithPriceUpdate`; the live pools are empty, so no V3 dev buy is
+    /// possible on the fork — `createAndBuyViaV3` is covered locally).
+    function test_AttestedStockLaunchOnTheLiveTestnet() public {
+        string memory rpc = vm.envOr("STOCK_FORK_RPC", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(rpc);
+        require(block.chainid == RobinhoodChainTestnet.CHAIN_ID, "fork is not RH 46630");
+        address proxy = vm.envOr("STOCK_FORK_PROXY", LIVE_PROXY);
+        address me = vm.addr(KEY);
+        uint256 attesterKey = 0xA77E57; // test-only
+        StonkzLaunchpad pad = StonkzLaunchpad(proxy);
+        PythPriceSource pps = PythPriceSource(address(pad.priceSource()));
+        vm.store(proxy, bytes32(uint256(5)), bytes32(uint256(uint160(me))));
+        vm.store(address(pps), bytes32(uint256(0)), bytes32(uint256(uint160(me))));
+        uint256 tokenCount = pad.tokenCount();
+
+        UpgradeAttestedStockLaunch up = new UpgradeAttestedStockLaunch();
+        UpgradeAttestedStockLaunch.Params memory p = up.defaults(proxy);
+        p.attester = vm.addr(attesterKey);
+        UpgradeAttestedStockLaunch.Result memory r = up.execute(p, KEY);
+        assertTrue(r.upgraded && r.fallbackSet);
+        assertEq(r.configured, 5);
+        assertEq(pad.trustedRouter(), r.router);
+        assertEq(pad.tokenCount(), tokenCount);
+        StockPriceSourceV2 v2 = StockPriceSourceV2(r.source);
+
+        address tsla = StockBases.RH_TESTNET_TSLA;
+        _mockEth();
+        uint64 price = 251_230_000;
+        StockPriceSourceV2.Legs memory l = v2.legs(tsla);
+        if (l.twapPrice1e6 != 0) price = uint64(l.twapPrice1e6); // a seeded pool must agree
+        uint64 t = uint64(block.timestamp);
+        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(v2.attestationDigest(tsla, price, t));
+        (uint8 v, bytes32 rr, bytes32 ss) = vm.sign(attesterKey, digest);
+        bytes[] memory u = new bytes[](1);
+        u[0] = abi.encode(bytes4("STKA"), tsla, price, t, abi.encodePacked(rr, ss, v));
+
+        address user = address(0xC4EA7);
+        StonkzRouter.CreateParams memory cp = StonkzRouter.CreateParams({
+            name: "Attested Fork Coin",
+            ticker: "ATTSLA",
+            uri: "ipfs://fork",
+            supply: 1_000_000_000,
+            baseToken: tsla,
+            feeBps: 250,
+            cashback: false
+        });
+        vm.prank(user);
+        address token = StonkzRouter(payable(r.router)).createWithPriceUpdate(cp, u, block.timestamp + 60);
+        StonkzLaunchpad.Coin memory c = pad.coinInfo(token);
+        assertEq(c.creator, user);
+        assertEq(c.baseToken, tsla);
+        assertEq(c.creationPrice1e6, price, "priced by the attestation");
         assertEq(pad.tokenCount(), tokenCount + 1);
     }
 

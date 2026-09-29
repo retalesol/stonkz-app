@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -64,7 +65,8 @@ contract AtomicLaunchTest is Test {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             0,
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
 
         // The upgrade `UpgradeAtomicLaunch` performs.
@@ -255,7 +257,8 @@ contract AtomicLaunchTest is Test {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             0,
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
         vm.prank(user);
         vm.expectRevert(bytes("not router"));
@@ -297,7 +300,8 @@ contract AtomicLaunchTest is Test {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             1 ether,
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(StonkzRouter.BuyAboveCap.selector, 2 ether, 1 ether));

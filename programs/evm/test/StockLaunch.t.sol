@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {IPriceSource} from "../src/oracle/IPriceSource.sol";
@@ -48,7 +49,8 @@ contract StockLaunchTest is StockFixture {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             0,
-            IPyth(address(pyth))
+            IPyth(address(pyth)),
+            IStockAttestationSink(address(0))
         );
         // The upgrade `UpgradeStockLaunch` performs.
         StonkzLaunchpad impl = new StonkzLaunchpad(address(router));
@@ -229,7 +231,8 @@ contract StockLaunchTest is StockFixture {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             1 ether,
-            IPyth(address(pyth))
+            IPyth(address(pyth)),
+            IStockAttestationSink(address(0))
         );
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(StonkzRouter.BuyAboveCap.selector, 2 ether, 1 ether));
@@ -413,7 +416,8 @@ contract StockScriptsTest is Test {
             IWETH9(RobinhoodChainTestnet.WETH9),
             ISwapRouter02(RobinhoodChainTestnet.UNISWAP_V3_SWAP_ROUTER02),
             5 ether,
-            IPyth(RobinhoodChainTestnet.PYTH)
+            IPyth(RobinhoodChainTestnet.PYTH),
+            IStockAttestationSink(address(0))
         );
         StonkzLaunchpad oldImpl = new StonkzLaunchpad(address(old));
         vm.prank(admin);

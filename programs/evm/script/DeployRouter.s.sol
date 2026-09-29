@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {RouterWiring} from "./RouterWiring.sol";
 import {MainnetGuard} from "./MainnetGuard.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
@@ -48,7 +49,8 @@ contract DeployRouter is Script {
             IWETH9(weth),
             ISwapRouter02(sr02),
             cap,
-            IPyth(pyth)
+            IPyth(pyth),
+            IStockAttestationSink(address(0))
         );
         vm.stopBroadcast();
 

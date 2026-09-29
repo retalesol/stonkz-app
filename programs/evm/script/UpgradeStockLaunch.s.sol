@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {RouterWiring} from "./RouterWiring.sol";
 import {MainnetGuard} from "./MainnetGuard.sol";
@@ -31,8 +32,9 @@ import {MainnetGuard} from "./MainnetGuard.sol";
 ///   forge script script/UpgradeStockLaunch.s.sol:UpgradeStockLaunch --rpc-url $RH_RPC -vvv   # dry run
 /// # ...then the same with --broadcast
 /// ```
-/// Optional env: `MAX_BUY_NATIVE` and `PYTH_ADDRESS` (default: the values of
-/// the router the proxy trusts today, else `RouterWiring`), `PAUSER`.
+/// Optional env: `MAX_BUY_NATIVE`, `PYTH_ADDRESS` and `ATTESTATION_SINK`
+/// (default: the values of the router the proxy trusts today, else
+/// `RouterWiring` / none), `PAUSER`.
 ///
 /// **Mainnet** (`MainnetGuard`): the launchpad must already be under the
 /// timelock; the script deploys and prints the batch, and never calls the
@@ -44,6 +46,9 @@ contract UpgradeStockLaunch is Script {
         address pyth;
         /// Optional; zero leaves the pauser as it is.
         address pauser;
+        /// `StockPriceSourceV2` to post "STKA" attestations to; zero drops them.
+        /// Defaults to the current router's, so a re-run keeps attestations on.
+        address attestationSink;
         MainnetGuard.Governance gov;
     }
 
@@ -63,6 +68,7 @@ contract UpgradeStockLaunch is Script {
         p.cap = vm.envOr("MAX_BUY_NATIVE", p.cap);
         p.pyth = vm.envOr("PYTH_ADDRESS", p.pyth);
         p.pauser = vm.envOr("PAUSER", address(0));
+        p.attestationSink = vm.envOr("ATTESTATION_SINK", p.attestationSink);
         p.gov = gov;
         return execute(p, vm.envUint("PRIVATE_KEY"));
     }
@@ -77,6 +83,8 @@ contract UpgradeStockLaunch is Script {
         if (current.code.length > 0) {
             p.cap = StonkzRouter(payable(current)).maxBuyNative();
             p.pyth = address(StonkzRouter(payable(current)).pyth());
+            (bool ok, bytes memory ret) = current.staticcall(abi.encodeWithSignature("attestationSink()"));
+            if (ok && ret.length == 32) p.attestationSink = abi.decode(ret, (address));
         }
     }
 
@@ -103,7 +111,8 @@ contract UpgradeStockLaunch is Script {
                 IWETH9(weth),
                 ISwapRouter02(sr02),
                 p.cap,
-                IPyth(p.pyth)
+                IPyth(p.pyth),
+                IStockAttestationSink(p.attestationSink)
             )
         );
         r.impl = address(new StonkzLaunchpad(r.router));
@@ -116,6 +125,10 @@ contract UpgradeStockLaunch is Script {
         require(address(StonkzRouter(payable(r.router)).launchpad()) == p.proxy, "router not bound to proxy");
         require(address(StonkzRouter(payable(r.router)).weth()) == weth, "router weth");
         require(address(StonkzRouter(payable(r.router)).swapRouter02()) == sr02, "router sr02");
+        require(
+            address(StonkzRouter(payable(r.router)).attestationSink()) == p.attestationSink,
+            "router attestation sink"
+        );
         require(StonkzLaunchpad(r.impl).trustedRouter() == r.router, "impl does not trust router");
 
         console2.log("chain            ", block.chainid);
@@ -124,6 +137,7 @@ contract UpgradeStockLaunch is Script {
         console2.log("new impl         ", r.impl);
         console2.log("pyth             ", p.pyth);
         console2.log("maxBuyNative     ", p.cap);
+        console2.log("attestationSink  ", p.attestationSink);
 
         if (direct) {
             r.upgraded = true;

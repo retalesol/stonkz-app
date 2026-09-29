@@ -5,6 +5,7 @@ import {SafeErc20} from "./SafeErc20.sol";
 import {StonkzLaunchpad} from "./StonkzLaunchpad.sol";
 import {StonkzToken} from "./StonkzToken.sol";
 import {IPyth} from "./oracle/IPyth.sol";
+import {IStockAttestationSink, STOCK_ATTESTATION_MAGIC} from "./oracle/IStockAttestationSink.sol";
 
 interface IERC20 {
     function transfer(address to, uint256 value) external returns (bool);
@@ -124,6 +125,10 @@ contract StonkzRouter {
     /// then relies on whatever price is already on chain; a non-empty update
     /// reverts `NoPyth`).
     IPyth public immutable pyth;
+    /// @notice Where `priceUpdate` entries starting with `"STKA"` (signed
+    /// stock-price attestations) are posted — `StockPriceSourceV2`. Zero:
+    /// such entries are dropped (never forwarded to Pyth).
+    IStockAttestationSink public immutable attestationSink;
 
     /// @notice Ceiling on the tolerance a caller may declare against the
     /// aggregator's quote.
@@ -221,7 +226,8 @@ contract StonkzRouter {
         IWETH9 _weth,
         ISwapRouter02 _swapRouter02,
         uint256 _maxBuyNative,
-        IPyth _pyth
+        IPyth _pyth,
+        IStockAttestationSink _attestationSink
     ) {
         require(
             address(_universalRouter) != address(0) && address(_launchpad) != address(0)
@@ -234,6 +240,7 @@ contract StonkzRouter {
         swapRouter02 = _swapRouter02;
         maxBuyNative = _maxBuyNative;
         pyth = _pyth;
+        attestationSink = _attestationSink;
     }
 
     /// @dev Every native-in entry point runs through this before touching a curve.
@@ -316,13 +323,41 @@ contract StonkzRouter {
         if (msg.value > fee) _sendEth(msg.sender, msg.value - fee);
     }
 
-    /// @dev Submit `priceUpdate` to Pyth, paying its fee from `msg.value`.
+    /// @dev Submit `priceUpdate`, paying Pyth's fee from `msg.value`. Entries
+    /// starting with `"STKA"` are signed stock-price attestations: they go to
+    /// `attestationSink` (or are dropped if it is unset), never to Pyth, and
+    /// cost no fee. An update with no such entries takes the original path.
     function _updatePrice(bytes[] calldata priceUpdate) private returns (uint256 fee) {
         if (priceUpdate.length == 0) return 0;
+        uint256 attestations;
+        for (uint256 i = 0; i < priceUpdate.length; i++) {
+            if (_isAttestation(priceUpdate[i])) attestations++;
+        }
+        if (attestations == 0) return _postPyth(priceUpdate);
+
+        // Mixed: signed stock prices to the sink (or dropped when there is
+        // none), everything else to Pyth, which is paid for its subset only.
+        bytes[] memory forPyth = new bytes[](priceUpdate.length - attestations);
+        uint256 n;
+        for (uint256 i = 0; i < priceUpdate.length; i++) {
+            if (!_isAttestation(priceUpdate[i])) {
+                forPyth[n++] = priceUpdate[i];
+            } else if (address(attestationSink) != address(0)) {
+                attestationSink.postAttestation(priceUpdate[i]);
+            }
+        }
+        if (n > 0) fee = _postPyth(forPyth);
+    }
+
+    function _postPyth(bytes[] memory updates) private returns (uint256 fee) {
         if (address(pyth) == address(0)) revert NoPyth();
-        fee = pyth.getUpdateFee(priceUpdate);
+        fee = pyth.getUpdateFee(updates);
         if (fee > msg.value) revert UpdateFeeUnpaid(fee, msg.value);
-        pyth.updatePriceFeeds{value: fee}(priceUpdate);
+        pyth.updatePriceFeeds{value: fee}(updates);
+    }
+
+    function _isAttestation(bytes calldata entry) private pure returns (bool) {
+        return entry.length >= 4 && bytes4(entry[:4]) == STOCK_ATTESTATION_MAGIC;
     }
 
     function _create(CreateParams calldata p) private returns (address) {

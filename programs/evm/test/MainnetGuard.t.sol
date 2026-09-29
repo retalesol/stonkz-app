@@ -20,6 +20,7 @@ import {UpgradeLaunchpad} from "../script/UpgradeLaunchpad.s.sol";
 import {SwitchPriceSource} from "../script/SwitchPriceSource.s.sol";
 import {UpgradeStockLaunch} from "../script/UpgradeStockLaunch.s.sol";
 import {DeployStockPriceSource} from "../script/DeployStockPriceSource.s.sol";
+import {UpgradeAttestedStockLaunch} from "../script/UpgradeAttestedStockLaunch.s.sol";
 import {MockAggregator} from "./mocks/Mocks.sol";
 
 contract GuardHarness {
@@ -74,6 +75,7 @@ contract MainnetGuardTest is Test {
         SwitchPriceSource switchSource = new SwitchPriceSource();
         UpgradeStockLaunch upgradeStock = new UpgradeStockLaunch();
         DeployStockPriceSource deployStock = new DeployStockPriceSource();
+        UpgradeAttestedStockLaunch upgradeAttested = new UpgradeAttestedStockLaunch();
 
         vm.chainId(4663);
         vm.expectRevert(bytes(MISSING));
@@ -94,6 +96,8 @@ contract MainnetGuardTest is Test {
         upgradeStock.run();
         vm.expectRevert(bytes(MISSING));
         deployStock.run();
+        vm.expectRevert(bytes(MISSING));
+        upgradeAttested.run();
 
         vm.chainId(8453);
         vm.expectRevert(bytes(MISSING));

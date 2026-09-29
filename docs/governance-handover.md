@@ -287,13 +287,45 @@ The WETH leg comes from Pyth ETH/USD, which has a 120 s tolerance. The app's `pr
 
 **Base, later.** Add a branch for the chain to `StockBases.forChain()` with each stock token's address and its stock/WETH V3 pool. Create a pool with `UniswapV3Factory.createPool` if none exists, then seed it. The feed ids and bands are the same on every chain. Then run steps 1 to 3 against Base. On Base mainnet (8453), `MainnetGuard` applies: the scripts deploy and configure, then print the `setFallbackSource` and `acceptAdmin` calls for the timelock. `SeedStockPool` is a testnet-only tool.
 
+### Signed per-launch prices (`StockPriceSourceV2`)
+
+With V2, stock bases price 24/7 with no seeded pool and no keeper. At `/launch/prepare` the API signs the DefiLlama USD price of the stock base. The launch transaction carries that signature as an extra `priceUpdate` entry that starts with `"STKA"`. The router posts that entry to `StockPriceSourceV2.postAttestation` instead of Pyth, and the Pyth fee is charged on the remaining entries only.
+
+V2 tries the price sources in this order:
+
+1. Fresh Pyth.
+2. A fresh attestation, at most 300 s old (`attestMaxAge`). If a TWAP exists, the attestation must be within `maxDeviationBps` of it. Otherwise, if Friday's close (or another recent Pyth close) exists, it must be within 15% of that close. Otherwise it is used alone, inside the price band.
+3. The TWAP.
+4. The push oracle.
+
+If the attestation and fresh Pyth disagree, there is no price.
+
+**Kill switches.** The admin can call `setAttester(0)` to turn attestations off, or rotate the key; rotating also voids every stored attestation. The admin **or the launchpad pauser** can call `pauseAttestations()`. Only the admin can call `setAttestationsPaused(false)` to resume.
+
+**Rollout** replaces the previous stock rollout (`UpgradeStockLaunch` + `DeployStockPriceSource`) on a chain that already has it. The command deploys V2, which copies the live stock source's per-base config and keeps the push oracle as the last fallback. It also deploys a new router whose `attestationSink` is V2 and a new implementation. It then runs `upgradeToAndCall` and `PythPriceSource.setFallbackSource(V2)`:
+
+```sh
+ATTESTER=0x<API signer address> \
+  forge script script/UpgradeAttestedStockLaunch.s.sol:UpgradeAttestedStockLaunch --rpc-url $RPC -vvv
+# then append --broadcast
+STOCK_FORK_RPC=$RPC forge test --match-path test/fork/StockLaunchFork.t.sol -vv   # rehearsal
+```
+
+Then, in the same window:
+
+- Point the app's router address at `NEW StonkzRouter`.
+- Give the API the attester key and `NEW StockPriceSourceV2`'s address. The signed digest binds the chain id and that address.
+- Record both addresses in `deployments/<chainId>.json`.
+
+On mainnet, `MainnetGuard` applies and the script prints the timelock batch: `upgradeToAndCall`, `setFallbackSource`, and V2's `acceptAdmin`.
+
 ## Mainnet guard
 
 Testnets may skip the multisig, but mainnet may not. Every deploy or upgrade script that can target a mainnet chain (RH 4663, Base 8453, Arc 5042) calls `MainnetGuard.requireOnMainnet()` before anything else. The scripts are:
 
 - `Deploy`, `DeployArc`
 - `DeployRouter`, `DeployMigrator`
-- `UpgradeAtomicLaunch`, `UpgradeStockLaunch`, `UpgradeLaunchpad`, `SwitchPriceSource`
+- `UpgradeAtomicLaunch`, `UpgradeStockLaunch`, `UpgradeAttestedStockLaunch`, `UpgradeLaunchpad`, `SwitchPriceSource`
 - `DeployStockPriceSource`
 - `GovernanceHandover`
 

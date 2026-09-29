@@ -200,6 +200,12 @@ export interface ApiEnv {
    * and RWA crate rewards (`router/defillama.ts`).
    */
   defillamaCoinsUrl: string;
+  /**
+   * `STOCK_PRICE_ATTESTER_KEY`: hex private key that signs DefiLlama stock
+   * quotes for `StockPriceSourceV2` (`router/price-attest.ts`). Message
+   * signing only — no funds, no gas. Unset: no attestations are sent.
+   */
+  stockPriceAttesterKey: string | undefined;
 
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
@@ -516,6 +522,7 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
     stockSwapSlippageBps: bps(src, 'STOCK_SWAP_SLIPPAGE_BPS', 100),
     stockDevBuyMaxImpactBps: bps(src, 'STOCK_DEV_BUY_MAX_IMPACT_BPS', 500),
     stockPriceMaxDivergenceBps: bps(src, 'STOCK_PRICE_MAX_DIVERGENCE_BPS', 500),
+    stockPriceAttesterKey: src['STOCK_PRICE_ATTESTER_KEY']?.trim() || undefined,
     defillamaCoinsUrl: str(src, 'DEFILLAMA_COINS_URL', 'https://coins.llama.fi').replace(
       /\/+$/,
       '',

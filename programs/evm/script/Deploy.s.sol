@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {ChainlinkPriceSource, AggregatorV3Interface} from "../src/oracle/ChainlinkPriceSource.sol";
@@ -138,7 +139,8 @@ contract Deploy is Script {
             0, // no per-buy cap
             // No Pyth pin for RH mainnet yet: launches use the Chainlink source
             // with an empty `priceUpdate`. Redeploy the router to add one.
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
 
         vm.stopBroadcast();
@@ -208,7 +210,8 @@ contract Deploy is Script {
             IWETH9(RobinhoodChain.WETH9),
             ISwapRouter02(RobinhoodChain.UNISWAP_V3_SWAP_ROUTER02),
             0,
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
         // The implementation that trusts this router for atomic launches.
         launchpad.upgradeToAndCall(address(new StonkzLaunchpad(address(router))), "");

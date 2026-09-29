@@ -746,6 +746,8 @@ export interface RouterLaunchPlanInput {
   slipBps: bigint;
   nowMs: number;
   logger: Logger;
+  /** Signed stock quotes (`router/price-attest.ts`) appended after the Pyth update; the router routes them to its attestation sink. */
+  attestations?: readonly Hex[];
 }
 
 export interface RouterLaunchPlan {
@@ -859,6 +861,11 @@ export async function planRouterLaunch(
         });
       }
     }
+  }
+  // Stock-price attestations ride in the same array; the fee above is Pyth's
+  // alone, and the router forwards only the Pyth entries to Pyth.
+  if (input.attestations && input.attestations.length > 0) {
+    updateData = [...updateData, ...input.attestations];
   }
 
   const plain = (nonAtomicReason: RouterLaunchPlan['nonAtomicReason']): RouterLaunchPlanResult => ({

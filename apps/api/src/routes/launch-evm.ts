@@ -36,6 +36,7 @@ import { pinnedV3FeeTierFor } from '../router/evm-router.js';
 import { asEvmCallSimulator, type PreflightRefusal } from '../router/launch-preflight.js';
 import { stockPriceCacheFor, stockPricer, type StockPrice } from '../router/stock-price.js';
 import { toAtoms } from '../router/units.js';
+import { attesterFromKey, stockAttestationsFor } from '../router/price-attest.js';
 import { DEFAULT_STOCK_POOL_FEE } from '../router/v3-pool-reads.js';
 
 /**
@@ -145,6 +146,24 @@ function stockLaunchContext(
   };
 }
 
+let attesterCache: { key: string | undefined; account: ReturnType<typeof attesterFromKey> } | null =
+  null;
+
+/** The configured attester, parsed once; a malformed key logs and disables attestations. */
+function attesterFor(key: string | undefined, logger: AppDeps['logger']) {
+  if (attesterCache && attesterCache.key === key) return attesterCache.account;
+  let account: ReturnType<typeof attesterFromKey> = null;
+  try {
+    account = attesterFromKey(key);
+  } catch (err) {
+    logger.error('STOCK_PRICE_ATTESTER_KEY is malformed; stock attestations disabled', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  attesterCache = { key, account };
+  return account;
+}
+
 function refuse(c: Context<AppEnv>, r: PreflightRefusal): Response {
   if (r.retryAfter !== undefined) c.header('Retry-After', String(r.retryAfter));
   return c.json(
@@ -184,6 +203,21 @@ export async function prepareEvmLaunch(
   if (caller && support.supported) {
     const weth = deps.baseMints.mintFor(a.net, 'WETH');
     const isWethBase = !!weth && weth.toLowerCase() === a.baseMintAddress.toLowerCase();
+    // Stock base: sign the DefiLlama quote so the chain has a 24/7 price even
+    // when its pool is empty and the equity market is closed.
+    const attestations =
+      !isWethBase && isStockBase(a.net, a.baseSymbol)
+        ? await stockAttestationsFor({
+            attester: attesterFor(deps.env.stockPriceAttesterKey, deps.logger),
+            caller,
+            router,
+            chainId: evmChainId(deps.env, a.net),
+            base: a.baseMintAddress as Address,
+            price1e6: (await stockPricerFor(deps, a.net)(a.baseSymbol))?.defiLlama1e6 ?? null,
+            nowMs: a.now,
+            logger: deps.logger,
+          })
+        : [];
     const planned = await planRouterLaunch({
       net: a.net,
       caller,
@@ -203,6 +237,7 @@ export async function prepareEvmLaunch(
       slipBps: BigInt(Math.round(a.devBuySlipPct * 100)),
       nowMs: a.now,
       logger: deps.logger,
+      attestations,
     });
     if (!planned.ok)
       return c.json({ error: planned.error, detail: planned.detail }, planned.status);

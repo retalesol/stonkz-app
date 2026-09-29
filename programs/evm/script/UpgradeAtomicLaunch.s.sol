@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {IPriceSource} from "../src/oracle/IPriceSource.sol";
 import {PythPriceSource} from "../src/oracle/PythPriceSource.sol";
@@ -173,7 +174,8 @@ contract UpgradeAtomicLaunch is Script {
                 IWETH9(weth),
                 ISwapRouter02(sr02),
                 p.cap,
-                IPyth(p.pyth)
+                IPyth(p.pyth),
+                IStockAttestationSink(address(0))
             )
         );
         r.impl = address(new StonkzLaunchpad(r.router));

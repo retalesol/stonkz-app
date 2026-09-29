@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {CurveMath} from "../src/CurveMath.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -66,7 +67,8 @@ contract RouterTest is Test {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             0, // no per-buy cap
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
 
         vm.prank(oracleAuth);
@@ -539,7 +541,8 @@ contract RouterTest is Test {
             IWETH9(address(weth)),
             ISwapRouter02(address(sr02)),
             1 ether,
-            IPyth(address(0))
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
         );
         assertEq(capped.maxBuyNative(), 1 ether);
 

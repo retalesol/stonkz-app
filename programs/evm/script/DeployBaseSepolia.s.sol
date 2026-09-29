@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -77,7 +78,8 @@ contract DeployBaseSepolia is Script {
             IWETH9(BaseSepolia.WETH9),
             ISwapRouter02(BaseSepolia.UNISWAP_V3_SWAP_ROUTER02),
             0, // no per-buy cap
-            IPyth(BaseSepolia.PYTH)
+            IPyth(BaseSepolia.PYTH),
+            IStockAttestationSink(address(0))
         );
 
         priceSource.pushPrice(BaseSepolia.WETH9, ethUsd1e6, 0);

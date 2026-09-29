@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -86,7 +87,8 @@ contract DeployArc is Script {
             IWETH9(Arc.WRAPPED_NATIVE),
             ISwapRouter02(Arc.UNISWAP_V3_SWAP_ROUTER02),
             Arc.MAX_BUY_NATIVE,
-            IPyth(address(0)) // no Pyth pin on Arc
+            IPyth(address(0)), // no Pyth pin on Arc
+            IStockAttestationSink(address(0))
         );
         // The implementation that trusts this router for atomic launches.
         launchpad.upgradeToAndCall(address(new StonkzLaunchpad(address(router))), "");
