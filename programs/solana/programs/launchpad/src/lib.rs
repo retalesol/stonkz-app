@@ -141,7 +141,9 @@ pub mod launchpad {
         cashback: bool,
         salt: u64,
     ) -> Result<()> {
-        instructions::create_token::create_token(ctx, name, ticker, uri, supply, fee_bps, cashback, salt)
+        instructions::create_token::create_token(
+            ctx, name, ticker, uri, supply, fee_bps, cashback, salt,
+        )
     }
 
     /// `amount_base` in, at least `min_out` tokens back. Slippage is enforced
@@ -195,5 +197,24 @@ pub mod launchpad {
     /// Appended last so every existing instruction keeps its position.
     pub fn sync_price_from_pyth(ctx: Context<SyncPriceFromPyth>) -> Result<()> {
         instructions::sync_price::sync_price_from_pyth(ctx)
+    }
+
+    /* ------------------------------------------------------------- pauser */
+
+    /// Admin appoints the emergency pauser (default pubkey removes it).
+    pub fn set_pauser(ctx: Context<SetPauser>, pauser: Pubkey) -> Result<()> {
+        instructions::pauser::set_pauser(ctx, pauser)
+    }
+
+    /// The pauser can set pause flags and nothing else; unpausing is admin's
+    /// `set_pause`.
+    pub fn pause(
+        ctx: Context<Pause>,
+        trading: bool,
+        launch: bool,
+        protocol_withdrawals: bool,
+        ops_withdrawals: bool,
+    ) -> Result<()> {
+        instructions::pauser::pause(ctx, trading, launch, protocol_withdrawals, ops_withdrawals)
     }
 }

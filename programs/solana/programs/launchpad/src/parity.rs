@@ -38,16 +38,36 @@ struct Case {
 
 const CASES: [Case; 5] = [
     // 1B supply against a $1.00 6-decimal stable — the common case.
-    Case { supply: 1_000_000_000, price_1e6: 1_000_000, base_decimals: 6 },
+    Case {
+        supply: 1_000_000_000,
+        price_1e6: 1_000_000,
+        base_decimals: 6,
+    },
     // 1B against a $200 9-decimal base (wrapped SOL).
-    Case { supply: 1_000_000_000, price_1e6: 200_000_000, base_decimals: 9 },
+    Case {
+        supply: 1_000_000_000,
+        price_1e6: 200_000_000,
+        base_decimals: 9,
+    },
     // 500M against a $3,000 18-decimal base (WETH on Robinhood Chain).
-    Case { supply: 500_000_000, price_1e6: 3_000_000_000, base_decimals: 18 },
+    Case {
+        supply: 500_000_000,
+        price_1e6: 3_000_000_000,
+        base_decimals: 18,
+    },
     // 1M supply, expensive few-decimal base — the tightest truncation case,
     // and the one that caught the virtual_base rounding direction.
-    Case { supply: 1_000_000, price_1e6: 4_312_500_000, base_decimals: 8 },
+    Case {
+        supply: 1_000_000,
+        price_1e6: 4_312_500_000,
+        base_decimals: 8,
+    },
     // 1T supply, cheap 5-decimal base — the largest k.
-    Case { supply: 1_000_000_000_000, price_1e6: 10, base_decimals: 5 },
+    Case {
+        supply: 1_000_000_000_000,
+        price_1e6: 10,
+        base_decimals: 5,
+    },
 ];
 
 /// A column of decimal strings.
@@ -57,7 +77,10 @@ fn col_str<T: std::fmt::Display>(name: &str, vals: &[T], indent: &str, last: boo
         .map(|v| format!("\"{v}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("{indent}\"{name}\": [{body}]{}\n", if last { "" } else { "," })
+    format!(
+        "{indent}\"{name}\": [{body}]{}\n",
+        if last { "" } else { "," }
+    )
 }
 
 /// A column of raw JSON values (numbers, booleans).
@@ -67,7 +90,10 @@ fn col_raw<T: std::fmt::Display>(name: &str, vals: &[T], indent: &str, last: boo
         .map(|v| v.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    format!("{indent}\"{name}\": [{body}]{}\n", if last { "" } else { "," })
+    format!(
+        "{indent}\"{name}\": [{body}]{}\n",
+        if last { "" } else { "," }
+    )
 }
 
 #[test]
@@ -80,7 +106,20 @@ fn parity_vectors() {
     /* ------------------------------------------------------------- fee split */
 
     let fees: [u64; 14] = [
-        0, 1, 2, 3, 7, 9, 10, 99, 100, 12_345, 999_999, 1_000_000_007, 18_446_744_073, u64::MAX,
+        0,
+        1,
+        2,
+        3,
+        7,
+        9,
+        10,
+        99,
+        100,
+        12_345,
+        999_999,
+        1_000_000_007,
+        18_446_744_073,
+        u64::MAX,
     ];
     let shares: Vec<FeeShares> = fees.iter().map(|f| split_fee(*f)).collect();
     out.push_str("  \"feeSplit\": {\n");
@@ -128,11 +167,36 @@ fn parity_vectors() {
         .map(|(b, s, c)| split_creator_bucket(*b, *s, *c))
         .collect();
     out.push_str("  \"creatorBucketSplit\": {\n");
-    out.push_str(&col_str("bucket", &bs.iter().map(|x| x.0).collect::<Vec<_>>(), "    ", false));
-    out.push_str(&col_str("eligibleStaked", &bs.iter().map(|x| x.1).collect::<Vec<_>>(), "    ", false));
-    out.push_str(&col_str("circulating", &bs.iter().map(|x| x.2).collect::<Vec<_>>(), "    ", false));
-    out.push_str(&col_str("creator", &splits.iter().map(|s| s.creator).collect::<Vec<_>>(), "    ", false));
-    out.push_str(&col_str("stakers", &splits.iter().map(|s| s.stakers).collect::<Vec<_>>(), "    ", true));
+    out.push_str(&col_str(
+        "bucket",
+        &bs.iter().map(|x| x.0).collect::<Vec<_>>(),
+        "    ",
+        false,
+    ));
+    out.push_str(&col_str(
+        "eligibleStaked",
+        &bs.iter().map(|x| x.1).collect::<Vec<_>>(),
+        "    ",
+        false,
+    ));
+    out.push_str(&col_str(
+        "circulating",
+        &bs.iter().map(|x| x.2).collect::<Vec<_>>(),
+        "    ",
+        false,
+    ));
+    out.push_str(&col_str(
+        "creator",
+        &splits.iter().map(|s| s.creator).collect::<Vec<_>>(),
+        "    ",
+        false,
+    ));
+    out.push_str(&col_str(
+        "stakers",
+        &splits.iter().map(|s| s.stakers).collect::<Vec<_>>(),
+        "    ",
+        true,
+    ));
     out.push_str("  },\n");
 
     /* ------------------------------------------------------------- cashback */
@@ -203,9 +267,16 @@ fn parity_vectors() {
         for (is_buy, amount, bps) in script {
             // Record the state each fill is quoted against, so a reader that
             // has drifted fails at the fill that caused it.
-            let (vb0, vt0, rb0, rt0) = (st.virtual_base, st.virtual_token, st.real_base, st.real_token);
+            let (vb0, vt0, rb0, rt0) = (
+                st.virtual_base,
+                st.virtual_token,
+                st.real_base,
+                st.real_token,
+            );
             if is_buy {
-                let Some(f) = buy_quote(&st, bps, amount) else { continue };
+                let Some(f) = buy_quote(&st, bps, amount) else {
+                    continue;
+                };
                 let s = split_fee(f.fee);
                 side.push("buy");
                 amount_in.push(amount);
@@ -225,7 +296,9 @@ fn parity_vectors() {
                 held += f.tokens_out;
             } else {
                 let amount = held / 3;
-                let Some(f) = sell_quote(&st, bps, amount) else { continue };
+                let Some(f) = sell_quote(&st, bps, amount) else {
+                    continue;
+                };
                 let s = split_fee(f.fee);
                 side.push("sell");
                 amount_in.push(amount);

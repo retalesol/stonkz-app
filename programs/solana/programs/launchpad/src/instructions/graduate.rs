@@ -187,7 +187,10 @@ pub struct MigrateCreatePool<'info> {
 
 pub fn migrate_create_pool(ctx: Context<MigrateCreatePool>) -> Result<()> {
     require!(ctx.accounts.curve.graduated, LaunchpadError::NotGraduable);
-    require!(!ctx.accounts.curve.migrated, LaunchpadError::AlreadyMigrated);
+    require!(
+        !ctx.accounts.curve.migrated,
+        LaunchpadError::AlreadyMigrated
+    );
     require!(
         ctx.accounts.curve.dex_pool == Pubkey::default(),
         LaunchpadError::PoolAlreadyExists
@@ -381,7 +384,10 @@ pub struct MigrateSeedLiquidity<'info> {
 pub fn migrate_seed_liquidity(ctx: Context<MigrateSeedLiquidity>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     require!(ctx.accounts.curve.graduated, LaunchpadError::NotGraduable);
-    require!(!ctx.accounts.curve.migrated, LaunchpadError::AlreadyMigrated);
+    require!(
+        !ctx.accounts.curve.migrated,
+        LaunchpadError::AlreadyMigrated
+    );
     require!(
         ctx.accounts.curve.dex_pool != Pubkey::default(),
         LaunchpadError::PoolNotCreated

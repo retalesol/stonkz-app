@@ -153,7 +153,10 @@ pub fn create_token(
     cashback: bool,
     _salt: u64,
 ) -> Result<()> {
-    require!(!ctx.accounts.global.launch_paused, LaunchpadError::LaunchPaused);
+    require!(
+        !ctx.accounts.global.launch_paused,
+        LaunchpadError::LaunchPaused
+    );
     require!(valid_ticker(&ticker), LaunchpadError::InvalidTicker);
     require!(
         name.len() <= MAX_NAME_LEN && uri.len() <= MAX_URI_LEN,
@@ -175,8 +178,8 @@ pub fn create_token(
     let supply_atoms = supply
         .checked_mul(10u64.pow(TOKEN_DECIMALS as u32))
         .ok_or(LaunchpadError::MathOverflow)?;
-    let p = derive_curve(supply_atoms, price_1e6, base_decimals)
-        .ok_or(LaunchpadError::MathOverflow)?;
+    let p =
+        derive_curve(supply_atoms, price_1e6, base_decimals).ok_or(LaunchpadError::MathOverflow)?;
 
     let mint_key = ctx.accounts.mint.key();
     let curve_bump = ctx.bumps.curve;

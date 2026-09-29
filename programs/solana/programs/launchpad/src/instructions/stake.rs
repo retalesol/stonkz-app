@@ -36,8 +36,14 @@ fn settle(pos: &mut StakePosition, c: &Curve) -> Result<()> {
 }
 
 /// Recompute a position's weight and fold the delta into the pool totals.
-fn reweigh(pos: &mut StakePosition, c: &mut Curve, old_amount: u64, old_weight: u128) -> Result<()> {
-    let new_weight = stake_weight(pos.amount, pos.lock_days).ok_or(LaunchpadError::InvalidLockTerm)?;
+fn reweigh(
+    pos: &mut StakePosition,
+    c: &mut Curve,
+    old_amount: u64,
+    old_weight: u128,
+) -> Result<()> {
+    let new_weight =
+        stake_weight(pos.amount, pos.lock_days).ok_or(LaunchpadError::InvalidLockTerm)?;
     pos.weight = new_weight;
 
     c.total_weight = c
@@ -111,10 +117,7 @@ pub fn stake(ctx: Context<Stake>, amount: u64, lock_days: u16) -> Result<()> {
         pos.lock_days = lock_days;
     } else {
         // Mixing terms in one position would make a single weight ambiguous.
-        require!(
-            pos.lock_days == lock_days,
-            LaunchpadError::LockTermMismatch
-        );
+        require!(pos.lock_days == lock_days, LaunchpadError::LockTermMismatch);
     }
 
     settle(pos, &ctx.accounts.curve)?;

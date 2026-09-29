@@ -160,3 +160,12 @@ pub struct StakePosition {
     pub unclaimed_base: u64,
     pub unclaimed_token: u64,
 }
+
+/// Who may pause. Separate from `Global` so appointing a pauser never
+/// reallocates the account every instruction reads.
+#[account]
+#[derive(InitSpace)]
+pub struct PauserConfig {
+    pub bump: u8,
+    pub pauser: Pubkey,
+}

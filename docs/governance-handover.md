@@ -253,3 +253,37 @@ How the two kinds of script behave on mainnet:
 - **`EXECUTORS`:** Safe-only (the default), or open (`0x0`).
 - **Pauser custody:** a hot ops key, or a separate 1-of-N Safe.
 - **`MIN_DELAY`:** 48 h is suggested, with a floor of 24 h on mainnet.
+
+## Solana
+
+The Solana launchpad has the same shape: a multisig admin, a separate emergency pauser, and a guard that stops mainnet operator scripts until both exist.
+
+### Emergency pauser
+
+- The pauser lives in its own PDA, `["pauser"]` (`PauserConfig { bump, pauser }`), so `Global`'s layout never changes.
+- `set_pauser(pauser)` is admin only. The first call creates the PDA (admin pays rent). `Pubkey::default()` removes the role.
+- `pause(trading, launch, protocol_withdrawals, ops_withdrawals)` is signed by the pauser. Each `true` sets that flag. `false` leaves it alone, so the pauser can never clear a flag.
+- Unpausing is `set_pause`, admin only.
+- Verified on a local validator: a non-admin `set_pauser` and a random signer's `pause` are rejected, the pauser cannot call `set_pause`, all-false does not unpause, and a removed pauser is rejected.
+
+### Mainnet guard
+
+`scripts/init-deployment.ts` calls `requireMainnetGovernance` (`scripts/mainnet-guard.ts`) when `STONKZ_CLUSTER=mainnet-beta`. It refuses unless:
+
+- `STONKZ_SQUADS_VAULT` is set and `STONKZ_ADMIN` equals it;
+- `STONKZ_PAUSER` is set and differs from both the vault and the deployer;
+- the program's upgrade authority on chain is the vault.
+
+It then appoints the pauser, or prints the `set_pauser` instruction for the vault to sign.
+
+### Handover to Squads (mainnet, or a testnet rehearsal)
+
+1. Create a Squads multisig and note its **vault** address.
+2. Move the upgrade authority:
+   `solana program set-upgrade-authority FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg --new-upgrade-authority <VAULT> --skip-new-upgrade-authority-signer-check`
+3. `propose_admin(<VAULT>)`, signed by the current admin.
+4. `accept_admin`, executed as a Squads transaction from the vault.
+5. `set_pauser(<PAUSER>)`, executed as a Squads transaction from the vault.
+6. Verify: `Global.admin` equals the vault, `pending_admin` is the default, the upgrade authority is the vault (`solana program show`), and the pauser PDA holds `<PAUSER>`.
+
+Squads can add a time lock to its vault transactions. Use one on mainnet, like the 24 h floor on EVM.

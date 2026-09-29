@@ -122,11 +122,7 @@ pub fn set_withdraw_authorities(
 /// Point migration at a Meteora DLMM deployment and `PresetParameter2` tier.
 /// Admin-gated because a wrong program id here would make every subsequent
 /// graduation's CPI fail closed (Anchor's `address = …` constraint).
-pub fn set_meteora_config(
-    ctx: Context<AdminOnly>,
-    program: Pubkey,
-    preset: Pubkey,
-) -> Result<()> {
+pub fn set_meteora_config(ctx: Context<AdminOnly>, program: Pubkey, preset: Pubkey) -> Result<()> {
     require!(program != Pubkey::default(), LaunchpadError::Unauthorized);
     require!(preset != Pubkey::default(), LaunchpadError::Unauthorized);
     ctx.accounts.global.dex_program = program;
@@ -206,11 +202,7 @@ pub fn push_price(ctx: Context<PushPrice>, price_1e6: u64, conf_1e6: u64) -> Res
 }
 
 /// Read an oracle, refusing stale or wide-banded prices.
-pub fn read_fresh_price(
-    oracle: &BaseOracle,
-    global: &Global,
-    now: i64,
-) -> Result<u64> {
+pub fn read_fresh_price(oracle: &BaseOracle, global: &Global, now: i64) -> Result<u64> {
     require!(oracle.price_1e6 > 0, LaunchpadError::OracleInvalid);
     require!(
         now.saturating_sub(oracle.publish_time) <= global.max_oracle_staleness,

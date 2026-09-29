@@ -303,7 +303,9 @@ pub fn buy(ctx: Context<TradeCtx>, amount_base: u64, min_out: u64) -> Result<()>
     let c = &mut ctx.accounts.curve;
     c.protocol_accrued = c.protocol_accrued.saturating_add(shares.protocol);
     c.ops_accrued = c.ops_accrued.saturating_add(shares.stonkz_ops);
-    c.creator_bucket_accrued = c.creator_bucket_accrued.saturating_add(shares.creator_bucket);
+    c.creator_bucket_accrued = c
+        .creator_bucket_accrued
+        .saturating_add(shares.creator_bucket);
     if c.real_token == 0 {
         c.complete = true;
     }
@@ -411,7 +413,9 @@ pub fn sell(ctx: Context<TradeCtx>, amount_token: u64, min_out: u64) -> Result<(
 
     c.protocol_accrued = c.protocol_accrued.saturating_add(shares.protocol);
     c.ops_accrued = c.ops_accrued.saturating_add(shares.stonkz_ops);
-    c.creator_bucket_accrued = c.creator_bucket_accrued.saturating_add(shares.creator_bucket);
+    c.creator_bucket_accrued = c
+        .creator_bucket_accrued
+        .saturating_add(shares.creator_bucket);
 
     emit_fill(
         c,

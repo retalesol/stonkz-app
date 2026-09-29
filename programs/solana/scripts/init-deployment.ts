@@ -21,6 +21,7 @@
  * Pass `--dry-run` to print everything it would do and send nothing.
  */
 import * as anchor from '@coral-xyz/anchor';
+import { requireMainnetGovernance } from './mainnet-guard';
 
 const { PublicKey, SystemProgram } = anchor.web3;
 type PublicKey = anchor.web3.PublicKey;
@@ -99,6 +100,16 @@ async function main() {
 
   const [globalPda] = PublicKey.findProgramAddressSync([Buffer.from('global')], program.programId);
 
+  // Mainnet: refuses unless a Squads vault is admin and upgrade authority and
+  // a separate pauser is named. Devnet/localnet return null and carry on.
+  const governance = await requireMainnetGovernance({
+    cluster,
+    connection: provider.connection,
+    programId: program.programId,
+    admin,
+    deployer: provider.wallet.publicKey,
+  });
+
   const presetIndex = Number(process.env.STONKZ_METEORA_PRESET_INDEX ?? DEFAULT_PRESET_INDEX);
   const preset = process.env.STONKZ_METEORA_PRESET
     ? new PublicKey(process.env.STONKZ_METEORA_PRESET)
@@ -157,6 +168,22 @@ async function main() {
     console.log('  program :', METEORA_DLMM.toBase58());
     console.log('  preset  :', preset.toBase58());
     console.log('Until this lands, migrate_create_pool fails closed and nothing can graduate.');
+  }
+
+  const pauser = governance?.pauser ?? (process.env.STONKZ_PAUSER ? new PublicKey(process.env.STONKZ_PAUSER) : null);
+  if (pauser) {
+    const [pauserPda] = PublicKey.findProgramAddressSync([Buffer.from('pauser')], program.programId);
+    if (provider.wallet.publicKey.equals(admin)) {
+      const sig = await program.methods
+        .setPauser(pauser)
+        .accounts({ global: globalPda, pauserConfig: pauserPda, admin, systemProgram: SystemProgram.programId })
+        .rpc();
+      console.log('  setPauser:', sig);
+    } else {
+      console.log('');
+      console.log('=== Admin (Squads vault) must execute ===');
+      console.log('launchpad.setPauser(' + pauser.toBase58() + ') signed by', admin.toBase58());
+    }
   }
 
   console.log('');

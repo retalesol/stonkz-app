@@ -15,7 +15,11 @@ use crate::constants::*;
 /// `["metadata", TOKEN_METADATA_PROGRAM_ID, mint]` under the Metaplex program.
 pub fn metadata_pda(mint: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[SEED_METADATA, TOKEN_METADATA_PROGRAM_ID.as_ref(), mint.as_ref()],
+        &[
+            SEED_METADATA,
+            TOKEN_METADATA_PROGRAM_ID.as_ref(),
+            mint.as_ref(),
+        ],
         &TOKEN_METADATA_PROGRAM_ID,
     )
 }

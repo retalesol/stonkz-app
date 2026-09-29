@@ -348,7 +348,11 @@ pub fn zero_fee_buy(state: &CurveState, amount_base: u64) -> Option<u64> {
 
 /// Market cap in base atoms: spot price × fixed supply.
 pub fn mcap_base(state: &CurveState, supply_atoms: u64) -> Option<u128> {
-    mul_div_floor(state.virtual_base, supply_atoms as u128, state.virtual_token)
+    mul_div_floor(
+        state.virtual_base,
+        supply_atoms as u128,
+        state.virtual_token,
+    )
 }
 
 /// Market cap in USD, scaled 1e6.
@@ -408,5 +412,8 @@ pub fn advance_acc(acc: u128, amount: u64, total_weight: u128) -> Option<(u128, 
             .div_ceil(ACC_PRECISION),
     )
     .ok()?;
-    Some((acc.checked_add(per_weight)?, amount.saturating_sub(committed)))
+    Some((
+        acc.checked_add(per_weight)?,
+        amount.saturating_sub(committed),
+    ))
 }

@@ -224,6 +224,8 @@ pub const TOKEN_METADATA_PROGRAM_ID: Pubkey =
 /// Metaplex metadata PDA seed: `["metadata", program, mint]` under the
 /// Metaplex program.
 pub const SEED_METADATA: &[u8] = b"metadata";
+/// The emergency pauser config PDA.
+pub const SEED_PAUSER: &[u8] = b"pauser";
 /// `CreateMetadataAccountV3` — Metaplex's native (non-Anchor) one-byte
 /// instruction tag.
 pub const METAPLEX_CREATE_METADATA_V3_IX: u8 = 33;

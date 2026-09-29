@@ -130,7 +130,11 @@ fn fee_split_is_exact_on_every_random_buy_and_sell() {
                 assert_eq!(s.protocol as u128, f.fee as u128 * 1_500 / 10_000);
                 assert_eq!(s.stonkz_ops as u128, f.fee as u128 * 1_000 / 10_000);
                 assert_eq!(s.burn as u128, f.fee as u128 * 600 / 10_000);
-                assert_eq!(f.gross_base, f.fee + f.net_base, "gross must equal fee + net");
+                assert_eq!(
+                    f.gross_base,
+                    f.fee + f.net_base,
+                    "gross must equal fee + net"
+                );
 
                 st.virtual_base += f.net_base as u128;
                 st.virtual_token -= f.tokens_out as u128;
@@ -268,7 +272,10 @@ fn capped_buy_charges_only_for_what_it_delivers() {
     let capped = buy_quote(&st, 300, absurd).unwrap();
     assert!(capped.curve_complete);
     assert_eq!(capped.tokens_out, st.real_token);
-    assert!(capped.gross_base < absurd, "capped buy must not pull the full offer");
+    assert!(
+        capped.gross_base < absurd,
+        "capped buy must not pull the full offer"
+    );
     assert_eq!(capped.gross_base, capped.fee + capped.net_base);
     // The fee still leaves at least the required net in the pool.
     assert!(capped.fee >= capped.gross_base * 300 / 10_000);
@@ -363,7 +370,10 @@ fn cashback_decays_from_50pct_to_the_creator_fee_across_300s() {
         assert_eq!(eff_fee_bps(base_bps, true, start, start), 5_000);
         assert_eq!(eff_fee_bps(base_bps, true, start, start + 300), base_bps);
         assert_eq!(eff_fee_bps(base_bps, true, start, start + 301), base_bps);
-        assert_eq!(eff_fee_bps(base_bps, true, start, start + 100_000), base_bps);
+        assert_eq!(
+            eff_fee_bps(base_bps, true, start, start + 100_000),
+            base_bps
+        );
 
         // Halfway through, halfway down.
         let mid = eff_fee_bps(base_bps, true, start, start + 150);
@@ -445,8 +455,14 @@ fn stakers_never_reach_past_half_the_creator_bucket() {
 
         let sp = split_creator_bucket(bucket, staked, circulating);
         assert_eq!(sp.creator + sp.stakers, bucket, "bucket must be conserved");
-        assert!(sp.stakers <= bucket / 2, "stakers took more than half the bucket");
-        assert!(sp.creator >= bucket - bucket / 2, "creator fell below half the bucket");
+        assert!(
+            sp.stakers <= bucket / 2,
+            "stakers took more than half the bucket"
+        );
+        assert!(
+            sp.creator >= bucket - bucket / 2,
+            "creator fell below half the bucket"
+        );
     }
 }
 
@@ -549,7 +565,10 @@ fn the_accumulator_resolves_a_fill_on_every_allowed_supply() {
             "supply {supply}: a 1.0-base-token accrual must move the accumulator, \
              not vanish into dust (weight {weight})"
         );
-        assert!(dust < 1_000_000, "supply {supply}: most of the accrual must land");
+        assert!(
+            dust < 1_000_000,
+            "supply {supply}: most of the accrual must land"
+        );
 
         // And a staker holding the whole float can actually claim it back.
         let claimable = pending_reward(weight, acc, 0).expect("no overflow");
@@ -557,7 +576,10 @@ fn the_accumulator_resolves_a_fill_on_every_allowed_supply() {
             claimable > 900_000,
             "supply {supply}: sole staker should recover nearly the whole accrual, got {claimable}"
         );
-        assert!(claimable <= 1_000_000, "supply {supply}: and never more than it");
+        assert!(
+            claimable <= 1_000_000,
+            "supply {supply}: and never more than it"
+        );
     }
 }
 
@@ -566,7 +588,9 @@ fn reward_accumulator_conserves_value() {
     let mut rng = Rng::new(0xACC0_1234);
     for _ in 0..20_000 {
         let n = rng.range(1, 8) as usize;
-        let weights: Vec<u128> = (0..n).map(|_| rng.range(1, 1_000_000_000) as u128).collect();
+        let weights: Vec<u128> = (0..n)
+            .map(|_| rng.range(1, 1_000_000_000) as u128)
+            .collect();
         let total: u128 = weights.iter().sum();
 
         let mut acc = 0u128;
@@ -752,4 +776,66 @@ mod metaplex_cpi {
         );
         assert_eq!(d.len(), 1 + 12 + 32 + 10 + 200 + 7);
     }
+}
+
+fn blank_global() -> crate::state::Global {
+    use anchor_lang::prelude::Pubkey;
+    crate::state::Global {
+        bump: 0,
+        admin: Pubkey::default(),
+        pending_admin: Pubkey::default(),
+        protocol_withdraw_authority: Pubkey::default(),
+        ops_withdraw_authority: Pubkey::default(),
+        oracle_authority: Pubkey::default(),
+        migration_authority: Pubkey::default(),
+        dex_program: Pubkey::default(),
+        dex_config: Pubkey::default(),
+        trading_paused: false,
+        launch_paused: false,
+        protocol_withdrawals_paused: false,
+        ops_withdrawals_paused: false,
+        max_oracle_staleness: DEFAULT_MAX_ORACLE_STALENESS,
+        token_count: 0,
+    }
+}
+
+#[test]
+fn pauser_sets_each_flag_independently() {
+    use crate::instructions::pauser::apply_pause;
+    let cases = [
+        (true, false, false, false),
+        (false, true, false, false),
+        (false, false, true, false),
+        (false, false, false, true),
+    ];
+    for (t, l, p, o) in cases {
+        let mut g = blank_global();
+        apply_pause(&mut g, t, l, p, o);
+        assert_eq!(
+            (
+                g.trading_paused,
+                g.launch_paused,
+                g.protocol_withdrawals_paused,
+                g.ops_withdrawals_paused
+            ),
+            (t, l, p, o)
+        );
+    }
+}
+
+#[test]
+fn pauser_can_never_unpause() {
+    use crate::instructions::pauser::apply_pause;
+    let mut g = blank_global();
+    g.trading_paused = true;
+    g.launch_paused = true;
+    g.protocol_withdrawals_paused = true;
+    g.ops_withdrawals_paused = true;
+    apply_pause(&mut g, false, false, false, false);
+    assert!(
+        g.trading_paused
+            && g.launch_paused
+            && g.protocol_withdrawals_paused
+            && g.ops_withdrawals_paused
+    );
 }
