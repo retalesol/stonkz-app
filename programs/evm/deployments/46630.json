@@ -14,7 +14,9 @@
     "PythPriceSource": "0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA",
     "Pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a",
     "StockPriceSource": "0x5e36248dF811A4b8358014f71276714E196D00fE",
-    "StockPriceAttester": "0x7DB88BA71807567be8057aff24B2D2D6aeAF6650"
+    "StockPriceAttester": "0x7DB88BA71807567be8057aff24B2D2D6aeAF6650",
+    "FeeLocker": "0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3",
+    "UniswapV3Migrator": "0x7C6DE508a176E48Df24863845c603aDe3D656748"
   },
   "tokens": {
     "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
@@ -49,16 +51,17 @@
     "2026-09-29: launchpad priceSource switched to PythPriceSource 0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA (maxOracleStaleness 90000; per-feed Pyth max age 120s; RH stock bases fall back to PushPriceSource). Corrective UniswapV2Migrator 0xC21940AF1e8D6Ac81a40Aa5B8A0Ac96315c919Ac with new StonkzV2Factory 0x0FeA7f9A380A6451CeEaFFb07D86b72c8B5c2747 (pairs support swap/skim/sync).",
     "2026-09-29: StockPriceSource 0xF53dE95ae1Fed92FFd9C9305E1716FD48EFcB776 (V3 TWAP x Pyth ETH, Pyth equity cross-check, last-close anchor off hours, push fallback) set as PythPriceSource fallback; stock/WETH pools cardinality 64 (pools still unseeded). UpgradeStockLaunch: router 0x3aAEEa60419e90fee3d9629eb36FAff8179984aE, impl 0x598588D7E739f4FEBA329063633BDDD5F5EA0B18.",
     "2026-09-29: UpgradeAttestedStockLaunch: StockPriceSourceV2 0x5e36248dF811A4b8358014f71276714E196D00fE (signed DefiLlama quotes, attester 0x7DB88BA71807567be8057aff24B2D2D6aeAF6650, attestMaxAge 300s) is PythPriceSource fallback; router 0x1d44A1868D84900953B02FF8d653bB42e3a26DB7 (attestationSink = V2); impl 0x4F1A2D8DFA632A66Ed587E086d9CFCa230DDD39F.",
-    "2026-09-29: UpgradeStockLaunch (graduation router): router 0xA039af821d950C03EE870F05bF1A32F06F9053c5, impl 0x97a37E0655e5feA670B2DaF26A6fF40D0f798b61."
+    "2026-09-29: UpgradeStockLaunch (graduation router): router 0xA039af821d950C03EE870F05bF1A32F06F9053c5, impl 0x97a37E0655e5feA670B2DaF26A6fF40D0f798b61.",
+    "2026-09-30: impl 0xCc494654811164C14399b9b0be7773DC29Cc453a (accrueExternalFees); FeeLocker 0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3 + UniswapV3Migrator 0x7C6DE508a176E48Df24863845c603aDe3D656748 (1% tier) installed via setMigrator."
   ],
   "implementation": {
-    "StonkzLaunchpad": "0x97a37E0655e5feA670B2DaF26A6fF40D0f798b61",
-    "address": "0x97a37E0655e5feA670B2DaF26A6fF40D0f798b61",
+    "StonkzLaunchpad": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
+    "address": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
     "upgradedAt": "2026-09-29",
-    "upgradeTx": "0x289be828a3764c6624c233d4304fa2eecdcba938f23e774c9a436c3332e463f1",
-    "upgradeBlock": 126386512,
+    "upgradeTx": "0x186c9dbf64794fbc342ec3a6238ae94005098732fdedf62a602d930d2d48ca27",
+    "upgradeBlock": 126414179,
     "trustedRouter": "0xA039af821d950C03EE870F05bF1A32F06F9053c5",
-    "change": "trustedRouter -> router with graduateWithPriceUpdate. Layout unchanged."
+    "change": "accrueExternalFees (migrator-gated) for post-bond pool fees. Router kept. Layout unchanged."
   },
   "previous": [
     {
@@ -114,6 +117,11 @@
       "StonkzRouter": "0x1d44A1868D84900953B02FF8d653bB42e3a26DB7",
       "retired": "2026-09-29",
       "reason": "superseded by router with graduateWithPriceUpdate"
+    },
+    {
+      "UniswapV2Migrator": "0xC21940AF1e8D6Ac81a40Aa5B8A0Ac96315c919Ac",
+      "retired": "2026-09-30",
+      "reason": "replaced by UniswapV3Migrator + FeeLocker"
     }
   ],
   "deployBlock": 124871527,
