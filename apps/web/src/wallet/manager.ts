@@ -213,6 +213,7 @@ export async function connectWalletFor(
   else if (net === 'SOL') wallet = await connectSolanaWallet(choice.id, { silent: !!opts.silent });
   else {
     wallet = await connectEvmWallet(choice.id, {
+      net,
       ...(opts.onWalletConnectUri ? { onWalletConnectUri: opts.onWalletConnectUri } : {}),
       ...(opts.silent ? { silent: true } : {}),
     });

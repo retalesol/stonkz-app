@@ -62,6 +62,12 @@ export async function stepUp(
     if (!id) throw new Error('No wallet selected.');
     await connectWalletFor(net, { id });
   }
+  // Admin actions are transactions on this net, so get the wallet onto its
+  // chain now rather than at the first prepared tx; wallets without a switch
+  // method (mobile) just sign in — the chain is re-checked before sending.
+  await activeWallet()
+    ?.ensureChain?.()
+    .catch(() => undefined);
 
   hooks.onPhase?.('session');
   const session = await ensureSession(API_BASE, net);

@@ -704,6 +704,12 @@ async function accountsOf(
 }
 
 export interface EvmConnectHooks {
+  /**
+   * The net this connection is for. Callers that know it (the wallet manager,
+   * the admin panel) pass it; otherwise the app's picked net is used, and RH
+   * as a last resort.
+   */
+  net?: EvmNet;
   /** Called with the `wc:` pairing URI, for the QR/deep-link panel. */
   onWalletConnectUri?: (uri: string) => void;
   /**
@@ -721,7 +727,7 @@ export async function connectEvmWallet(
     const reason = walletConnectUnavailableReason();
     if (reason) throw new WalletError('unconfigured', reason);
     const { WALLET } = await import('../state/wallet.js');
-    const wcNet: EvmNet = isEvm(WALLET.net as Net) ? (WALLET.net as EvmNet) : 'RH';
+    const wcNet: EvmNet = hooks.net ?? (isEvm(WALLET.net as Net) ? (WALLET.net as EvmNet) : 'RH');
     const { provider, address, disconnect } = await connectWalletConnect({
       net: wcNet,
       ...(hooks.onWalletConnectUri ? { onUri: hooks.onWalletConnectUri } : {}),
@@ -757,7 +763,8 @@ export async function connectEvmWallet(
   if (!account) throw new WalletError('rejected', `${detail.info.name} authorised no accounts.`);
 
   const { WALLET } = await import('../state/wallet.js');
-  const injectedNet: EvmNet = isEvm(WALLET.net as Net) ? (WALLET.net as EvmNet) : 'RH';
+  const injectedNet: EvmNet =
+    hooks.net ?? (isEvm(WALLET.net as Net) ? (WALLET.net as EvmNet) : 'RH');
   return new EvmWallet(
     'evm-injected',
     detail.info.name.toUpperCase(),
