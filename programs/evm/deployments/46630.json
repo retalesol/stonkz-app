@@ -8,8 +8,8 @@
   "contracts": {
     "PushPriceSource": "0x1440A9776a93dcb10c7B6AD9f8053Bac469637B8",
     "StonkzLaunchpad": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
-    "StonkzV2Factory": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
-    "UniswapV2Migrator": "0x5CD47DBA6F6a7dA8785E74CD1602743712fe7888",
+    "StonkzV2Factory": "0x0FeA7f9A380A6451CeEaFFb07D86b72c8B5c2747",
+    "UniswapV2Migrator": "0xC21940AF1e8D6Ac81a40Aa5B8A0Ac96315c919Ac",
     "StonkzRouter": "0x985877AcDF01A21527E093bc4fCE513EB180C775",
     "PythPriceSource": "0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA",
     "Pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a"
@@ -43,7 +43,8 @@
     "2026-09-27: StonkzRouter redeployed at 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c (block 124911291) with the capped-buy refund and permit fall-through; previous router 0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa is unreferenced.",
     "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230, block 125797509).",
     "2026-09-29: launchpad upgraded in place (impl 0x68E6150B60bA0f456C52f0E31509ca260488F7c1): createToken refuses supply > 1e12. Layout unchanged.",
-    "2026-09-29: UpgradeAtomicLaunch: impl 0xe6afc300097A089f0749725dBF84BBdf0AA65F08, new StonkzRouter 0x985877AcDF01A21527E093bc4fCE513EB180C775 (createAndBuyWithEth / createWithPriceUpdate with Pyth updates), PythPriceSource 0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA deployed; launchpad priceSource NOT yet switched (still PushPriceSource). Old router kept as an indexer AtomicBuy source."
+    "2026-09-29: UpgradeAtomicLaunch: impl 0xe6afc300097A089f0749725dBF84BBdf0AA65F08, new StonkzRouter 0x985877AcDF01A21527E093bc4fCE513EB180C775 (createAndBuyWithEth / createWithPriceUpdate with Pyth updates), PythPriceSource 0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA deployed; launchpad priceSource NOT yet switched (still PushPriceSource). Old router kept as an indexer AtomicBuy source.",
+    "2026-09-29: launchpad priceSource switched to PythPriceSource 0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA (maxOracleStaleness 90000; per-feed Pyth max age 120s; RH stock bases fall back to PushPriceSource). Corrective UniswapV2Migrator 0xC21940AF1e8D6Ac81a40Aa5B8A0Ac96315c919Ac with new StonkzV2Factory 0x0FeA7f9A380A6451CeEaFFb07D86b72c8B5c2747 (pairs support swap/skim/sync)."
   ],
   "implementation": {
     "StonkzLaunchpad": "0xe6afc300097A089f0749725dBF84BBdf0AA65F08",
