@@ -29,9 +29,16 @@ export type BoardEvent =
   | { type: 'token_created'; net: Net; sym: string; payload: unknown }
   | { type: 'token_update'; net: Net; sym: string; payload: unknown }
   | { type: 'lane_move'; net: Net; sym: string; from: string; to: string }
-  | { type: 'koth'; net: Net; sym: string; mc: number }
+  | { type: 'koth'; net: Net; sym: string; mc: number; mcBase?: number }
   | { type: 'graduated'; net: Net; sym: string };
 
+/**
+ * Market-cap convention on every frame (0027): `mc` / `price` are USD at the
+ * launch snapshot price (what the indexer can compute without an oracle);
+ * `mcBase` / `priceBase` are the base-denominated truth. A client shows
+ * `mcBase × its own live base mark` and only falls back to `mc` when a frame
+ * predates `mcBase`.
+ */
 export type TokenEvent =
   | { type: 'fill'; net: Net; sym: string; payload: unknown; mint?: string }
   | {
@@ -40,6 +47,9 @@ export type TokenEvent =
       sym: string;
       mc: number;
       price: number;
+      /** Cap after the fill in whole base units, and base per token. */
+      mcBase?: number;
+      priceBase?: number;
       lane: string;
       mint?: string;
       /** From `/trade/confirm`'s fast path, ahead of the indexer's confirmation depth. */

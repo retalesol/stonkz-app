@@ -4,6 +4,7 @@ import {
   assertOnChainFeeSplit,
   baseAtomsToUsd,
   inferBaseDecimals,
+  marketCapBase,
   marketCapUsd,
   nativeFeeLegs,
   nativeNotional,
@@ -181,6 +182,12 @@ export async function mapSolanaTransaction(
             record.basePrice1e6,
             baseDecimals,
           ),
+          mcBase: marketCapBase(
+            record.virtualBase,
+            record.virtualToken,
+            record.supply,
+            baseDecimals,
+          ),
           curve: {
             tokenDecimals,
             baseDecimals,
@@ -233,6 +240,12 @@ export async function mapSolanaTransaction(
             record.virtualToken,
             meta.supplyAtoms,
             meta.basePrice1e6,
+            meta.baseDecimals,
+          ),
+          mcBase: marketCapBase(
+            record.virtualBase,
+            record.virtualToken,
+            meta.supplyAtoms,
             meta.baseDecimals,
           ),
           cashback: record.inCashback,
@@ -312,6 +325,9 @@ export async function mapSolanaTransaction(
           mint: record.mint,
           sym: meta.sym,
           mc: Number(record.mcapUsd1e6) / 1e6,
+          ...(meta.basePrice1e6 > 0n
+            ? { mcBase: Number(record.mcapUsd1e6) / Number(meta.basePrice1e6) }
+            : {}),
           ...(migrated ? { poolAddress: migrated.pool, positionAddress: migrated.position } : {}),
         });
         break;

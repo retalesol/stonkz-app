@@ -169,3 +169,34 @@ pub struct PauserConfig {
     pub bump: u8,
     pub pauser: Pubkey,
 }
+
+/// Referral payout configuration, appended in its own PDA
+/// (`["referral_config"]`) so no existing account layout changes. Admin sets
+/// `signer` (the API's Ed25519 voucher key), `max_per_day` (base atoms, the
+/// blast radius of a leaked signer; `0` refuses every claim, `u64::MAX`
+/// uncapped) and `cluster_tag`; admin or the pauser sets `paused`.
+#[account]
+#[derive(InitSpace)]
+pub struct ReferralConfig {
+    pub bump: u8,
+    pub signer: Pubkey,
+    pub paused: bool,
+    pub max_per_day: u64,
+    /// Start of the rolling day `claimed_today` counts against.
+    pub day_start: i64,
+    pub claimed_today: u64,
+    /// 8-byte cluster marker every voucher carries (`b"mainnet\0"`, …).
+    pub cluster_tag: [u8; 8],
+}
+
+/// Lifetime referral amount already paid to one recipient for one base mint
+/// (`["referral_claim", base_mint, recipient]`). A voucher pays
+/// `cumulative_amount - claimed`.
+#[account]
+#[derive(InitSpace)]
+pub struct ReferralClaimState {
+    pub bump: u8,
+    pub base_mint: Pubkey,
+    pub recipient: Pubkey,
+    pub claimed: u64,
+}

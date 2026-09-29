@@ -18,10 +18,17 @@ library RobinhoodChainTestnet {
     address internal constant UNIVERSAL_ROUTER = 0x8876789976dEcBfCbBbe364623C63652db8C0904;
     address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
-    /// @dev Uniswap V3 / V4 (testnet-specific; for API fee-tier overrides).
+    /// @dev Uniswap V3 / V4 (testnet-specific; for API fee-tier overrides and
+    /// the graduation pool). Fee tiers 100/500/3000/10000 are enabled.
     address internal constant UNISWAP_V3_FACTORY = 0xdf9e3D6ffaC4513dD7b053212bbECcbCD15ec932;
     address internal constant UNISWAP_V3_SWAP_ROUTER02 = 0xb79cB26e90EBBD9bC02c75267c9a86dBa1AFedB7;
     address internal constant UNISWAP_V4_POOL_MANAGER = 0x552815eF68E6eb418A3d65D0AA1043d93204F612;
+    /// **No NonfungiblePositionManager on 46630** (the mainnet pin and the
+    /// Base Sepolia one both hold no code here; checked 2026-09-30). This is
+    /// why `FeeLocker` owns graduation positions directly in the pool.
+    address internal constant UNISWAP_V3_NFPM = address(0);
+    /// Graduation pool fee tier for `UniswapV3Migrator` (1%, tick spacing 200).
+    uint24 internal constant GRADUATION_POOL_FEE = 10_000;
 
     /// @dev No Chainlink directory for 46630 — use PushPriceSource.
     uint64 internal constant ORACLE_MAX_AGE_SECS = 90_000;

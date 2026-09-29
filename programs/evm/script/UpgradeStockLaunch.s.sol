@@ -36,6 +36,13 @@ import {MainnetGuard} from "./MainnetGuard.sol";
 /// (default: the values of the router the proxy trusts today, else
 /// `RouterWiring` / none), `PAUSER`.
 ///
+/// **Implementation-only re-run** (`KEEP_ROUTER=1`, or `ROUTER_ADDRESS`):
+/// no new router; the new implementation trusts the router the proxy trusts
+/// today, so the swap is a pure logic change (e.g. shipping
+/// `accrueExternalFees` for the v3 `FeeLocker` — run this, then
+/// `DeployV3Migrator`). `ATTESTATION_SINK` and the cap are still carried
+/// over from that router, and the layout check runs as before.
+///
 /// **Mainnet** (`MainnetGuard`): the launchpad must already be under the
 /// timelock; the script deploys and prints the batch, and never calls the
 /// proxy. The same happens on a testnet when the signer is not the admin.
@@ -49,6 +56,8 @@ contract UpgradeStockLaunch is Script {
         /// `StockPriceSourceV2` to post "STKA" attestations to; zero drops them.
         /// Defaults to the current router's, so a re-run keeps attestations on.
         address attestationSink;
+        /// Reuse this router instead of deploying one; zero deploys a new one.
+        address router;
         MainnetGuard.Governance gov;
     }
 
@@ -69,6 +78,8 @@ contract UpgradeStockLaunch is Script {
         p.pyth = vm.envOr("PYTH_ADDRESS", p.pyth);
         p.pauser = vm.envOr("PAUSER", address(0));
         p.attestationSink = vm.envOr("ATTESTATION_SINK", p.attestationSink);
+        if (vm.envOr("KEEP_ROUTER", false)) p.router = StonkzLaunchpad(proxy).trustedRouter();
+        p.router = vm.envOr("ROUTER_ADDRESS", p.router);
         p.gov = gov;
         return execute(p, vm.envUint("PRIVATE_KEY"));
     }
@@ -104,17 +115,22 @@ contract UpgradeStockLaunch is Script {
         }
 
         vm.startBroadcast(pk);
-        r.router = address(
-            new StonkzRouter(
-                IUniversalRouter(ur),
-                StonkzLaunchpad(p.proxy),
-                IWETH9(weth),
-                ISwapRouter02(sr02),
-                p.cap,
-                IPyth(p.pyth),
-                IStockAttestationSink(p.attestationSink)
-            )
-        );
+        if (p.router != address(0)) {
+            require(p.router.code.length > 0, "UpgradeStockLaunch: no code at ROUTER_ADDRESS");
+            r.router = p.router;
+        } else {
+            r.router = address(
+                new StonkzRouter(
+                    IUniversalRouter(ur),
+                    StonkzLaunchpad(p.proxy),
+                    IWETH9(weth),
+                    ISwapRouter02(sr02),
+                    p.cap,
+                    IPyth(p.pyth),
+                    IStockAttestationSink(p.attestationSink)
+                )
+            );
+        }
         r.impl = address(new StonkzLaunchpad(r.router));
         if (direct) {
             pad.upgradeToAndCall(r.impl, "");
@@ -133,7 +149,7 @@ contract UpgradeStockLaunch is Script {
 
         console2.log("chain            ", block.chainid);
         console2.log("proxy            ", p.proxy);
-        console2.log("NEW StonkzRouter ", r.router);
+        console2.log(p.router != address(0) ? "router (kept)    " : "NEW StonkzRouter ", r.router);
         console2.log("new impl         ", r.impl);
         console2.log("pyth             ", p.pyth);
         console2.log("maxBuyNative     ", p.cap);

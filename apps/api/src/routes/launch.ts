@@ -1102,7 +1102,9 @@ export function launchRoutes(): Hono<AppEnv> {
       /** EVM router launch: the `AtomicBuy` that landed with it. */
       let evmDevBuy: EvmConfirmedDevBuy | null = null;
       let curveColumns: CurveStateColumns;
+      /** Launch cap at the snapshot price (`tokens.mc`) and in base units (`tokens.mcBase`, the truth). */
       let mcValue: number;
+      let mcBaseValue: number;
 
       try {
         if (net === 'SOL') {
@@ -1186,6 +1188,7 @@ export function launchRoutes(): Hono<AppEnv> {
           curveColumns = derived.columns;
           const mcapBaseAtoms = mcapBase(derived.state, supplyAtoms);
           mcValue = Number(mcapUsd1e6(mcapBaseAtoms, price1e6, baseDecimals)) / 1e6;
+          mcBaseValue = Number(mcapBaseAtoms) / 10 ** baseDecimals;
         } else {
           if (!isEvm(net)) return c.json({ error: 'bad_request', detail: 'unsupported net' }, 400);
           const launchpadAddr = evmLaunchpadAddress(deps.env, net);
@@ -1274,6 +1277,7 @@ export function launchRoutes(): Hono<AppEnv> {
           const mcapBaseAtoms = (decoded.virtualBase * decoded.supply) / decoded.virtualToken;
           mcValue =
             Number((mcapBaseAtoms * decoded.basePrice1e6) / 10n ** BigInt(baseDecimals)) / 1e6;
+          mcBaseValue = Number(mcapBaseAtoms) / 10 ** baseDecimals;
         }
       } catch (err) {
         if (err instanceof RpcError) {
@@ -1302,6 +1306,8 @@ export function launchRoutes(): Hono<AppEnv> {
             cbStartMs: intent.cashback ? now : null,
             mc: mcValue,
             lastMc: mcValue,
+            mcBase: mcBaseValue,
+            lastMcBase: mcBaseValue,
             lane: 'new',
             seed: Math.floor(now % 2_147_483_647),
             launchedAt: new Date(now),

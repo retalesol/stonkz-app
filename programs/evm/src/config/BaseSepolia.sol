@@ -20,6 +20,12 @@ library BaseSepolia {
     address internal constant UNISWAP_V3_FACTORY = 0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24;
     address internal constant UNISWAP_V3_SWAP_ROUTER02 = 0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4;
     address internal constant UNISWAP_V3_QUOTER_V2 = 0xC5290058841028F1614F3A6F0F5816cAd0df5E27;
+    /// NonfungiblePositionManager (docs.uniswap.org, Base Sepolia; `factory()`
+    /// verified on chain 2026-09-30). Reference only: `FeeLocker` owns its
+    /// positions directly in the pool and never touches the NFPM.
+    address internal constant UNISWAP_V3_NFPM = 0x27F971cb582BF9E50F397e4d29a5C7A34f11faA2;
+    /// Graduation pool fee tier for `UniswapV3Migrator` (1%, tick spacing 200).
+    uint24 internal constant GRADUATION_POOL_FEE = 10_000;
 
     /// PushPriceSource on testnet (Chainlink is mainnet cutover work).
     uint64 internal constant ORACLE_MAX_AGE_SECS = 90_000;

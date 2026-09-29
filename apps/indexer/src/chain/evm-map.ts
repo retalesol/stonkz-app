@@ -8,6 +8,7 @@ import {
   baseAtomsToUsd,
   inferBaseDecimals,
   isNativeBaseMint,
+  marketCapBase,
   marketCapUsd,
   nativeFeeLegs,
   nativeNotional,
@@ -172,6 +173,22 @@ function tradeFor(logs: readonly EvmTxLog[], index: number, token: string) {
   return undefined;
 }
 
+/**
+ * The `PoolFeesAccrued` that completes a post-graduation `FeeAccrued` at
+ * `index`: the next one for the same token, before any further `FeeAccrued`
+ * for it. `accrueExternalFees` emits `FeeAccrued`, `TreasuryCredit`,
+ * `PoolFeesAccrued` back to back.
+ */
+function poolFeesFor(logs: readonly EvmTxLog[], index: number, token: string) {
+  for (let i = index + 1; i < logs.length; i++) {
+    const event = logs[i]?.event;
+    if (!event) continue;
+    if (event.name === 'FeeAccrued' && addr(event.args, 'token') === token) return undefined;
+    if (event.name === 'PoolFeesAccrued' && addr(event.args, 'token') === token) return event;
+  }
+  return undefined;
+}
+
 export async function mapEvmTransaction(
   logs: readonly EvmTxLog[],
   ctx: EvmMapContext,
@@ -255,6 +272,7 @@ export async function mapEvmTransaction(
           cashback: bool(args, 'cashback'),
           seed: seedFromAddress(token),
           mc: marketCapUsd(virtualBase, virtualToken, supply, basePrice1e6, baseDecimals),
+          mcBase: marketCapBase(virtualBase, virtualToken, supply, baseDecimals),
           curve: {
             tokenDecimals,
             baseDecimals,
@@ -323,6 +341,12 @@ export async function mapEvmTransaction(
             meta.basePrice1e6,
             meta.baseDecimals,
           ),
+          mcBase: marketCapBase(
+            big(args, 'virtualBase'),
+            big(args, 'virtualToken'),
+            meta.supplyAtoms,
+            meta.baseDecimals,
+          ),
           cashback: bool(args, 'inCashback'),
           realBase: big(args, 'realBase').toString(),
           realToken: realToken.toString(),
@@ -344,11 +368,30 @@ export async function mapEvmTransaction(
         );
         const feeUsd = baseAtomsToUsd(feeTotal, meta.basePrice1e6, meta.baseDecimals);
         const trade = tradeFor(logs, index, token);
+        // No `Trade` means the fee did not come from a curve fill but from
+        // the graduated pool's locked position (`accrueExternalFees`), whose
+        // token side and staker peel follow on `PoolFeesAccrued`.
+        const pool = trade ? undefined : poolFeesFor(logs, index, token);
         // A cashback fill whose bucket was swapped into the token reports its
         // creator/staker peel (`feeCreator` / `feeStakers`) in **tokens**, so
         // neither is a native amount: the native peel is zero and the token
         // slices are carried separately.
         const converted = trade ? big(trade.args, 'cashbackTokens') > 0n : false;
+        const stakerAtoms = pool
+          ? big(pool.args, 'stakersBase')
+          : trade && !converted
+            ? big(trade.args, 'feeStakers')
+            : 0n;
+        const creatorTokenAtoms = pool
+          ? big(pool.args, 'tokenAmount') - big(pool.args, 'stakersToken')
+          : converted && trade
+            ? big(trade.args, 'feeCreator')
+            : 0n;
+        const stakerTokenAtoms = pool
+          ? big(pool.args, 'stakersToken')
+          : converted && trade
+            ? big(trade.args, 'feeStakers')
+            : 0n;
         out.push({
           ...base,
           kind: 'FeeAccrued',
@@ -365,21 +408,20 @@ export async function mapEvmTransaction(
               feeUsd,
               ctx.nativeUsdPrice,
             ),
-            trade && !converted ? big(trade.args, 'feeStakers') : 0n,
+            stakerAtoms,
             big(args, 'creatorBucket'),
             splitVersion,
           ),
-          creatorTokens: toWhole(
-            converted && trade ? big(trade.args, 'feeCreator') : 0n,
-            meta.tokenDecimals,
-          ),
-          stakerTokens: toWhole(
-            converted && trade ? big(trade.args, 'feeStakers') : 0n,
-            meta.tokenDecimals,
-          ),
+          creatorTokens: toWhole(creatorTokenAtoms, meta.tokenDecimals),
+          stakerTokens: toWhole(stakerTokenAtoms, meta.tokenDecimals),
+          ...(pool ? { postGraduation: true } : {}),
         });
         break;
       }
+
+      // Consumed by the `FeeAccrued` just before it (see above).
+      case 'PoolFeesAccrued':
+        break;
 
       // The redundant view of the same split `FeeAccrued` already credited —
       // see `solana-map.ts` decision (1). `_credit` on the launchpad emits
@@ -402,6 +444,10 @@ export async function mapEvmTransaction(
           mint: token,
           sym: meta.sym,
           mc: Number(big(args, 'mcapUsd1e6')) / 1e6,
+          // The program reports the cap at its snapshot price; back out the base figure.
+          ...(meta.basePrice1e6 > 0n
+            ? { mcBase: Number(big(args, 'mcapUsd1e6')) / Number(meta.basePrice1e6) }
+            : {}),
           ...(migrated ? { poolAddress: addr(migrated.args, 'pool') } : {}),
         });
         break;

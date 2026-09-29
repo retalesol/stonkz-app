@@ -6,6 +6,7 @@ import {
   RAR,
   RANKS,
   crateBy,
+  isEvm,
   num,
   rankOf,
 } from '@stonkz/shared';
@@ -15,9 +16,15 @@ import {
   SocialApiError,
   attachReferral,
   claimReferralFees,
+  confirmReferralClaim,
+  fetchReferralClaimable,
   fetchReferrals,
+  prepareReferralClaim,
+  type LiveReferralClaimable,
   type LiveReferralSnapshot,
 } from '../api/social.js';
+import { signAndConfirm, type SignPayload } from '../app/signer.js';
+import { type ReferralBusy, type ReferralModel, referralHTML } from './referral-view.js';
 import { back } from '../app/route.js';
 import { showView } from '../app/view.js';
 import { drawCrate } from '../canvas/crate.js';
@@ -75,6 +82,10 @@ import {
 
 let selCrate: CrateTier = 'GOLD';
 let REFERRAL: LiveReferralSnapshot | null = null;
+/** `GET /referrals/claimable` for the connected net; `null` until asked. */
+let REFERRAL_CLAIMABLE: LiveReferralClaimable | null = null;
+/** A self-serve on-chain claim in flight. */
+let REFERRAL_BUSY: ReferralBusy = null;
 /** The wallet the pane was last rendered for; a switch re-selects the first openable tier. */
 let lastWallet = '';
 
@@ -123,168 +134,23 @@ function model(now = Date.now()): RewardsModel {
 
 /* -------------------------------- referral --------------------------------- */
 
-function referralHTML(): Html {
-  if (api.mode !== 'live') {
-    return html`<section class="pnl" style="grid-column:1/-1">
-      <div class="pnl-hd">
-        <h2>Referrals</h2>
-        <span class="sub">LIVE MODE ONLY</span>
-      </div>
-      <div class="pnl-bd">
-        <p class="hint">
-          CONNECT IN LIVE TO SHARE A CODE ${DOT} EARN 15/10/5% OF REFERRAL FEES + 5% OF THEIR SP.
-        </p>
-      </div>
-    </section>`;
-  }
-  const r = REFERRAL;
-  if (!r) {
-    return html`<section class="pnl" style="grid-column:1/-1">
-      <div class="pnl-hd">
-        <h2>Referrals</h2>
-        <span class="sub">${WALLET.on ? 'LOADING…' : 'CONNECT A WALLET'}</span>
-      </div>
-      <div class="pnl-bd">
-        <p class="hint">
-          ${WALLET.on ? 'LOADING YOUR CODE…' : `CONNECT TO GET A CODE ${DOT} EARN 15/10/5% OF REFERRAL FEES + 5% OF THEIR SP.`}
-        </p>
-      </div>
-    </section>`;
-  }
-  const pending = r.pendingNative;
-  const unit = nativeUnit();
-  const tiers = r.tiers ?? [];
-  const requested = r.requestedNative ?? 0;
-  const paid = r.paidNative ?? 0;
-  const payouts = (r.payouts ?? []).slice(0, 5);
-  return html`<section class="pnl" style="grid-column:1/-1">
-    <div class="pnl-hd">
-      <h2>Referrals</h2>
-      <span class="sub"
-        >${r.directReferrals} DIRECT ${DOT} 15% / 10% / 5% FEE SHARE ${DOT} 5% SP KICKBACK</span
-      >
-    </div>
-    <div class="pnl-bd" style="display:flex;flex-direction:column;gap:10px">
-      <div>
-        <span class="lbl">YOUR CODE</span>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-          <code id="refCode" style="font-size:18px;letter-spacing:.12em;font-weight:700"
-            >${r.code}</code
-          ><button type="button" class="send" id="refCopy">COPY</button>
-        </div>
-        <p class="hint">FRIENDS PASTE THIS ON FIRST JOIN ${DOT} YOU EARN WHEN THEY TRADE.</p>
-      </div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <div>
-          <span class="lbl">PENDING FEES</span>
-          <div class="v" id="refPending">${pending.toFixed(4)} ${unit}</div>
-        </div>
-        <div>
-          <span class="lbl">LIFETIME</span>
-          <div class="v">${r.lifetimeNative.toFixed(4)} ${unit}</div>
-        </div>
-        <div>
-          <span class="lbl">AWAITING PAYOUT</span>
-          <div class="v${requested > 0 ? ' am' : ''}" id="refRequested">
-            ${requested.toFixed(4)} ${unit}
-          </div>
-        </div>
-        <div>
-          <span class="lbl">PAID OUT</span>
-          <div class="v" id="refPaid">${paid.toFixed(4)} ${unit}</div>
-        </div>
-        <div>
-          <span class="lbl">REFERRED BY</span>
-          <div class="v">${r.referredBy ? r.referredBy.slice(0, 8) + '…' : '—'}</div>
-        </div>
-      </div>
-      ${
-        tiers.length
-          ? html`<div class="scrolly">
-              <table class="tbl" id="refTiers">
-                <thead>
-                  <tr>
-                    <th>TIER</th>
-                    <th class="r">RATE</th>
-                    <th class="r">FILLS</th>
-                    <th class="r">PENDING ${unit}</th>
-                    <th class="r">LIFETIME ${unit}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${tiers.map(
-                    (t) =>
-                      html`<tr>
-                        <td>
-                          T${t.tier} ${DOT}
-                          ${t.tier === 1 ? 'DIRECT' : t.tier === 2 ? 'THEIR REFERRALS' : 'THIRD DEGREE'}
-                        </td>
-                        <td class="r">${(t.rate * 100).toFixed(0)}%</td>
-                        <td class="r">${num(t.fills)}</td>
-                        <td class="r${t.pendingNative > 0 ? ' up' : ' dm'}">
-                          ${t.pendingNative.toFixed(6)}
-                        </td>
-                        <td class="r dm">${t.lifetimeNative.toFixed(6)}</td>
-                      </tr>`,
-                  )}
-                </tbody>
-              </table>
-            </div>`
-          : ''
-      }
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button type="button" class="openbtn" id="refClaim" ${pending > 0 ? '' : ' disabled'}>
-          CLAIM AS $STONKZ
-        </button>
-        <button type="button" class="wiz-btn" id="refPayout" ${pending > 0 ? '' : ' disabled'}>
-          REQUEST ${unit} PAYOUT
-        </button>
-        <form id="refAttach" style="display:flex;gap:6px;align-items:center">
-          <input
-            class="fld"
-            id="refAttachCode"
-            maxlength="12"
-            placeholder="ENTER A CODE"
-            style="width:120px"
-          /><button class="send" type="submit">APPLY</button>
-        </form>
-      </div>
-      ${
-        payouts.length
-          ? html`<div class="hint" id="refPayouts">
-              ${payouts.map(
-                (p) =>
-                  html`<div>
-                    ${new Date(p.requestedAt).toISOString().slice(0, 10)} ${DOT}
-                    ${
-                      p.mode === 'stonkz'
-                        ? num(p.stonkz ?? 0) +
-                          ' $STONKZ FOR ' +
-                          p.amountNative.toFixed(6) +
-                          ' ' +
-                          unit
-                        : p.amountNative.toFixed(6) +
-                          ' ' +
-                          unit +
-                          ' ' +
-                          DOT +
-                          ' ' +
-                          p.status.toUpperCase() +
-                          (p.txSig ? ' ' + DOT + ' ' + p.txSig.slice(0, 10) + '…' : '')
-                    }
-                  </div>`,
-              )}
-            </div>`
-          : ''
-      }
-      <p class="hint">
-        15/10/5% OF REFERRED TRADERS&#8217; CURVE FEES, PAID OUT OF THE PLATFORM&#8217;S 15% LEG
-        ${DOT} CLAIM AS $STONKZ REWARD CREDITS AT ONCE, OR REQUEST THE ${unit} ITSELF: THE
-        COMMISSION SITS IN THE ON-CHAIN PROTOCOL VAULT AND IS SENT TO YOUR WALLET BY THE TREASURY
-        SIGNER IN A BATCH, THEN SHOWS AS PAID OUT HERE.
-      </p>
-    </div>
-  </section>`;
+/** The panel's model; `views/referral-view.ts` renders it (and is unit-tested on its own). */
+function referralModel(): ReferralModel {
+  return {
+    live: api.mode === 'live',
+    connected: WALLET.on,
+    loading: WALLET.on && REFERRAL === null,
+    snapshot: REFERRAL,
+    unit: nativeUnit(),
+    claimable: REFERRAL_CLAIMABLE
+      ? { configured: REFERRAL_CLAIMABLE.configured, assets: REFERRAL_CLAIMABLE.assets }
+      : null,
+    busy: REFERRAL_BUSY,
+  };
+}
+
+function referralPanelHTML(): Html {
+  return referralHTML(referralModel());
 }
 
 /**
@@ -335,10 +201,84 @@ async function refreshReferralPanel(): Promise<void> {
   } catch {
     REFERRAL = null;
   }
+  // Only worth a round trip on a net that advertises a vault; elsewhere the
+  // request flow stands and the answer would be `configured: false` anyway.
+  if (REFERRAL?.onchainClaims) {
+    try {
+      REFERRAL_CLAIMABLE = await fetchReferralClaimable(WALLET.net);
+    } catch {
+      REFERRAL_CLAIMABLE = null;
+    }
+  } else {
+    REFERRAL_CLAIMABLE = null;
+  }
+  repaintReferralPanel();
+}
+
+function repaintReferralPanel(): void {
   const slot = $('#refPanel');
   if (slot) {
-    render(slot, referralHTML());
+    render(slot, referralPanelHTML());
     bindReferralControls();
+  }
+}
+
+/**
+ * CLAIM ON CHAIN: the API drains pending into a signed cumulative voucher and
+ * returns the transaction; the wallet signs it (one signature, inline, like a
+ * claim of creator fees); the API reads the receipt back and marks the rows
+ * paid. A voucher that was signed but never sent is simply re-issued next
+ * time — the amount is cumulative, so nothing is lost or paid twice. On the
+ * EVM nets the WETH is unwrapped: `claimAsEth` pays ETH to the wallet.
+ */
+async function claimReferralOnChain(asset: string | undefined): Promise<void> {
+  if (REFERRAL_BUSY) return;
+  const net = WALLET.net;
+  const setBusy = (b: ReferralBusy): void => {
+    REFERRAL_BUSY = b;
+    repaintReferralPanel();
+  };
+  setBusy('preparing');
+  try {
+    const prep = await prepareReferralClaim(net, asset);
+    const payload: SignPayload =
+      prep.net === 'SOL'
+        ? {
+            net: 'SOL',
+            transaction: prep.transaction,
+            lastValidBlockHeight: prep.lastValidBlockHeight,
+          }
+        : {
+            net: isEvm(prep.net) ? prep.net : 'RH',
+            to: prep.to,
+            data: prep.dataUnwrap,
+            value: prep.value,
+          };
+    setBusy('signing');
+    const sent = await signAndConfirm(net, payload);
+    setBusy('confirming');
+    if (sent.simulated) {
+      toast('CLAIM SIMULATED ' + DOT + ' NOTHING SETTLED', 'gold');
+      return;
+    }
+    const done = await confirmReferralClaim(net, sent.signature);
+    toast(
+      'CLAIMED ' + done.paidNative.toFixed(6) + ' ' + nativeUnit() + ' FROM REFERRALS ON CHAIN',
+      'gold',
+    );
+  } catch (err) {
+    if (err instanceof SocialApiError) {
+      if (err.code === 'nothing_to_claim') toast('NOTHING TO CLAIM');
+      else if (err.code === 'claim_in_progress') toast('A CLAIM IS ALREADY IN PROGRESS');
+      else if (err.code === 'not_confirmed') {
+        toast('CLAIM SENT ' + DOT + ' STILL CONFIRMING; IT WILL SHOW AS PAID SHORTLY');
+      } else toast(err.message || 'CLAIM FAILED');
+    } else {
+      toast(err instanceof Error ? err.message : 'CLAIM FAILED');
+    }
+  } finally {
+    REFERRAL_BUSY = null;
+    await refreshReferralPanel();
   }
 }
 
@@ -369,6 +309,11 @@ function bindReferralControls(): void {
       }
     })();
   });
+  for (const btn of $$('#refControls [id="refClaimChain"]')) {
+    btn.addEventListener('click', () => {
+      void claimReferralOnChain((btn as HTMLElement).dataset['asset']);
+    });
+  }
   $('#refPayout')?.addEventListener('click', () => {
     void (async () => {
       try {
@@ -590,7 +535,7 @@ export function renderRewards(): void {
         </section>
         <section class="pnl" id="cratePane">${paneHTML(selCrate, now)}</section>
         ${balancesHTML(m)} ${itemsHTML(m)}
-        <div id="refPanel">${referralHTML()}</div>
+        <div id="refPanel">${referralPanelHTML()}</div>
         <section class="pnl" style="grid-column:1/-1">
           <div class="pnl-hd">
             <h2>Achievements</h2>

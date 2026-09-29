@@ -216,7 +216,10 @@ export async function confirmTradeFills(
       mint: payload.mint,
       mc: payload.mc,
       price: payload.tok > 0 ? payload.v / payload.tok : 0,
-      // A graduated token stays graduated, as in `Ingestor.updateToken`.
+      mcBase: payload.mcBase,
+      priceBase: payload.priceBase,
+      // A graduated token stays graduated, as in `Ingestor.updateToken`. The
+      // lane reads the snapshot-priced cap: base-proportional, like the chain.
       lane: lane === 'grad' ? 'grad' : laneOf({ mc: payload.mc }),
       provisional: true,
     });

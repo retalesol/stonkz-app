@@ -364,7 +364,12 @@ export interface FillPayload {
   buy: boolean;
   sol: number;
   tok: number;
+  /** Cap after the fill, USD at the launch snapshot price (base-proportional). */
   mc: number;
+  /** Cap after the fill in whole base units — what a client marks at its live base price. */
+  mcBase: number;
+  /** Base per token after the fill. */
+  priceBase: number;
   w: string;
   v: number;
   cb: boolean;
@@ -408,25 +413,25 @@ export function fillPayload(
   } else {
     sol = ctx.nativeUsdPrice > 0 ? usdValue / ctx.nativeUsdPrice : 0;
   }
-  const mc =
+  const mcBaseAtoms =
     fill.virtualToken > 0n
-      ? Number(
-          mcapUsd1e6(
-            mcapBase(
-              {
-                virtualBase: fill.virtualBase,
-                virtualToken: fill.virtualToken,
-                realBase: 0n,
-                realToken: 0n,
-                k: fill.virtualBase * fill.virtualToken,
-              },
-              meta.supplyAtoms,
-            ),
-            meta.basePrice1e6,
-            meta.baseDecimals,
-          ),
-        ) / 1e6
+      ? mcapBase(
+          {
+            virtualBase: fill.virtualBase,
+            virtualToken: fill.virtualToken,
+            realBase: 0n,
+            realToken: 0n,
+            k: fill.virtualBase * fill.virtualToken,
+          },
+          meta.supplyAtoms,
+        )
+      : 0n;
+  const mc =
+    mcBaseAtoms > 0n
+      ? Number(mcapUsd1e6(mcBaseAtoms, meta.basePrice1e6, meta.baseDecimals)) / 1e6
       : 0;
+  const mcBase = mcBaseAtoms > 0n ? whole(mcBaseAtoms, meta.baseDecimals) : 0;
+  const supplyWhole = whole(meta.supplyAtoms, meta.tokenDecimals);
   // EVM hashes are lowercased everywhere the indexer stores them.
   const sig = ctx.net === 'SOL' ? ctx.txSig : ctx.txSig.toLowerCase();
   return {
@@ -438,6 +443,8 @@ export function fillPayload(
     sol,
     tok: whole(fill.tokenAmount, meta.tokenDecimals),
     mc,
+    mcBase,
+    priceBase: supplyWhole > 0 ? mcBase / supplyWhole : 0,
     w: fill.trader,
     v: usdValue,
     cb: fill.inCashback,

@@ -183,6 +183,20 @@
       "when": 1790600000000,
       "tag": "0026_graduation_pool",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790670000000,
+      "tag": "0027_live_market_caps",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790740000000,
+      "tag": "0028_referral_onchain_claims",
+      "breakpoints": true
     }
   ]
 }

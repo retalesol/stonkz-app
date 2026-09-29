@@ -56,7 +56,10 @@ export interface Trade {
   buy: boolean;
   sol: number;
   tok: number;
+  /** Cap after the fill, USD at the live base mark. */
   mc: number;
+  /** Cap after the fill in the coin's base unit — what the chart re-prices from (live). */
+  mcBase?: number;
   /** Display label (short addr or CASHBACK). */
   w: string;
   /** Full wallet for profile links when known. */
@@ -98,6 +101,14 @@ export interface SimCoin extends Coin {
   liveHolders?: Holder[] | null;
   /** Launch time, epoch ms, when the API sent it — NEWEST sorts on this, not the coarse `age`. */
   launchedAt?: number;
+  /**
+   * Live mode: the cap in the coin's base asset — the source of truth. `mc`
+   * is `mcBase × the live base mark` and is re-derived on every native-price
+   * tick (`api/live-fills.ts`'s `remarkCaps`). Absent on sim coins.
+   */
+  mcBase?: number;
+  /** Live mode: USD per base unit the API last served (a stable's $1, a stock base's live price). */
+  baseUsd?: number;
 }
 
 /** Seed rows: sym, name, desc, mcap, 24h %, replies, holders, age in minutes. */
@@ -432,6 +443,7 @@ export function pushTrade(
     mine?: boolean;
     tok?: number;
     mc?: number;
+    mcBase?: number;
     w?: string;
     addr?: string;
     v?: string;
@@ -489,6 +501,9 @@ export function pushTrade(
       sol: o.sol || prev.sol,
       tok,
       mc: o.mc ?? prev.mc,
+      ...(o.mcBase !== undefined || prev.mcBase !== undefined
+        ? { mcBase: o.mcBase ?? prev.mcBase }
+        : {}),
       ...(o.cb !== undefined || prev.cb !== undefined ? { cb: o.cb ?? prev.cb } : {}),
       w: preferPrevWallet ? prev.w : o.cb ? 'CASHBACK' : (o.w ?? prev.w),
       ...(preferPrevWallet || o.addr || prev.addr
@@ -519,6 +534,7 @@ export function pushTrade(
     sol: o.sol,
     tok,
     mc: o.mc ?? c.mc,
+    ...(o.mcBase !== undefined ? { mcBase: o.mcBase } : {}),
     cb: !!o.cb,
     w: o.cb ? 'CASHBACK' : (o.w ?? (o.mine ? 'YOU..7xKQ' : fakeAddr((Math.random() * 1e6) | 0))),
     ...(o.addr ? { addr: o.addr } : {}),

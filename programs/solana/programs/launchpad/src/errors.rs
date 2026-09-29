@@ -75,4 +75,17 @@ pub enum LaunchpadError {
     PositionMismatch,
     #[msg("This coin's liquidity has not been migrated yet")]
     NotMigrated,
+    /// Referral payouts (appended, positional).
+    #[msg("Referral claims are paused")]
+    ReferralClaimsPaused,
+    #[msg("No referral signer is configured")]
+    ReferralSignerUnset,
+    #[msg("Referral voucher has expired")]
+    ReferralVoucherExpired,
+    #[msg("No Ed25519 verification of this referral voucher by the configured signer precedes this instruction")]
+    ReferralSignatureInvalid,
+    #[msg("Referral voucher does not exceed what this recipient has already claimed")]
+    ReferralNothingToClaim,
+    #[msg("Referral claim would exceed today's cap")]
+    ReferralDailyCapExceeded,
 }

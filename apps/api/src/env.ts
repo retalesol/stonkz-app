@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import { withChainsFile } from './chains-file.js';
-import type { Net } from '@stonkz/shared';
+import type { EvmNet, Net } from '@stonkz/shared';
 import { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
 import { ARC_BLOCK_MS, ARC_CHAIN_ID, ARC_EXPLORER_URL, ARC_RPC_URL } from './chain/arc.js';
 import {
@@ -223,6 +223,38 @@ export interface ApiEnv {
    */
   stockPriceAttesterKey: string | undefined;
 
+  /* ------------------------------------------------------- referral payouts */
+
+  /**
+   * `REFERRAL_SIGNER_KEY_EVM`: 32-byte hex secp256k1 key that signs EIP-712
+   * referral vouchers for the EVM `ReferralVault`s (`game/referral-signer.ts`).
+   * Message signing only — it holds no funds and pays no gas; the vault's
+   * `maxPerDay` bounds what a leak could cost. Unset: EVM on-chain claims are
+   * off and the panel keeps the operator-batch request flow.
+   */
+  referralSignerKeyEvm: string | undefined;
+  /**
+   * `REFERRAL_SIGNER_KEY_SOL`: Ed25519 seed for Solana vouchers — 32-byte hex,
+   * or a 64-number JSON array as `solana-keygen` writes it. Same posture as
+   * the EVM key. Unset: Solana on-chain claims are off.
+   */
+  referralSignerKeySol: string | undefined;
+  /**
+   * `REFERRAL_VAULT_ADDRESS_{RH,BASE,ARC}`: the deployed `ReferralVault` per
+   * EVM net (`script/DeployReferralVault.s.sol`). Zero = not deployed there.
+   * Solana's vault is a PDA of the launchpad program and needs no address.
+   */
+  referralVaultAddress: Record<EvmNet, string>;
+  /**
+   * `REFERRAL_ASSET_{RH,BASE,ARC}` = `address:decimals:symbol` — the ERC-20 the
+   * net's referral vault pays (commissions are booked in the native unit, so
+   * this is the wrapped native). Defaults to the net's pinned WETH (18) on RH
+   * and Base; Arc has no pinned wrapped USDC yet, so it must be set there.
+   */
+  referralAsset: Record<EvmNet, { address: string; decimals: number; symbol: string } | null>;
+  /** How long a voucher stays redeemable (`REFERRAL_CLAIM_DEADLINE_SECONDS`, default 1800). */
+  referralClaimDeadlineSeconds: number;
+
   launchIntentTtlSeconds: number;
   launchRateLimitPerWallet: number;
   launchRateLimitWindowSeconds: number;
@@ -302,6 +334,22 @@ function int(src: EnvSource, key: string, fallback: number): number {
 }
 
 /** Basis points, `0`–`10000`. */
+/** `address:decimals:symbol`, or `null` when empty. Malformed values fail the boot. */
+function referralAsset(
+  src: EnvSource,
+  key: string,
+  fallback: string,
+): { address: string; decimals: number; symbol: string } | null {
+  const raw = str(src, key, fallback);
+  if (!raw) return null;
+  const [address, dec, symbol] = raw.split(':').map((s) => s.trim());
+  const decimals = Number.parseInt(dec ?? '', 10);
+  if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address) || !Number.isInteger(decimals) || !symbol) {
+    throw new Error(`env ${key} must be address:decimals:symbol, got ${JSON.stringify(raw)}`);
+  }
+  return { address, decimals, symbol };
+}
+
 function bps(src: EnvSource, key: string, fallback: number): number {
   const n = int(src, key, fallback);
   if (n < 0 || n > 10_000) throw new Error(`env ${key} must be 0-10000 bps, got ${n}`);
@@ -571,6 +619,27 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
     stockDevBuyMaxImpactBps: bps(src, 'STOCK_DEV_BUY_MAX_IMPACT_BPS', 500),
     stockPriceMaxDivergenceBps: bps(src, 'STOCK_PRICE_MAX_DIVERGENCE_BPS', 500),
     stockPriceAttesterKey: src['STOCK_PRICE_ATTESTER_KEY']?.trim() || undefined,
+    referralSignerKeyEvm: src['REFERRAL_SIGNER_KEY_EVM']?.trim() || undefined,
+    referralSignerKeySol: src['REFERRAL_SIGNER_KEY_SOL']?.trim() || undefined,
+    referralVaultAddress: {
+      RH: str(src, 'REFERRAL_VAULT_ADDRESS_RH', ZERO_EVM_ADDRESS),
+      BASE: str(src, 'REFERRAL_VAULT_ADDRESS_BASE', ZERO_EVM_ADDRESS),
+      ARC: str(src, 'REFERRAL_VAULT_ADDRESS_ARC', ZERO_EVM_ADDRESS),
+    },
+    referralAsset: {
+      RH: referralAsset(
+        src,
+        'REFERRAL_ASSET_RH',
+        '0x7943e237c7F95DA44E0301572D358911207852Fa:18:WETH',
+      ),
+      BASE: referralAsset(
+        src,
+        'REFERRAL_ASSET_BASE',
+        '0x4200000000000000000000000000000000000006:18:WETH',
+      ),
+      ARC: referralAsset(src, 'REFERRAL_ASSET_ARC', ''),
+    },
+    referralClaimDeadlineSeconds: int(src, 'REFERRAL_CLAIM_DEADLINE_SECONDS', 1800),
     defillamaCoinsUrl: str(src, 'DEFILLAMA_COINS_URL', 'https://coins.llama.fi').replace(
       /\/+$/,
       '',

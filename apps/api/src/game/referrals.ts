@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { parseUnits } from 'viem';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   REFERRAL_FEE_RATES,
@@ -17,6 +18,7 @@ import {
   referralPayouts,
   referrals,
   trades,
+  type ReferralVoucherRecord,
 } from '../db/schema.js';
 import type { Ledger } from './ledger.js';
 import { REASONS } from './rules.js';
@@ -38,18 +40,63 @@ export interface ReferralTierSnapshot {
   fills: number;
 }
 
+/** How a `native` payout is settled: the operator batch, or a self-serve on-chain claim. */
+export type ReferralPayoutMethod = 'batch' | 'onchain';
+
 export interface ReferralPayoutRow {
   id: number;
   net: Net;
   wallet: string;
   amountNative: number;
   mode: ReferralPayoutMode;
+  method: ReferralPayoutMethod;
   status: 'requested' | 'paid' | 'void';
   tiers: Record<string, number>;
   stonkz: number | null;
   txSig: string | null;
+  /** On-chain rows only. */
+  asset: string | null;
+  amountAtoms: string | null;
+  cumulativeAtoms: string | null;
   requestedAt: number;
   settledAt: number | null;
+}
+
+/** One asset's self-serve claim position for a wallet, all in the asset's atoms. */
+export interface ReferralOnchainPosition {
+  /** Not yet drained into a voucher, in the ledger's native unit. */
+  pendingNative: number;
+  pendingAtoms: bigint;
+  /** Highest cumulative the vault has confirmed paying (`paid` rows). */
+  paidCumulativeAtoms: bigint;
+  /** Highest cumulative ever signed (`requested` + `paid` rows). */
+  signedCumulativeAtoms: bigint;
+  /** What the chain would pay right now if a fresh voucher were redeemed. */
+  claimableAtoms: bigint;
+  /** Signed but not yet confirmed on chain (a voucher out in the wild). */
+  awaitingConfirmAtoms: bigint;
+  /** Open on-chain rows, oldest first. */
+  outstandingIds: number[];
+}
+
+/**
+ * Whole native units to atoms. The ledger is a double (`0.15` is really
+ * `0.1499999999999999944…`), so amounts are rounded to 12 decimals first —
+ * 1e-12 ETH / 1e-12 SOL, far below any economic meaning — and then scaled to
+ * the asset's precision. Deterministic, so the same balance always yields the
+ * same cumulative.
+ */
+export const ATOMS_ROUNDING_DECIMALS = 12;
+
+export function nativeToAtoms(native: number, decimals: number): bigint {
+  if (!(native > 0)) return 0n;
+  return parseUnits(native.toFixed(Math.min(decimals, ATOMS_ROUNDING_DECIMALS)), decimals);
+}
+
+/** Atoms to whole units, splitting integer and fraction so 276e12 wei reads back exactly. */
+export function atomsToNative(atoms: bigint, decimals: number): number {
+  const scale = 10n ** BigInt(decimals);
+  return Number(atoms / scale) + Number(atoms % scale) / Number(scale);
 }
 
 export interface ReferralClaimResult {
@@ -210,10 +257,14 @@ export class ReferralService {
       wallet: r.wallet,
       amountNative: r.amountNative,
       mode: r.mode as ReferralPayoutMode,
+      method: (r.method === 'onchain' ? 'onchain' : 'batch') as ReferralPayoutMethod,
       status: r.status as ReferralPayoutRow['status'],
       tiers: r.tiers,
       stonkz: r.stonkz,
       txSig: r.txSig,
+      asset: r.asset ?? null,
+      amountAtoms: r.amountAtoms ?? null,
+      cumulativeAtoms: r.cumulativeAtoms ?? null,
       requestedAt: r.requestedAt.getTime(),
       settledAt: r.settledAt ? r.settledAt.getTime() : null,
     };
@@ -510,15 +561,18 @@ export class ReferralService {
 
   /* ------------------------------------------------------------ operator */
 
-  /** Native payout requests awaiting the treasury signer, oldest first. */
+  /**
+   * Native payout requests awaiting the treasury signer, oldest first.
+   * Batch rows only: an `onchain` row is settled by the referrer's own
+   * voucher redemption and must never also be paid by the authority.
+   */
   async listPayoutRequests(net?: Net): Promise<ReferralPayoutRow[]> {
-    const where = net
-      ? and(
-          eq(referralPayouts.mode, 'native'),
-          eq(referralPayouts.status, 'requested'),
-          eq(referralPayouts.net, net),
-        )
-      : and(eq(referralPayouts.mode, 'native'), eq(referralPayouts.status, 'requested'));
+    const base = and(
+      eq(referralPayouts.mode, 'native'),
+      eq(referralPayouts.status, 'requested'),
+      eq(referralPayouts.method, 'batch'),
+    );
+    const where = net ? and(base, eq(referralPayouts.net, net)) : base;
     const rows = await this.db
       .select()
       .from(referralPayouts)
@@ -537,6 +591,7 @@ export class ReferralService {
         and(
           inArray(referralPayouts.id, ids),
           eq(referralPayouts.mode, 'native'),
+          eq(referralPayouts.method, 'batch'),
           eq(referralPayouts.status, 'requested'),
         ),
       )
@@ -553,7 +608,12 @@ export class ReferralService {
         .from(referralPayouts)
         .where(eq(referralPayouts.id, id))
         .for('update');
-      if (!row || row.mode !== 'native' || row.status !== 'requested') return false;
+      // An on-chain row is never voided: its cumulative may already be in a
+      // signed voucher, and returning the amount to pending would let it be
+      // signed twice.
+      if (!row || row.mode !== 'native' || row.status !== 'requested' || row.method === 'onchain') {
+        return false;
+      }
       await tx
         .update(referralPayouts)
         .set({ status: 'void', note, settledAt: nowDate })
@@ -585,4 +645,204 @@ export class ReferralService {
       return true;
     });
   }
+
+  /* ------------------------------------------------------ on-chain claims */
+
+  /**
+   * The wallet's self-serve position for one asset. `pending` is the DB
+   * balance not yet drained into a voucher; the cumulatives come from the
+   * immutable `onchain` payout rows, so what the API signs next is always
+   * `max signed + pending` and can never exceed lifetime earned.
+   */
+  async onchainPosition(
+    net: Net,
+    wallet: string,
+    asset: string,
+    decimals: number,
+  ): Promise<ReferralOnchainPosition> {
+    const [bal] = await this.db
+      .select({ pendingNative: referralFeeBalances.pendingNative })
+      .from(referralFeeBalances)
+      .where(and(eq(referralFeeBalances.net, net), eq(referralFeeBalances.wallet, wallet)))
+      .limit(1);
+    const rows = await this.db
+      .select({
+        id: referralPayouts.id,
+        status: referralPayouts.status,
+        cumulativeAtoms: referralPayouts.cumulativeAtoms,
+      })
+      .from(referralPayouts)
+      .where(
+        and(
+          eq(referralPayouts.net, net),
+          eq(referralPayouts.wallet, wallet),
+          eq(referralPayouts.method, 'onchain'),
+          eq(referralPayouts.asset, asset),
+        ),
+      )
+      .orderBy(referralPayouts.id);
+    return positionOf(bal?.pendingNative ?? 0, decimals, rows);
+  }
+
+  /**
+   * Drain the pending balance into a new on-chain payout row and return the
+   * cumulative the voucher must certify. Idempotent while nothing new has
+   * accrued: with `pending == 0` no row is added and the current signed
+   * cumulative is returned, so a lost or expired voucher is simply re-issued.
+   *
+   * One transaction: the balance row is locked, the tier rows are zeroed by
+   * the same amounts, and the row records the atoms and the running
+   * cumulative — the same drain `claimFees` does, with an immutable ledger of
+   * what was signed. Callers serialise per wallet on top (the route holds a
+   * Redis lock) so two prepares cannot interleave between drain and sign.
+   */
+  async prepareOnchainClaim(
+    net: Net,
+    wallet: string,
+    asset: string,
+    decimals: number,
+  ): Promise<ReferralOnchainPosition & { payoutId: number | null }> {
+    const nowDate = new Date(this.now());
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(referralFeeBalances)
+        .where(and(eq(referralFeeBalances.net, net), eq(referralFeeBalances.wallet, wallet)))
+        .for('update');
+      const pending = row?.pendingNative ?? 0;
+      const pendingAtoms = nativeToAtoms(pending, decimals);
+
+      const existing = await tx
+        .select({
+          id: referralPayouts.id,
+          status: referralPayouts.status,
+          cumulativeAtoms: referralPayouts.cumulativeAtoms,
+        })
+        .from(referralPayouts)
+        .where(
+          and(
+            eq(referralPayouts.net, net),
+            eq(referralPayouts.wallet, wallet),
+            eq(referralPayouts.method, 'onchain'),
+            eq(referralPayouts.asset, asset),
+          ),
+        )
+        .orderBy(referralPayouts.id);
+      const before = positionOf(pending, decimals, existing);
+      if (pendingAtoms === 0n) return { ...before, payoutId: null };
+
+      const tierRows = await tx
+        .select()
+        .from(referralFeeTierBalances)
+        .where(
+          and(eq(referralFeeTierBalances.net, net), eq(referralFeeTierBalances.wallet, wallet)),
+        )
+        .for('update');
+      const tiers: Record<string, number> = {};
+      for (const t of tierRows) if (t.pendingNative > 0) tiers[String(t.tier)] = t.pendingNative;
+
+      await tx
+        .update(referralFeeBalances)
+        .set({ pendingNative: 0, updatedAt: nowDate })
+        .where(and(eq(referralFeeBalances.net, net), eq(referralFeeBalances.wallet, wallet)));
+      await tx
+        .update(referralFeeTierBalances)
+        .set({ pendingNative: 0, updatedAt: nowDate })
+        .where(
+          and(eq(referralFeeTierBalances.net, net), eq(referralFeeTierBalances.wallet, wallet)),
+        );
+
+      const cumulative = before.signedCumulativeAtoms + pendingAtoms;
+      const [payout] = await tx
+        .insert(referralPayouts)
+        .values({
+          net,
+          wallet,
+          amountNative: pending,
+          mode: 'native',
+          method: 'onchain',
+          status: 'requested',
+          tiers,
+          stonkz: null,
+          asset,
+          amountAtoms: pendingAtoms.toString(),
+          cumulativeAtoms: cumulative.toString(),
+          requestedAt: nowDate,
+          settledAt: null,
+        })
+        .returning({ id: referralPayouts.id });
+      const after = positionOf(0, decimals, [
+        ...existing,
+        { id: payout?.id ?? 0, status: 'requested', cumulativeAtoms: cumulative.toString() },
+      ]);
+      return { ...after, payoutId: payout?.id ?? null };
+    });
+  }
+
+  /** Remember the voucher issued for the newest open row (audit / re-serve). */
+  async recordVoucher(payoutId: number, voucher: ReferralVoucherRecord): Promise<void> {
+    await this.db.update(referralPayouts).set({ voucher }).where(eq(referralPayouts.id, payoutId));
+  }
+
+  /**
+   * The chain paid up to `cumulativeAtoms` in `txSig`: every open on-chain row
+   * at or below it is settled. Returns the rows it changed.
+   */
+  async confirmOnchainClaim(
+    net: Net,
+    wallet: string,
+    asset: string,
+    txSig: string,
+    cumulativeAtoms: bigint,
+  ): Promise<number> {
+    const open = await this.db
+      .select({ id: referralPayouts.id, cumulativeAtoms: referralPayouts.cumulativeAtoms })
+      .from(referralPayouts)
+      .where(
+        and(
+          eq(referralPayouts.net, net),
+          eq(referralPayouts.wallet, wallet),
+          eq(referralPayouts.method, 'onchain'),
+          eq(referralPayouts.asset, asset),
+          eq(referralPayouts.status, 'requested'),
+        ),
+      );
+    const ids = open
+      .filter((r) => BigInt(r.cumulativeAtoms ?? '0') <= cumulativeAtoms)
+      .map((r) => r.id);
+    if (ids.length === 0) return 0;
+    const updated = await this.db
+      .update(referralPayouts)
+      .set({ status: 'paid', txSig, settledAt: new Date(this.now()) })
+      .where(and(inArray(referralPayouts.id, ids), eq(referralPayouts.status, 'requested')))
+      .returning({ id: referralPayouts.id });
+    return updated.length;
+  }
+}
+
+/** Fold the immutable on-chain rows (+ the live pending) into a position. */
+function positionOf(
+  pendingNative: number,
+  decimals: number,
+  rows: { id: number; status: string; cumulativeAtoms: string | null }[],
+): ReferralOnchainPosition {
+  let paid = 0n;
+  let signed = 0n;
+  const outstandingIds: number[] = [];
+  for (const r of rows) {
+    const c = BigInt(r.cumulativeAtoms ?? '0');
+    if (r.status === 'paid' && c > paid) paid = c;
+    if ((r.status === 'paid' || r.status === 'requested') && c > signed) signed = c;
+    if (r.status === 'requested') outstandingIds.push(r.id);
+  }
+  const pendingAtoms = nativeToAtoms(pendingNative, decimals);
+  return {
+    pendingNative,
+    pendingAtoms,
+    paidCumulativeAtoms: paid,
+    signedCumulativeAtoms: signed,
+    claimableAtoms: signed + pendingAtoms - paid,
+    awaitingConfirmAtoms: signed - paid,
+    outstandingIds,
+  };
 }

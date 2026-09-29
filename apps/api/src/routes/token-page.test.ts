@@ -25,6 +25,11 @@ const NOW = 1_790_710_764_000;
 const SUPPLY = 1_000_000;
 /** Oracle snapshot at `create_token`, USD per ETH × 1e6 (from mc / mcBase). */
 const BASE_PRICE_1E6 = '2736600000';
+const SNAPSHOT_ETH = 2736.6;
+/** The test app's live ETH mark (`FakePriceOracle`): every USD figure is base × this. */
+const LIVE_ETH = 4200;
+/** MEMEMAN's cap in ETH after fill #2 (virtualBase / virtualToken × supply). */
+const MC_BASE = 1.612823;
 
 /* Trade event #2's post-fill state. `virtualBase0 = virtualBase - realBase`,
  * `virtualToken0 = virtualToken + (tokensForSale - realToken)`. */
@@ -167,24 +172,80 @@ describe('curveFacts', () => {
 
 describe('GET /tokens/:sym (detail extras)', () => {
   it('reports real 24h / lifetime volume, native cap and real liquidity beside the Coin shape', async () => {
-    const { status, body } = await get<Record<string, number | string>>('/tokens/MEMEMAN' + Q);
+    const { status, body } = await get<Record<string, number | string | boolean>>(
+      '/tokens/MEMEMAN' + Q,
+    );
     expect(status).toBe(200);
-    expect(body['mc']).toBeCloseTo(4413.656488, 6);
+    // Pump.fun semantics: the ETH cap is the truth and the dollar figure is
+    // that cap at the LIVE ETH price, not the $2,736.6 stamped at launch.
+    expect(body['mcBase']).toBeCloseTo(MC_BASE, 5);
+    expect(body['baseUsd']).toBe(LIVE_ETH);
+    expect(body['baseUsdLive']).toBe(true);
+    expect(body['baseUsdAtLaunch']).toBe(SNAPSHOT_ETH);
+    expect(body['mc']).toBeCloseTo((body['mcBase'] as number) * LIVE_ETH, 6);
+    expect(body['priceUsd']).toBeCloseTo((body['mc'] as number) / SUPPLY, 12);
     expect(body['nativeUnit']).toBe('ETH');
-    expect(body['vol24Usd']).toBeCloseTo(54.732052, 6);
+    expect(body['baseUnit']).toBe('WETH');
+    // 24h volume is the ETH traded at today's price; the recorded figure and
+    // the lifetime total stay as the fills wrote them.
+    expect(body['vol24Base']).toBeCloseTo(0.02, 9);
+    expect(body['vol24Usd']).toBeCloseTo(0.02 * LIVE_ETH, 6);
+    expect(body['vol24UsdRecorded']).toBeCloseTo(54.732052, 6);
     expect(body['vol24Native']).toBeCloseTo(0.02, 9);
     expect(body['trades24h']).toBe(2);
     expect(body['volTotalUsd']).toBeCloseTo(54.732052, 6);
+    expect(body['volTotalBase']).toBeCloseTo(0.02, 9);
     expect(body['tradeCount']).toBe(2);
-    expect(body['mcBase']).toBeCloseTo(1.612823, 5);
     // Liquidity is the ETH the curve really holds, not 14% of the cap.
     expect(body['liqBase']).toBe(0.0196);
-    expect(body['liqUsd']).toBeCloseTo(0.0196 * 2736.6, 6);
+    expect(body['liqUsd']).toBeCloseTo(0.0196 * LIVE_ETH, 6);
     expect(body['circulating']).toBeCloseTo(12_294.3056, 3);
     expect(body['lpReserve']).toBe(200_000);
     expect(body['graduationUsd']).toBe(GRAD);
     expect(body['graduationBase']).toBeCloseTo(25.2142, 3);
+    expect(body['graduationUsdLive']).toBeCloseTo((body['graduationBase'] as number) * LIVE_ETH, 3);
     expect(body['web']).toBe('mememan.example');
+  });
+
+  it('re-marks the dollar cap when ETH moves and leaves curve progress alone', async () => {
+    const at4200 = (await get<Record<string, number | boolean>>('/tokens/MEMEMAN' + Q)).body;
+    h.oracle.set('ETH', 2100);
+    const at2100 = (await get<Record<string, number | boolean>>('/tokens/MEMEMAN' + Q)).body;
+    try {
+      expect(at2100['mc']).toBeCloseTo((at4200['mc'] as number) / 2, 6);
+      expect(at2100['lastMc']).toBeCloseTo((at4200['lastMc'] as number) / 2, 6);
+      expect(at2100['liqUsd']).toBeCloseTo((at4200['liqUsd'] as number) / 2, 9);
+      expect(at2100['vol24Usd']).toBeCloseTo((at4200['vol24Usd'] as number) / 2, 9);
+      expect(at2100['mcBase']).toBe(at4200['mcBase']);
+      // Graduation is measured in ETH on chain: the fill % and readiness do
+      // not move with the ETH price, only the dollar label of the target does.
+      expect(at2100['curvePct']).toBe(at4200['curvePct']);
+      expect(at2100['curvePct']).toBeCloseTo(0.1564, 3);
+      expect(at2100['curveFillPct']).toBe(at4200['curveFillPct']);
+      expect(at2100['graduationReady']).toBe(false);
+      expect(at2100['graduationUsdLive']).toBeCloseTo(
+        (at4200['graduationUsdLive'] as number) / 2,
+        6,
+      );
+      // The coin's own 24h change is in ETH terms and never re-priced.
+      expect(at2100['chg']).toBe(at4200['chg']);
+    } finally {
+      h.oracle.set('ETH', LIVE_ETH);
+    }
+  });
+
+  it('falls back to the launch snapshot when the oracle has no price', async () => {
+    h.oracle.set('ETH', 0);
+    try {
+      const { body } = await get<Record<string, number | boolean>>('/tokens/MEMEMAN' + Q);
+      // mcBase × $2,736.6 is what the indexer recorded as `mc` (to the cent:
+      // the fixture's `mc` was rounded from the event's reserves).
+      expect(body['mc']).toBeCloseTo(4413.656488, 1);
+      expect(body['baseUsd']).toBe(SNAPSHOT_ETH);
+      expect(body['baseUsdLive']).toBe(false);
+    } finally {
+      h.oracle.set('ETH', LIVE_ETH);
+    }
   });
 
   it('drops a fill out of the 24h window while keeping it in the lifetime totals', async () => {
@@ -203,43 +264,94 @@ describe('GET /tokens/:sym/candles', () => {
     h: number;
     l: number;
     c: number;
+    ob: number;
+    hb: number;
+    lb: number;
+    cb: number;
     v: number;
+    baseVolume: number;
     trades: number;
   };
+  type Body = {
+    basis: string;
+    bucketMs: number;
+    baseUnit: string;
+    baseUsd: number;
+    baseUsdLive: boolean;
+    candles: Candle[];
+  };
+  /** Fill #1's cap in ETH (the row predates `mc_base`, so it converts back from the snapshot). */
+  const CAP1_BASE = 4362.931659 / SNAPSHOT_ETH;
+  const CAP2_BASE = 4413.656488 / SNAPSHOT_ETH;
 
   it('builds spot-priced candles from the fills, bucketed like the indexer', async () => {
-    const { body } = await get<{ basis: string; bucketMs: number; candles: Candle[] }>(
-      '/tokens/MEMEMAN/candles' + Q + '&tf=1m',
-    );
+    const { body } = await get<Body>('/tokens/MEMEMAN/candles' + Q + '&tf=1m');
     expect(body.basis).toBe('spot');
     expect(body.bucketMs).toBe(60_000);
+    expect(body.baseUnit).toBe('WETH');
+    expect(body.baseUsd).toBe(LIVE_ETH);
+    expect(body.baseUsdLive).toBe(true);
     expect(body.candles.map((k) => k.t)).toEqual([T1, 1_790_687_760_000]);
     const [a, b] = body.candles as [Candle, Candle];
-    // Close is the header's price: cap / supply.
-    expect(a.c).toBeCloseTo(4362.931659 / SUPPLY, 15);
-    expect(b.c).toBeCloseTo(4413.656488 / SUPPLY, 15);
+    // The native axis is the cap in ETH / supply; the USD axis is that × live ETH.
+    expect(a.cb).toBeCloseTo(CAP1_BASE / SUPPLY, 15);
+    expect(b.cb).toBeCloseTo(CAP2_BASE / SUPPLY, 15);
+    expect(a.c).toBeCloseTo(a.cb * LIVE_ETH, 15);
+    expect(b.c).toBeCloseTo(b.cb * LIVE_ETH, 15);
     // The second candle opens at the first's close and holds it as its low.
+    expect(b.ob).toBe(a.cb);
+    expect(b.lb).toBe(a.cb);
+    expect(b.hb).toBe(b.cb);
     expect(b.o).toBe(a.c);
     expect(b.l).toBe(a.c);
-    expect(b.h).toBe(b.c);
+    // Volume as recorded, plus the base leg.
     expect(a.v).toBeCloseTo(27.366026, 6);
+    expect(a.baseVolume).toBeCloseTo(0.01, 12);
     expect(a.trades).toBe(1);
   });
 
+  it('moves the USD axis with the ETH price and keeps the native axis fixed', async () => {
+    const before = (await get<Body>('/tokens/MEMEMAN/candles' + Q + '&tf=1m')).body;
+    h.oracle.set('ETH', 8400);
+    try {
+      const after = (await get<Body>('/tokens/MEMEMAN/candles' + Q + '&tf=1m')).body;
+      expect(after.baseUsd).toBe(8400);
+      after.candles.forEach((k, i) => {
+        const was = before.candles[i] as Candle;
+        expect(k.cb).toBe(was.cb);
+        expect(k.ob).toBe(was.ob);
+        expect(k.c).toBeCloseTo(was.c * 2, 15);
+        expect(k.h).toBeCloseTo(was.h * 2, 15);
+        expect(k.v).toBe(was.v);
+      });
+    } finally {
+      h.oracle.set('ETH', LIVE_ETH);
+    }
+  });
+
   it('serves every timeframe with the indexer bucket starts', async () => {
-    const five = await get<{ candles: Candle[] }>('/tokens/MEMEMAN/candles' + Q + '&tf=5m');
+    const five = await get<Body>('/tokens/MEMEMAN/candles' + Q + '&tf=5m');
     expect(five.body.candles.map((k) => k.t)).toEqual([1_790_686_200_000, 1_790_687_700_000]);
-    const day = await get<{ candles: Candle[] }>('/tokens/MEMEMAN/candles' + Q + '&tf=1d');
+    const day = await get<Body>('/tokens/MEMEMAN/candles' + Q + '&tf=1d');
     expect(day.body.candles).toHaveLength(1);
     expect(day.body.candles[0]).toMatchObject({ trades: 2 });
     expect(day.body.candles[0]?.v).toBeCloseTo(54.732052, 6);
-    expect(day.body.candles[0]?.o).toBeCloseTo(4362.931659 / SUPPLY, 15);
-    expect(day.body.candles[0]?.c).toBeCloseTo(4413.656488 / SUPPLY, 15);
+    expect(day.body.candles[0]?.ob).toBeCloseTo(CAP1_BASE / SUPPLY, 15);
+    expect(day.body.candles[0]?.cb).toBeCloseTo(CAP2_BASE / SUPPLY, 15);
+    expect(day.body.candles[0]?.c).toBeCloseTo((CAP2_BASE / SUPPLY) * LIVE_ETH, 15);
   });
 });
 
 describe('GET /tokens/:sym/trades', () => {
-  type Row = { id: number; sig: string; t: number; mc: number; v: number };
+  type Row = {
+    id: number;
+    sig: string;
+    t: number;
+    mc: number;
+    mcRecorded: number;
+    mcBase: number;
+    v: number;
+  };
 
   it('pages older fills with a `before` cursor and says when more exist', async () => {
     const first = await get<{ hasMore: boolean; nextBefore?: number; trades: Row[] }>(
@@ -253,7 +365,11 @@ describe('GET /tokens/:sym/trades', () => {
     );
     expect(older.body.trades.map((t) => t.sig)).toEqual([SIG1]);
     expect(older.body.hasMore).toBe(false);
-    expect(older.body.trades[0]).toMatchObject({ t: T1, mc: 4362.931659, v: 27.366026 });
+    // The cap after the fill at today's ETH price; the recorded USD stays.
+    const row = older.body.trades[0] as Row;
+    expect(row).toMatchObject({ t: T1, mcRecorded: 4362.931659, v: 27.366026 });
+    expect(row.mcBase).toBeCloseTo(4362.931659 / SNAPSHOT_ETH, 9);
+    expect(row.mc).toBeCloseTo(row.mcBase * LIVE_ETH, 6);
   });
 });
 

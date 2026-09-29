@@ -113,7 +113,24 @@ export const LAUNCHPAD_EVENTS_ABI = [
     inputs: [
       { name: 'token', type: 'address', indexed: true },
       { name: 'pool', type: 'address', indexed: false },
+      // The v2 migrator's burned LP; the v3 migrator's locked liquidity.
       { name: 'liquidityBurned', type: 'uint256', indexed: false },
+    ],
+  },
+  // `accrueExternalFees`: fees collected from a graduated coin's locked v3
+  // position. The launchpad emits the usual `FeeAccrued` + `TreasuryCredit`
+  // pair for the base side first, then this with what those cannot carry —
+  // the token side and the staker peel of each (a curve fill's peel is read
+  // off its `Trade`; a pool claim has none).
+  {
+    type: 'event',
+    name: 'PoolFeesAccrued',
+    inputs: [
+      { name: 'token', type: 'address', indexed: true },
+      { name: 'baseAmount', type: 'uint256', indexed: false },
+      { name: 'tokenAmount', type: 'uint256', indexed: false },
+      { name: 'stakersBase', type: 'uint256', indexed: false },
+      { name: 'stakersToken', type: 'uint256', indexed: false },
     ],
   },
   {

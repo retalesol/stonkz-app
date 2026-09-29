@@ -78,7 +78,16 @@ import {
   settingsPayload,
 } from '../state/settings.js';
 import { fillCandleGaps } from '../lib/candles.js';
-import { FillLedger, applyFillToSeries, type FillSource, type SeriesAnchor } from './live-fills.js';
+import {
+  FillLedger,
+  applyFillToSeries,
+  capUsd,
+  coinBaseUsd,
+  nudgedCap,
+  remarkCaps,
+  type FillSource,
+  type SeriesAnchor,
+} from './live-fills.js';
 import { NATIVE_PRICE, WALLET, selectNet, nativeUsd } from '../state/wallet.js';
 import { activeWallet, isRejection, pendingSignature, requireWallet } from '../wallet/index.js';
 import { LaunchPendingError, LaunchedDevBuyError, type LaunchHooks } from './launch-errors.js';
@@ -149,6 +158,10 @@ interface ApiToken {
   image?: string;
   mint?: string;
   tradeable?: boolean;
+  /** Cap in the base asset (the truth) and the USD-per-base mark `mc` was converted at. */
+  mcBase?: number;
+  lastMcBase?: number;
+  baseUsd?: number;
   /** Epoch ms; NEWEST sorts on it (the `age` minutes are too coarse to order by). */
   launchedAt?: number;
   /** Graduation as the chain has it — see `SerialisedToken` for the four fields. */
@@ -173,12 +186,16 @@ interface ApiCandle {
   h: number;
   l: number;
   c: number;
+  /** The same candle in base per token (0027). */
+  cb?: number;
   v: number;
   nativeVolume: number;
 }
 
 interface ApiCandlesResponse {
   candles: ApiCandle[];
+  /** USD per base unit the `o`–`c` figures were converted at. */
+  baseUsd?: number;
 }
 
 export interface ApiTradeRow {
@@ -189,6 +206,8 @@ export interface ApiTradeRow {
   sol: number;
   tok: number;
   mc: number;
+  /** Cap after the fill in the coin's base unit (0027). */
+  mcBase?: number;
   w: string;
   v: number;
   cb: boolean;
@@ -228,7 +247,10 @@ interface ApiFillPayload {
   buy: boolean;
   sol: number;
   tok: number;
+  /** Cap after the fill, USD at the launch snapshot price (see `mcBase`). */
   mc: number;
+  /** Cap after the fill in the base unit — marked at the live base price here. */
+  mcBase?: number;
   w: string;
   v: number;
   cb?: boolean;
@@ -547,13 +569,24 @@ function isApiToken(t: unknown): t is ApiToken {
   return !!t && typeof t === 'object' && typeof (t as ApiToken).sym === 'string';
 }
 
+/**
+ * The coin's USD cap from a board/detail read: `mcBase × the live base mark`
+ * when the API sent a base figure (so a coin fetched seconds after a native
+ * price tick already reads at today's mark), else the API's `mc`.
+ */
+function liveMc(t: { net: Net; base?: string; baseUsd?: number; mc: number; mcBase?: number }) {
+  return capUsd(t.mcBase, coinBaseUsd(t, nativeUsd), t.mc);
+}
+
 function toSimCoin(t: ApiToken): SimCoin {
   return {
     id: t.id ?? t.seed ?? 0,
     sym: t.sym,
     name: t.name,
     desc: t.desc,
-    mc: t.mc,
+    mc: liveMc(t),
+    ...(t.mcBase !== undefined ? { mcBase: t.mcBase } : {}),
+    ...(t.baseUsd !== undefined ? { baseUsd: t.baseUsd } : {}),
     chg: t.chg,
     reps: t.reps,
     hold: t.hold,
@@ -623,7 +656,9 @@ function mintQs(c: { mint?: string }): string {
 /** Patch an already-rendered coin in place, so `c.el` and open charts survive. */
 function patchCoin(c: SimCoin, t: ApiToken): void {
   c.lastMc = c.mc;
-  c.mc = t.mc;
+  if (t.mcBase !== undefined) c.mcBase = t.mcBase;
+  if (t.baseUsd !== undefined) c.baseUsd = t.baseUsd;
+  c.mc = liveMc({ ...t, ...(c.baseUsd !== undefined ? { baseUsd: c.baseUsd } : {}) });
   c.chg = t.chg;
   c.reps = t.reps;
   c.hold = t.hold;
@@ -641,10 +676,19 @@ function patchCoin(c: SimCoin, t: ApiToken): void {
 }
 
 /** Candle closes -> the market-cap series `drawTokenChart` already draws. */
-function applyCandles(c: SimCoin, candles: ApiCandle[]): void {
+function applyCandles(c: SimCoin, candles: ApiCandle[], baseUsd?: number): void {
   const supply = c.supply || SUPPLY;
+  // Base closes × the live base mark: the series the card sparkline draws is
+  // in today's dollars, like the cap beside it.
+  const mark = coinBaseUsd(c, nativeUsd);
+  const usdClose = (k: ApiCandle): number =>
+    k.cb !== undefined && k.cb > 0 && mark > 0
+      ? k.cb * mark
+      : baseUsd !== undefined && baseUsd > 0 && mark > 0
+        ? (k.c / baseUsd) * mark
+        : k.c;
   const filled = fillCandleGaps(
-    candles.map((k) => ({ t: k.t, c: k.c, v: k.v })),
+    candles.map((k) => ({ t: k.t, c: usdClose(k), v: k.v })),
     60_000,
   );
   c.h = filled.map((k) => k.c * supply);
@@ -692,10 +736,14 @@ function applyLiveFill(c: SimCoin, f: ApiFillPayload, source: FillSource): void 
   // Prints can land out of order (an older fill's indexed twin after a newer
   // provisional one); only the newest may move the headline cap.
   const newest = t >= (latestFillT.get(c) ?? 0);
+  // The frame's `mc` is at the launch snapshot price; mark the base cap at
+  // today's — the same arithmetic the API's reads use.
+  const mc = capUsd(f.mcBase, coinBaseUsd(c, nativeUsd), f.mc);
   if (newest) {
     latestFillT.set(c, t);
     c.lastMc = c.mc;
-    c.mc = f.mc;
+    c.mc = mc;
+    if (f.mcBase !== undefined) c.mcBase = f.mcBase;
   }
   const side = f.buy ? 'buy' : 'sell';
   const hops = hopsForTrade(c, side, f.sol, f.tok);
@@ -703,7 +751,8 @@ function applyLiveFill(c: SimCoin, f: ApiFillPayload, source: FillSource): void 
     buy: f.buy,
     sol: f.sol,
     tok: f.tok,
-    mc: f.mc,
+    mc,
+    ...(f.mcBase !== undefined ? { mcBase: f.mcBase } : {}),
     cb: !!f.cb,
     w: f.cb ? 'CASHBACK' : shortAddr(f.w),
     ...(f.cb ? {} : { addr: f.w }),
@@ -721,7 +770,7 @@ function applyLiveFill(c: SimCoin, f: ApiFillPayload, source: FillSource): void 
       anchorOf(c),
       {
         t,
-        mc: newest ? f.mc : (c.h[c.h.length - 1] ?? f.mc),
+        mc: newest ? mc : (c.h[c.h.length - 1] ?? mc),
         volUsd: f.v > 0 ? f.v : f.sol * (NATIVE_PRICE.usd || 0),
       },
       verdict === 'add',
@@ -818,7 +867,8 @@ export function mapTradeRow(c: SimCoin, r: ApiTradeRow): Trade {
     buy: r.buy,
     sol: r.sol,
     tok: r.tok,
-    mc: r.mc,
+    mc: capUsd(r.mcBase, coinBaseUsd(c, nativeUsd), r.mc),
+    ...(r.mcBase !== undefined ? { mcBase: r.mcBase } : {}),
     cb: !!r.cb,
     w: r.cb ? 'CASHBACK' : shortAddr(r.w),
     ...(r.cb ? {} : { addr: r.w }),
@@ -974,6 +1024,10 @@ async function refreshNativePrices(): Promise<void> {
     if (typeof res.SOL === 'number' && res.SOL > 0) NATIVE_PRICE.sol = res.SOL;
     if (typeof res.ETH === 'number' && res.ETH > 0) NATIVE_PRICE.eth = res.ETH;
     NATIVE_PRICE.usd = nativeUsd(nativeUnitOf(WALLET.net));
+    // Every card's dollar cap follows the native mark (Pump.fun): re-derive
+    // from the base caps, then `tick` repaints the board and the open chart.
+    // Throttled by the poll itself (~30s).
+    remarkCaps(COINS, nativeUsd);
     emit('tick');
   } catch {
     // Keep last marks; the footer just stays stale until the next poll.
@@ -1392,8 +1446,10 @@ function onBoardEvent(data: Record<string, unknown>): void {
     case 'koth': {
       const c = sym ? findCoin({ sym, mint }) : null;
       if (c) {
+        const mcBase = data['mcBase'];
         c.lastMc = c.mc;
-        c.mc = data['mc'] as number;
+        if (typeof mcBase === 'number' && mcBase > 0) c.mcBase = mcBase;
+        c.mc = capUsd(c.mcBase, coinBaseUsd(c, nativeUsd), data['mc'] as number);
       }
       emit('tick');
       return;
@@ -1422,7 +1478,8 @@ function onTapeEvent(data: Record<string, unknown>): void {
   if (c && payload.t >= (latestFillT.get(c) ?? 0) && Number.isFinite(payload.mc)) {
     latestFillT.set(c, payload.t);
     c.lastMc = c.mc;
-    c.mc = payload.mc;
+    if (payload.mcBase !== undefined && payload.mcBase > 0) c.mcBase = payload.mcBase;
+    c.mc = capUsd(payload.mcBase, coinBaseUsd(c, nativeUsd), payload.mc);
     emit('tick');
   }
   // The strip itself decides whether this print is new (`views/tape.ts`).
@@ -1447,9 +1504,15 @@ function onTokenEvent(sym: string, data: Record<string, unknown>): void {
       // While a provisional print is outstanding its fill frames own the cap
       // (newest-first); an indexed `curve` for an older fill would pull it back.
       const mc = data['mc'];
+      const mcBase = data['mcBase'];
       if (typeof mc === 'number' && Number.isFinite(mc) && !ledgerOf(c).hasPending()) {
         c.lastMc = c.mc;
-        c.mc = mc;
+        if (typeof mcBase === 'number' && mcBase > 0) c.mcBase = mcBase;
+        c.mc = capUsd(
+          typeof mcBase === 'number' ? mcBase : undefined,
+          coinBaseUsd(c, nativeUsd),
+          mc,
+        );
       }
       const lane = data['lane'] as Lane;
       if (lane && c.lane !== lane) {
@@ -1571,7 +1634,7 @@ async function hydrateToken(c: SimCoin): Promise<void> {
   const mq = mintQs(c);
   const [candlesRes, tradesRes, holdersRes] = await Promise.all([
     getJson<ApiCandlesResponse>(`/tokens/${c.sym}/candles?net=${net}&tf=1m&limit=200${mq}`).catch(
-      () => ({ candles: [] }),
+      (): ApiCandlesResponse => ({ candles: [] }),
     ),
     getJson<ApiTradesResponse>(`/tokens/${c.sym}/trades?net=${net}&limit=40${mq}`).catch(() => ({
       trades: [],
@@ -1580,7 +1643,7 @@ async function hydrateToken(c: SimCoin): Promise<void> {
       (): ApiHoldersResponse => ({ holders: [] }),
     ),
   ]);
-  applyCandles(c, candlesRes.candles);
+  applyCandles(c, candlesRes.candles, candlesRes.baseUsd);
   c.trades = tradesRes.trades.map((r) => mapTradeRow(c, r));
   c.liveHolders = mapHolders(c, holdersRes.holders, holdersRes.curveWallet);
   if (typeof holdersRes.holderCount === 'number') {
@@ -1805,10 +1868,13 @@ function applyConfirmedTrade(
     ? ledgerOf(c).admit({ sig: signature, source: 'local' }, Date.now())
     : 'add';
   if (verdict === 'add') {
-    // Display-only nudge until the exact post-fill cap arrives.
+    // Display-only nudge until the exact post-fill cap arrives — applied to
+    // the base cap too, so the next native-price tick lands on the same figure.
     const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
     c.lastMc = c.mc;
-    c.mc = Math.max(900, c.mc * (1 + (buy ? push : -push) * 0.55));
+    const nudged = nudgedCap(c, 1 + (buy ? push : -push) * 0.55);
+    c.mc = nudged.mc;
+    if (nudged.mcBase !== undefined) c.mcBase = nudged.mcBase;
     if (c.h && c.hv) {
       applyFillToSeries(
         c.h,
@@ -1825,6 +1891,7 @@ function applyConfirmedTrade(
     sol: nativeAmt,
     tok: tokAmt,
     mc: c.mc,
+    ...(c.mcBase !== undefined ? { mcBase: c.mcBase } : {}),
     w: shortAddr(sessionWallet(net)),
     addr: sessionWallet(net),
     v: quote.routeLabel || venueFor(c),
@@ -2325,6 +2392,44 @@ async function liveGraduate(coin: SimCoin): Promise<void> {
     net,
     prep.net === 'SOL' ? solPayload(prep) : evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'),
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pool fees — `POST /tokens/:sym/pool-fees/claim/prepare`.                    */
+/* -------------------------------------------------------------------------- */
+
+interface ApiPoolFeesPrepare {
+  net: EvmNet;
+  sym: string;
+  to: string;
+  data: string;
+  value: string;
+  pendingBase: number;
+  baseSym: string;
+  pendingTokens: number;
+}
+
+/**
+ * The permissionless `FeeLocker.claimFees` for a v3-graduated coin, one
+ * signature: collects the locked position's fees and routes them into the
+ * launchpad's ledgers (creator, stakers, treasuries). The caller gets nothing
+ * but the gas bill; the numbers returned are what the claim will collect.
+ */
+export async function liveClaimPoolFees(
+  coin: SimCoin,
+): Promise<{ pendingBase: number; baseSym: string; pendingTokens: number }> {
+  const net = WALLET.net;
+  const prep = await postJson<ApiPoolFeesPrepare>(
+    '/tokens/' + encodeURIComponent(coin.sym) + '/pool-fees/claim/prepare',
+    coin.mint ? { mint: coin.mint } : {},
+    net,
+  );
+  await signAndConfirm(net, evmPayload(prep, isEvm(prep.net) ? prep.net : 'RH'));
+  return {
+    pendingBase: prep.pendingBase,
+    baseSym: prep.baseSym,
+    pendingTokens: prep.pendingTokens,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

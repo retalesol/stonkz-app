@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { and, desc, eq, getTableColumns, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import { MAJORS, isEvm, nativeUnit, parseNet, stockBasesFor, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
@@ -10,7 +10,9 @@ import { fillId } from '../chain/trade-fills.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import { kothOverrides } from '../admin/index.js';
 import type { AppEnv } from '../app/context.js';
-import { serialiseToken, type TokenRow } from './serialise.js';
+import { serialiseToken, usdFromBase, type TokenRow } from './serialise.js';
+import { snapshotBaseUsd } from './curve-facts.js';
+import { LiveBaseUsd } from './live-base-usd.js';
 import { resolveTokenRow } from './token-resolve.js';
 
 /** `GET /koth`, `GET /tape`, `GET /base-tokens`, `GET /treasuries`. */
@@ -37,23 +39,39 @@ export function marketRoutes(): Hono<AppEnv> {
       if (!pinned) continue;
       const idx = rows.findIndex((r) => r.net === oNet);
       const crownedAt = rows[idx]?.crownedAt ?? new Date(deps.now());
-      const crown = { net: oNet, sym: pinned.sym, mc: pinned.mc, crownedAt };
+      const crown = {
+        net: oNet,
+        sym: pinned.sym,
+        mc: pinned.mc,
+        mcBase: pinned.mcBase ?? null,
+        crownedAt,
+      };
       if (idx >= 0) rows[idx] = crown;
       else rows.push(crown);
     }
 
     const now = deps.now();
+    const prices = new LiveBaseUsd(deps);
     const kings = await Promise.all(
       rows.map(async (row) => {
         const token = await resolveTokenRow(deps.db, row.net, { sym: row.sym });
+        // The crown's cap follows the live base price like the card does; the
+        // `koth` row itself is the indexer's snapshot at crowning.
+        const view = token
+          ? serialiseToken(token as TokenRow, now, {
+              baseUsd: await prices.liveForRow(token as TokenRow),
+            })
+          : null;
         return {
           net: row.net as Net,
           sym: row.sym,
-          mc: row.mc,
+          mc: view ? view.mc : row.mc,
+          mcBase: view ? view.mcBase : (row.mcBase ?? 0),
+          baseUsd: view ? view.baseUsd : 0,
           crownedAt: row.crownedAt.getTime(),
           // 5s `crowned` glow in the UI keys off this.
           freshMs: now - row.crownedAt.getTime(),
-          token: token ? serialiseToken(token as TokenRow, now) : null,
+          token: view,
         };
       }),
     );
@@ -97,37 +115,57 @@ export function marketRoutes(): Hono<AppEnv> {
       partition by ${tape.net}, ${tape.txSig} order by ${tape.logIndex}
     ) - 1)::int`;
     // The newest coin with this ticker on this net, so the board can key the
-    // print to a card even when a ticker was reused.
-    const mint = sql<string | null>`(
-      select t.mint from ${tokens} t
+    // print to a card even when a ticker was reused — and its base, so the
+    // print's cap can be marked at today's base price.
+    const newest = (col: string): SQL<string | null> => sql<string | null>`(
+      select t.${sql.raw(col)} from ${tokens} t
       where t.net = ${TAPE_NET} and t.sym = ${TAPE_SYM}
       order by t.launched_at desc limit 1
     )`;
+    const mint = newest('mint');
+    const baseSymbol = newest('base_symbol');
+    const basePrice1e6 = newest('base_price_usd_1e6');
 
     const rows = await deps.db
-      .select({ ...getTableColumns(tape), ordinal, mint })
+      .select({ ...getTableColumns(tape), ordinal, mint, baseSymbol, basePrice1e6 })
       .from(tape)
       .where(and(...filters))
       .orderBy(desc(tape.id))
       .limit(max);
 
+    const prices = new LiveBaseUsd(deps);
     return c.json({
       net: net ?? 'ALL',
-      fills: rows.map((r) => ({
-        t: r.blockTime.getTime(),
-        sym: r.sym,
-        net: r.net,
-        ...(r.mint ? { mint: r.mint } : {}),
-        buy: r.side === 'buy',
-        sol: r.nativeAmount,
-        tok: r.tokenAmount,
-        mc: r.mc,
-        w: r.trader,
-        v: r.usdValue,
-        cb: r.cashback,
-        sig: r.txSig,
-        fid: fillId(r.txSig, r.ordinal),
-      })),
+      fills: await Promise.all(
+        rows.map(async (r) => {
+          const snapshot = snapshotBaseUsd({ basePriceUsd1e6: r.basePrice1e6 ?? '0' });
+          const mcBase =
+            r.mcBase !== null && r.mcBase > 0
+              ? r.mcBase
+              : snapshot > 0 && r.mc > 0
+                ? r.mc / snapshot
+                : 0;
+          const baseUsd = r.baseSymbol
+            ? await prices.price(r.net as Net, r.baseSymbol, r.basePrice1e6 ?? '0')
+            : 0;
+          return {
+            t: r.blockTime.getTime(),
+            sym: r.sym,
+            net: r.net,
+            ...(r.mint ? { mint: r.mint } : {}),
+            buy: r.side === 'buy',
+            sol: r.nativeAmount,
+            tok: r.tokenAmount,
+            mc: usdFromBase(mcBase, baseUsd, r.mc),
+            ...(mcBase > 0 ? { mcBase, baseUsd } : {}),
+            w: r.trader,
+            v: r.usdValue,
+            cb: r.cashback,
+            sig: r.txSig,
+            fid: fillId(r.txSig, r.ordinal),
+          };
+        }),
+      ),
     });
   });
 

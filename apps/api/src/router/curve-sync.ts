@@ -34,6 +34,7 @@ export type CurveSyncRow = CurveStateRow & {
   graduatedAt: Date | null;
   supply?: number;
   mc?: number;
+  mcBase?: number | null;
   lane?: string | null;
 };
 
@@ -169,15 +170,17 @@ export async function fetchSolCurveReserves(opts: {
   }
 }
 
-function mcUsdFromRow(row: CurveSyncRow): number | null {
+/** The cap the live reserves imply: USD at the launch snapshot (`mc`) and in base units (`mcBase`). */
+function mcFromRow(row: CurveSyncRow): { usd: number; base: number } | null {
   if (!hasCurveState(row) || row.supply === undefined) return null;
   try {
     const state = liveCurveState(row);
     const supplyAtoms = BigInt(Math.round(row.supply)) * 10n ** BigInt(row.tokenDecimals);
-    const base = mcapBase(state, supplyAtoms);
-    const usd1e6 = mcapUsd1e6(base, BigInt(row.basePriceUsd1e6 || '0'), row.baseDecimals);
+    const baseAtoms = mcapBase(state, supplyAtoms);
+    const usd1e6 = mcapUsd1e6(baseAtoms, BigInt(row.basePriceUsd1e6 || '0'), row.baseDecimals);
     const usd = Number(usd1e6) / 1e6;
-    return Number.isFinite(usd) && usd > 0 ? usd : null;
+    const base = Number(baseAtoms) / 10 ** row.baseDecimals;
+    return Number.isFinite(usd) && usd > 0 && Number.isFinite(base) ? { usd, base } : null;
   } catch {
     return null;
   }
@@ -194,24 +197,32 @@ async function persistReserves<T extends CurveSyncRow>(
     curveRealToken: live.realToken,
   } as T;
 
-  const mc = mcUsdFromRow(next);
+  const cap = mcFromRow(next);
   const patch: {
     curveRealBase: string;
     curveRealToken: string;
     updatedAt: Date;
     mc?: number;
     lastMc?: number;
+    mcBase?: number;
+    lastMcBase?: number;
     lane?: string;
   } = {
     curveRealBase: live.realBase,
     curveRealToken: live.realToken,
     updatedAt: new Date(),
   };
-  if (mc !== null) {
+  if (cap !== null) {
+    const mc = cap.usd;
     patch.lastMc = typeof row.mc === 'number' && row.mc > 0 ? row.mc : mc;
     patch.mc = mc;
+    patch.lastMcBase = typeof row.mcBase === 'number' && row.mcBase > 0 ? row.mcBase : cap.base;
+    patch.mcBase = cap.base;
+    // Lane from the snapshot-priced cap: base-proportional, so it tracks the
+    // chain's `gradMcapBase` progress, not the live ETH/SOL price.
     if (row.lane !== 'grad') patch.lane = laneOf({ mc });
     (next as CurveSyncRow).mc = mc;
+    (next as CurveSyncRow).mcBase = cap.base;
     if (patch.lane) (next as CurveSyncRow).lane = patch.lane;
   }
 

@@ -20,6 +20,8 @@
  * DOM-free so it can be unit tested (`live-fills.test.ts`).
  */
 
+import { nativeUnit as nativeUnitOf, type NativeUnit, type Net } from '@stonkz/shared';
+
 export const BUCKET_MS = 60_000;
 /** Longest series the chart keeps, matching `onTokenEvent`'s old cap. */
 export const MAX_POINTS = 240;
@@ -177,4 +179,91 @@ export function applyFillToSeries(
     h.shift();
     hv.shift();
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Market caps — base is the truth, USD is `base × the live base mark`         */
+/* (Pump.fun). Mirrors `apps/api/src/routes/serialise.ts`.                    */
+/* -------------------------------------------------------------------------- */
+
+/** The base symbols that *are* a chain's native unit (or its wrapped form). */
+const NATIVE_BASES: Record<NativeUnit, readonly string[]> = {
+  SOL: ['SOL', 'WSOL'],
+  ETH: ['ETH', 'WETH', 'AEWETH'],
+  USDC: ['USDC'],
+};
+
+/** True when the coin is paired against its chain's own gas token, so its base mark is the footer price. */
+export function isNativeBase(unit: NativeUnit, base: string | undefined): boolean {
+  if (!base) return true;
+  return NATIVE_BASES[unit].includes(base.toUpperCase());
+}
+
+/**
+ * USD per unit of the coin's base right now: the live native mark for a
+ * native-paired coin (ticks with the footer poll), else the price the API
+ * last served with the coin (`baseUsd`: $1 for a stable, the live stock
+ * pricer for a stock base). `0` when neither is known.
+ */
+export function coinBaseUsd(
+  c: { net?: Net | undefined; base?: string | undefined; baseUsd?: number | undefined },
+  nativeMark: (unit: NativeUnit) => number,
+): number {
+  const unit = nativeUnitOf(c.net ?? 'SOL');
+  if (isNativeBase(unit, c.base)) {
+    const mark = nativeMark(unit);
+    if (mark > 0) return mark;
+  }
+  return c.baseUsd !== undefined && c.baseUsd > 0 ? c.baseUsd : 0;
+}
+
+/** `mcBase × baseUsd`, or the USD figure that came with the frame when either side is unknown. */
+export function capUsd(
+  mcBase: number | undefined | null,
+  baseUsd: number,
+  fallbackUsd: number,
+): number {
+  return typeof mcBase === 'number' && mcBase > 0 && baseUsd > 0 ? mcBase * baseUsd : fallbackUsd;
+}
+
+/**
+ * The display-only nudge a local print applies before the exact post-fill
+ * cap arrives: the same factor on the base cap and its USD value, so the
+ * next native-price tick re-derives the same dollar figure.
+ */
+export function nudgedCap(
+  cap: { mc: number; mcBase?: number | undefined },
+  factor: number,
+  floorUsd = 900,
+): { mc: number; mcBase?: number } {
+  const mc = Math.max(floorUsd, cap.mc * factor);
+  if (cap.mcBase === undefined || !(cap.mcBase > 0)) return { mc };
+  // Keep the base cap on the same ratio the USD floor allowed.
+  const applied = cap.mc > 0 ? mc / cap.mc : factor;
+  return { mc, mcBase: cap.mcBase * applied };
+}
+
+/** Re-marks every coin's USD cap at the current base marks; returns how many moved. */
+export function remarkCaps(
+  coins: Iterable<{
+    net?: Net | undefined;
+    base?: string | undefined;
+    baseUsd?: number | undefined;
+    mc: number;
+    mcBase?: number | undefined;
+  }>,
+  nativeMark: (unit: NativeUnit) => number,
+): number {
+  let moved = 0;
+  for (const c of coins) {
+    if (c.mcBase === undefined || !(c.mcBase > 0)) continue;
+    const usd = coinBaseUsd(c, nativeMark);
+    if (!(usd > 0)) continue;
+    const next = c.mcBase * usd;
+    if (next !== c.mc) {
+      c.mc = next;
+      moved++;
+    }
+  }
+  return moved;
 }

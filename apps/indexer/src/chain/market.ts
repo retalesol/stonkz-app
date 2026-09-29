@@ -86,7 +86,27 @@ export function baseAtomsToUsd(atoms: bigint, basePrice1e6: bigint, baseDecimals
   return Number(mcapUsd1e6(atoms, basePrice1e6, baseDecimals)) / 1e6;
 }
 
-/** USD market cap implied by the post-fill virtual reserves. */
+/**
+ * Market cap implied by the post-fill virtual reserves, in whole base units.
+ * The base-denominated figure is the source of truth (0027): the API marks it
+ * at the live base price; `marketCapUsd` below is the same cap at the launch
+ * snapshot, which lanes and graduation stay proportional to.
+ */
+export function marketCapBase(
+  virtualBase: bigint,
+  virtualToken: bigint,
+  supplyAtoms: bigint,
+  baseDecimals: number,
+): number {
+  if (virtualToken <= 0n) return 0;
+  const inBase = mcapBase(
+    { virtualBase, virtualToken, realBase: 0n, realToken: 0n, k: virtualBase * virtualToken },
+    supplyAtoms,
+  );
+  return toWhole(inBase, baseDecimals);
+}
+
+/** USD market cap implied by the post-fill virtual reserves, at the launch oracle snapshot. */
 export function marketCapUsd(
   virtualBase: bigint,
   virtualToken: bigint,

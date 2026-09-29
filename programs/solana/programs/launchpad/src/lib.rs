@@ -224,4 +224,50 @@ pub mod launchpad {
     ) -> Result<()> {
         instructions::pauser::pause(ctx, trading, launch, protocol_withdrawals, ops_withdrawals)
     }
+
+    /* --------------------------------------------------- referral payouts */
+    // Appended last, in this order: instruction discriminators are by name,
+    // but keeping new entries at the end keeps the IDL diff append-only.
+
+    /// Permissionless: open the referral payout vault for a base mint. Anyone
+    /// may pay its rent; opening it grants nothing.
+    pub fn init_referral_vault(ctx: Context<InitReferralVault>) -> Result<()> {
+        instructions::referral::init_referral_vault(ctx)
+    }
+
+    /// Anyone may top a referral vault up. The protocol withdraw authority
+    /// normally uses `withdraw_treasury(Protocol, amount)` with the referral
+    /// vault as `destination` instead.
+    pub fn fund_referral_vault(ctx: Context<FundReferralVault>, amount: u64) -> Result<()> {
+        instructions::referral::fund_referral_vault(ctx, amount)
+    }
+
+    /// Admin: the API's Ed25519 voucher signer, the daily cap (base atoms;
+    /// `0` refuses all, `u64::MAX` uncapped) and the 8-byte cluster tag.
+    pub fn set_referral_signer(
+        ctx: Context<SetReferralSigner>,
+        signer: Pubkey,
+        max_per_day: u64,
+        cluster_tag: [u8; 8],
+    ) -> Result<()> {
+        instructions::referral::set_referral_signer(ctx, signer, max_per_day, cluster_tag)
+    }
+
+    /// Admin or the emergency pauser may pause referral claims; only admin
+    /// may unpause.
+    pub fn set_referral_paused(ctx: Context<SetReferralPaused>, paused: bool) -> Result<()> {
+        instructions::referral::set_referral_paused(ctx, paused)
+    }
+
+    /// Redeem an API-signed voucher for `cumulative_amount` (lifetime) base
+    /// atoms: pays the difference over what this recipient already claimed.
+    /// The transaction must carry an `Ed25519Program` verification of the
+    /// voucher message by the configured signer before this instruction.
+    pub fn claim_referral(
+        ctx: Context<ClaimReferral>,
+        cumulative_amount: u64,
+        deadline: i64,
+    ) -> Result<()> {
+        instructions::referral::claim_referral(ctx, cumulative_amount, deadline)
+    }
 }

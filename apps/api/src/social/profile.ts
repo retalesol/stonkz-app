@@ -11,6 +11,8 @@ import {
   users,
 } from '../db/schema.js';
 import { rowsOf } from '../db/rows.js';
+import { snapshotBaseUsd } from '../routes/curve-facts.js';
+import { LiveBaseUsd } from '../routes/live-base-usd.js';
 import {
   checkTelegram,
   checkWebsite,
@@ -389,6 +391,41 @@ export function withCostBasis(raw: RawHolding[], basis: Map<string, CostBasis>):
  * the RPC cannot answer, and always the source of the sells that reduce a
  * position. Priced at the latest indexed market cap.
  */
+/** The columns {@link tokenPriceUsd} prices a position from. */
+export interface PricedTokenCols {
+  net: string;
+  baseSymbol: string;
+  basePriceUsd1e6: string;
+  mc: number;
+  mcBase: number | null;
+  supply: number;
+}
+
+export const PRICED_TOKEN_COLS = {
+  net: tokens.net,
+  baseSymbol: tokens.baseSymbol,
+  basePriceUsd1e6: tokens.basePriceUsd1e6,
+  mc: tokens.mc,
+  mcBase: tokens.mcBase,
+  supply: tokens.supply,
+} as const;
+
+/**
+ * USD per token at the live base price (Pump.fun: a portfolio in ETH-paired
+ * coins moves with ETH). Falls back to the snapshot-priced `mc` for a row
+ * without a base figure.
+ */
+export async function tokenPriceUsd(prices: LiveBaseUsd, t: PricedTokenCols): Promise<number> {
+  if (!(t.supply > 0)) return 0;
+  const snapshot = snapshotBaseUsd(t);
+  const mcBase = t.mcBase !== null && t.mcBase > 0 ? t.mcBase : snapshot > 0 ? t.mc / snapshot : 0;
+  if (mcBase > 0) {
+    const baseUsd = await prices.forRow(t);
+    if (baseUsd > 0) return (mcBase * baseUsd) / t.supply;
+  }
+  return t.mc / t.supply;
+}
+
 export async function holdingsFromTrades(
   deps: AppDeps,
   net: Net,
@@ -397,15 +434,16 @@ export async function holdingsFromTrades(
   const keys = [...basis.keys()];
   if (!keys.length) return [];
   const known = await deps.db
-    .select({ sym: tokens.sym, mint: tokens.mint, mc: tokens.mc, supply: tokens.supply })
+    .select({ sym: tokens.sym, mint: tokens.mint, ...PRICED_TOKEN_COLS })
     .from(tokens)
     .where(and(eq(tokens.net, net), inArray(tokens.mint, keys)));
   const byMint = new Map(known.map((t) => [t.mint, t]));
+  const prices = new LiveBaseUsd(deps);
   const out: RawHolding[] = [];
   for (const [key, b] of basis) {
     if (b.netTok <= 1e-6) continue;
     const t = byMint.get(key);
-    const priceUsd = t && t.supply > 0 ? t.mc / t.supply : 0;
+    const priceUsd = t ? await tokenPriceUsd(prices, t) : 0;
     out.push({ sym: t?.sym ?? key, mint: t?.mint ?? null, tok: b.netTok, priceUsd });
   }
   return out;
@@ -439,7 +477,11 @@ export async function stakedSummary(deps: AppDeps, net: Net, wallet: string): Pr
       rewardNative: stakePositions.rewardNative,
       rewardTokens: stakePositions.rewardTokens,
       mc: tokens.mc,
+      mcBase: tokens.mcBase,
       supply: tokens.supply,
+      tokNet: tokens.net,
+      baseSymbol: tokens.baseSymbol,
+      basePriceUsd1e6: tokens.basePriceUsd1e6,
       tokSym: tokens.sym,
     })
     .from(stakePositions)
@@ -447,23 +489,34 @@ export async function stakedSummary(deps: AppDeps, net: Net, wallet: string): Pr
     .where(
       and(eq(stakePositions.net, net), inArray(stakePositions.wallet, walletForms(net, wallet))),
     );
-  return rows
-    .filter((r) => r.amount > 0)
-    .map((r) => {
-      const priceUsd = r.mc != null && r.supply != null && r.supply > 0 ? r.mc / r.supply : 0;
-      return {
-        sym: r.tokSym ?? r.sym,
-        mint: r.mint,
-        amt: r.amount,
-        lockDays: r.lockDays,
-        mult: r.mult,
-        untilMs: r.untilMs,
-        rewardNative: r.rewardNative,
-        rewardTokens: r.rewardTokens,
-        valueUsd: r.amount * priceUsd,
-      };
-    })
-    .sort((a, b) => b.valueUsd - a.valueUsd || b.amt - a.amt);
+  const prices = new LiveBaseUsd(deps);
+  const out: StakedOut[] = [];
+  for (const r of rows) {
+    if (r.amount <= 0) continue;
+    const priceUsd =
+      r.mc != null && r.supply != null && r.tokNet != null
+        ? await tokenPriceUsd(prices, {
+            net: r.tokNet,
+            baseSymbol: r.baseSymbol ?? '',
+            basePriceUsd1e6: r.basePriceUsd1e6 ?? '0',
+            mc: r.mc,
+            mcBase: r.mcBase ?? null,
+            supply: r.supply,
+          })
+        : 0;
+    out.push({
+      sym: r.tokSym ?? r.sym,
+      mint: r.mint,
+      amt: r.amount,
+      lockDays: r.lockDays,
+      mult: r.mult,
+      untilMs: r.untilMs,
+      rewardNative: r.rewardNative,
+      rewardTokens: r.rewardTokens,
+      valueUsd: r.amount * priceUsd,
+    });
+  }
+  return out.sort((a, b) => b.valueUsd - a.valueUsd || b.amt - a.amt);
 }
 
 /* -------------------------------------------------------------------------- */

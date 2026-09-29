@@ -25,7 +25,10 @@ export function bucketStart(tf: Timeframe, atMs: number): number {
 export interface CandleUpdate {
   tf: Timeframe;
   bucketStart: number;
+  /** USD per token at the launch snapshot price. */
   price: number;
+  /** Base per token — the series of record (0027); `null` for a fill without a base figure. */
+  priceBase: number | null;
   usdVolume: number;
   nativeVolume: number;
 }
@@ -36,11 +39,13 @@ export function candleUpdatesFor(
   price: number,
   usdVolume: number,
   nativeVolume: number,
+  priceBase: number | null = null,
 ): CandleUpdate[] {
   return TIMEFRAMES.map((tf) => ({
     tf,
     bucketStart: bucketStart(tf, atMs),
     price,
+    priceBase,
     usdVolume,
     nativeVolume,
   }));

@@ -21,16 +21,19 @@ import {
   friendsOf,
   holdingsFromTrades,
   identitiesFor,
+  PRICED_TOKEN_COLS,
   recentActivity,
   sameWallet,
   serialiseUser,
   stakedSummary,
+  tokenPriceUsd,
   withCostBasis,
   type RawHolding,
 } from '../social/profile.js';
 import { SolanaRpc } from '../chain/solana.js';
 import { asErc20BalanceSource } from '../chain/types.js';
 import { serialiseToken } from './serialise.js';
+import { LiveBaseUsd } from './live-base-usd.js';
 import { MAX_IMAGE_BYTES, PinataError, uploadToPinata } from '../social/pinata.js';
 import { sanitizeName } from './launch-validate.js';
 
@@ -204,13 +207,13 @@ async function holdingsOnChain(
     .select({
       sym: tokens.sym,
       mint: tokens.mint,
-      mc: tokens.mc,
-      supply: tokens.supply,
       tokenDecimals: tokens.tokenDecimals,
+      ...PRICED_TOKEN_COLS,
     })
     .from(tokens)
     .where(eq(tokens.net, net));
   if (!known.length) return [];
+  const prices = new LiveBaseUsd(deps);
 
   if (net === 'SOL') {
     const rpc = deps.rpcs.SOL;
@@ -226,7 +229,7 @@ async function holdingsOnChain(
           sym: t.sym,
           mint: t.mint,
           tok: bal,
-          priceUsd: t.supply > 0 ? t.mc / t.supply : 0,
+          priceUsd: await tokenPriceUsd(prices, t),
         });
       }
       return out;
@@ -245,7 +248,7 @@ async function holdingsOnChain(
       if (atoms <= 0n) continue;
       const tok = Number(atoms) / 10 ** t.tokenDecimals;
       if (!Number.isFinite(tok) || tok <= 0) continue;
-      out.push({ sym: t.sym, mint: t.mint, tok, priceUsd: t.supply > 0 ? t.mc / t.supply : 0 });
+      out.push({ sym: t.sym, mint: t.mint, tok, priceUsd: await tokenPriceUsd(prices, t) });
     }
     return out;
   } catch {
@@ -446,6 +449,12 @@ export function socialRoutes(): Hono<AppEnv> {
     }
 
     const now = deps.now();
+    const prices = new LiveBaseUsd(deps);
+    const launched = await Promise.all(
+      launchedRows.map(async (r) =>
+        serialiseToken(r, now, { baseUsd: await prices.liveForRow(r) }),
+      ),
+    );
     const base = {
       net: memberNet,
       addr: wallet,
@@ -457,7 +466,7 @@ export function socialRoutes(): Hono<AppEnv> {
       followsYou,
       xp: snapshot.xp,
       rank: snapshot.rank,
-      launched: launchedRows.map((r) => serialiseToken(r, now)),
+      launched,
     };
 
     if (!visible) {

@@ -14,7 +14,6 @@ import {
   type Net,
   type TokenFees,
 } from '@stonkz/shared';
-import { mcapBase } from '@stonkz/curve-sim';
 import { PublicKey } from '@solana/web3.js';
 import { evmChainId, evmExplorerUrl, evmLaunchpadAddress } from '../chain/evm-net.js';
 import {
@@ -37,17 +36,19 @@ import {
   trades,
   treasuryCredits,
 } from '../db/schema.js';
-import { hasCurveState, liveCurveState } from '../router/curve-state.js';
 import { derivePdas } from '../router/solana-idl.js';
 import { limit, optionalAuth } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import { notHiddenFilter } from '../admin/index.js';
 import type { AppEnv } from '../app/context.js';
 import { PRIVATE_ROOM_SUFFIX } from '../social/chat.js';
-import { serialiseToken, type TokenRow } from './serialise.js';
+import { serialiseToken, usdFromBase, type TokenRow } from './serialise.js';
+import { curveFacts, snapshotBaseUsd, type CurveFacts } from './curve-facts.js';
+import { LiveBaseUsd, liveMcSql } from './live-base-usd.js';
 import { resolveTokenRow } from './token-resolve.js';
 import { stakePoolSummary } from './stake-data.js';
 import { creatorClaimable, sameWallet } from './creator-claimable.js';
+import { encodeClaimPoolFeesCall, poolFeesExtra, poolFeesView } from '../chain/pool-fees.js';
 
 /** Candle buckets, ms — the same six the indexer materialises (`apps/indexer/src/candles.ts`). */
 const TF_MS: Record<string, number> = {
@@ -59,6 +60,28 @@ const TF_MS: Record<string, number> = {
   '1d': 86_400_000,
 };
 const TIMEFRAMES = new Set(Object.keys(TF_MS));
+
+/**
+ * One candle on the wire. `o`–`c` are USD per token at the response's
+ * `baseUsd` (live); `ob`–`cb` are the same candle in base per token — the
+ * series of record, which a client re-prices itself as the native mark ticks.
+ */
+interface WireCandle {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  ob: number;
+  hb: number;
+  lb: number;
+  cb: number;
+  /** USD volume as recorded at fill time. */
+  v: number;
+  baseVolume: number;
+  nativeVolume: number;
+  trades: number;
+}
 const DAY_MS = 86_400_000;
 /** `index.html:1451` — NEWEST, MARKET CAP, GAINERS, MOST REPLIES. */
 const SORTS = new Set(['new', 'mc', 'chg', 'rep']);
@@ -80,76 +103,9 @@ function clampLimit(raw: string | undefined, fallback: number, max: number): num
   return Math.min(n, max);
 }
 
-/** Atoms (as the text columns store them) to whole units, integer and fraction split so 6182e18 reads back as exactly 6182. */
-function whole(atoms: bigint, decimals: number): number {
-  const scale = 10n ** BigInt(Math.max(0, decimals));
-  return Number(atoms / scale) + Number(atoms % scale) / Number(scale);
-}
-
-/**
- * What the curve holds right now, in whole units, from the row's CPMM
- * columns. `null` for fixture rows that never got curve state.
- *
- * USD figures use the base price stamped at `create_token`
- * (`basePriceUsd1e6`): the same snapshot the contract's `marketCap()` and
- * the indexer's `mc` use, so the header, the board card and graduation
- * (`gradMcapBase`, fixed in base units) all agree. A live oracle mark would
- * make the cap drift away from the fill % the chain actually graduates on.
- */
-export interface CurveFacts {
-  /** Market cap in the base asset (ETH / SOL / USDC …). */
-  mcBase: number;
-  /** Base the curve really holds — what sells can drain. */
-  realBase: number;
-  /** Tokens still in the curve. */
-  realToken: number;
-  tokensForSale: number;
-  /** Tokens bought out of the curve so far. */
-  circulating: number;
-  /** Tokens parked for the graduation pool (supply less the curve's allotment). */
-  lpReserve: number;
-  /** USD per whole base unit at launch. */
-  baseUsd: number;
-  /** Graduation cap in base units. */
-  gradBase: number;
-  /** Fill toward graduation, 0–100, measured the way the chain does (base terms). */
-  fillPct: number;
-}
-
-export function curveFacts(row: TokenRow): CurveFacts | null {
-  if (!hasCurveState(row)) return null;
-  try {
-    const state = liveCurveState(row);
-    const supplyAtoms = BigInt(Math.round(row.supply)) * 10n ** BigInt(row.tokenDecimals);
-    const tokensForSale = BigInt(row.curveTokensForSale);
-    const gradBaseAtoms = BigInt(row.curveGradMcapBase);
-    const mcBaseAtoms = mcapBase(state, supplyAtoms);
-    const startBaseAtoms =
-      (BigInt(row.curveVirtualBase0) * supplyAtoms) / BigInt(row.curveVirtualToken0 || '1');
-    const span = gradBaseAtoms > startBaseAtoms ? gradBaseAtoms - startBaseAtoms : 0n;
-    const fill =
-      span > 0n
-        ? Number(((mcBaseAtoms - startBaseAtoms) * 1_000_000n) / span) / 10_000
-        : mcBaseAtoms >= gradBaseAtoms
-          ? 100
-          : 0;
-    const lpAtoms = supplyAtoms > tokensForSale ? supplyAtoms - tokensForSale : 0n;
-    const soldAtoms = tokensForSale > state.realToken ? tokensForSale - state.realToken : 0n;
-    return {
-      mcBase: whole(mcBaseAtoms, row.baseDecimals),
-      realBase: whole(state.realBase, row.baseDecimals),
-      realToken: whole(state.realToken, row.tokenDecimals),
-      tokensForSale: whole(tokensForSale, row.tokenDecimals),
-      circulating: whole(soldAtoms, row.tokenDecimals),
-      lpReserve: whole(lpAtoms, row.tokenDecimals),
-      baseUsd: Number(BigInt(row.basePriceUsd1e6 || '0')) / 1e6,
-      gradBase: whole(gradBaseAtoms, row.baseDecimals),
-      fillPct: Math.max(0, Math.min(100, fill)),
-    };
-  } catch {
-    return null;
-  }
-}
+// `curveFacts` lives in `./curve-facts.ts` so `serialise.ts` can share it;
+// re-exported here for the callers (and tests) that import it from the route.
+export { curveFacts, type CurveFacts };
 
 /** Staked balances per wallet (the indexer's view), so a staker still reads as a holder. */
 async function stakedByWallet(
@@ -319,6 +275,8 @@ export async function tokenDetailExtras(
   net: Net,
   row: TokenRow,
   now: number,
+  /** Live USD per base unit; the launch snapshot when the route has none. */
+  baseUsd: number = snapshotBaseUsd(row),
 ): Promise<Record<string, unknown>> {
   const mint = (row.mint ?? '').trim();
   const scope = mint
@@ -327,6 +285,7 @@ export async function tokenDetailExtras(
   const agg = {
     usd: sql<number>`coalesce(sum(${trades.usdValue}), 0)`,
     nat: sql<number>`coalesce(sum(${trades.nativeAmount}), 0)`,
+    base: sql<number>`coalesce(sum(${trades.baseAmount}), 0)`,
     n: sql<number>`count(*)::int`,
   };
   const [[all], [day]] = await Promise.all([
@@ -338,12 +297,24 @@ export async function tokenDetailExtras(
   ]);
   const facts = curveFacts(row);
   const unit = nativeUnit(net);
+  const vol24Base = Number(day?.base ?? 0);
+  const volTotalBase = Number(all?.base ?? 0);
+  const vol24Recorded = Number(day?.usd ?? 0);
   return {
     nativeUnit: unit,
-    vol24Usd: Number(day?.usd ?? 0),
+    baseUnit: row.baseSymbol,
+    /** USD per base unit the live figures below were converted at. */
+    baseUsd,
+    // The "current" figures follow the live base price (Pump.fun): 24h volume
+    // is the base traded × today's price. Lifetime USD volume stays as each
+    // fill recorded it — history is not re-marked.
+    vol24Usd: baseUsd > 0 && vol24Base > 0 ? vol24Base * baseUsd : vol24Recorded,
+    vol24UsdRecorded: vol24Recorded,
+    vol24Base,
     vol24Native: Number(day?.nat ?? 0),
     trades24h: Number(day?.n ?? 0),
     volTotalUsd: Number(all?.usd ?? 0),
+    volTotalBase,
     volTotalNative: Number(all?.nat ?? 0),
     tradeCount: Number(all?.n ?? 0),
     graduationUsd: GRAD,
@@ -351,12 +322,14 @@ export async function tokenDetailExtras(
       ? {
           mcBase: facts.mcBase,
           liqBase: facts.realBase,
-          liqUsd: facts.realBase * facts.baseUsd,
+          liqUsd: facts.realBase * (baseUsd > 0 ? baseUsd : facts.baseUsd),
           circulating: facts.circulating,
           curveTokens: facts.realToken,
           lpReserve: facts.lpReserve,
           baseUsdAtLaunch: facts.baseUsd,
           graduationBase: facts.gradBase,
+          /** Graduation cap in USD at the live base price — what "$X to go" should count toward. */
+          graduationUsdLive: facts.gradBase * (baseUsd > 0 ? baseUsd : facts.baseUsd),
           curveFillPct: facts.fillPct,
         }
       : {}),
@@ -453,16 +426,24 @@ export function tokenRoutes(): Hono<AppEnv> {
     }
     const where = and(...filters);
 
+    // USD figures are base × the live base price, resolved once per request.
+    const prices = new LiveBaseUsd(deps);
+
     // Every sort breaks ties on recency so paging with `offset` is stable:
-    // two coins with the same cap never swap places between pages.
-    const primary =
-      sort === 'mc'
-        ? desc(tokens.mc)
-        : sort === 'chg'
-          ? desc(tokens.chg)
-          : sort === 'rep'
-            ? desc(repliesExpr)
-            : desc(tokens.launchedAt);
+    // two coins with the same cap never swap places between pages. MARKET CAP
+    // orders by the *live* USD cap so a board of mixed nets and bases ranks
+    // the way the cards read; the expression is built from the bases the
+    // scope actually contains.
+    let primary: SQL;
+    if (sort === 'mc') {
+      const pairs = await deps.db
+        .selectDistinct({ net: tokens.net, baseSymbol: tokens.baseSymbol })
+        .from(tokens)
+        .where(where);
+      primary = desc(await liveMcSql(prices, pairs));
+    } else if (sort === 'chg') primary = desc(tokens.chg);
+    else if (sort === 'rep') primary = desc(repliesExpr);
+    else primary = desc(tokens.launchedAt);
 
     const [rows, [total], counts] = await Promise.all([
       deps.db
@@ -498,7 +479,11 @@ export function tokenRoutes(): Hono<AppEnv> {
         soon: counts.find((r) => r.lane === 'soon')?.n ?? 0,
         grad: counts.find((r) => r.lane === 'grad')?.n ?? 0,
       },
-      tokens: rows.map((r) => serialiseToken(r as TokenRow, now)),
+      tokens: await Promise.all(
+        rows.map(async (r) =>
+          serialiseToken(r as TokenRow, now, { baseUsd: await prices.liveForRow(r as TokenRow) }),
+        ),
+      ),
     });
   });
 
@@ -518,12 +503,63 @@ export function tokenRoutes(): Hono<AppEnv> {
       .where(and(eq(tokens.net, net), eq(tokens.mint, row.mint)))
       .limit(1);
     const replies = rep?.n ?? row.replies;
+    const prices = new LiveBaseUsd(deps);
+    const [liveUsd, baseUsd] = await Promise.all([
+      prices.liveForRow(row as TokenRow),
+      prices.forRow(row as TokenRow),
+    ]);
 
     return c.json({
-      ...serialiseToken({ ...(row as TokenRow), replies }, deps.now()),
-      ...(await tokenDetailExtras(deps, net, row as TokenRow, deps.now())),
+      ...serialiseToken({ ...(row as TokenRow), replies }, deps.now(), { baseUsd: liveUsd }),
+      ...(await tokenDetailExtras(deps, net, row as TokenRow, deps.now(), baseUsd)),
+      // EVM v3 graduation only: the locked position's uncollected fees.
+      ...(await poolFeesExtra(deps, net, row as TokenRow)),
     });
   });
+
+  /**
+   * `POST /tokens/:sym/pool-fees/claim/prepare` — the "CLAIM POOL FEES"
+   * button on a v3-graduated EVM coin. `FeeLocker.claimFees(token)` is
+   * permissionless: it collects the locked position's fees and routes them
+   * into the launchpad's ledgers (creator, stakers, treasuries) by the curve
+   * split; the caller only pays gas. Same single-call shape as
+   * `/fees/claim/prepare`. Refuses `nothing_to_claim` when the pool reports
+   * no uncollected fees, and `no_locked_position` for a coin whose
+   * liquidity is not in the locker (a v2 graduation, or not yet migrated).
+   */
+  app.post(
+    '/tokens/:sym/pool-fees/claim/prepare',
+    optionalAuth(),
+    limit(RATE_LIMITS.fees),
+    async (c) => {
+      const deps = c.get('deps');
+      const sym = c.req.param('sym').toUpperCase();
+      const net = parseNet(c.req.query('net')) ?? c.get('user')?.net ?? 'SOL';
+      if (!isEvm(net)) return c.json({ error: 'bad_request', detail: 'EVM nets only' }, 400);
+      const body = (await c.req.json().catch(() => ({}))) as { mint?: unknown };
+      const mintBody = typeof body.mint === 'string' ? body.mint.trim() : undefined;
+
+      const row = await resolveTokenRow(deps.db, net, { mint: mintBody, sym });
+      if (!row || !row.mint) return c.json({ error: 'not_found' }, 404);
+      if (row.graduatedAt === null || !row.poolAddress)
+        return c.json({ error: 'not_graduated' }, 409);
+
+      const fees = await poolFeesView(deps, net, row as TokenRow);
+      if (!fees) return c.json({ error: 'no_locked_position' }, 422);
+      if (fees.pendingBase <= 0 && fees.pendingTokens <= 0) {
+        return c.json({ error: 'nothing_to_claim' }, 422);
+      }
+      return c.json({
+        net,
+        sym,
+        mint: row.mint,
+        ...fees,
+        to: fees.locker,
+        data: encodeClaimPoolFeesCall(row.mint),
+        value: '0',
+      });
+    },
+  );
 
   app.get('/tokens/:sym/candles', async (c) => {
     const deps = c.get('deps');
@@ -538,26 +574,41 @@ export function tokenRoutes(): Hono<AppEnv> {
     const mint = token?.mint;
     const supply = token && token.supply > 0 ? token.supply : SUPPLY;
     const bucketMs = TF_MS[tf] as number;
+    // The USD axis is the base series × the live base price; the native axis
+    // is the base series itself. A token that never had a base price
+    // (fixture) has USD-only history: `baseUsd` is 1 and both axes carry the
+    // same numbers.
+    const snapshotUsd = token ? snapshotBaseUsd(token as TokenRow) : 0;
+    const priced = snapshotUsd > 0;
+    const liveUsd = priced ? await new LiveBaseUsd(deps).forRow(token as TokenRow) : 0;
+    const baseUsd = priced ? (liveUsd > 0 ? liveUsd : snapshotUsd) : 1;
+    const baseUnit = token?.baseSymbol ?? nativeUnit(net);
+    const meta = { net, sym, tf, bucketMs, supply, baseUnit, baseUsd, baseUsdLive: liveUsd > 0 };
 
     // Candles are built from the fills themselves, priced at the curve's spot
-    // after each fill (`trades.mc / supply`): the same number the header, the
-    // board card and a live `fill` frame show. The indexer's `candles` rows
-    // carry the *average execution* price (USD paid ÷ tokens, fee included),
+    // after each fill (`trades.mc_base / supply`): the same number the header,
+    // the board card and a live `fill` frame show. The indexer's `candles`
+    // rows carry the *average execution* price (paid ÷ tokens, fee included),
     // which sits ~fee% above spot and made every REST candle disagree with
     // the live point that followed it. Open is the previous bucket's close so
-    // the candle body shows the move, not a dot.
+    // the candle body shows the move, not a dot. A fill from before 0027 has
+    // no `mc_base`; its snapshot-USD `mc` converts back exactly.
     const bucket = sql<number>`(floor(extract(epoch from ${trades.blockTime}) * 1000 / ${sql.raw(String(bucketMs))}) * ${sql.raw(String(bucketMs))})`;
+    const capBase = priced
+      ? sql<number>`coalesce(${trades.mcBase}, ${trades.mc} / ${snapshotUsd})`
+      : sql<number>`${trades.mc}`;
     const scope = mint
       ? and(eq(trades.net, net), eq(trades.mint, mint))
       : and(eq(trades.net, net), eq(trades.sym, sym));
     const agg = await deps.db
       .select({
         t: bucket,
-        o: sql<number>`(array_agg(${trades.mc} order by ${trades.chainPosition} asc, ${trades.logIndex} asc, ${trades.id} asc))[1]`,
-        h: sql<number>`max(${trades.mc})`,
-        l: sql<number>`min(${trades.mc})`,
-        c: sql<number>`(array_agg(${trades.mc} order by ${trades.chainPosition} desc, ${trades.logIndex} desc, ${trades.id} desc))[1]`,
+        o: sql<number>`(array_agg(${capBase} order by ${trades.chainPosition} asc, ${trades.logIndex} asc, ${trades.id} asc))[1]`,
+        h: sql<number>`max(${capBase})`,
+        l: sql<number>`min(${capBase})`,
+        c: sql<number>`(array_agg(${capBase} order by ${trades.chainPosition} desc, ${trades.logIndex} desc, ${trades.id} desc))[1]`,
         v: sql<number>`coalesce(sum(${trades.usdValue}), 0)`,
+        bv: sql<number>`coalesce(sum(${trades.baseAmount}), 0)`,
         nv: sql<number>`coalesce(sum(${trades.nativeAmount}), 0)`,
         n: sql<number>`count(*)::int`,
       })
@@ -568,32 +619,30 @@ export function tokenRoutes(): Hono<AppEnv> {
       .limit(max);
 
     if (agg.length > 0) {
-      const out: Array<{
-        t: number;
-        o: number;
-        h: number;
-        l: number;
-        c: number;
-        v: number;
-        nativeVolume: number;
-        trades: number;
-      }> = [];
+      const out: WireCandle[] = [];
       for (const r of agg.reverse()) {
         const prev = out[out.length - 1];
-        const o = prev ? prev.c : Number(r.o) / supply;
-        const cl = Number(r.c) / supply;
+        const ob = prev ? prev.cb : Number(r.o) / supply;
+        const cb = Number(r.c) / supply;
+        const hb = Math.max(Number(r.h) / supply, ob, cb);
+        const lb = Math.min(Number(r.l) / supply, ob, cb);
         out.push({
           t: Number(r.t),
-          o,
-          h: Math.max(Number(r.h) / supply, o, cl),
-          l: Math.min(Number(r.l) / supply, o, cl),
-          c: cl,
+          o: ob * baseUsd,
+          h: hb * baseUsd,
+          l: lb * baseUsd,
+          c: cb * baseUsd,
+          ob,
+          hb,
+          lb,
+          cb,
           v: Number(r.v),
+          baseVolume: Number(r.bv),
           nativeVolume: Number(r.nv),
           trades: Number(r.n),
         });
       }
-      return c.json({ net, sym, tf, bucketMs, supply, basis: 'spot', candles: out });
+      return c.json({ ...meta, basis: 'spot', candles: out });
     }
 
     // No fills on record: fall back to whatever the indexer materialised
@@ -612,24 +661,35 @@ export function tokenRoutes(): Hono<AppEnv> {
           .orderBy(desc(candles.bucketStart))
           .limit(max);
 
+    // Indexed candles hold base OHLC since 0027; older rows convert back from
+    // the snapshot USD they were written at.
+    const toBase = (usd: number, base: number | null): number =>
+      base !== null && base > 0 ? base : priced && snapshotUsd > 0 ? usd / snapshotUsd : usd;
     return c.json({
-      net,
-      sym,
-      tf,
-      bucketMs,
-      supply,
+      ...meta,
       basis: 'indexed',
       // Oldest first: `drawTChart` walks the series left to right.
-      candles: rows.reverse().map((r) => ({
-        t: r.bucketStart.getTime(),
-        o: r.o,
-        h: r.h,
-        l: r.l,
-        c: r.c,
-        v: r.v,
-        nativeVolume: r.nativeVolume,
-        trades: r.trades,
-      })),
+      candles: rows.reverse().map((r): WireCandle => {
+        const ob = toBase(r.o, r.oBase);
+        const hb = toBase(r.h, r.hBase);
+        const lb = toBase(r.l, r.lBase);
+        const cb = toBase(r.c, r.cBase);
+        return {
+          t: r.bucketStart.getTime(),
+          o: ob * baseUsd,
+          h: hb * baseUsd,
+          l: lb * baseUsd,
+          c: cb * baseUsd,
+          ob,
+          hb,
+          lb,
+          cb,
+          v: r.v,
+          baseVolume: 0,
+          nativeVolume: r.nativeVolume,
+          trades: r.trades,
+        };
+      }),
     });
   });
 
@@ -658,30 +718,49 @@ export function tokenRoutes(): Hono<AppEnv> {
     const hasMore = page.length > max;
     const rows = hasMore ? page.slice(0, max) : page;
     const oldest = rows[rows.length - 1];
+    const snapshotUsd = token ? snapshotBaseUsd(token as TokenRow) : 0;
+    const baseUsd = token ? await new LiveBaseUsd(deps).forRow(token as TokenRow) : 0;
+    const baseOf = (mcBase: number | null, mcUsd: number): number | undefined =>
+      mcBase !== null && mcBase > 0
+        ? mcBase
+        : snapshotUsd > 0 && mcUsd > 0
+          ? mcUsd / snapshotUsd
+          : undefined;
 
     return c.json({
       net,
       sym,
       ...(mint ? { mint } : {}),
       nativeUnit: nativeUnit(net),
+      baseUnit: token?.baseSymbol ?? nativeUnit(net),
+      baseUsd,
       hasMore,
       ...(hasMore && oldest ? { nextBefore: oldest.id } : {}),
-      trades: rows.map((r) => ({
-        id: r.id,
-        t: r.blockTime.getTime(),
-        sym: r.sym,
-        mint: r.mint ?? undefined,
-        net: r.net,
-        buy: r.side === 'buy',
-        sol: r.nativeAmount,
-        tok: r.tokenAmount,
-        base: r.baseAmount,
-        mc: r.mc,
-        w: r.trader,
-        v: r.usdValue,
-        cb: r.cashback,
-        sig: r.txSig,
-      })),
+      // `mc` is the cap after the fill at today's base price (what the chart
+      // draws); `mcRecorded` / `v` are the USD figures as the fill recorded them.
+      trades: rows.map((r) => {
+        const mcBase = baseOf(r.mcBase, r.mc);
+        return {
+          id: r.id,
+          t: r.blockTime.getTime(),
+          sym: r.sym,
+          mint: r.mint ?? undefined,
+          net: r.net,
+          buy: r.side === 'buy',
+          sol: r.nativeAmount,
+          tok: r.tokenAmount,
+          base: r.baseAmount,
+          mc: usdFromBase(mcBase, baseUsd, r.mc),
+          mcRecorded: r.mc,
+          ...(mcBase !== undefined
+            ? { mcBase, priceBase: r.tokenAmount > 0 ? r.baseAmount / r.tokenAmount : 0 }
+            : {}),
+          w: r.trader,
+          v: r.usdValue,
+          cb: r.cashback,
+          sig: r.txSig,
+        };
+      }),
     });
   });
 
@@ -833,6 +912,9 @@ export function tokenRoutes(): Hono<AppEnv> {
     }
     if (token.creator) canon.set(token.creator.toLowerCase(), token.creator);
     const staked = await stakedByWallet(deps, net, mint);
+    // Position values on the tab: `amount × priceUsd`, at the live base price.
+    const baseUsd = await new LiveBaseUsd(deps).liveForRow(token as TokenRow);
+    const view = serialiseToken(token as TokenRow, deps.now(), { baseUsd });
 
     const respond = (chain: ChainHolder[], source: 'explorer' | 'rpc' | 'db'): Response => {
       const shaped = shapeHolders({ chain, supply, facts, staked, cost, canon, evm, limit: max });
@@ -841,6 +923,12 @@ export function tokenRoutes(): Hono<AppEnv> {
         sym,
         ...(mint ? { mint } : {}),
         source,
+        baseUnit: token.baseSymbol,
+        baseUsd: view.baseUsd,
+        mc: view.mc,
+        mcBase: view.mcBase,
+        priceUsd: view.priceUsd,
+        priceBase: view.priceBase,
         ...(evm ? { curveWallet: launchpad } : {}),
         ...(facts
           ? {

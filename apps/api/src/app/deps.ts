@@ -12,6 +12,7 @@ import { GameAwards } from '../game/awards.js';
 import { CrateService } from '../game/crates.js';
 import { Ledger } from '../game/ledger.js';
 import { ReferralService } from '../game/referrals.js';
+import { referralSignerFromEnv } from '../game/referral-signer.js';
 import { SocialCapsService } from '../game/social-caps.js';
 import { SpLevelService } from '../game/sp-levels.js';
 import { createLogger, type Logger } from '../observability/logger.js';
@@ -172,6 +173,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
   const awards = new GameAwards({ ledger, socialCaps, dust: env.dust, whaleCut: env.whaleCut });
   const spLevels = new SpLevelService({ db, publisher, now });
   const referrals = new ReferralService({ db, ledger, now });
+  const referralSigner = referralSignerFromEnv(env);
   const crates = new CrateService({
     db,
     ledger,
@@ -281,6 +283,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     crates,
     spLevels,
     referrals,
+    referralSigner,
     socialCaps,
     publisher,
     now,

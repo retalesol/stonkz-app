@@ -8,6 +8,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -140,8 +141,18 @@ export const tokens = pgTable(
     cashback: boolean('cashback').notNull().default(false),
     /** Epoch ms the cashback window opened; `effFee()` decays from it. */
     cbStartMs: bigint('cb_start_ms', { mode: 'number' }),
+    /**
+     * USD cap at the launch-time oracle snapshot (`basePriceUsd1e6`). Kept as
+     * the base-proportional figure lanes, KOTH selection and graduation read,
+     * and as the USD figure for rows without a curve. Live USD is
+     * `mcBase × the current base price` (0027, `routes/live-base-usd.ts`).
+     */
     mc: doublePrecision('mc').notNull().default(0),
     lastMc: doublePrecision('last_mc').notNull().default(0),
+    /** Cap in whole base units (ETH / SOL / USDC …) after the last fill — the source of truth (0027). */
+    mcBase: doublePrecision('mc_base'),
+    lastMcBase: doublePrecision('last_mc_base'),
+    /** 24h change, percent, measured on the coin's own curve (base terms). */
     chg: doublePrecision('chg').notNull().default(0),
     holders: integer('holders').notNull().default(0),
     replies: integer('replies').notNull().default(0),
@@ -270,9 +281,14 @@ export const trades = pgTable(
     nativeAmount: doublePrecision('native_amount').notNull(),
     baseAmount: doublePrecision('base_amount').notNull(),
     tokenAmount: doublePrecision('token_amount').notNull(),
+    /** USD notional at the launch-time snapshot price — historical, never re-marked. */
     usdValue: doublePrecision('usd_value').notNull(),
+    /** Cap after the fill, USD at the snapshot price (base-proportional). */
     mc: doublePrecision('mc').notNull(),
     price: doublePrecision('price').notNull(),
+    /** Cap after the fill in whole base units, and base per token (0027). */
+    mcBase: doublePrecision('mc_base'),
+    priceBase: doublePrecision('price_base'),
     cashback: boolean('cashback').notNull().default(false),
     blockTime: timestamp('block_time', { withTimezone: true }).notNull(),
     chainPosition: bigint('chain_position', { mode: 'number' }).notNull(),
@@ -299,6 +315,11 @@ export const candles = pgTable(
     h: doublePrecision('h').notNull(),
     l: doublePrecision('l').notNull(),
     c: doublePrecision('c').notNull(),
+    /** OHLC in base per token (0027); `o`–`c` are USD at the launch snapshot. */
+    oBase: doublePrecision('o_base'),
+    hBase: doublePrecision('h_base'),
+    lBase: doublePrecision('l_base'),
+    cBase: doublePrecision('c_base'),
     /** USD volume. */
     v: doublePrecision('v').notNull().default(0),
     nativeVolume: doublePrecision('native_volume').notNull().default(0),
@@ -332,6 +353,7 @@ export const koth = pgTable('koth', {
   net: text('net').primaryKey(),
   sym: text('sym').notNull(),
   mc: doublePrecision('mc').notNull(),
+  mcBase: doublePrecision('mc_base'),
   crownedAt: timestamp('crowned_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -347,6 +369,7 @@ export const tape = pgTable(
     tokenAmount: doublePrecision('token_amount').notNull(),
     usdValue: doublePrecision('usd_value').notNull(),
     mc: doublePrecision('mc').notNull(),
+    mcBase: doublePrecision('mc_base'),
     cashback: boolean('cashback').notNull().default(false),
     txSig: text('tx_sig').notNull(),
     logIndex: integer('log_index').notNull().default(0),
@@ -951,6 +974,18 @@ export const referralFeeTierBalances = pgTable(
  * signed by the protocol withdraw authority in an operator batch
  * (`scripts/referral-payouts.ts`), which then marks the row `paid`.
  */
+/** What `referral_payouts.voucher` holds for an on-chain claim. */
+export interface ReferralVoucherRecord {
+  deadline: number;
+  signature: string;
+  vault: string;
+  /** EVM only. */
+  chainId?: number;
+  /** Solana only: the cluster tag word (`mainnet`, `devnet`, …) without its NUL padding. */
+  clusterTag?: string;
+  issuedAt: number;
+}
+
 export const referralPayouts = pgTable(
   'referral_payouts',
   {
@@ -970,10 +1005,29 @@ export const referralPayouts = pgTable(
     note: text('note'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp('settled_at', { withTimezone: true }),
+    /**
+     * How a `native` row is settled (0028): `batch` — the protocol withdraw
+     * authority pays it from the protocol vault; `onchain` — the referrer
+     * redeems an API-signed voucher against the chain's referral vault.
+     */
+    method: text('method').notNull().default('batch'),
+    /** On-chain rows: the asset paid (WETH address / wSOL mint). */
+    asset: text('asset'),
+    /** On-chain rows: `amountNative` in the asset's atoms, as a decimal string. */
+    amountAtoms: numeric('amount_atoms', { precision: 78, scale: 0 }),
+    /**
+     * On-chain rows: the lifetime atoms the voucher certifies. The running
+     * maximum over a wallet's rows is what the API signs next; the vault pays
+     * the difference over what it already paid.
+     */
+    cumulativeAtoms: numeric('cumulative_atoms', { precision: 78, scale: 0 }),
+    /** On-chain rows: the last voucher issued for this cumulative (deadline, signature). */
+    voucher: jsonb('voucher').$type<ReferralVoucherRecord>(),
   },
   (t) => [
     index('referral_payouts_wallet_idx').on(t.net, t.wallet, t.requestedAt),
     index('referral_payouts_status_idx').on(t.net, t.status),
+    index('referral_payouts_onchain_idx').on(t.net, t.wallet, t.method, t.asset),
   ],
 );
 

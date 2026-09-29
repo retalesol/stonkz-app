@@ -59,6 +59,10 @@ describe('migration history', () => {
       '0022_referral_payouts',
       // 0026 adds the graduation pool records.
       '0026_graduation_pool',
+      // 0027 adds the base-denominated cap columns (live USD = base × live price).
+      '0027_live_market_caps',
+      // 0028 adds the on-chain referral claim columns (method / asset / atoms / voucher).
+      '0028_referral_onchain_claims',
     ]);
     const second = await runMigrations(h.db);
     expect(second.applied).toEqual([]);
@@ -72,6 +76,7 @@ describe('migration history', () => {
     // journal order, so its idx is 26 and 0026 follows at 27.
     expect(files.map((f) => f.idx)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 24, 25, 26, 27,
+      28, 29,
     ]);
     expect(files.map((f) => f.tag)).toContain('0022_referral_payouts');
     for (const f of files) expect(f.statements.length).toBeGreaterThan(0);

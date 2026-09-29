@@ -252,3 +252,17 @@ pub const METAPLEX_CREATE_METADATA_V3_IX: u8 = 33;
 pub const METAPLEX_MAX_NAME_LEN: usize = 32;
 pub const METAPLEX_MAX_SYMBOL_LEN: usize = 10;
 pub const METAPLEX_MAX_URI_LEN: usize = 200;
+
+/* ------------------------------------------------------ referral payouts */
+
+/// Per-base-mint referral payout vault: `["referral_vault", base_mint]`, a
+/// token account whose authority is the data-less `SEED_REFERRAL_AUTHORITY`
+/// PDA (never `global`, so `withdraw_treasury` cannot reach it).
+pub const SEED_REFERRAL_VAULT: &[u8] = b"referral_vault";
+pub const SEED_REFERRAL_AUTHORITY: &[u8] = b"referral_authority";
+/// Signer / pause / daily cap for referral claims (`ReferralConfig`).
+pub const SEED_REFERRAL_CONFIG: &[u8] = b"referral_config";
+/// One recipient's lifetime-claimed counter per base mint (`ReferralClaimState`).
+pub const SEED_REFERRAL_CLAIM: &[u8] = b"referral_claim";
+/// Leading bytes of every referral voucher the API signs.
+pub const REFERRAL_MESSAGE_PREFIX: &[u8] = b"STONKZ_REFERRAL_V1";

@@ -12,6 +12,7 @@ import type { GameAwards } from '../game/awards.js';
 import type { CrateService } from '../game/crates.js';
 import type { Ledger } from '../game/ledger.js';
 import type { ReferralService } from '../game/referrals.js';
+import type { ReferralSigner } from '../game/referral-signer.js';
 import type { SocialCapsService } from '../game/social-caps.js';
 import type { SpLevelService } from '../game/sp-levels.js';
 import type { Publisher } from '../ws/publisher.js';
@@ -40,6 +41,8 @@ export interface AppDeps {
   crates: CrateService;
   spLevels: SpLevelService;
   referrals: ReferralService;
+  /** Signs on-chain referral vouchers (`REFERRAL_SIGNER_KEY_*`); message-only keys. */
+  referralSigner: ReferralSigner;
   socialCaps: SocialCapsService;
   publisher: Publisher;
   now: () => number;

@@ -101,7 +101,9 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// the contract sits at the EIP-170 ceiling. Same slot (0), same selector,
     /// same return bytes.
     mapping(address => Coin) internal _coins;
-    mapping(address => mapping(address => Position)) public positions;
+    /// @dev Was `public`; the generated 8-output getter is gone for the same
+    /// reason as `coins` (size), `positionInfo` is the read path. Same slot (1).
+    mapping(address => mapping(address => Position)) internal positions;
     mapping(bytes32 => address) public tokenByTicker;
 
     /// Treasury balances per base token. Not claimable by any user path.
@@ -231,6 +233,18 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 mcapUsd1e6
     );
     event LiquidityMigrated(address indexed token, address pool, uint256 liquidityBurned);
+    /// @notice Post-graduation pool fees routed in through `accrueExternalFees`.
+    /// Emitted after the `FeeAccrued` + `TreasuryCredit` pair for the base
+    /// side, carrying what those cannot: the token side and the staker peel
+    /// of each (the indexer reads the peel off `Trade` for a curve fill; a
+    /// pool claim has no `Trade`).
+    event PoolFeesAccrued(
+        address indexed token,
+        uint256 baseAmount,
+        uint256 tokenAmount,
+        uint256 stakersBase,
+        uint256 stakersToken
+    );
     event CreatorFeesClaimed(address indexed token, address indexed creator, uint256 base, uint256 tokens);
     event Staked(
         address indexed token,
@@ -685,9 +699,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         c.realBase -= f.grossBase;
         c.realToken += amountToken;
 
-        protocolRevenue[c.baseToken] += s.protocol;
-        stonkzOps[c.baseToken] += s.stonkzOps;
-        stonkzBurn[c.baseToken] += s.burn;
+        _creditFees(c, s);
         // A sell inside the cashback window pays the elevated fee, but its
         // bucket accrues in base: converting it would be buy pressure the
         // seller never asked for. See SPEC.md §3.
@@ -696,11 +708,6 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint256 circ = CurveMath.circulating(c.tokensForSale, c.realToken);
         if (circ == 0) circ = 1;
         (uint256 toCreator, uint256 toStakers) = _accrueBucketBase(c, s.creatorBucket, circ);
-
-        c.protocolAccrued += s.protocol;
-        c.opsAccrued += s.stonkzOps;
-        c.burnAccrued += s.burn;
-        c.creatorBucketAccrued += s.creatorBucket;
 
         _send(c.baseToken, msg.sender, f.netBase);
 
@@ -866,6 +873,40 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         emit LiquidityMigrated(token, pool, burned);
     }
 
+    /// @notice Route fees earned by a graduated coin's locked pool position
+    /// into the same ledgers a curve fill feeds: the base side is split
+    /// 15/10/6/69 exactly as `buy`/`sell` split a fee, the token side goes to
+    /// the 69% bucket (the caller has already disposed of the treasury legs
+    /// of it — see `FeeLocker`), and both bucket sides peel to stakers by
+    /// the same rule. Pulls both amounts from the caller.
+    /// @dev Callable by the configured `migrator` only — the `UniswapV3Migrator`
+    /// forwards for its `FeeLocker`. Nothing here can leave the contract, so
+    /// the gate protects the accounting, not the funds.
+    function accrueExternalFees(address token, uint256 baseAmount, uint256 tokenAmount)
+        external
+        nonReentrant
+    {
+        require(msg.sender == address(migrator), "not migrator");
+        Coin storage c = _coins[token];
+        _known(c);
+        _something(baseAmount, tokenAmount);
+        if (baseAmount > 0) _pull(c.baseToken, msg.sender, baseAmount);
+        if (tokenAmount > 0) _pullTokens(token, tokenAmount);
+
+        CurveMath.FeeShares memory s = CurveMath.splitFee(baseAmount);
+        _creditFees(c, s);
+        c.bucketBase += s.creatorBucket;
+        c.bucketToken += tokenAmount;
+
+        uint256 circ = CurveMath.circulating(c.tokensForSale, c.realToken);
+        if (circ == 0) circ = 1;
+        (, uint256 stakersBase) = _accrueBucketBase(c, s.creatorBucket, circ);
+        (, uint256 stakersToken) = _accrueBucketToken(c, tokenAmount, circ);
+
+        _emitFee(c, s);
+        emit PoolFeesAccrued(token, baseAmount, tokenAmount, stakersBase, stakersToken);
+    }
+
     /* ---------------------------------------------------------------- views */
 
     function quoteBuy(address token, uint256 amountBase)
@@ -944,6 +985,21 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         _notGraduated(c);
         // `graduate` is permissionless, so this is seconds, not a lockup.
         require(!c.complete, "curve complete");
+    }
+
+    /// @dev The treasury legs of a fee, credited to the per-base vaults and to
+    /// the coin's own lifetime ledger. Shared by `sell` and
+    /// `accrueExternalFees` (the contract sits at the EIP-170 ceiling); `buy`
+    /// keeps its inline copy, which via-IR cannot stack otherwise.
+    function _creditFees(Coin storage c, CurveMath.FeeShares memory s) internal {
+        address b = c.baseToken;
+        protocolRevenue[b] += s.protocol;
+        stonkzOps[b] += s.stonkzOps;
+        stonkzBurn[b] += s.burn;
+        c.protocolAccrued += s.protocol;
+        c.opsAccrued += s.stonkzOps;
+        c.burnAccrued += s.burn;
+        c.creatorBucketAccrued += s.creatorBucket;
     }
 
     function _accrueBucketBase(Coin storage c, uint256 bucket, uint256 circ)
@@ -1060,7 +1116,15 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
             c.realBase,
             c.realToken
         );
-        emit FeeAccrued(c.token, c.baseToken, fee, s.protocol, s.stonkzOps, s.burn, s.creatorBucket);
+        _emitFee(c, s);
+    }
+
+    /// @dev The accounting pair every fee source emits: `FeeAccrued` with the
+    /// on-chain split, then the redundant `TreasuryCredit` view of it.
+    function _emitFee(Coin storage c, CurveMath.FeeShares memory s) internal {
+        emit FeeAccrued(
+            c.token, c.baseToken, CurveMath.feeOf(s), s.protocol, s.stonkzOps, s.burn, s.creatorBucket
+        );
         emit TreasuryCredit(c.baseToken, s.protocol, s.stonkzOps, s.burn);
     }
 }

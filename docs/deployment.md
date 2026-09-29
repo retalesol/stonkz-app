@@ -288,6 +288,44 @@ cast send $ROUTER "graduateWithPriceUpdate(address,bytes[],uint256)" \
 cast send $LAUNCHPAD "migrateLiquidity(address)" $TOKEN --rpc-url $RPC --private-key $MIGRATION_AUTHORITY_KEY
 ```
 
+#### 2.0.2 Post-graduation fees (Uniswap v3 + `FeeLocker`)
+
+`UniswapV3Migrator` replaces the v2 migrator: the raise + escrow become one
+**full-range** Uniswap v3 position (1% tier by default; a constructor param)
+owned by the immutable `FeeLocker`, which has no owner and no function that
+removes liquidity — the principal is as locked as burned LP — but whose
+permissionless `claimFees(token)` collects the position's fees and routes
+them into the launchpad's ledgers by the curve's own 15/10/6/69 split (base
+side; token side: 69% to the creator bucket incl. the staker peel, the 31%
+treasury legs burned to `0x…dEaD`). The locker owns positions directly in the
+pool by `(locker, tickLower, tickUpper)`; RH testnet has no
+NonfungiblePositionManager and none is needed anywhere.
+
+Rollout, per chain (testnet: admin key; mainnet: the script prints the
+timelock batch):
+
+```bash
+cd programs/evm
+# 1. Implementation-only upgrade: adds `accrueExternalFees`, keeps the router.
+LAUNCHPAD_ADDRESS=$PROXY KEEP_ROUTER=1 EXPECT_CHAIN_ID=$CHAIN \
+  forge script script/UpgradeStockLaunch.s.sol:UpgradeStockLaunch --rpc-url $RPC -vvv   # then --broadcast
+# 2. FeeLocker + UniswapV3Migrator, then setMigrator (refuses until step 1 is live).
+LAUNCHPAD_ADDRESS=$PROXY EXPECT_CHAIN_ID=$CHAIN \
+  forge script script/DeployV3Migrator.s.sol:DeployV3Migrator --rpc-url $RPC -vvv       # then --broadcast
+# Optional: V3_FACTORY (defaults to the chain pin), V3_FEE (10000), FEE_LOCKER (reuse), MIGRATION_AUTHORITY.
+```
+
+Afterwards `migrateLiquidity` emits `LiquidityMigrated(token, pool, liquidity)`
+(same signature; the third field is the locked v3 liquidity, not burned LP)
+and anyone can call `FeeLocker.claimFees(token)` — the token page shows the
+uncollected amount and offers **CLAIM POOL FEES**. Each claim emits the usual
+`FeeAccrued` + `TreasuryCredit` plus `PoolFeesAccrued` (token side and staker
+peel), which the indexer books like a curve fill. The API discovers the
+locker from the chain (`launchpad.migrator().locker()`); no env var. Coins
+graduated by the v2 migrator keep their burned LP and show no claim button.
+Record `FeeLocker` and `UniswapV3Migrator` in `deployments/<chainId>.json`.
+Fork rehearsal: `test/fork/V3GraduationFork.t.sol` (env-gated, either chain).
+
 ### 2.1 Mainnet deploy
 
 ```bash

@@ -23,6 +23,11 @@
  *   DATABASE_URL=… pnpm --filter @stonkz/api exec tsx ../../scripts/referral-payouts.ts void --id 12 --note "wrong wallet"
  *       cancels a request and returns the amount to the wallet's pending balance
  *
+ * Only **batch** rows (`method = 'batch'`) are listed or settled here. A
+ * self-serve on-chain claim (`method = 'onchain'`, docs/referral-payouts.md)
+ * is redeemed by the referrer's own voucher against the referral vault and
+ * must never also be paid by the authority; `paid` and `void` refuse them.
+ *
  * `list` writes nothing. Amounts are converted from the ledger's native
  * units to atoms at the base asset's decimals: 18 for WETH / ETH on the EVM
  * nets, 9 for wrapped SOL. Commissions are booked in the chain's native unit,

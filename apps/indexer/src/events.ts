@@ -66,8 +66,10 @@ export interface TokenCreatedEvent extends EventBase {
   feeBps: number;
   cashback: boolean;
   seed: number;
-  /** Market cap right after the (optional) dev buy. */
+  /** Market cap right after the (optional) dev buy, USD at the launch oracle snapshot. */
   mc: number;
+  /** The same cap in whole base units — the source of truth for live USD (0027). Chain sources only. */
+  mcBase?: number;
   xHandle?: string;
   website?: string;
   telegram?: string;
@@ -86,8 +88,10 @@ export interface TradeEvent extends EventBase {
   baseAmount: number;
   tokenAmount: number;
   usdValue: number;
-  /** Market cap after the fill. */
+  /** Market cap after the fill, USD at the launch oracle snapshot (base-proportional). */
   mc: number;
+  /** Market cap after the fill in whole base units — what live USD is marked from (0027). */
+  mcBase?: number;
   /** Filled inside a cashback window. */
   cashback: boolean;
   /**
@@ -105,6 +109,7 @@ export interface GraduatedEvent extends EventBase {
   mint?: string;
   sym: string;
   mc: number;
+  mcBase?: number;
   poolAddress?: string;
   /** Meteora DLMM PositionV2 account (permanent lock / dead operator). */
   positionAddress?: string;
@@ -146,6 +151,14 @@ export interface FeeAccruedEvent extends EventBase {
   creatorTokens: number;
   /** The stakers' slice of a converted cashback bucket, in tokens (`Trade.feeStakers`). */
   stakerTokens?: number;
+  /**
+   * Set when the fee was collected from the graduated coin's locked DEX
+   * position (`StonkzLaunchpad.accrueExternalFees` via `FeeLocker`) rather
+   * than a curve fill. Such a claim carries a **native** bucket (with its
+   * staker peel) *and* token slices at once, unlike a cashback fill where the
+   * token slices replace the native ones.
+   */
+  postGraduation?: boolean;
 }
 
 export interface StakedEvent extends EventBase {

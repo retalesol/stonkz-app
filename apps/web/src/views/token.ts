@@ -39,8 +39,9 @@ import {
   subscribeChatRoom,
   type ApiTradeRow,
   type LiveChatFrame,
+  liveClaimPoolFees,
 } from '../api/live.js';
-import { sigKey } from '../api/live-fills.js';
+import { coinBaseUsd, sigKey } from '../api/live-fills.js';
 import {
   fetchTokenCandles,
   fetchTokenDetail,
@@ -466,6 +467,7 @@ function tokenHTML(c: SimCoin): Html {
 interface ChartState {
   /** `sym:mint:tf` the REST candles belong to. */
   key: string;
+  /** REST candles in **base per token**; `composeLiveCandles` marks them in USD on each draw. */
   rest: Candle[];
   /** Signatures already inside `rest`. */
   restSigs: Set<string>;
@@ -510,6 +512,18 @@ function axisFor(c: SimCoin): ChartAxis {
   return { unit, rate: mark > 0 ? 1 / mark : 1 };
 }
 
+/**
+ * USD per unit of the coin's base right now — the multiplier that turns the
+ * base candle series (and a trade row's `mcBase`) into today's dollars. A
+ * native-paired coin follows the footer mark; other bases use the price the
+ * API served with the coin. `1` in sim mode or when nothing is known.
+ */
+function chartBaseUsd(c: SimCoin): number {
+  if (api.mode !== 'live') return 1;
+  const usd = coinBaseUsd(c, nativeUsd);
+  return usd > 0 ? usd : 1;
+}
+
 async function loadChartCandles(c: SimCoin, key: string): Promise<void> {
   CH.loading = true;
   try {
@@ -552,6 +566,9 @@ function composeLiveCandles(c: SimCoin, bucketMs: number, supply: number, now: n
   }
   let pending = 0;
   for (const t of trades) if (t.pending) pending++;
+  // Base series × the live base mark: a native-price tick re-prices the whole
+  // chart (the mark is in the key), the coin's own moves come from the fills.
+  const baseUsd = chartBaseUsd(c);
   const key = [
     CH.rest.length,
     trades.length,
@@ -559,20 +576,29 @@ function composeLiveCandles(c: SimCoin, bucketMs: number, supply: number, now: n
     pending,
     bucketOf(now, bucketMs),
     c.mc,
+    baseUsd,
   ].join('|');
   if (key === CH.viewKey) return CH.view;
   const out: Candle[] = CH.rest.map((k) => ({ ...k }));
-  // Oldest first so opens carry forward correctly.
+  // Oldest first so opens carry forward correctly. Folded in base terms like
+  // the REST candles: a row's `mcBase`, else its USD cap at today's mark.
   for (let i = trades.length - 1; i >= 0; i--) {
     const t = trades[i] as Trade;
     if (!t.sig || CH.restSigs.has(sigKey(t.sig))) continue;
+    const capBase = t.mcBase !== undefined && t.mcBase > 0 ? t.mcBase : t.mc / baseUsd;
     foldTrade(
       out,
-      { t: t.t.getTime(), price: t.mc / supply, usd: tradeUsd(c, t), pending: t.pending },
+      { t: t.t.getTime(), price: capBase / supply, usd: tradeUsd(c, t), pending: t.pending },
       bucketMs,
     );
   }
-  CH.view = fillOhlcGaps(out, bucketMs, now);
+  CH.view = fillOhlcGaps(out, bucketMs, now).map((k) => ({
+    ...k,
+    o: k.o * baseUsd,
+    h: k.h * baseUsd,
+    l: k.l * baseUsd,
+    c: k.c * baseUsd,
+  }));
   CH.viewKey = key;
   return CH.view;
 }
@@ -1629,17 +1655,34 @@ function updateCurveNote(): void {
   if (isGraduated(c)) {
     // `poolAddress` lands with `LiquidityMigrated`, a second transaction on
     // EVM (authority-gated) — until then the honest link is the mint itself.
+    // `poolFees` (EVM, v3 graduation) means the position sits in the
+    // immutable FeeLocker rather than burned LP: its fees are claimable by
+    // anyone, into the curve's own ledgers.
+    const fees =
+      api.mode === 'live' && detailKey === c.sym + ':' + (c.mint ?? '')
+        ? (DETAIL?.poolFees ?? null)
+        : null;
+    const lpNote = fees
+      ? 'THE POSITION IS LOCKED FOREVER IN THE FEE LOCKER; ITS FEES PAY THE CREATOR, STAKERS AND TREASURIES'
+      : NET_INFO[net].lpNote;
     render(
       n,
       c.poolAddress
-        ? html`GRADUATED ${MID} LIQUIDITY MIGRATED TO ${NET_INFO[net].dex} AND ${NET_INFO[net].lpNote}.
+        ? html`GRADUATED ${MID} LIQUIDITY MIGRATED TO ${NET_INFO[net].dex} AND ${lpNote}.
             <a
               class="txlink"
               href="${attr(dexPoolUrl(net, c.poolAddress))}"
               target="_blank"
               rel="noopener"
               >OPEN ${NET_INFO[net].dex} POOL ↗</a
-            >`
+            >${
+              fees
+                ? html` ${MID} UNCOLLECTED POOL FEES:
+                    <b class="am">${fmtSig(fees.pendingBase)} ${fees.baseSym}</b> +
+                    <b class="am">${fmtSig(fees.pendingTokens)} ${c.sym}</b>
+                    <button type="button" class="custbtn" id="cv-claim-pool">CLAIM POOL FEES</button>`
+                : ''
+            }`
         : html`GRADUATED ${MID} THE CURVE IS CLOSED. LIQUIDITY IS MIGRATING TO ${NET_INFO[net].dex},
             WHERE ${NET_INFO[net].lpNote.replace(/ (WERE|IS) /, ' WILL BE ')}.
             ${
@@ -1654,6 +1697,7 @@ function updateCurveNote(): void {
                 : ''
             }`,
     );
+    $('#cv-claim-pool')?.addEventListener('click', () => void claimPoolFeesNow(c));
   } else if (api.mode === 'live' && c.graduationReady) {
     // The threshold is met but nobody has called the permissionless
     // `graduate` yet. Offer it to whoever is looking.
@@ -1666,15 +1710,22 @@ function updateCurveNote(): void {
     );
     $('#cv-graduate')?.addEventListener('click', () => void graduateNow(c));
   } else {
-    const gradBase =
-      DETAIL && DETAIL.graduationBase !== undefined && detailKey === c.sym + ':' + (c.mint ?? '')
-        ? html` (${fmtSig(DETAIL.graduationBase)} ${coinUnit(c)})`
-        : '';
+    // Graduation is fixed in the base asset on chain; in dollars it moves
+    // with the base price, like the cap it is measured against.
+    const detail =
+      DETAIL && detailKey === c.sym + ':' + (c.mint ?? '') && DETAIL.graduationBase !== undefined
+        ? DETAIL
+        : null;
+    const gradBase = detail ? html` (${fmtSig(detail.graduationBase as number)} ${c.base || coinUnit(c)})` : '';
+    const gradUsd =
+      detail && detail.graduationUsdLive !== undefined && detail.graduationUsdLive > 0
+        ? detail.graduationUsdLive
+        : GRAD;
     render(
       n,
-      html`AT ${usd(GRAD)} MARKET CAP${gradBase} THE CURVE FILLS, LIQUIDITY MIGRATES
+      html`AT ${usd(gradUsd)} MARKET CAP${gradBase} THE CURVE FILLS, LIQUIDITY MIGRATES
         (${NET_INFO[net].dex}) AND THE LP LOCKS.
-        <b class="am">${usd(Math.max(0, GRAD - c.mc))}</b> TO GO.`,
+        <b class="am">${usd(Math.max(0, gradUsd - c.mc))}</b> TO GO.`,
     );
   }
 }
@@ -1725,6 +1776,64 @@ async function graduateNow(c: SimCoin): Promise<void> {
   }
 }
 
+/**
+ * "CLAIM POOL FEES": one signature on the permissionless
+ * `FeeLocker.claimFees`. The caller pays gas and nothing else; the fees land
+ * in the creator's, stakers' and treasuries' ledgers, and the header's
+ * uncollected figure refreshes once the detail re-fetches.
+ */
+async function claimPoolFeesNow(c: SimCoin): Promise<void> {
+  const btn = $('#cv-claim-pool') as HTMLButtonElement | null;
+  if (btn?.disabled) return;
+  if (!WALLET.on) {
+    void connectWallet(c.net ?? 'SOL');
+    return;
+  }
+  if (crossChain(c)) {
+    toast('SWITCH TO ' + NET_INFO[c.net ?? 'SOL'].short + ' TO CLAIM', 'red');
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'CLAIMING…';
+  }
+  try {
+    const got = await liveClaimPoolFees(c);
+    toast(
+      'POOL FEES CLAIMED ' +
+        MID +
+        ' ' +
+        fmtSig(got.pendingBase) +
+        ' ' +
+        got.baseSym +
+        ' + ' +
+        fmtSig(got.pendingTokens) +
+        ' ' +
+        c.sym +
+        ' ROUTED TO THE CREATOR, STAKERS AND TREASURIES',
+      'gold',
+    );
+    if (btn) btn.textContent = 'CLAIMED';
+    refreshDetail(c, 2_000);
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'CLAIM POOL FEES';
+    }
+    if (err instanceof SignerCancelledError || isRejection(err)) {
+      toast('SIGNING CANCELLED', 'red');
+      return;
+    }
+    const code = err instanceof LiveApiError ? err.code : '';
+    if (code === 'nothing_to_claim') toast('NOTHING TO CLAIM YET ' + MID + ' REFRESHING', 'gold');
+    else if (code === 'no_locked_position') toast('THIS POOL HAS NO LOCKED POSITION TO CLAIM FROM', 'red');
+    else if (err instanceof LiveApiError) {
+      toast(('CLAIM FAILED: ' + err.message).toUpperCase(), 'red');
+    } else toast(('CLAIM FAILED: ' + describeWalletError(err)).toUpperCase(), 'red');
+    if (code === 'nothing_to_claim') refreshDetail(c);
+  }
+}
+
 /** Patch the header stats without rebuilding the page. `index.html:2052` */
 export function syncToken(): void {
   const c = TV.c;
@@ -1759,7 +1868,11 @@ export function syncToken(): void {
   set('#s-liq', live ? (liqUsd !== undefined ? usd(liqUsd) : MID) : usd(liq(c)));
   const mcn = $('#s-mcn');
   if (mcn) {
-    const t = detail && detail.mcBase !== undefined ? fmtSig(detail.mcBase) + ' ' + unit : '';
+    // "$4.4K · 1.61 ETH": the base cap is the truth; the coin's own base
+    // symbol when it is not paired against the gas token.
+    const baseUnit = c.base || unit;
+    const mcBase = c.mcBase ?? detail?.mcBase;
+    const t = mcBase !== undefined && mcBase > 0 ? fmtSig(mcBase) + ' ' + baseUnit : '';
     if (mcn.textContent !== t) mcn.textContent = t;
   }
   const liqn = $('#s-liqn');

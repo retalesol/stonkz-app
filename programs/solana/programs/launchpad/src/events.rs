@@ -189,3 +189,36 @@ pub struct DexFeesClaimed {
     pub tokens_burned: u64,
     pub ts: i64,
 }
+
+/// A referral voucher was redeemed: `amount` left the referral vault for
+/// `recipient`, whose lifetime claimed is now `cumulative_amount`.
+#[event]
+pub struct ReferralClaimed {
+    pub base_mint: Pubkey,
+    pub vault: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub cumulative_amount: u64,
+    pub ts: i64,
+}
+
+/// `fund_referral_vault` (a `withdraw_treasury` into the vault emits
+/// `TreasuryWithdrawn` instead).
+#[event]
+pub struct ReferralVaultFunded {
+    pub base_mint: Pubkey,
+    pub vault: Pubkey,
+    pub funder: Pubkey,
+    pub amount: u64,
+    pub ts: i64,
+}
+
+/// `set_referral_signer` / `set_referral_paused`: the config after the change.
+#[event]
+pub struct ReferralConfigSet {
+    pub signer: Pubkey,
+    pub max_per_day: u64,
+    pub cluster_tag: [u8; 8],
+    pub paused: bool,
+    pub ts: i64,
+}

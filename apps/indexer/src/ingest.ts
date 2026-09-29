@@ -23,6 +23,7 @@ import type { Publisher } from '@stonkz/api/ws/publisher';
 import type { Logger } from '@stonkz/api/observability/logger';
 import { fillId } from '@stonkz/api/chain/trade-fills';
 import { candleUpdatesFor } from './candles.js';
+import { isNativeBaseMint } from './chain/market.js';
 import {
   assertEventIntegrity,
   compareEvents,
@@ -226,7 +227,14 @@ export class Ingestor {
       type: 'token_created',
       net: event.net,
       sym: event.sym,
-      payload: { mint, name, creator: event.creator, mc: event.mc, lane },
+      payload: {
+        mint,
+        name,
+        creator: event.creator,
+        mc: event.mc,
+        ...(event.mcBase !== undefined ? { mcBase: event.mcBase } : {}),
+        lane,
+      },
     });
 
     const result = await this.opts.awards.launch({
@@ -296,6 +304,10 @@ export class Ingestor {
       cbStartMs,
       mc: event.mc,
       lastMc: event.mc,
+      // The base-denominated cap is the truth (0027); `mc` is its value at
+      // the launch snapshot. A fixture launch has no base figure.
+      mcBase: event.mcBase ?? null,
+      lastMcBase: event.mcBase ?? null,
       lane,
       seed: event.seed,
       xHandle: event.xHandle ?? null,
@@ -455,6 +467,12 @@ export class Ingestor {
   private async onTrade(event: TradeEvent, report: IngestReport): Promise<void> {
     const at = new Date(event.blockTimeMs);
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
+    // Execution price in base per token, the base twin of `price` (USD paid ÷
+    // tokens); `null` when the source carried no base figure (fixtures).
+    const priceBase =
+      event.mcBase !== undefined && event.tokenAmount > 0 && event.baseAmount > 0
+        ? event.baseAmount / event.tokenAmount
+        : null;
 
     await this.db
       .insert(trades)
@@ -472,6 +490,8 @@ export class Ingestor {
         usdValue: event.usdValue,
         mc: event.mc,
         price: event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0,
+        mcBase: event.mcBase ?? null,
+        priceBase,
         cashback: event.cashback,
         blockTime: at,
         chainPosition: event.chainPosition,
@@ -489,6 +509,7 @@ export class Ingestor {
         tokenAmount: event.tokenAmount,
         usdValue: event.usdValue,
         mc: event.mc,
+        mcBase: event.mcBase ?? null,
         cashback: event.cashback,
         txSig: event.txSig,
         logIndex: event.logIndex,
@@ -498,7 +519,7 @@ export class Ingestor {
       .onConflictDoNothing();
 
     await this.updateHolder(event, mint);
-    await this.updateCandles(event, mint);
+    await this.updateCandles(event, mint, priceBase);
     const lane = await this.updateToken(event, mint);
     await this.updateKoth(event.net);
 
@@ -517,6 +538,7 @@ export class Ingestor {
         sol: event.nativeAmount,
         tok: event.tokenAmount,
         mc: event.mc,
+        ...(event.mcBase !== undefined ? { mcBase: event.mcBase, priceBase: priceBase ?? 0 } : {}),
         w: event.trader,
         v: event.usdValue,
         cb: event.cashback,
@@ -532,6 +554,7 @@ export class Ingestor {
       mint,
       mc: event.mc,
       price: event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0,
+      ...(event.mcBase !== undefined ? { mcBase: event.mcBase, priceBase: priceBase ?? 0 } : {}),
       lane,
     });
 
@@ -632,14 +655,20 @@ export class Ingestor {
       });
   }
 
-  private async updateCandles(event: TradeEvent, mint: string): Promise<void> {
+  private async updateCandles(
+    event: TradeEvent,
+    mint: string,
+    priceBase: number | null,
+  ): Promise<void> {
     const price = event.tokenAmount > 0 ? event.usdValue / event.tokenAmount : 0;
     for (const update of candleUpdatesFor(
       event.blockTimeMs,
       price,
       event.usdValue,
       event.nativeAmount,
+      priceBase,
     )) {
+      const pb = update.priceBase;
       await this.db
         .insert(candles)
         .values({
@@ -652,6 +681,10 @@ export class Ingestor {
           h: price,
           l: price,
           c: price,
+          oBase: pb,
+          hBase: pb,
+          lBase: pb,
+          cBase: pb,
           v: update.usdVolume,
           nativeVolume: update.nativeVolume,
           trades: 1,
@@ -663,6 +696,15 @@ export class Ingestor {
             h: sql`greatest(${candles.h}, ${price})`,
             l: sql`least(${candles.l}, ${price})`,
             c: price,
+            ...(pb !== null
+              ? {
+                  // A bucket opened before 0027 has no base open: adopt this fill's.
+                  oBase: sql`coalesce(${candles.oBase}, ${pb})`,
+                  hBase: sql`greatest(coalesce(${candles.hBase}, ${pb}), ${pb})`,
+                  lBase: sql`least(coalesce(${candles.lBase}, ${pb}), ${pb})`,
+                  cBase: pb,
+                }
+              : {}),
             v: sql`${candles.v} + ${update.usdVolume}`,
             nativeVolume: sql`${candles.nativeVolume} + ${update.nativeVolume}`,
             trades: sql`${candles.trades} + 1`,
@@ -691,9 +733,12 @@ export class Ingestor {
       );
 
     // 24h change against the oldest fill still in the window, falling back to
-    // the launch cap when the token is younger than a day.
+    // the launch cap when the token is younger than a day. Measured on the
+    // coin's own curve (base units) so a move in ETH/SOL is never shown as
+    // the coin's move; the snapshot-USD `mc` is the same ratio for rows from
+    // before the base column existed.
     const [anchor] = await this.db
-      .select({ mc: trades.mc })
+      .select({ mc: trades.mc, mcBase: trades.mcBase })
       .from(trades)
       .where(
         and(
@@ -704,10 +749,19 @@ export class Ingestor {
       )
       .orderBy(asc(trades.blockTime))
       .limit(1);
-    const base = anchor?.mc ?? existing.mc;
-    const chg = base > 0 ? ((event.mc - base) / base) * 100 : 0;
+    const inBase =
+      event.mcBase !== undefined &&
+      event.mcBase > 0 &&
+      (anchor ? anchor.mcBase !== null && anchor.mcBase > 0 : (existing.mcBase ?? 0) > 0);
+    const from = inBase
+      ? ((anchor?.mcBase ?? existing.mcBase) as number)
+      : (anchor?.mc ?? existing.mc);
+    const to = inBase ? (event.mcBase as number) : event.mc;
+    const chg = from > 0 ? ((to - from) / from) * 100 : 0;
 
-    // A graduated token stays graduated even if its cap falls back below $69K.
+    // A graduated token stays graduated even if its cap falls back below the
+    // graduation cap. The lane reads the snapshot-priced cap, which is
+    // proportional to the chain's base-denominated progress.
     const lane: Lane = existing.lane === 'grad' ? 'grad' : laneOf({ mc: event.mc });
 
     await this.db
@@ -715,6 +769,9 @@ export class Ingestor {
       .set({
         lastMc: existing.mc,
         mc: event.mc,
+        ...(event.mcBase !== undefined
+          ? { lastMcBase: existing.mcBase ?? event.mcBase, mcBase: event.mcBase }
+          : {}),
         chg,
         holders: holderRows[0]?.n ?? 0,
         lane,
@@ -740,40 +797,49 @@ export class Ingestor {
 
   /** Highest cap on the net that has not graduated yet wears the crown. */
   private async updateKoth(net: Net): Promise<void> {
+    // Ranked on the snapshot-priced cap (base-proportional per coin). The API
+    // marks the crown's cap at the live base price when it serves it.
     const [top] = await this.db
-      .select({ sym: tokens.sym, mc: tokens.mc })
+      .select({ sym: tokens.sym, mc: tokens.mc, mcBase: tokens.mcBase })
       .from(tokens)
       .where(and(eq(tokens.net, net), eq(tokens.lane, 'new')))
       .orderBy(desc(tokens.mc))
       .limit(1);
 
     const [soon] = await this.db
-      .select({ sym: tokens.sym, mc: tokens.mc })
+      .select({ sym: tokens.sym, mc: tokens.mc, mcBase: tokens.mcBase })
       .from(tokens)
       .where(and(eq(tokens.net, net), eq(tokens.lane, 'soon')))
       .orderBy(desc(tokens.mc))
       .limit(1);
 
     const best = [top, soon]
-      .filter((r): r is { sym: string; mc: number } => r !== undefined)
+      .filter((r): r is { sym: string; mc: number; mcBase: number | null } => r !== undefined)
       .sort((a, b) => b.mc - a.mc)[0];
     if (!best) return;
+    const crown = { mc: best.mc, mcBase: best.mcBase };
 
     const [current] = await this.db.select().from(koth).where(eq(koth.net, net)).limit(1);
     if (current?.sym === best.sym) {
-      await this.db.update(koth).set({ mc: best.mc }).where(eq(koth.net, net));
+      await this.db.update(koth).set(crown).where(eq(koth.net, net));
       return;
     }
 
     await this.db
       .insert(koth)
-      .values({ net, sym: best.sym, mc: best.mc, crownedAt: new Date(this.now()) })
+      .values({ net, sym: best.sym, ...crown, crownedAt: new Date(this.now()) })
       .onConflictDoUpdate({
         target: koth.net,
-        set: { sym: best.sym, mc: best.mc, crownedAt: new Date(this.now()) },
+        set: { sym: best.sym, ...crown, crownedAt: new Date(this.now()) },
       });
 
-    await this.opts.publisher.board({ type: 'koth', net, sym: best.sym, mc: best.mc });
+    await this.opts.publisher.board({
+      type: 'koth',
+      net,
+      sym: best.sym,
+      mc: best.mc,
+      ...(best.mcBase !== null ? { mcBase: best.mcBase } : {}),
+    });
   }
 
   /* ------------------------------------------------------------ graduation */
@@ -802,6 +868,7 @@ export class Ingestor {
         .update(tokens)
         .set({
           ...(event.mc > 0 ? { mc: event.mc } : {}),
+          ...(event.mcBase !== undefined && event.mcBase > 0 ? { mcBase: event.mcBase } : {}),
           ...pool,
           updatedAt: new Date(this.now()),
         })
@@ -823,6 +890,7 @@ export class Ingestor {
         graduatedAt: new Date(event.blockTimeMs),
         // A standalone migration carries no cap (`mc: 0`); keep the last one.
         ...(event.mc > 0 ? { mc: event.mc } : {}),
+        ...(event.mcBase !== undefined && event.mcBase > 0 ? { mcBase: event.mcBase } : {}),
         ...pool,
         updatedAt: new Date(this.now()),
       })
@@ -893,7 +961,10 @@ export class Ingestor {
     // claimable from it, though the bucket's native value still counts
     // towards the lifetime total the Fees tab shows.
     const stakerTokens = event.stakerTokens ?? 0;
-    const converted = event.creatorTokens > 0 || stakerTokens > 0;
+    // A post-graduation pool claim pays both units at once (base fees and
+    // token fees), so its token slices do not mean the native side was
+    // converted away.
+    const converted = !event.postGraduation && (event.creatorTokens > 0 || stakerTokens > 0);
     const creatorNet = converted ? 0 : Math.max(0, event.creatorBucket - event.stakerShare);
     const stakerNative = converted ? 0 : event.stakerShare;
     const mint = await this.resolveMint(event.net, event.sym, event.mint);
@@ -1165,13 +1236,24 @@ export class Ingestor {
       if (position.costNative <= 0) continue;
 
       const [token] = await this.db
-        .select({ mc: tokens.mc, supply: tokens.supply })
+        .select({
+          mc: tokens.mc,
+          mcBase: tokens.mcBase,
+          supply: tokens.supply,
+          baseMint: tokens.baseMint,
+        })
         .from(tokens)
         .where(and(eq(tokens.net, net), eq(tokens.mint, position.mint)))
         .limit(1);
       if (!token || token.supply <= 0 || nativeUsdPrice <= 0) continue;
 
-      const valueNative = (position.tokenAmount * (token.mc / token.supply)) / nativeUsdPrice;
+      // A native-paired coin's value in the native unit is its base cap
+      // share, independent of the ETH/SOL price; anything else converts its
+      // snapshot-USD cap at today's mark.
+      const nativePaired = token.mcBase !== null && isNativeBaseMint(net, token.baseMint);
+      const valueNative = nativePaired
+        ? position.tokenAmount * ((token.mcBase as number) / token.supply)
+        : (position.tokenAmount * (token.mc / token.supply)) / nativeUsdPrice;
       const pnlPct = ((valueNative - position.costNative) / position.costNative) * 100;
       if (pnlPct > -25) continue;
 

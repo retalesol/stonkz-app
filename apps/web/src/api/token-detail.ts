@@ -46,6 +46,13 @@ export interface TokenDetail {
   volTotalNative?: number;
   tradeCount?: number;
   graduationUsd?: number;
+  /** Graduation cap in USD at the live base price (`graduationBase × baseUsd`). */
+  graduationUsdLive?: number;
+  /** USD per base unit the detail's live figures were converted at. */
+  baseUsd?: number;
+  baseUsdLive?: boolean;
+  vol24UsdRecorded?: number;
+  vol24Base?: number;
   mcBase?: number;
   liqBase?: number;
   liqUsd?: number;
@@ -60,6 +67,19 @@ export interface TokenDetail {
   x?: string;
   launchedAt?: number;
   graduatedAt?: number | null;
+  /**
+   * EVM only, once the coin's liquidity sits in the immutable `FeeLocker`
+   * (a v3 graduation): its uncollected pool fees, claimable by anyone via
+   * `POST /tokens/:sym/pool-fees/claim/prepare`. Absent for a v2 graduation
+   * (LP burned, nothing to claim) and before migration.
+   */
+  poolFees?: {
+    locker: string;
+    pool: string;
+    pendingBase: number;
+    baseSym: string;
+    pendingTokens: number;
+  } | null;
 }
 
 export function fetchTokenDetail(c: TokenIdentity): Promise<TokenDetail> {
@@ -70,30 +90,56 @@ interface ApiCandlesResponse {
   bucketMs?: number;
   supply?: number;
   basis?: 'spot' | 'indexed';
+  /** USD per base unit `o`–`c` were converted at (0027). */
+  baseUsd?: number;
   candles: Array<{
     t: number;
     o: number;
     h: number;
     l: number;
     c: number;
+    /** Base per token (0027). */
+    ob?: number;
+    hb?: number;
+    lb?: number;
+    cb?: number;
     v: number;
     trades?: number;
   }>;
 }
 
+/**
+ * The series of record is in **base per token** (`ob`–`cb`); the chart
+ * multiplies by the live base mark on every draw, so the USD axis follows
+ * ETH/SOL and the native axis is the series itself. An API that predates the
+ * base columns is converted back at the `baseUsd` it served (or taken as-is
+ * with `baseUsd: 1` when it has no price at all).
+ */
 export async function fetchTokenCandles(
   c: TokenIdentity,
   tf: Timeframe,
   limit = 400,
-): Promise<{ candles: Candle[]; basis: 'spot' | 'indexed' }> {
+): Promise<{ candles: Candle[]; basis: 'spot' | 'indexed'; baseUsd: number }> {
   const res = await getJson<ApiCandlesResponse>(
     '/tokens/' + encodeURIComponent(c.sym) + '/candles' + qs(c, { tf, limit }),
   );
+  const baseUsd = res.baseUsd !== undefined && res.baseUsd > 0 ? res.baseUsd : 1;
+  const inBase = (usd: number, base: number | undefined): number =>
+    base !== undefined && base > 0 ? base : usd / baseUsd;
   return {
     basis: res.basis ?? 'indexed',
+    baseUsd,
     candles: (res.candles ?? [])
       .filter((k) => Number.isFinite(k.t) && k.c > 0)
-      .map((k) => ({ t: k.t, o: k.o, h: k.h, l: k.l, c: k.c, v: k.v || 0, n: k.trades ?? 1 })),
+      .map((k) => ({
+        t: k.t,
+        o: inBase(k.o, k.ob),
+        h: inBase(k.h, k.hb),
+        l: inBase(k.l, k.lb),
+        c: inBase(k.c, k.cb),
+        v: k.v || 0,
+        n: k.trades ?? 1,
+      })),
   };
 }
 

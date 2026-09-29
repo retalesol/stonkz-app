@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { and, eq } from 'drizzle-orm';
 import { chatMessages, tape, tokens } from '../db/schema.js';
 import { createTestApp, type TestApp } from '../test/app.js';
 import { PRIVATE_ROOM_SUFFIX } from '../social/chat.js';
@@ -216,6 +217,115 @@ describe('GET /tokens paging', () => {
     const b = (await get<BoardResponse>('/tokens?net=SOL&lane=new&sort=mc&q=dev')).body;
     expect(syms(b)).toEqual(['DEVCOIN']);
     expect(b.total).toBe(1);
+  });
+});
+
+describe('GET /tokens sort=mc with live base prices', () => {
+  /**
+   * Three coins on three chains with three bases, each with a base cap and a
+   * launch snapshot chosen so the snapshot-USD order (RHDOG > DEVCOIN >
+   * MEMEMAN) differs from the live-USD order. `FakePriceOracle`: SOL $214.08,
+   * ETH $4,200; USDC is $1 by definition.
+   */
+  async function priceRows(): Promise<void> {
+    const set = async (
+      net: string,
+      mint: string,
+      patch: Partial<typeof tokens.$inferInsert>,
+    ): Promise<void> => {
+      await h.deps.db
+        .update(tokens)
+        .set(patch)
+        .where(and(eq(tokens.net, net), eq(tokens.mint, mint)));
+    };
+    // 1 ETH: $2,736.6 at launch, $4,200 live.
+    await set('BASE', MINT_A, {
+      baseSymbol: 'WETH',
+      basePriceUsd1e6: '2736600000',
+      mcBase: 1,
+      mc: 2736.6,
+    });
+    // 20 SOL: $150 at launch ($3,000), $214.08 live ($4,281.6).
+    await set('SOL', MINT_C, {
+      baseSymbol: 'SOL',
+      basePriceUsd1e6: '150000000',
+      mcBase: 20,
+      mc: 3000,
+    });
+    // 3,500 USDC: $3,500 either way.
+    await set('RH', MINT_B, {
+      baseSymbol: 'USDC',
+      basePriceUsd1e6: '1000000',
+      mcBase: 3500,
+      mc: 3500,
+    });
+  }
+
+  it('ranks mixed nets and bases by the live USD cap and pages that order', async () => {
+    await priceRows();
+    const byMc = (await get<BoardResponse>('/tokens?net=ALL&sort=mc')).body;
+    expect(syms(byMc)).toEqual(['CULT', 'DEVCOIN', 'MEMEMAN', 'RHDOG']);
+    const of = (sym: string) => byMc.tokens.find((t) => t.sym === sym) as SerialisedToken;
+    expect(of('MEMEMAN').mc).toBeCloseTo(4200, 9);
+    expect(of('MEMEMAN').baseUsd).toBe(4200);
+    expect(of('MEMEMAN').mcBase).toBe(1);
+    expect(of('DEVCOIN').mc).toBeCloseTo(20 * 214.08, 9);
+    expect(of('RHDOG').mc).toBe(3500);
+    expect(of('RHDOG').baseUsd).toBe(1);
+    // CULT never had a base price: its `mc` is USD as stored.
+    expect(of('CULT').mc).toBe(60_000);
+    expect(of('CULT').mcBase).toBe(0);
+
+    const one = (await get<BoardResponse>('/tokens?net=ALL&sort=mc&limit=2')).body;
+    const rest = (await get<BoardResponse>('/tokens?net=ALL&sort=mc&limit=2&offset=2')).body;
+    expect([...syms(one), ...syms(rest)]).toEqual(syms(byMc));
+  });
+
+  it('re-ranks when a native price moves', async () => {
+    await priceRows();
+    h.oracle.set('ETH', 6000);
+    try {
+      const byMc = (await get<BoardResponse>('/tokens?net=ALL&sort=mc')).body;
+      expect(syms(byMc)).toEqual(['CULT', 'MEMEMAN', 'DEVCOIN', 'RHDOG']);
+      expect(byMc.tokens.find((t) => t.sym === 'MEMEMAN')?.mc).toBeCloseTo(6000, 9);
+    } finally {
+      h.oracle.set('ETH', 4200);
+    }
+  });
+
+  it('marks KOTH and the tape at the live base price too', async () => {
+    await priceRows();
+    await h.deps.db.insert((await import('../db/schema.js')).koth).values({
+      net: 'BASE',
+      sym: 'MEMEMAN',
+      mc: 2736.6,
+      mcBase: 1,
+      crownedAt: minutesAgo(1),
+    });
+    const koth = (
+      await get<{ kings: { sym: string; mc: number; mcBase: number; baseUsd: number }[] }>(
+        '/koth?net=BASE',
+      )
+    ).body;
+    expect(koth.kings[0]).toMatchObject({ sym: 'MEMEMAN', mcBase: 1, baseUsd: 4200 });
+    expect(koth.kings[0]?.mc).toBeCloseTo(4200, 9);
+
+    // The MEMEMAN prints were recorded at the launch snapshot ($4,400 and
+    // $4,450 caps); the strip shows them at today's ETH.
+    const tapeRes = (
+      await get<{ fills: { sym: string; mc: number; mcBase?: number; baseUsd?: number }[] }>(
+        '/tape?net=BASE',
+      )
+    ).body;
+    const prints = tapeRes.fills.filter((f) => f.sym === 'MEMEMAN');
+    expect(prints).toHaveLength(2);
+    for (const f of prints) {
+      expect(f.baseUsd).toBe(4200);
+      expect(f.mc).toBeCloseTo((f.mcBase as number) * 4200, 9);
+    }
+    expect(prints.map((f) => f.mcBase)).toEqual(
+      expect.arrayContaining([4450 / 2736.6, 4400 / 2736.6]),
+    );
   });
 });
 

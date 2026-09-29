@@ -1,4 +1,4 @@
-import type { CrateProof, Net, RwaReward } from '@stonkz/shared';
+import type { CrateProof, EvmNet, Net, RwaReward } from '@stonkz/shared';
 import {
   authHeader,
   ensureSession,
@@ -658,6 +658,8 @@ export interface LiveReferralPayout {
   id: number;
   amountNative: number;
   mode: 'stonkz' | 'native';
+  /** `batch` — the treasury signer pays it; `onchain` — the referrer redeemed a voucher. Absent on older API builds. */
+  method?: 'batch' | 'onchain';
   status: 'requested' | 'paid' | 'void';
   stonkz: number | null;
   txSig: string | null;
@@ -680,6 +682,8 @@ export interface LiveReferralSnapshot {
   /** Native payouts settled on chain. */
   paidNative?: number;
   payouts?: LiveReferralPayout[];
+  /** True when this net has a referral vault + signer: the panel offers CLAIM ON CHAIN. */
+  onchainClaims?: boolean;
 }
 
 export function fetchReferrals(net: Net): Promise<LiveReferralSnapshot> {
@@ -709,6 +713,95 @@ export function claimReferralFees(
   payout: 'stonkz' | 'native' = 'stonkz',
 ): Promise<LiveReferralClaim> {
   return authedJson(`/referrals/claim`, net, { method: 'POST', body: JSON.stringify({ payout }) });
+}
+
+/* ---- self-serve on-chain claims (docs/referral-payouts.md) ---- */
+
+export interface LiveReferralClaimAsset {
+  asset: string;
+  symbol: string;
+  decimals: number;
+  vault: string;
+  /** What a fresh voucher would pay right now, in whole units. */
+  claimableNative: number;
+  claimableAtoms: string;
+  pendingNative: number;
+  /** Signed but not yet confirmed on chain. */
+  awaitingConfirmAtoms: string;
+  paidCumulativeAtoms: string;
+  cumulativeAtoms: string;
+  outstandingIds: number[];
+}
+
+export interface LiveReferralClaimable {
+  net: Net;
+  wallet: string;
+  /** False = no vault on this net; the panel keeps the REQUEST PAYOUT flow. */
+  configured: boolean;
+  assets: LiveReferralClaimAsset[];
+}
+
+export function fetchReferralClaimable(net: Net): Promise<LiveReferralClaimable> {
+  return authedJson(`/referrals/claimable`, net);
+}
+
+interface LiveReferralPrepareCommon {
+  net: Net;
+  asset: string;
+  symbol: string;
+  decimals: number;
+  vault: string;
+  cumulativeAtoms: string;
+  amountAtoms: string;
+  amountNative: number;
+  deadline: number;
+  payoutId: number;
+  signature: string;
+}
+
+export type LiveReferralPrepare =
+  | (LiveReferralPrepareCommon & {
+      net: 'SOL';
+      /** Base64 unsigned transaction: create-ATA, Ed25519 verify, `claim_referral`. */
+      transaction: string;
+      lastValidBlockHeight: number;
+    })
+  | (LiveReferralPrepareCommon & {
+      net: EvmNet;
+      chainId: number;
+      to: string;
+      /** `claim(...)`: pays WETH. */
+      data: string;
+      /** `claimAsEth(...)`: the same voucher paid as ETH. Only the recipient may send it. */
+      dataUnwrap: string;
+      value: string;
+    });
+
+/** Drains pending into a signed cumulative voucher and returns the transaction to sign. */
+export function prepareReferralClaim(net: Net, asset?: string): Promise<LiveReferralPrepare> {
+  return authedJson(`/referrals/claim/prepare`, net, {
+    method: 'POST',
+    body: JSON.stringify(asset ? { asset } : {}),
+  });
+}
+
+export interface LiveReferralConfirm {
+  ok: true;
+  net: Net;
+  asset: string;
+  paidAtoms: string;
+  paidNative: number;
+  cumulativeAtoms: string;
+  /** Payout rows this transaction settled. */
+  settled: number;
+}
+
+/** Reads the receipt / logs back and marks the payout rows paid. */
+export function confirmReferralClaim(net: Net, signature: string): Promise<LiveReferralConfirm> {
+  return authedJson(`/referrals/claim/confirm`, net, {
+    method: 'POST',
+    body: JSON.stringify({ signature }),
+  });
 }
 
 export function likeWallPost(

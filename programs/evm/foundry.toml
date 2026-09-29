@@ -7,7 +7,11 @@ solc = "0.8.28"
 optimizer = true
 optimizer_runs = 100
 via_ir = true
-fs_permissions = [{ access = "read", path = "../parity-vectors.json" }]
+fs_permissions = [
+  { access = "read", path = "../parity-vectors.json" },
+  # Canonical Uniswap V3 factory runtime (Base Sepolia), etched in tests.
+  { access = "read", path = "test/fixtures" },
+]
 
 [fmt]
 line_length = 110

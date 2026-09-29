@@ -132,6 +132,14 @@ no oracle and graduates regardless, so the pause cannot strand a finished coin.
 
 ### 2.5 Graduation is a Uniswap v2 pool with the LP genuinely burned
 
+> **Superseded (2026-09-30) by `UniswapV3Migrator` + `FeeLocker`** for new
+> graduations once installed: a full-range Uniswap v3 position owned by an
+> immutable locker with no liquidity exit, whose permissionless `claimFees`
+> routes the position's fees into the launchpad's ledgers by the curve split
+> (`StonkzLaunchpad.accrueExternalFees`). See `docs/deployment.md` §2.0.2 and
+> `test/V3Migration.t.sol`. Everything below still describes coins graduated
+> by the v2 migrator, whose LP stays burned.
+
 The plan's original wording was "burn the LP **and** keep the fee-claim
 authority". Those two clauses are mutually exclusive on v2 and this tree does
 not attempt them (§4.2): a v2 pool has no `collect`, fees accrue into reserves,
