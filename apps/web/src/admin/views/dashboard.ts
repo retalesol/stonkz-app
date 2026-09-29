@@ -98,12 +98,12 @@ export async function renderDashboard(root: HTMLElement): Promise<void> {
         </div>
         ${
           d.alerts.length
-            ? html`<div class="alerts" style="margin-bottom:10px">
+            ? html`<div class="alerts mb10">
                 ${d.alerts.map((a) => html`<div class="alert ${a.severity}"><span class="tag ${a.severity === 'critical' ? 'crit' : 'warn'}">${a.severity}</span>${a.message}</div>`)}
               </div>`
-            : html`<div class="okbox" style="margin-bottom:10px">NO ACTIVE ALERTS</div>`
+            : html`<div class="okbox mb10">NO ACTIVE ALERTS</div>`
         }
-        <div class="grid c4" style="margin-bottom:10px">
+        <div class="grid c4 mb10">
           ${stat('Launches today', String(sum(d.stats.today, 'launches')), `7d ${sum(d.stats.week, 'launches')}`)}
           ${stat('Trades today', num(sum(d.stats.today, 'trades')), `7d ${num(sum(d.stats.week, 'trades'))}`)}
           ${stat('Volume today', usd(sum(d.stats.today, 'volumeUsd')), `7d ${usd(sum(d.stats.week, 'volumeUsd'))}`, 'am')}

@@ -811,3 +811,27 @@ pre.code {
   padding: 0;
   margin: 0;
 }
+.grow {
+  flex: 1;
+}
+.mb10 {
+  margin-bottom: 10px;
+}
+.mt8 {
+  margin-top: 8px;
+}
+.mt10 {
+  margin-top: 10px;
+}
+.mt14 {
+  margin-top: 14px;
+}
+.minh160 {
+  min-height: 160px;
+}
+.gap10 {
+  gap: 10px;
+}
+.p0 {
+  padding: 0;
+}

@@ -106,7 +106,7 @@ export async function renderComms(root: HTMLElement): Promise<void> {
         )}
         ${panel(
           'New notice / maintenance window',
-          html`<form id="noticeForm" class="pnl-bd" style="padding:0">
+          html`<form id="noticeForm" class="pnl-bd p0">
             <div class="frow">
               <label class="sm"
                 ><span class="lbl">Kind</span
@@ -154,7 +154,7 @@ export async function renderComms(root: HTMLElement): Promise<void> {
           </form>`,
         )}
       </div>
-      <div style="margin-top:10px">
+      <div class="mt10">
         ${panel(
           'Notices',
           table(

@@ -133,8 +133,7 @@ async function moderationDialog(t: TokenDetail): Promise<boolean> {
         ><input id="tmReason" class="fld" placeholder="why"
       /></label>
       <div class="btns">
-        <button type="button" class="btn ghost" data-close>Cancel</button
-        ><span style="flex:1"></span
+        <button type="button" class="btn ghost" data-close>Cancel</button><span class="grow"></span
         ><button type="button" class="btn go" data-save-tm>Apply</button>
       </div>`;
   });
@@ -207,8 +206,8 @@ async function metadataDialog(t: TokenDetail): Promise<boolean> {
         Edits the indexer's copy only. On-chain metadata (Metaplex URI / ERC-20 name) is immutable.
       </p>
       <div class="btns">
-        <button type="button" class="btn ghost" data-close>Cancel</button
-        ><span style="flex:1"></span><button type="button" class="btn go" data-save-md>Save</button>
+        <button type="button" class="btn ghost" data-close>Cancel</button><span class="grow"></span
+        ><button type="button" class="btn go" data-save-md>Save</button>
       </div>`;
   });
   if (!out) return false;
@@ -454,7 +453,7 @@ export async function renderTokens(root: HTMLElement, params: URLSearchParams): 
         <h1>Tokens</h1>
         <span class="sub">${tokens.length} shown · newest first</span>
       </div>
-      <form class="frow" id="tokSearch" style="margin-bottom:10px">
+      <form class="frow mb10" id="tokSearch">
         <label class="lg"
           ><span class="lbl">Ticker, name or exact mint</span
           ><input id="tq" class="fld" value="${q}" placeholder="PEPE / 0x… / base58" autofocus
@@ -499,7 +498,7 @@ export async function renderTokens(root: HTMLElement, params: URLSearchParams): 
         ),
         'NO TOKENS MATCH',
       )}
-      <div style="margin-top:14px">
+      <div class="mt14">
         ${panel('Indexer dead letters', html`<div id="dlBox"><div class="empty">LOADING…</div></div>`, 'open items · retry re-enqueues the range to the indexer')}
       </div>`,
   );

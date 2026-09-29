@@ -50,7 +50,7 @@ export async function renderAudit(root: HTMLElement, params: URLSearchParams): P
         ><span class="grow"></span
         ><button type="button" class="btn ghost sm" id="csv">Export CSV</button>
       </div>
-      <form id="auditFilter" class="frow" style="margin-bottom:10px">
+      <form id="auditFilter" class="frow mb10">
         <label
           ><span class="lbl">Actor</span
           ><input
@@ -125,7 +125,7 @@ export async function renderAudit(root: HTMLElement, params: URLSearchParams): P
         ),
         'NO AUDIT ROWS MATCH',
       )}
-      ${nextBefore && rows.length >= 100 ? html`<div class="btns" style="margin-top:8px"><a class="btn ghost" href="#/audit?${query(params)}&before=${nextBefore}">Older →</a></div>` : ''}`,
+      ${nextBefore && rows.length >= 100 ? html`<div class="btns mt8"><a class="btn ghost" href="#/audit?${query(params)}&before=${nextBefore}">Older →</a></div>` : ''}`,
   );
   root.querySelector('#auditFilter')?.addEventListener('submit', (e) => {
     e.preventDefault();

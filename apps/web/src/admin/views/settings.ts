@@ -91,7 +91,7 @@ async function editSetting(s: Setting): Promise<boolean> {
         field = html`<textarea id="${id}" class="fld" placeholder="one per line">
 ${(s.value as string[]).join('\n')}</textarea>`;
       else
-        field = html`<textarea id="${id}" class="fld" style="min-height:160px">
+        field = html`<textarea id="${id}" class="fld minh160">
 ${JSON.stringify(s.value, null, 2)}</textarea>`;
       return html`<div class="kv">
           <dt>key</dt>
@@ -104,7 +104,7 @@ ${JSON.stringify(s.value, null, 2)}</textarea>`;
         <label><span class="lbl">New value</span>${field}</label>
         <div class="btns">
           <button type="button" class="btn ghost" data-close>Cancel</button
-          ><span style="flex:1"></span
+          ><span class="grow"></span
           ><button type="button" class="btn go" data-save="${id}">Save</button>
         </div>`;
     },
@@ -129,11 +129,11 @@ export async function renderSettings(root: HTMLElement): Promise<void> {
           ${canWrite ? 'you can edit' : 'read-only for your role'}</span
         >
       </div>
-      <p class="hint" style="margin-bottom:10px">
+      <p class="hint mb10">
         WIRED means a read site in the API consults the key right now. STORED means it is persisted
         and audited but nothing reads it yet (see docs/admin-panel.md for the list).
       </p>
-      <div class="grid" style="gap:10px">
+      <div class="grid gap10">
         ${groups.map((g) =>
           panel(
             GROUPS[g] ?? g,

@@ -136,7 +136,7 @@ async function moderationDialog(u: UserDetail): Promise<boolean> {
         </div>
         <div class="btns">
           <button type="button" class="btn ghost" data-close>Cancel</button
-          ><span style="flex:1"></span
+          ><span class="grow"></span
           ><button type="button" class="btn go" data-save-mod>Apply</button>
         </div>`;
     },
@@ -213,7 +213,7 @@ async function grantDialog(u: UserDetail): Promise<boolean> {
         </p>
         <div class="btns">
           <button type="button" class="btn ghost" data-close>Cancel</button
-          ><span style="flex:1"></span
+          ><span class="grow"></span
           ><button type="button" class="btn go" data-save-grant>Apply</button>
         </div>`;
     },
@@ -414,7 +414,7 @@ export async function renderUsers(root: HTMLElement, params: URLSearchParams): P
         <h1>Users</h1>
         <span class="sub">${users.length} shown</span>
       </div>
-      <form class="frow" id="userSearch" style="margin-bottom:10px">
+      <form class="frow mb10" id="userSearch">
         <label class="lg"
           ><span class="lbl">Wallet prefix or username</span
           ><input id="uq" class="fld" value="${q}" placeholder="0x… / base58… / name" autofocus

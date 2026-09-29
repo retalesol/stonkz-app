@@ -124,7 +124,7 @@ export async function renderAccess(root: HTMLElement): Promise<void> {
           /></label>
           <div class="btns">
             <button type="button" class="btn ghost" data-close>Cancel</button
-            ><span style="flex:1"></span
+            ><span class="grow"></span
             ><button type="button" class="btn go" data-confirm-totp>Enable</button>
           </div>`;
       });

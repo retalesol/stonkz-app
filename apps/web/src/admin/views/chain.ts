@@ -291,7 +291,7 @@ async function prepareFlow(n: NetState, refresh: () => Promise<void>): Promise<v
             ${actions.map((a) => html`<option value="${a.kind}">${a.label}</option>`)}
           </select></label
         >
-        <div id="paFields" class="pnl-bd" style="padding:0"></div>
+        <div id="paFields" class="pnl-bd p0"></div>
         <p class="hint">
           The server encodes the call and returns it unsigned. Your connected wallet
           (${short(connectedAddress())}) signs; make sure it holds the on-chain role the action
@@ -299,7 +299,7 @@ async function prepareFlow(n: NetState, refresh: () => Promise<void>): Promise<v
         </p>
         <div class="btns">
           <button type="button" class="btn ghost" data-close>Cancel</button
-          ><span style="flex:1"></span
+          ><span class="grow"></span
           ><button type="button" class="btn go" data-pa-go>Prepare →</button>
         </div>`;
     },
@@ -392,7 +392,7 @@ async function reviewAndSign(p: Prepared, refresh: () => Promise<void>): Promise
         <div class="btns">
           <button type="button" class="btn ghost" data-copy>Copy</button>
           ${p.safe ? html`<button type="button" class="btn ghost" data-safe>Safe Tx Builder JSON ↓</button>` : ''}
-          <span style="flex:1"></span>
+          <span class="grow"></span>
           <button type="button" class="btn ghost" data-close>Later</button>
           <button type="button" class="btn go" data-sign>Sign in wallet</button>
         </div>
@@ -585,7 +585,7 @@ export async function renderChain(root: HTMLElement, params: URLSearchParams): P
         ><span class="grow"></span
         ><button type="button" class="btn ghost sm" id="chainRefresh">Refresh</button>
       </div>
-      <div class="grid c2" style="margin-bottom:10px">
+      <div class="grid c2 mb10">
         ${nets.map((n) => {
           const s = n.state ?? {};
           return panel(
@@ -646,7 +646,7 @@ export async function renderChain(root: HTMLElement, params: URLSearchParams): P
         ${panel(`Oracle legs · ${focus}`, html`<div id="oracleBox"><div class="empty">LOADING…</div></div>`, 'on-chain source vs staleness bound')}
         ${panel(`Treasury vaults · ${focus}`, html`<div id="vaultBox"><div class="empty">LOADING…</div></div>`, 'indexed + live reads')}
       </div>
-      <div style="margin-top:10px">
+      <div class="mt10">
         ${panel('Indexer cursors', html`<div id="cursorBox"><div class="empty">LOADING…</div></div>`, 'owner may set a cursor with typed confirmation')}
       </div>`,
   );
