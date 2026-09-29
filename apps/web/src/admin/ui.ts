@@ -157,7 +157,7 @@ export async function confirmTyped(
       /></label>
       <div class="btns">
         <button type="button" class="btn ghost" data-close>Cancel</button>
-        <span style="flex:1"></span>
+        <span class="grow"></span>
         <button
           type="button"
           class="btn ${opts.danger ? 'danger' : 'go'}"
@@ -210,7 +210,7 @@ ${opts.initial ?? ''}</textarea>`
       </label>
       <div class="btns">
         <button type="button" class="btn ghost" data-close>Cancel</button>
-        <span style="flex:1"></span>
+        <span class="grow"></span>
         <button type="button" class="btn go" data-ok="${id}">OK</button>
       </div>`;
   });

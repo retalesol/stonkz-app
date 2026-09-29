@@ -1,3 +1,9 @@
 /* ---------- layout ---------- */
 .wrap{padding:10px 12px 52px;display:flex;flex-direction:column;gap:10px}
 
+
+/* Platform banner painted by admin/banner.ts (CSP: no inline styles). */
+.plat-banner{padding:5px 12px;font:600 11px/1.4 "IBM Plex Mono",monospace;letter-spacing:.08em;text-transform:uppercase;
+  border-bottom:1px solid #c87c14;background:#150d02;color:var(--amber)}
+.plat-banner.severe{color:var(--down);border-bottom-color:var(--down)}
+.plat-banner[hidden]{display:none}

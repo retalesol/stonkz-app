@@ -798,3 +798,16 @@ pre.code {
     padding: 10px 8px 60px;
   }
 }
+
+/* CSP forbids inline styles; the few one-off layouts live here. */
+.btns > .grow {
+  flex: 1;
+}
+.btns.stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+.steps.flush {
+  padding: 0;
+  margin: 0;
+}

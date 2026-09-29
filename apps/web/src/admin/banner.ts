@@ -19,9 +19,8 @@ export function mountBanner(base: string, net: () => string | null): void {
     el = document.createElement('div');
     el.id = 'platformBanner';
     el.setAttribute('role', 'status');
-    el.style.cssText =
-      'display:none;padding:5px 12px;font:600 11px/1.4 "IBM Plex Mono",monospace;letter-spacing:.08em;' +
-      'text-transform:uppercase;border-bottom:1px solid #c87c14;background:#150d02;color:#ffa22b';
+    el.className = 'plat-banner';
+    el.hidden = true;
     const tape = document.querySelector('.tape');
     (tape?.parentNode ?? document.body).insertBefore(el, tape ?? null);
     return el;
@@ -39,10 +38,9 @@ export function mountBanner(base: string, net: () => string | null): void {
     const box = ensure();
     const severe =
       s.banner?.severity === 'critical' || s.notices.some((n) => n.severity === 'critical');
-    box.style.color = severe ? '#ff4c3b' : '#ffa22b';
-    box.style.borderBottomColor = severe ? '#ff4c3b' : '#c87c14';
+    box.classList.toggle('severe', severe);
     box.textContent = lines.join('   ·   ');
-    box.style.display = lines.length ? 'block' : 'none';
+    box.hidden = lines.length === 0;
   };
   const tick = async (): Promise<void> => {
     try {

@@ -107,7 +107,7 @@ async function pickWallet(choices: ReturnType<typeof walletChoices>): Promise<st
         .querySelectorAll<HTMLElement>('[data-wallet]')
         .forEach((b) => b.addEventListener('click', () => done(b.dataset['wallet'])));
     });
-    return html`<div class="btns" style="flex-direction:column;align-items:stretch">
+    return html`<div class="btns stack">
       ${choices.map((c) => html`<button type="button" class="btn" data-wallet="${c.id}">${c.name}</button>`)}
     </div>`;
   });
@@ -138,7 +138,7 @@ function paintLogin(
         </div>
         <div class="pnl-bd">
           ${error ? html`<div class="errbox">${error}</div>` : ''}
-          <ul class="steps" style="padding:0;margin:0">
+          <ul class="steps flush">
             ${steps.map(([, label], i) => html`<li class="${i < idx || phase === 'done' ? 'done' : i === idx ? 'on' : ''}"><i>${i < idx || phase === 'done' ? '✓' : i + 1}</i>${label}</li>`)}
           </ul>
           <span class="lbl">Sign in on</span>
