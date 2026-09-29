@@ -6,6 +6,10 @@
       "destination": "/admin.html"
     },
     {
+      "source": "/admin/",
+      "destination": "/admin.html"
+    },
+    {
       "source": "/t/:sym",
       "has": [
         {
@@ -26,6 +30,11 @@
         }
       ],
       "destination": "https://api.ston.kz/og/u/:addr"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
-  ]
+  ],
+  "_note": "Unused: deploys run from the repo root; edit /vercel.json."
 }
