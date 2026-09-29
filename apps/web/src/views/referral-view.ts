@@ -130,17 +130,17 @@ export function claimControlsHTML(m: ReferralModel): Html {
   }
   return html`${stonkz}
   ${assets.map(
-      (a) =>
-        html`<button
-          type="button"
-          class="wiz-btn"
-          id="refClaimChain"
-          data-asset="${attr(a.asset)}"
-          ${a.claimableNative > 0 && !m.busy ? '' : ' disabled'}
-        >
-          ${claimButtonLabel(a, m.unit, m.busy)}
-        </button>`,
-    )}`;
+    (a) =>
+      html`<button
+        type="button"
+        class="wiz-btn"
+        id="refClaimChain"
+        data-asset="${attr(a.asset)}"
+        ${a.claimableNative > 0 && !m.busy ? '' : ' disabled'}
+      >
+        ${claimButtonLabel(a, m.unit, m.busy)}
+      </button>`,
+  )}`;
 }
 
 export function referralHTML(m: ReferralModel): Html {
