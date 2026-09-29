@@ -10,7 +10,9 @@
     "StonkzLaunchpad": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
     "StonkzV2Factory": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
     "UniswapV2Migrator": "0x5CD47DBA6F6a7dA8785E74CD1602743712fe7888",
-    "StonkzRouter": "0xC98F8214999220CE06E04ca8739A34Cb8AF5779c"
+    "StonkzRouter": "0x985877AcDF01A21527E093bc4fCE513EB180C775",
+    "PythPriceSource": "0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA",
+    "Pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a"
   },
   "tokens": {
     "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
@@ -40,16 +42,17 @@
     "2026-09-27: full redeploy at block 124871527 after the storage-shift incident (docs/fee-split-rollout.md). Old proxy left in `previous`.",
     "2026-09-27: StonkzRouter redeployed at 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c (block 124911291) with the capped-buy refund and permit fall-through; previous router 0xC362ca8e1d5e039e49A5057111dDc9155bc41FCa is unreferenced.",
     "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230, block 125797509).",
-    "2026-09-29: launchpad upgraded in place (impl 0x68E6150B60bA0f456C52f0E31509ca260488F7c1): createToken refuses supply > 1e12. Layout unchanged."
+    "2026-09-29: launchpad upgraded in place (impl 0x68E6150B60bA0f456C52f0E31509ca260488F7c1): createToken refuses supply > 1e12. Layout unchanged.",
+    "2026-09-29: UpgradeAtomicLaunch: impl 0xe6afc300097A089f0749725dBF84BBdf0AA65F08, new StonkzRouter 0x985877AcDF01A21527E093bc4fCE513EB180C775 (createAndBuyWithEth / createWithPriceUpdate with Pyth updates), PythPriceSource 0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA deployed; launchpad priceSource NOT yet switched (still PushPriceSource). Old router kept as an indexer AtomicBuy source."
   ],
   "implementation": {
-    "StonkzLaunchpad": "0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230",
+    "StonkzLaunchpad": "0xe6afc300097A089f0749725dBF84BBdf0AA65F08",
+    "address": "0xe6afc300097A089f0749725dBF84BBdf0AA65F08",
     "upgradedAt": "2026-09-29",
-    "upgradeTx": null,
-    "upgradeBlock": null,
-    "note": "v2 fee schedule: 69% creator bucket / 15% platform / 10% $STONKZ buyback (half crates, half burn) / 6% RWA crate fund. Constants only; storage layout unchanged.",
-    "address": "0x68E6150B60bA0f456C52f0E31509ca260488F7c1",
-    "change": "createToken caps supply at CurveMath.MAX_SUPPLY (1e12)"
+    "upgradeTx": "0x158b04c3f080c91fb70ada0f169316bf978362b36acf84b3b01957f2a7386237",
+    "upgradeBlock": 126051574,
+    "trustedRouter": "0x985877AcDF01A21527E093bc4fCE513EB180C775",
+    "change": "Atomic router launches (createTokenFor, trusted router immutable), pauser slot 16, supply cap 1e12, v2 fee split. Layout append-only."
   },
   "previous": [
     {

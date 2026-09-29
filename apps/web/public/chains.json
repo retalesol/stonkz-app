@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-27",
+  "generatedAt": "2026-09-29",
   "dev": {
     "RH": {
       "kind": "EVM",
@@ -9,7 +9,7 @@
       "explorer": "https://explorer.testnet.chain.robinhood.com",
       "deployedAt": "2026-09-27",
       "launchpad": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
-      "router": "0xC98F8214999220CE06E04ca8739A34Cb8AF5779c",
+      "router": "0x985877AcDF01A21527E093bc4fCE513EB180C775",
       "migrator": "0x5CD47DBA6F6a7dA8785E74CD1602743712fe7888",
       "priceSource": "0x1440A9776a93dcb10c7B6AD9f8053Bac469637B8",
       "v2Factory": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
@@ -36,7 +36,7 @@
       "explorer": "https://sepolia.basescan.org",
       "deployedAt": "2026-09-27",
       "launchpad": "0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35",
-      "router": "0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d",
+      "router": "0xA947241914E934e6A77480a49a7ea09C2d09Ca9C",
       "migrator": "0xFfFDfc7DEfbfaF64c232897452Aa6E6F92809426",
       "priceSource": "0x12DA47672287c188C79c1504eE72E2aC8b446f7B",
       "v2Factory": "0x7c7eDfF0e0EFb7d82e8790aDaa4a72b4D36A3Cc0",
@@ -56,7 +56,7 @@
       "cluster": "devnet",
       "programId": "FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg",
       "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
-      "deployedAt": "2026-09-26"
+      "deployedAt": "2026-09-29"
     }
   },
   "main": {}
