@@ -7,8 +7,12 @@ const RH_LEGACY = [
   '0xc98f8214999220ce06e04ca8739a34cb8af5779c',
   '0x985877acdf01a21527e093bc4fce513eb180c775',
   '0x3aaeea60419e90fee3d9629eb36faff8179984ae',
+  '0x1d44a1868d84900953b02ff8d653bb42e3a26db7',
 ];
-const BASE_LEGACY = '0x05b245fbdf5acbffc3ceefffb1648e1dcbf5413d';
+const BASE_LEGACY = [
+  '0x05b245fbdf5acbffc3ceefffb1648e1dcbf5413d',
+  '0xa947241914e934e6a77480a49a7ea09c2d09ca9c',
+];
 
 const base = {
   NODE_ENV: 'test',
@@ -24,7 +28,7 @@ describe('router address lists (atomic-launch router + its predecessor)', () => 
     const config = readIndexerConfig(env, fixtures);
     expect(config.rhRouterAddresses).toEqual([NEW_RH_ROUTER.toLowerCase(), ...RH_LEGACY]);
     // No BASE_ROUTER_ADDRESS: the zero default is dropped, the predecessor kept.
-    expect(config.baseRouterAddresses).toEqual([BASE_LEGACY]);
+    expect(config.baseRouterAddresses).toEqual(BASE_LEGACY);
     expect(config.arcRouterAddresses).toEqual([]);
   });
 

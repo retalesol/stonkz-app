@@ -10,7 +10,7 @@
     "StonkzLaunchpad": "0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35",
     "StonkzV2Factory": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
     "UniswapV2Migrator": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
-    "StonkzRouter": "0xA947241914E934e6A77480a49a7ea09C2d09Ca9C",
+    "StonkzRouter": "0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478",
     "PythPriceSource": "0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F",
     "Pyth": "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729"
   },
@@ -36,7 +36,8 @@
     "2026-09-28: launchpad upgraded in place to the v2 fee split (impl 0x3738186EB44716AF8701A83cE810E38c4Dcd0514, block 47423325).",
     "2026-09-29: launchpad upgraded in place (impl 0x0007A46B7391735e65E76DfD088d13240D580253): createToken refuses supply > 1e12. Layout unchanged.",
     "2026-09-29: UpgradeAtomicLaunch: impl 0xd9560ABC5716e664a576e6eaf9f6D3485662267c, new StonkzRouter 0xA947241914E934e6A77480a49a7ea09C2d09Ca9C (createAndBuyWithEth / createWithPriceUpdate with Pyth updates), PythPriceSource 0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F deployed; launchpad priceSource NOT yet switched (still PushPriceSource). Old router kept as an indexer AtomicBuy source.",
-    "2026-09-29: launchpad priceSource switched to PythPriceSource 0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F (maxOracleStaleness 90000; per-feed Pyth max age 120s; RH stock bases fall back to PushPriceSource). Corrective UniswapV2Migrator 0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88 with new StonkzV2Factory 0xe308287C9A85E2B53F1027a1c589B5e3969928e8 (pairs support swap/skim/sync)."
+    "2026-09-29: launchpad priceSource switched to PythPriceSource 0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F (maxOracleStaleness 90000; per-feed Pyth max age 120s; RH stock bases fall back to PushPriceSource). Corrective UniswapV2Migrator 0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88 with new StonkzV2Factory 0xe308287C9A85E2B53F1027a1c589B5e3969928e8 (pairs support swap/skim/sync).",
+    "2026-09-29: UpgradeStockLaunch (graduation router): router 0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478, impl 0x39a9EB858971BF4134652097Fe9530c12F3Bf14e."
   ],
   "previous": [
     {
@@ -54,16 +55,21 @@
         "BASEDOG_createTx": "0x09fe4d9633d3d2eb606566264252b235ac98c5292ad6041dc0e5950fb13fcb87"
       },
       "note": "Abandoned 2026-09-27: the fee-split upgrade shifted its storage layout and the only key that could recover it (protocol withdraw authority) is lost. Nothing routes here any more."
+    },
+    {
+      "StonkzRouter": "0xA947241914E934e6A77480a49a7ea09C2d09Ca9C",
+      "retired": "2026-09-29",
+      "reason": "superseded by router with graduateWithPriceUpdate"
     }
   ],
   "implementation": {
-    "StonkzLaunchpad": "0xd9560ABC5716e664a576e6eaf9f6D3485662267c",
-    "address": "0xd9560ABC5716e664a576e6eaf9f6D3485662267c",
+    "StonkzLaunchpad": "0x39a9EB858971BF4134652097Fe9530c12F3Bf14e",
+    "address": "0x39a9EB858971BF4134652097Fe9530c12F3Bf14e",
     "upgradedAt": "2026-09-29",
-    "upgradeTx": "0x31f8f3488cd56c5066da34eaf30909ed772d774420aa36901de8769442366198",
-    "upgradeBlock": 47447319,
-    "trustedRouter": "0xA947241914E934e6A77480a49a7ea09C2d09Ca9C",
-    "change": "Atomic router launches (createTokenFor, trusted router immutable), pauser slot 16, supply cap 1e12, v2 fee split. Layout append-only."
+    "upgradeTx": "0xf5209aad14026813445026e8d90374a4a023d39f2d4c0854704b58fad569417a",
+    "upgradeBlock": 47474559,
+    "trustedRouter": "0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478",
+    "change": "trustedRouter -> router with graduateWithPriceUpdate. Layout unchanged."
   },
   "deployBlock": 47348724,
   "deployTxs": {
