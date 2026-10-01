@@ -4,19 +4,30 @@
   "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
   "lastUpgradedSlot": 505228004,
   "upgradeSignature": null,
-  "upgradedAt": "2026-09-30",
+  "upgradedAt": "2026-10-01",
   "note": "v2 fee split (69 creator bucket / 15 platform / 10 $STONKZ buyback / 6 RWA crate fund); vault seeds unchanged. Mint PDA seeds are creator+salt; duplicate tickers allowed. Program ID unchanged.",
   "upgradeSlot": 505697751,
-  "programSha256": "9d58f238b4e9b1e220888d56834cbf0b67a169958b636d9e84217ba90da80a7d",
+  "programSha256": "0628383e9e054e90f830f8aa2f65b08fb090d2b9a325dba738847185e5298871",
   "programSha256Note": "sha256 of programs/solana/target/deploy/launchpad.so from the 2026-09-30 local anchor build (anchor-cli 0.32.1, 830,136 B). Not yet confirmed against the on-chain ProgramData at slot 505697751; refresh with `node scripts/sync-idl.mjs --hash` on the exact build you deploy.",
   "notes": [
     "2026-09-29: create_token writes immutable Metaplex metadata (update authority = curve PDA); 17-account create. Upgraded at slot 505315826.",
-    "2026-09-30: upgraded at slot 505697751 (Meteora migration fixes, claim_dex_fees, pauser, referral vault/claims); ProgramData extended to 859,656 B. Referral vault (wSOL) 4gtgiR1buzGWBvWf1w3zBYGEFCMvoi9Us4rf7dfeyGz1, signer rwp1sFwu9gvCHWdeiyVGoXivJXuqDtFTgGn6yhsr3rP."
+    "2026-09-30: upgraded at slot 505697751 (Meteora migration fixes, claim_dex_fees, pauser, referral vault/claims); ProgramData extended to 859,656 B. Referral vault (wSOL) 4gtgiR1buzGWBvWf1w3zBYGEFCMvoi9Us4rf7dfeyGz1, signer rwp1sFwu9gvCHWdeiyVGoXivJXuqDtFTgGn6yhsr3rP.",
+    "2026-10-01: runtime params \u2014 Params PDA [\"params\"] + set_params (empty PDA = defaults); create_token/buy/sell/graduate/claim_dex_fees take the PDA as their last account. .so 853,840 B. See docs/parameters.md."
   ],
   "referral": {
     "vaultWsol": "4gtgiR1buzGWBvWf1w3zBYGEFCMvoi9Us4rf7dfeyGz1",
     "config": "BiDP3XCAAZpcP4zzNjcLU5B2LkLjmSReikiqYiFnWJSN",
     "signer": "rwp1sFwu9gvCHWdeiyVGoXivJXuqDtFTgGn6yhsr3rP",
     "maxPerDaySol": 1
-  }
+  },
+  "slot": 506299571,
+  "programDataLen": 859701,
+  "history": [
+    {
+      "programSha256": "9d58f238b4e9b1e220888d56834cbf0b67a169958b636d9e84217ba90da80a7d",
+      "upgradedAt": "2026-09-30",
+      "slot": null,
+      "note": "before 2026-10-01 runtime-params upgrade"
+    }
+  ]
 }
