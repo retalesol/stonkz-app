@@ -29,5 +29,11 @@
       "slot": null,
       "note": "before 2026-10-01 runtime-params upgrade"
     }
-  ]
+  ],
+  "launchAlt": {
+    "address": "526uSojgLkrRLsnXYmsShwQSZQwsaiwMad6XHUbGTaoh",
+    "createdAt": "2026-10-01",
+    "entries": 12,
+    "note": "operator ALT incl. the params PDA; API SOLANA_LAUNCH_ALT"
+  }
 }
