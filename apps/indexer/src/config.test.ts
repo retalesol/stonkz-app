@@ -8,10 +8,12 @@ const RH_LEGACY = [
   '0x985877acdf01a21527e093bc4fce513eb180c775',
   '0x3aaeea60419e90fee3d9629eb36faff8179984ae',
   '0x1d44a1868d84900953b02ff8d653bb42e3a26db7',
+  '0xa039af821d950c03ee870f05bf1a32f06f9053c5',
 ];
 const BASE_LEGACY = [
   '0x05b245fbdf5acbffc3ceefffb1648e1dcbf5413d',
   '0xa947241914e934e6a77480a49a7ea09c2d09ca9c',
+  '0xe9085fa0dc45f490048eafbe8c86b6abeac07478',
 ];
 
 const base = {
