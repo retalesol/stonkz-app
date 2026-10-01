@@ -10,7 +10,7 @@
     "StonkzLaunchpad": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
     "StonkzV2Factory": "0x0FeA7f9A380A6451CeEaFFb07D86b72c8B5c2747",
     "UniswapV2Migrator": "0xC21940AF1e8D6Ac81a40Aa5B8A0Ac96315c919Ac",
-    "StonkzRouter": "0xA039af821d950C03EE870F05bF1A32F06F9053c5",
+    "StonkzRouter": "0x12f4b6b2d601dBE3cEA63D9cf949F7392D84Ce2A",
     "PythPriceSource": "0x4DF51B8a92ce0c634Cd4bb7a799f8762A800cecA",
     "Pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a",
     "StockPriceSource": "0x5e36248dF811A4b8358014f71276714E196D00fE",
@@ -18,7 +18,9 @@
     "FeeLocker": "0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3",
     "UniswapV3Migrator": "0x7C6DE508a176E48Df24863845c603aDe3D656748",
     "ReferralVault": "0x942A1eB9747Aa3b161cb3e7a068Fdf846B8bC445",
-    "ReferralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894"
+    "ReferralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894",
+    "StonkzLens": "0xb52517861383ac95c50Bcac613678db798b48a37",
+    "PreviousStonkzRouter": "0xA039af821d950C03EE870F05bF1A32F06F9053c5"
   },
   "tokens": {
     "WETH9": "0x7943e237c7F95DA44E0301572D358911207852Fa",
@@ -55,16 +57,26 @@
     "2026-09-29: UpgradeAttestedStockLaunch: StockPriceSourceV2 0x5e36248dF811A4b8358014f71276714E196D00fE (signed DefiLlama quotes, attester 0x7DB88BA71807567be8057aff24B2D2D6aeAF6650, attestMaxAge 300s) is PythPriceSource fallback; router 0x1d44A1868D84900953B02FF8d653bB42e3a26DB7 (attestationSink = V2); impl 0x4F1A2D8DFA632A66Ed587E086d9CFCa230DDD39F.",
     "2026-09-29: UpgradeStockLaunch (graduation router): router 0xA039af821d950C03EE870F05bF1A32F06F9053c5, impl 0x97a37E0655e5feA670B2DaF26A6fF40D0f798b61.",
     "2026-09-30: impl 0xCc494654811164C14399b9b0be7773DC29Cc453a (accrueExternalFees); FeeLocker 0xD30C019aF2039B0B1015cC9Be3f17f07ef457eD3 + UniswapV3Migrator 0x7C6DE508a176E48Df24863845c603aDe3D656748 (1% tier) installed via setMigrator.",
-    "2026-09-30: ReferralVault 0x942A1eB9747Aa3b161cb3e7a068Fdf846B8bC445 (signer 0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894, 1 ETH/day)."
+    "2026-09-30: ReferralVault 0x942A1eB9747Aa3b161cb3e7a068Fdf846B8bC445 (signer 0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894, 1 ETH/day).",
+    "2026-10-01: UpgradeParams \u2014 impl 0x40a0B10841b7C41014C5892376A537e9A565bcC9, StonkzLens 0xb52517861383ac95c50Bcac613678db798b48a37, new StonkzRouter 0x12f4b6b2d601dBE3cEA63D9cf949F7392D84Ce2A (setConfig admin-gated; router tx 0x2e6499991c019c38816f154e27681d49d629397ae9e58da14b0c506e98010b03), previous router 0xA039af821d950C03EE870F05bF1A32F06F9053c5 kept in indexer LEGACY_ROUTERS. Params word 0 = defaults. See docs/parameters.md."
   ],
   "implementation": {
-    "StonkzLaunchpad": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
-    "address": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
-    "upgradedAt": "2026-09-29",
-    "upgradeTx": "0x186c9dbf64794fbc342ec3a6238ae94005098732fdedf62a602d930d2d48ca27",
-    "upgradeBlock": 126414179,
-    "trustedRouter": "0xA039af821d950C03EE870F05bF1A32F06F9053c5",
-    "change": "accrueExternalFees (migrator-gated) for post-bond pool fees. Router kept. Layout unchanged."
+    "StonkzLaunchpad": "0x40a0B10841b7C41014C5892376A537e9A565bcC9",
+    "address": "0x40a0B10841b7C41014C5892376A537e9A565bcC9",
+    "upgradedAt": "2026-10-01",
+    "upgradeTx": "0x84867a692e410303a51d56dc2bdd2762ce32406b766c1cf0010c10a109f5d233",
+    "upgradeBlock": 127167758,
+    "trustedRouter": "0x12f4b6b2d601dBE3cEA63D9cf949F7392D84Ce2A",
+    "change": "Runtime params: setParams(uint256 word) (fee split, creator fee bounds, supply cap, cashback window/start, graduation threshold; 0 = defaults), setTrustedRouter, paramsWord(). quoteBuy/quoteSell/marketCap moved to StonkzLens. Slots 17 (_params) and 18 (_router) appended; layout otherwise unchanged. New StonkzRouter with admin-gated setConfig(maxBuyNative, pyth, attestationSink) replaces the immutable one.",
+    "previousImplementation": {
+      "StonkzLaunchpad": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
+      "address": "0xCc494654811164C14399b9b0be7773DC29Cc453a",
+      "upgradedAt": "2026-09-29",
+      "upgradeTx": "0x186c9dbf64794fbc342ec3a6238ae94005098732fdedf62a602d930d2d48ca27",
+      "upgradeBlock": 126414179,
+      "trustedRouter": "0xA039af821d950C03EE870F05bF1A32F06F9053c5",
+      "change": "accrueExternalFees (migrator-gated) for post-bond pool fees. Router kept. Layout unchanged."
+    }
   },
   "previous": [
     {
@@ -138,5 +150,5 @@
     "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
     "opsWithdraw": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca"
   },
-  "routerDeployBlock": 124911291
+  "routerDeployBlock": 127167758
 }

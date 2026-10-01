@@ -149,11 +149,16 @@ export const LEGACY_ROUTERS: Readonly<Record<number, readonly string[]>> = {
     '0x985877AcDF01A21527E093bc4fCE513EB180C775',
     '0x3aAEEa60419e90fee3d9629eb36FAff8179984aE',
     '0x1d44A1868D84900953B02FF8d653bB42e3a26DB7',
+    // 2026-10-01 UpgradeParams: the immutable-config router, superseded by the
+    // setConfig router 0x12f4…Ce2A.
+    '0xA039af821d950C03EE870F05bF1A32F06F9053c5',
   ],
   // Base Sepolia — deployments/84532.json, 2026-09-27 redeploy.
   84532: [
     '0x05B245FBDF5ACbfFc3cEEFFFB1648E1dCbF5413d',
     '0xA947241914E934e6A77480a49a7ea09C2d09Ca9C',
+    // 2026-10-01 UpgradeParams: superseded by the setConfig router 0x9180…Fc41.
+    '0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478',
   ],
 };
 

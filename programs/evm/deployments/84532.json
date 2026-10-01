@@ -10,13 +10,15 @@
     "StonkzLaunchpad": "0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35",
     "StonkzV2Factory": "0xe308287C9A85E2B53F1027a1c589B5e3969928e8",
     "UniswapV2Migrator": "0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88",
-    "StonkzRouter": "0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478",
+    "StonkzRouter": "0x9180C04942a48CF2B356F228931210D0aafbFc41",
     "PythPriceSource": "0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F",
     "Pyth": "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729",
     "FeeLocker": "0xC98F8214999220CE06E04ca8739A34Cb8AF5779c",
     "UniswapV3Migrator": "0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230",
     "ReferralVault": "0xCfaAAeA8DE96f5ED6191Cd0A55Ecf2D6B1A09817",
-    "ReferralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894"
+    "ReferralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894",
+    "StonkzLens": "0xb36aae0f7Bcb0b53f53b1997602CF035d5CcC55A",
+    "PreviousStonkzRouter": "0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478"
   },
   "tokens": {
     "WETH9": "0x4200000000000000000000000000000000000006",
@@ -42,7 +44,8 @@
     "2026-09-29: UpgradeAtomicLaunch: impl 0xd9560ABC5716e664a576e6eaf9f6D3485662267c, new StonkzRouter 0xA947241914E934e6A77480a49a7ea09C2d09Ca9C (createAndBuyWithEth / createWithPriceUpdate with Pyth updates), PythPriceSource 0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F deployed; launchpad priceSource NOT yet switched (still PushPriceSource). Old router kept as an indexer AtomicBuy source.",
     "2026-09-29: launchpad priceSource switched to PythPriceSource 0x7DCcf6947891a0d55Dd82398Fc8B9Ff3b6C9000F (maxOracleStaleness 90000; per-feed Pyth max age 120s; RH stock bases fall back to PushPriceSource). Corrective UniswapV2Migrator 0xc524DA1A6CdeFD3fF76e4960eE9EaF54A4f3fE88 with new StonkzV2Factory 0xe308287C9A85E2B53F1027a1c589B5e3969928e8 (pairs support swap/skim/sync).",
     "2026-09-29: UpgradeStockLaunch (graduation router): router 0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478, impl 0x39a9EB858971BF4134652097Fe9530c12F3Bf14e.",
-    "2026-09-30: impl 0x911f58813FB4606bc03bb1e5875311f424d18Ba5 (accrueExternalFees); FeeLocker 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c + UniswapV3Migrator 0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230 (Uniswap V3 1% tier); ReferralVault 0xCfaAAeA8DE96f5ED6191Cd0A55Ecf2D6B1A09817 (signer 0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894, 1 ETH/day)."
+    "2026-09-30: impl 0x911f58813FB4606bc03bb1e5875311f424d18Ba5 (accrueExternalFees); FeeLocker 0xC98F8214999220CE06E04ca8739A34Cb8AF5779c + UniswapV3Migrator 0x8A7A8CB703FE090eF8Fc2eb0622c8c1cCfB1A230 (Uniswap V3 1% tier); ReferralVault 0xCfaAAeA8DE96f5ED6191Cd0A55Ecf2D6B1A09817 (signer 0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894, 1 ETH/day).",
+    "2026-10-01: UpgradeParams \u2014 impl 0x3DB0b0a811e6F81d75eff28522814d1A999A82aA, StonkzLens 0xb36aae0f7Bcb0b53f53b1997602CF035d5CcC55A, new StonkzRouter 0x9180C04942a48CF2B356F228931210D0aafbFc41 (setConfig admin-gated; router tx 0xaa9a9226e251fff27f2424840a100b302de07c323451b7999d0ff1757e47dc66), previous router 0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478 kept in indexer LEGACY_ROUTERS. Params word 0 = defaults. See docs/parameters.md."
   ],
   "previous": [
     {
@@ -73,13 +76,22 @@
     }
   ],
   "implementation": {
-    "StonkzLaunchpad": "0x911f58813FB4606bc03bb1e5875311f424d18Ba5",
-    "address": "0x911f58813FB4606bc03bb1e5875311f424d18Ba5",
-    "upgradedAt": "2026-09-29",
-    "upgradeTx": "0x73373b80e1c6ad46177192386bd73b14b3dc8a767f31b287f8b605e3e0a6ea1c",
-    "upgradeBlock": 47477885,
-    "trustedRouter": "0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478",
-    "change": "accrueExternalFees (migrator-gated) for post-bond pool fees. Router kept. Layout unchanged."
+    "StonkzLaunchpad": "0x3DB0b0a811e6F81d75eff28522814d1A999A82aA",
+    "address": "0x3DB0b0a811e6F81d75eff28522814d1A999A82aA",
+    "upgradedAt": "2026-10-01",
+    "upgradeTx": "0x7771ede99af6a0f430ea13a43dafbfc7f3451129f8b827f1e6df410d661a1b51",
+    "upgradeBlock": 47547613,
+    "trustedRouter": "0x9180C04942a48CF2B356F228931210D0aafbFc41",
+    "change": "Runtime params: setParams(uint256 word) (fee split, creator fee bounds, supply cap, cashback window/start, graduation threshold; 0 = defaults), setTrustedRouter, paramsWord(). quoteBuy/quoteSell/marketCap moved to StonkzLens. Slots 17 (_params) and 18 (_router) appended; layout otherwise unchanged. New StonkzRouter with admin-gated setConfig(maxBuyNative, pyth, attestationSink) replaces the immutable one.",
+    "previousImplementation": {
+      "StonkzLaunchpad": "0x911f58813FB4606bc03bb1e5875311f424d18Ba5",
+      "address": "0x911f58813FB4606bc03bb1e5875311f424d18Ba5",
+      "upgradedAt": "2026-09-29",
+      "upgradeTx": "0x73373b80e1c6ad46177192386bd73b14b3dc8a767f31b287f8b605e3e0a6ea1c",
+      "upgradeBlock": 47477885,
+      "trustedRouter": "0xe9085Fa0dc45F490048EAfBe8C86B6ABEaC07478",
+      "change": "accrueExternalFees (migrator-gated) for post-bond pool fees. Router kept. Layout unchanged."
+    }
   },
   "deployBlock": 47348724,
   "deployTxs": {
@@ -92,5 +104,5 @@
     "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
     "opsWithdraw": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca"
   },
-  "routerDeployBlock": 47352362
+  "routerDeployBlock": 47547613
 }
