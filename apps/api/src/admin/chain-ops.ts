@@ -9,7 +9,13 @@ import {
   type Address,
   type Hex,
 } from 'viem';
-import type { EvmNet } from '@stonkz/shared';
+import {
+  packParamsWord,
+  unpackParamsWord,
+  validateCurveParams,
+  type EvmNet,
+  type ParamsWordFields,
+} from '@stonkz/shared';
 import type { EthCaller } from '../auth/siwe.js';
 import type { SolanaAccountDataSource, SolanaBlockhashSource } from '../chain/types.js';
 import { anchorDiscriminator, derivePdas, encodeBool, encodeU64 } from '../router/solana-idl.js';
@@ -57,6 +63,19 @@ export const LAUNCHPAD_ADMIN_ABI = parseAbi([
   'function setPriceSource(address s)',
   'function setMaxOracleStaleness(uint64 s)',
   'function withdrawTreasury(uint8 which, address baseToken, uint256 amount, address to)',
+  // Runtime parameters: one packed uint256 (`packParamsWord` in @stonkz/shared); 0 = defaults.
+  'function paramsWord() view returns (uint256)',
+  'function setParams(uint256 w)',
+  'function trustedRouter() view returns (address)',
+  'function setTrustedRouter(address r)',
+]);
+
+/** `StonkzRouter`'s admin surface — `setConfig` is gated on `launchpad.admin()`. */
+export const ROUTER_ADMIN_ABI = parseAbi([
+  'function maxBuyNative() view returns (uint256)',
+  'function pyth() view returns (address)',
+  'function attestationSink() view returns (address)',
+  'function setConfig(uint256 maxBuyNative, address pyth, address attestationSink)',
 ]);
 
 export const PUSH_PRICE_SOURCE_ABI = parseAbi([
@@ -83,6 +102,10 @@ export interface EvmLaunchpadState {
     oracleGraduation: boolean;
   };
   tokenCount: number;
+  /** `null` until the parameterised implementation is live (the views revert before it). */
+  trustedRouter: string | null;
+  /** The packed params word as a decimal string; `'0'` = contract defaults; `null` when the view reverts. */
+  paramsWord: string | null;
 }
 
 type ViewName =
@@ -100,7 +123,9 @@ type ViewName =
   | 'protocolWithdrawalsPaused'
   | 'opsWithdrawalsPaused'
   | 'oracleGraduationPaused'
-  | 'tokenCount';
+  | 'tokenCount'
+  | 'trustedRouter'
+  | 'paramsWord';
 
 async function view<T>(eth: EthCaller, to: string, functionName: ViewName): Promise<T> {
   const data = encodeFunctionData({ abi: LAUNCHPAD_ADMIN_ABI, functionName });
@@ -145,6 +170,14 @@ export async function readEvmLaunchpadState(
     view<boolean>(eth, launchpad, 'oracleGraduationPaused'),
     view<bigint>(eth, launchpad, 'tokenCount'),
   ]);
+  // The params views only exist on the parameterised implementation; an
+  // older proxy target reverts on them and must not take the whole page down.
+  const [trustedRouter, paramsWord] = await Promise.all([
+    view<Address>(eth, launchpad, 'trustedRouter').catch(() => null),
+    view<bigint>(eth, launchpad, 'paramsWord')
+      .then((w) => String(w))
+      .catch(() => null),
+  ]);
   return {
     admin,
     pendingAdmin,
@@ -157,6 +190,55 @@ export async function readEvmLaunchpadState(
     maxOracleStaleness: Number(maxOracleStaleness),
     paused: { trading, launch, protocolWithdrawals, opsWithdrawals, oracleGraduation },
     tokenCount: Number(tokenCount),
+    trustedRouter,
+    paramsWord,
+  };
+}
+
+/**
+ * The params-related launchpad views on their own, each tolerant: the
+ * Parameters page must render for a launchpad whose other views are not what
+ * `readEvmLaunchpadState` expects (a test double) or that predates params.
+ */
+export async function readEvmParamsViews(
+  eth: EthCaller,
+  launchpad: string,
+): Promise<{ admin: string | null; paramsWord: string | null; trustedRouter: string | null }> {
+  const [admin, paramsWord, trustedRouter] = await Promise.all([
+    view<Address>(eth, launchpad, 'admin').catch(() => null),
+    view<bigint>(eth, launchpad, 'paramsWord')
+      .then((w) => String(w))
+      .catch(() => null),
+    view<Address>(eth, launchpad, 'trustedRouter').catch(() => null),
+  ]);
+  return { admin, paramsWord, trustedRouter };
+}
+
+/** `StonkzRouter.maxBuyNative()` / `pyth()` / `attestationSink()`, each `null` when the router predates it. */
+export async function readEvmRouterConfig(
+  eth: EthCaller,
+  router: string,
+): Promise<{ maxBuyNative: string | null; pyth: string | null; attestationSink: string | null }> {
+  const read = async <T>(
+    functionName: 'maxBuyNative' | 'pyth' | 'attestationSink',
+  ): Promise<T | null> => {
+    try {
+      const data = encodeFunctionData({ abi: ROUTER_ADMIN_ABI, functionName });
+      const raw = (await eth.ethCall(router, data)) as Hex;
+      return decodeFunctionResult({ abi: ROUTER_ADMIN_ABI, functionName, data: raw }) as T;
+    } catch {
+      return null;
+    }
+  };
+  const [maxBuyNative, pyth, attestationSink] = await Promise.all([
+    read<bigint>('maxBuyNative'),
+    read<Address>('pyth'),
+    read<Address>('attestationSink'),
+  ]);
+  return {
+    maxBuyNative: maxBuyNative === null ? null : String(maxBuyNative),
+    pyth,
+    attestationSink,
   };
 }
 
@@ -262,7 +344,12 @@ export type EvmAdminAction =
       amountAtoms: string;
       to: string;
     }
-  | { kind: 'pushPrice'; source: string; baseToken: string; price1e6: string; conf1e6: string };
+  | { kind: 'pushPrice'; source: string; baseToken: string; price1e6: string; conf1e6: string }
+  /** `setParams(uint256)` — `word` is the packed record (decimal or 0x hex string); validated by unpacking. */
+  | { kind: 'setParams'; word: string }
+  /** `StonkzRouter.setConfig` — targets the net's router, signed by the launchpad admin. */
+  | { kind: 'setRouterConfig'; maxBuyNative: string; pyth: string; attestationSink: string }
+  | { kind: 'setTrustedRouter'; router: string };
 
 export interface PreparedEvmTx {
   net: EvmNet;
@@ -291,11 +378,36 @@ function uint(v: string | number, what: string): bigint {
   }
 }
 
+/** Decode and validate a `setParams` word the way the contract will; throws `ChainOpsError` otherwise. */
+export function checkParamsWord(raw: string): { word: bigint; fields: ParamsWordFields } {
+  let word: bigint;
+  try {
+    word = BigInt(raw.trim());
+  } catch {
+    throw new ChainOpsError('bad_amount', 'params word must be an integer');
+  }
+  if (word <= 0n || word >= 1n << 256n) {
+    throw new ChainOpsError('bad_amount', 'params word must be a non-zero uint256');
+  }
+  const fields = unpackParamsWord(word);
+  const errors = validateCurveParams({ ...fields, maxBuyNative: '0' });
+  if (errors.length > 0) throw new ChainOpsError('bad_amount', errors.join('; '));
+  // Round-trip: a word with stray bits (e.g. a fractional grad) is refused rather than silently normalised.
+  if (packParamsWord(fields) !== word) {
+    throw new ChainOpsError(
+      'bad_amount',
+      'params word does not round-trip through the field layout',
+    );
+  }
+  return { word, fields };
+}
+
 export function prepareEvmAdminTx(
   net: EvmNet,
   chainId: number,
   launchpad: string,
   action: EvmAdminAction,
+  ctx: { router?: string | null | undefined } = {},
 ): PreparedEvmTx {
   const lp = addr(launchpad, 'launchpad');
   const base = { net, chainId, value: '0' };
@@ -433,6 +545,45 @@ export function prepareEvmAdminTx(
         signer: 'oracleAuthority',
       };
     }
+    case 'setParams': {
+      const { word, fields: f } = checkParamsWord(action.word);
+      return {
+        ...base,
+        to: lp,
+        data: enc('setParams', [word]),
+        summary: `setParams(protocol=${f.feeProtocolBps}, ops=${f.feeOpsBps}, burn=${f.feeBurnBps}, fee=${f.minFeeBps}..${f.maxFeeBps} bps, cbStart=${f.cbStartFeeBps} bps, cbWindow=${f.cbWindowSecs}s, grad=$${f.gradUsd}, maxSupply=${f.maxSupply}) word=${word}`,
+        signer: 'admin',
+      };
+    }
+    case 'setRouterConfig': {
+      if (!ctx.router) {
+        throw new ChainOpsError('not_deployed', 'no StonkzRouter is configured on this net');
+      }
+      const maxBuy = uint(action.maxBuyNative, 'maxBuyNative');
+      return {
+        ...base,
+        to: addr(ctx.router, 'router'),
+        data: encodeFunctionData({
+          abi: ROUTER_ADMIN_ABI,
+          functionName: 'setConfig',
+          args: [
+            maxBuy,
+            addr(action.pyth, 'pyth'),
+            addr(action.attestationSink, 'attestationSink'),
+          ],
+        }),
+        summary: `router.setConfig(maxBuyNative=${maxBuy}${maxBuy === 0n ? ' (uncapped)' : ' wei'}, pyth=${action.pyth}, attestationSink=${action.attestationSink})`,
+        signer: 'admin',
+      };
+    }
+    case 'setTrustedRouter':
+      return {
+        ...base,
+        to: lp,
+        data: enc('setTrustedRouter', [addr(action.router, 'router')]),
+        summary: `setTrustedRouter(${action.router})`,
+        signer: 'admin',
+      };
   }
 }
 
@@ -538,6 +689,125 @@ export function decodeSolanaPauserConfig(base64: string): { pauser: string } {
   return { pauser: new PublicKey(buf.subarray(9, 41)).toBase58() };
 }
 
+/* ------------------------------------------------------ runtime params */
+
+/** `set_params` payload — `ParamsArgs` in `instructions/params.rs`, same field order. */
+export interface SolanaParamsArgs {
+  feeProtocolBps: number;
+  feeOpsBps: number;
+  feeBurnBps: number;
+  minFeeBps: number;
+  maxFeeBps: number;
+  cbStartFeeBps: number;
+  cbWindowSecs: number;
+  /** USD scaled 1e6, as a decimal string (u64). */
+  gradMcapUsd1e6: string;
+}
+
+/** The `Params` PDA as the program sees it. `initialised: false` = the account does not exist and the program runs on these defaults. */
+export interface SolanaParamsState extends SolanaParamsArgs {
+  initialised: boolean;
+}
+
+/** `constants.rs` defaults — what `load_params` returns for an empty account. */
+export const SOLANA_PARAMS_DEFAULTS: Readonly<SolanaParamsArgs> = Object.freeze({
+  feeProtocolBps: 1500,
+  feeOpsBps: 1000,
+  feeBurnBps: 600,
+  minFeeBps: 100,
+  maxFeeBps: 500,
+  cbStartFeeBps: 5000,
+  cbWindowSecs: 300,
+  gradMcapUsd1e6: '69000000000',
+});
+
+export function solanaParamsPda(programId: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('params')], programId)[0];
+}
+
+/**
+ * `Params` per `state.rs`: 8-byte discriminator, bump u8, six u16, u32, u64,
+ * 64 reserved bytes. `null` / empty (the account was never created) decodes
+ * to the defaults with `initialised: false`, exactly as `load_params` does.
+ */
+export function decodeSolanaParams(base64: string | null | undefined): SolanaParamsState {
+  if (!base64) return { initialised: false, ...SOLANA_PARAMS_DEFAULTS };
+  const buf = Buffer.from(base64, 'base64');
+  if (buf.length === 0) return { initialised: false, ...SOLANA_PARAMS_DEFAULTS };
+  const need = 8 + 1 + 2 * 6 + 4 + 8;
+  if (buf.length < need)
+    throw new ChainOpsError('bad_account', `Params account too short (${buf.length} < ${need})`);
+  let o = 8 + 1;
+  const u16 = (): number => {
+    const v = buf.readUInt16LE(o);
+    o += 2;
+    return v;
+  };
+  const feeProtocolBps = u16();
+  const feeOpsBps = u16();
+  const feeBurnBps = u16();
+  const minFeeBps = u16();
+  const maxFeeBps = u16();
+  const cbStartFeeBps = u16();
+  const cbWindowSecs = buf.readUInt32LE(o);
+  o += 4;
+  const gradMcapUsd1e6 = buf.readBigUInt64LE(o).toString();
+  return {
+    initialised: true,
+    feeProtocolBps,
+    feeOpsBps,
+    feeBurnBps,
+    minFeeBps,
+    maxFeeBps,
+    cbStartFeeBps,
+    cbWindowSecs,
+    gradMcapUsd1e6,
+  };
+}
+
+/**
+ * Borsh-encoded `set_params(args)` instruction data, validated the way
+ * `validate_params` in the program does so a bad payload fails here rather
+ * than on chain.
+ */
+export function encodeSetParamsData(a: SolanaParamsArgs): Buffer {
+  const bps = (v: number, what: string): number => {
+    if (!Number.isInteger(v) || v < 0 || v > 10_000)
+      throw new ChainOpsError('bad_amount', `${what} must be an integer in 0..=10000 bps`);
+    return v;
+  };
+  const feeProtocolBps = bps(a.feeProtocolBps, 'feeProtocolBps');
+  const feeOpsBps = bps(a.feeOpsBps, 'feeOpsBps');
+  const feeBurnBps = bps(a.feeBurnBps, 'feeBurnBps');
+  const minFeeBps = bps(a.minFeeBps, 'minFeeBps');
+  const maxFeeBps = bps(a.maxFeeBps, 'maxFeeBps');
+  const cbStartFeeBps = bps(a.cbStartFeeBps, 'cbStartFeeBps');
+  if (feeProtocolBps + feeOpsBps + feeBurnBps > 10_000)
+    throw new ChainOpsError(
+      'bad_amount',
+      'feeProtocolBps + feeOpsBps + feeBurnBps must be <= 10000',
+    );
+  if (minFeeBps > maxFeeBps)
+    throw new ChainOpsError('bad_amount', 'minFeeBps must be <= maxFeeBps');
+  if (maxFeeBps > cbStartFeeBps)
+    throw new ChainOpsError('bad_amount', 'maxFeeBps must be <= cbStartFeeBps');
+  if (!Number.isInteger(a.cbWindowSecs) || a.cbWindowSecs <= 0 || a.cbWindowSecs > 0xffff_ffff)
+    throw new ChainOpsError('bad_amount', 'cbWindowSecs must be a positive u32');
+  const grad = uint(a.gradMcapUsd1e6, 'gradMcapUsd1e6');
+  if (grad === 0n) throw new ChainOpsError('bad_amount', 'gradMcapUsd1e6 must be > 0');
+  const out = Buffer.alloc(8 + 2 * 6 + 4 + 8);
+  anchorDiscriminator('set_params').copy(out, 0);
+  let o = 8;
+  for (const v of [feeProtocolBps, feeOpsBps, feeBurnBps, minFeeBps, maxFeeBps, cbStartFeeBps]) {
+    out.writeUInt16LE(v, o);
+    o += 2;
+  }
+  out.writeUInt32LE(a.cbWindowSecs, o);
+  o += 4;
+  out.writeBigUInt64LE(grad, o);
+  return out;
+}
+
 /** `BaseOracle` per `state.rs`: bump, base_mint, price_1e6 u64, conf_1e6 u64, publish_time i64, base_decimals u8. */
 export function decodeSolanaBaseOracle(base64: string): {
   baseMint: string;
@@ -570,14 +840,21 @@ export function solanaPauserPda(programId: PublicKey): PublicKey {
 export async function readSolanaGlobal(
   rpc: SolanaAccountDataSource,
   programId: PublicKey,
-): Promise<{ global: SolanaGlobalState | null; pauser: string | null }> {
-  const [g, p] = await Promise.all([
+): Promise<{
+  global: SolanaGlobalState | null;
+  pauser: string | null;
+  /** Runtime params; `initialised: false` with the defaults when `set_params` was never called. */
+  params: SolanaParamsState;
+}> {
+  const [g, p, prm] = await Promise.all([
     rpc.getAccountDataBase64(solanaGlobalPda(programId).toBase58()),
     rpc.getAccountDataBase64(solanaPauserPda(programId).toBase58()),
+    rpc.getAccountDataBase64(solanaParamsPda(programId).toBase58()),
   ]);
   return {
     global: g ? decodeSolanaGlobal(g) : null,
     pauser: p ? decodeSolanaPauserConfig(p).pauser : null,
+    params: decodeSolanaParams(prm),
   };
 }
 
@@ -609,7 +886,8 @@ export type SolanaAdminAction =
       amountAtoms: string;
       to: string;
     }
-  | { kind: 'push_price'; baseMint: string; price1e6: string; conf1e6: string };
+  | { kind: 'push_price'; baseMint: string; price1e6: string; conf1e6: string }
+  | { kind: 'set_params'; params: SolanaParamsArgs };
 
 function pubkey(v: string, what: string): PublicKey {
   try {
@@ -826,6 +1104,25 @@ export function buildSolanaAdminInstruction(
         }),
         summary: `push_price(${action.baseMint}, ${price}, ${action.conf1e6})`,
         signer: 'oracleAuthority',
+      };
+    }
+    case 'set_params': {
+      // `SetParams`: global (has_one admin), params PDA (init_if_needed, so
+      // writable + admin pays), admin signer, system program.
+      const a = action.params;
+      return {
+        ix: new TransactionInstruction({
+          programId,
+          keys: [
+            { pubkey: global, isSigner: false, isWritable: false },
+            { pubkey: solanaParamsPda(programId), isSigner: false, isWritable: true },
+            { pubkey: signer, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          data: encodeSetParamsData(a),
+        }),
+        summary: `set_params(protocol=${a.feeProtocolBps}, ops=${a.feeOpsBps}, burn=${a.feeBurnBps}, fee=${a.minFeeBps}..${a.maxFeeBps} bps, cbStart=${a.cbStartFeeBps} bps, cbWindow=${a.cbWindowSecs}s, grad=$${Number(BigInt(a.gradMcapUsd1e6) / 1_000_000n)})`,
+        signer: 'admin',
       };
     }
   }

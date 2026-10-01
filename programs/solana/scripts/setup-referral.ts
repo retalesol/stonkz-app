@@ -3,7 +3,7 @@
  * referral vault (permissionless, `init_if_needed`-style — safe to re-run)
  * and register the API's Ed25519 voucher signer with a daily cap (admin).
  *
- *   ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
+ *   ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
  *   ANCHOR_WALLET=/path/to/admin.json \
  *   REFERRAL_SIGNER=<pubkey of REFERRAL_SIGNER_KEY_SOL> \
  *   REFERRAL_MAX_PER_DAY_SOL=1 \

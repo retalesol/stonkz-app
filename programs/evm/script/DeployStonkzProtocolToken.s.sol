@@ -20,11 +20,12 @@ import {StonkzProtocolToken} from "../src/StonkzProtocolToken.sol";
 /// ```
 /// cd programs/evm
 /// forge script script/DeployStonkzProtocolToken.s.sol:DeployStonkzProtocolToken \
-///   --rpc-url https://rpc.mainnet.chain.robinhood.com \
+///   --rpc-url https://thrumming-wild-shape.robinhood-mainnet.quiknode.pro/e928f474b84a91ae2a3e1202b4830a4e8ff8739f/ \
 ///   --broadcast --verify -vvv
 /// ```
 ///
-/// Dry-run by omitting `--broadcast`. Use the testnet RPC and chain 46630 first.
+/// Dry-run by omitting `--broadcast`. Use the testnet RPC (`RH_RPC_URL`, see
+/// docs/deployment.md "RPC endpoints") and chain 46630 first.
 contract DeployStonkzProtocolToken is Script {
     address internal constant INITIAL_RECIPIENT = 0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca;
 

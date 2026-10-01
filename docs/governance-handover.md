@@ -14,13 +14,13 @@ Status: **scripted and tested, not broadcast.**
 On RH testnet (46630) and Base Sepolia (84532) one EOA,
 `0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca`, holds all of these powers:
 
-| Power                  | Where                                                           | What it can do                                                                                                                                                                                       |
-| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admin`                | `StonkzLaunchpad` proxy (slot 5)                                | `upgradeToAndCall` (which can replace all logic and take every balance), `setPause`, `setPauser`, `setMigrator`, `setWithdrawAuthorities`, `setPriceSource`, `setMaxOracleStaleness`, `proposeAdmin` |
-| `admin`                | `PushPriceSource` proxy (slot 0), and the new `PythPriceSource` | upgrade (push oracle only), feed configuration, `setOracleAuthority`                                                                                                                                 |
-| `oracleAuthority`      | `PushPriceSource`                                               | push any price                                                                                                                                                                                       |
-| `opsWithdrawAuthority` | launchpad                                                       | withdraw the ops (`which = 1`) and RWA-crate (`which = 2`) treasuries                                                                                                                                |
-| `migrationAuthority`   | launchpad                                                       | `migrateLiquidity`                                                                                                                                                                                   |
+| Power                  | Where                                                           | What it can do                                                                                                                                                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admin`                | `StonkzLaunchpad` proxy (slot 5)                                | `upgradeToAndCall` (which can replace all logic and take every balance), `setPause`, `setPauser`, `setMigrator`, `setWithdrawAuthorities`, `setPriceSource`, `setMaxOracleStaleness`, `setParams`, `setTrustedRouter`, `proposeAdmin`; and, through it, `StonkzRouter.setConfig` (gated by `launchpad.admin()`) |
+| `admin`                | `PushPriceSource` proxy (slot 0), and the new `PythPriceSource` | upgrade (push oracle only), feed configuration, `setOracleAuthority`                                                                                                                                                                                                                                            |
+| `oracleAuthority`      | `PushPriceSource`                                               | push any price                                                                                                                                                                                                                                                                                                  |
+| `opsWithdrawAuthority` | launchpad                                                       | withdraw the ops (`which = 1`) and RWA-crate (`which = 2`) treasuries                                                                                                                                                                                                                                           |
+| `migrationAuthority`   | launchpad                                                       | `migrateLiquidity`                                                                                                                                                                                                                                                                                              |
 
 Its key may have been shared in chat. The notes in `deployments/*.json` already treat the deployer key as burned for mainnet. Every one of these powers moves as follows:
 
@@ -33,7 +33,7 @@ Its key may have been shared in chat. The notes in `deployments/*.json` already 
 - **ops-withdraw** and **migration** authorities go to new addresses you choose.
 - The protocol-withdraw authority (`0xFf88…4879`) stays as is unless you set `PROTOCOL_WITHDRAW_AUTHORITY`.
 
-These contracts have no admin at all: `StonkzRouter`, `UniswapV2Migrator`, `StonkzV2Factory` and `StonkzToken`. None of them has a pause switch either. The launchpad's pause stops every router path, because the router only reaches a curve through the launchpad. The router's per-buy cap is an immutable, not a switch.
+These contracts have no admin key of their own: `StonkzRouter`, `UniswapV2Migrator`, `StonkzV2Factory` and `StonkzToken`. None of them has a pause switch either. The launchpad's pause stops every router path, because the router only reaches a curve through the launchpad. The router's per-buy cap, Pyth and attestation sink are set with `StonkzRouter.setConfig`, which is gated by `launchpad.admin()` — so it moves to the timelock with the handover (routers deployed before the parameters upgrade have them as immutables; see [`parameters.md`](parameters.md)).
 
 ## The emergency pauser
 
@@ -70,10 +70,10 @@ Run from `programs/evm`:
 cd programs/evm
 export PRIVATE_KEY=0x...          # current admin EOA
 
-# RH testnet
-export RPC=https://rpc.testnet.chain.robinhood.com LAUNCHPAD_ADDRESS=0xe308287C9A85E2B53F1027a1c589B5e3969928e8 EXPECT_CHAIN_ID=46630
+# RH testnet (the project's QuickNode endpoint — docs/deployment.md "RPC endpoints")
+export RPC=https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/ LAUNCHPAD_ADDRESS=0xe308287C9A85E2B53F1027a1c589B5e3969928e8 EXPECT_CHAIN_ID=46630
 # Base Sepolia
-# export RPC=https://sepolia.base.org LAUNCHPAD_ADDRESS=0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 EXPECT_CHAIN_ID=84532
+# export RPC=https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/ LAUNCHPAD_ADDRESS=0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 EXPECT_CHAIN_ID=84532
 ```
 
 **1. Tests.**
@@ -211,6 +211,8 @@ Record the timelock, the Safe, the pauser and the rotated authorities under `aut
 Example: to unpause, schedule a call to `launchpad.setPause(false, false, false, false, false)`.
 
 The Safe can `cancel(id)` anything pending. Changing the delay is itself a timelocked `updateDelay`, and so is changing the pauser (`setPauser`).
+
+The runtime parameters (fee split, fee bounds, cashback, graduation cap, supply cap, trusted router, router cap / Pyth / sink) are governed the same way; the words, bounds, scripts and the batch to schedule are in [`parameters.md`](parameters.md).
 
 ## Stock bases (TSLA, AMZN, PLTR, NFLX, AMD)
 

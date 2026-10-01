@@ -90,24 +90,25 @@ chain cannot fake without being one).
 ```
 # mainnet
 RH_CHAIN_ID=4663
-RH_RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}   # production
-RH_RPC_URL_PUBLIC=https://rpc.mainnet.chain.robinhood.com              # dev/fallback only, rate-limited
+RH_RPC_URL=https://thrumming-wild-shape.robinhood-mainnet.quiknode.pro/e928f474b84a91ae2a3e1202b4830a4e8ff8739f/   # production (QuickNode; on Railway as RH_MAINNET_RPC_URL until cut-over)
+RH_RPC_URL_PUBLIC=https://rpc.mainnet.chain.robinhood.com              # fallback only, rate-limited
 RH_WS_URL=wss://robinhood-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}
 RH_SEQUENCER_FEED=wss://feed.mainnet.chain.robinhood.com
 RH_EXPLORER=https://robinhoodchain.blockscout.com
 
 # testnet
 RH_TESTNET_CHAIN_ID=46630
-RH_TESTNET_RPC_URL=https://rpc.testnet.chain.robinhood.com
+RH_TESTNET_RPC_URL=https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/   # QuickNode; public: https://rpc.testnet.chain.robinhood.com
 RH_TESTNET_EXPLORER=https://explorer.testnet.chain.robinhood.com
 RH_TESTNET_FAUCET=https://faucet.testnet.chain.robinhood.com   # capped 0.01 ETH / 24h
 ```
 
 Robinhood's own docs say the public RPC is "rate-limited and not recommended for production use" and name **Alchemy** as
-the recommended provider, which also supplies the archive endpoint the indexer needs for historical reads
-([docs …/connecting](https://docs.robinhood.com/chain/connecting/)). This maps onto the plan's Helius-for-Solana
-arrangement: Alchemy is the RH equivalent, and plan step 5's `.env.example` should carry an `ALCHEMY_KEY`, not a bare
-public URL.
+the recommended provider, with QuickNode among the supported alternatives
+([docs …/connecting](https://docs.robinhood.com/chain/connecting/)). The project standardised on **QuickNode** for every
+network (RH, Base, Solana; testnet and mainnet) — the endpoints, chain ids and env vars are the table in
+[`deployment.md`](deployment.md#0b-rpc-endpoints-quicknode), and `apps/api/.env.example` carries the testnet ones. The
+public host stays a fallback only.
 
 ### 2.3 One unresolved detail: the explorer hostname
 

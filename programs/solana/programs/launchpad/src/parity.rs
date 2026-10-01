@@ -19,6 +19,11 @@
 //! Regenerate with `cargo test -p launchpad --lib parity`.
 
 use crate::constants::*;
+use crate::state::Params;
+
+fn dp() -> Params {
+    Params::defaults()
+}
 use crate::math::*;
 use std::fmt::Write as _;
 
@@ -121,7 +126,7 @@ fn parity_vectors() {
         18_446_744_073,
         u64::MAX,
     ];
-    let shares: Vec<FeeShares> = fees.iter().map(|f| split_fee(*f)).collect();
+    let shares: Vec<FeeShares> = fees.iter().map(|f| split_fee(*f, &dp())).collect();
     out.push_str("  \"feeSplit\": {\n");
     out.push_str(&col_str("fee", &fees, "    ", false));
     out.push_str(&col_str(
@@ -210,13 +215,13 @@ fn parity_vectors() {
             cb_base.push(base);
             cb_elapsed.push(elapsed);
             cb_on.push(true);
-            cb_eff.push(eff_fee_bps(base, true, 0, elapsed));
+            cb_eff.push(eff_fee_bps(base, true, 0, elapsed, &dp()));
         }
         // A non-cashback coin is flat at the creator's own fee.
         cb_base.push(base);
         cb_elapsed.push(0);
         cb_on.push(false);
-        cb_eff.push(eff_fee_bps(base, false, 0, 0));
+        cb_eff.push(eff_fee_bps(base, false, 0, 0, &dp()));
     }
     out.push_str("  \"effFeeBps\": {\n");
     out.push_str(&col_raw("baseBps", &cb_base, "    ", false));
@@ -232,7 +237,7 @@ fn parity_vectors() {
 
     for (ci, c) in CASES.iter().enumerate() {
         let supply_atoms = c.supply * 10u64.pow(TOKEN_DECIMALS as u32);
-        let p = derive_curve(supply_atoms, c.price_1e6, c.base_decimals).expect("derives");
+        let p = derive_curve(supply_atoms, c.price_1e6, c.base_decimals, GRAD_MCAP_USD_1E6 as u64).expect("derives");
 
         let mut st = CurveState {
             virtual_base: p.virtual_base,
@@ -277,7 +282,7 @@ fn parity_vectors() {
                 let Some(f) = buy_quote(&st, bps, amount) else {
                     continue;
                 };
-                let s = split_fee(f.fee);
+                let s = split_fee(f.fee, &dp());
                 side.push("buy");
                 amount_in.push(amount);
                 gross.push(f.gross_base);
@@ -299,7 +304,7 @@ fn parity_vectors() {
                 let Some(f) = sell_quote(&st, bps, amount) else {
                     continue;
                 };
-                let s = split_fee(f.fee);
+                let s = split_fee(f.fee, &dp());
                 side.push("sell");
                 amount_in.push(amount);
                 gross.push(f.gross_base);
@@ -366,7 +371,7 @@ fn parity_vectors() {
     // invariants here rather than trusting the writer.
     for c in CASES.iter() {
         let supply_atoms = c.supply * 10u64.pow(TOKEN_DECIMALS as u32);
-        let p = derive_curve(supply_atoms, c.price_1e6, c.base_decimals).unwrap();
+        let p = derive_curve(supply_atoms, c.price_1e6, c.base_decimals, GRAD_MCAP_USD_1E6 as u64).unwrap();
         assert_eq!(p.tokens_for_sale + p.lp_reserve, supply_atoms);
         assert_eq!(p.k, p.virtual_base * p.virtual_token);
     }

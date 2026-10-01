@@ -91,6 +91,8 @@ describe('stonkz launchpad', () => {
   const BASE_PRICE = new BN(1_000_000);
 
   const globalPda = PublicKey.findProgramAddressSync([enc('global')], pid)[0];
+  /** Runtime params PDA. Does not exist until `set_params`; every reader treats that as the defaults. */
+  const paramsPda = PublicKey.findProgramAddressSync([enc('params')], pid)[0];
   const oraclePdaFor = (m: PublicKey) =>
     PublicKey.findProgramAddressSync([enc('oracle'), m.toBuffer()], pid)[0];
   const vault = (seed: string, key: PublicKey) =>
@@ -155,6 +157,7 @@ describe('stonkz launchpad', () => {
         creator: creator.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
         systemProgram: SystemProgram.programId,
       })
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
@@ -203,6 +206,7 @@ describe('stonkz launchpad', () => {
         traderTokenAccount: whoToken,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
       })
       .signers([who])
       .rpc();
@@ -265,6 +269,7 @@ describe('stonkz launchpad', () => {
         traderTokenAccount: whoToken,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
       })
       .signers([who])
       .rpc();
@@ -383,8 +388,11 @@ describe('stonkz launchpad', () => {
 
   /* --------------------------------------------- 2.A gate: the split settles */
 
-  describe('fee split settles 20 / 10 / 70 to the atom', () => {
+  describe('fee split settles 15 / 10 / 6 / 69 to the atom', () => {
     it('holds across random fill sizes and every fee in 100-500 bps', async () => {
+      // No `set_params` has run: the params PDA does not exist and every fill
+      // below settles on the program's built-in defaults.
+      assert.isNull(await conn.getAccountInfo(paramsPda), 'params PDA must not exist yet');
       // Deterministic sizes, spread over four orders of magnitude.
       const sizes = [1_000n, 7_919n, 250_001n, 3_333_333n, 40_000_000n, 999_999_999n];
       const feeBpsCases = [100, 137, 250, 419, 500];
@@ -835,10 +843,14 @@ program.methods.stake(new BN(1), 30).accountsPartial(stakeAccounts).signers([sta
     it('has no user-facing claim path to protocol or ops', () => {
       const names = Object.keys(program.methods);
       const claims = names.filter((n) => /claim/i.test(n));
+      // claim_dex_fees is a permissionless crank that pays its caller nothing
+      // (fees land in the program vaults); claim_referral pays from the
+      // referral vault, which withdraw_treasury cannot reach. Neither touches
+      // the protocol or ops vault on behalf of a user.
       assert.deepEqual(
         claims.sort(),
-        ['claimCreatorFees', 'claimStake'],
-        `only creator and staker claims may exist, found ${claims}`,
+        ['claimCreatorFees', 'claimDexFees', 'claimReferral', 'claimStake'],
+        `only creator / staker / dex-crank / referral claims may exist, found ${claims}`,
       );
       assert.include(names, 'withdrawTreasury');
     });
@@ -977,6 +989,7 @@ buy(coin, trader, traderBase, tt, 1_000_000n), /CurveComplete/);
           curveTokenVault: coin.curveTokenVault,
           caller: trader.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
+          params: paramsPda,
         })
         .signers([trader])
         .rpc();
@@ -1004,6 +1017,7 @@ program.methods
             curveTokenVault: coin.curveTokenVault,
             caller: trader.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
+            params: paramsPda,
           })
           .signers([trader])
           .rpc(),
@@ -1041,6 +1055,7 @@ program.methods
             curveTokenVault: coin.curveTokenVault,
             caller: trader.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
+            params: paramsPda,
           })
           .signers([trader])
           .rpc();
@@ -1121,6 +1136,7 @@ program.methods
           curveTokenVault: coin.curveTokenVault,
           caller: trader.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
+          params: paramsPda,
         })
         .signers([trader])
         .rpc();
@@ -1282,6 +1298,181 @@ program.methods
       // And the only signer able to influence this instruction at all is
       // `migrationAuthority`, funding rent -- never a token-account owner.
       assert.include(names, 'migrationAuthority');
+    });
+  });
+  /* ------------------------------------------------- runtime params (admin) */
+
+  describe('runtime params (set_params)', () => {
+    type Args = {
+      feeProtocolBps: number;
+      feeOpsBps: number;
+      feeBurnBps: number;
+      minFeeBps: number;
+      maxFeeBps: number;
+      cbStartFeeBps: number;
+      cbWindowSecs: number;
+      gradMcapUsd1e6: BN;
+    };
+    /** `constants.rs` — what the program ran on before any set_params. */
+    const DEFAULTS: Args = {
+      feeProtocolBps: 1500,
+      feeOpsBps: 1000,
+      feeBurnBps: 600,
+      minFeeBps: 100,
+      maxFeeBps: 500,
+      cbStartFeeBps: 5000,
+      cbWindowSecs: 300,
+      gradMcapUsd1e6: new BN('69000000000'),
+    };
+    const CUSTOM: Args = {
+      feeProtocolBps: 2000,
+      feeOpsBps: 1500,
+      feeBurnBps: 500,
+      minFeeBps: 50,
+      maxFeeBps: 800,
+      cbStartFeeBps: 6000,
+      cbWindowSecs: 120,
+      gradMcapUsd1e6: new BN('100000000000'),
+    };
+    /**
+     * Anchor's generated types camel-case `grad_mcap_usd_1e6` as
+     * `gradMcapUsd1e6`, but its runtime coder (the `camelcase` package) reads
+     * `gradMcapUsd1E6` — a digit followed by a letter is a word boundary
+     * there — and silently encodes the missing key as 0. Feed it both, and
+     * read the account back through the runtime spelling.
+     */
+    const wire = (a: Args) => ({ ...a, gradMcapUsd1E6: a.gradMcapUsd1e6 }) as unknown as Args;
+    const gradOf = (p: unknown): string =>
+      ((p as { gradMcapUsd1E6?: BN; gradMcapUsd1e6?: BN }).gradMcapUsd1E6 ??
+        (p as { gradMcapUsd1e6?: BN }).gradMcapUsd1e6)!.toString();
+    const splitWith = (fee: bigint, p: Args) => {
+      const protocol = (fee * BigInt(p.feeProtocolBps)) / 10000n;
+      const ops = (fee * BigInt(p.feeOpsBps)) / 10000n;
+      const burn = (fee * BigInt(p.feeBurnBps)) / 10000n;
+      return { protocol, ops, burn, creatorBucket: fee - protocol - ops - burn };
+    };
+    const setParams = (args: Args, signer: Keypair = admin) =>
+      program.methods
+        .setParams(wire(args))
+        .accountsPartial({
+          global: globalPda,
+          params: paramsPda,
+          admin: signer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([signer])
+        .rpc();
+
+    it('before any set_params the PDA is absent and fills settle on the defaults', async () => {
+      assert.isNull(await conn.getAccountInfo(paramsPda), 'params PDA must not exist yet');
+      const coin = await launch('PRESET', { feeBps: 300 });
+      const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
+      const d = await buy(coin, trader, traderBase, tt, 3_333_333n);
+      const fee = d.spent - d.curveBase;
+      assert.equal(fee, (d.spent * 300n) / 10000n);
+      const want = splitWith(fee, DEFAULTS);
+      assert.equal(d.protocol, want.protocol);
+      assert.equal(d.ops, want.ops);
+      assert.equal(d.burn, want.burn);
+      assert.equal(d.bucket, want.creatorBucket);
+      // Default creator-fee bounds still bite.
+      await rejects(launch('WIDE0', { feeBps: 700 }), /FeeOutOfRange/);
+    });
+
+    it('refuses every inconsistent payload, and anyone but admin', async () => {
+      await rejects(
+        setParams({ ...CUSTOM, feeProtocolBps: 5000, feeOpsBps: 4000, feeBurnBps: 1001 }),
+        /ParamsFeeSplitTooLarge/,
+      );
+      await rejects(setParams({ ...CUSTOM, minFeeBps: 801 }), /ParamsFeeBoundsInvalid/);
+      await rejects(setParams({ ...CUSTOM, cbStartFeeBps: 799 }), /ParamsCashbackStartInvalid/);
+      await rejects(setParams({ ...CUSTOM, cbStartFeeBps: 10001 }), /ParamsCashbackStartInvalid/);
+      await rejects(setParams({ ...CUSTOM, cbWindowSecs: 0 }), /ParamsCashbackWindowInvalid/);
+      await rejects(setParams({ ...CUSTOM, gradMcapUsd1e6: new BN(0) }), /ParamsGradMcapInvalid/);
+      await rejects(setParams(CUSTOM, trader), /Unauthorized/);
+      // A rejected first call must not have left a half-written account behind.
+      assert.isNull(await conn.getAccountInfo(paramsPda));
+    });
+
+    it('set_params rewrites split, bounds and graduation cap, and fills follow the new split', async () => {
+      await setParams(CUSTOM);
+      const p = await program.account.params.fetch(paramsPda);
+      assert.equal(p.feeProtocolBps, 2000);
+      assert.equal(p.feeOpsBps, 1500);
+      assert.equal(p.feeBurnBps, 500);
+      assert.equal(p.minFeeBps, 50);
+      assert.equal(p.maxFeeBps, 800);
+      assert.equal(p.cbStartFeeBps, 6000);
+      assert.equal(p.cbWindowSecs, 120);
+      assert.equal(gradOf(p), '100000000000');
+
+      // New bounds: 900 bps still out, 700 (formerly out) now in.
+      await rejects(launch('TOOHI', { feeBps: 900 }), /FeeOutOfRange/);
+      const coin = await launch('WIDE7', { feeBps: 700 });
+      const c = await program.account.curve.fetch(coin.curve);
+      // $100K at $1.00 on a 6-decimal base = 100_000e6 atoms; virtual_base is ceil(/15).
+      assert.equal(c.gradMcapBase.toString(), '100000000000');
+      assert.equal(c.virtualBase.toString(), (100_000_000_000n / 15n + 1n).toString());
+
+      const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
+      for (const size of [1_000n, 250_001n, 40_000_000n]) {
+        const d = await buy(coin, trader, traderBase, tt, size);
+        const fee = d.spent - d.curveBase;
+        assert.equal(fee, (d.spent * 700n) / 10000n, `fee @ ${size}`);
+        const want = splitWith(fee, CUSTOM);
+        assert.equal(d.protocol, want.protocol, `protocol @ ${size}`);
+        assert.equal(d.ops, want.ops, `ops @ ${size}`);
+        assert.equal(d.burn, want.burn, `burn @ ${size}`);
+        assert.equal(d.bucket, want.creatorBucket, `bucket @ ${size}`);
+        assert.equal(d.protocol + d.ops + d.burn + d.bucket, fee);
+      }
+      const held = await bal(tt);
+      const s = await sell(coin, trader, traderBase, tt, held / 3n);
+      const sellFee = s.protocol + s.ops + s.burn + s.bucket;
+      const want = splitWith(sellFee, CUSTOM);
+      assert.equal(s.protocol, want.protocol, 'sell protocol');
+      assert.equal(s.ops, want.ops, 'sell ops');
+      assert.equal(s.burn, want.burn, 'sell burn');
+      assert.equal(s.bucket, want.creatorBucket, 'sell bucket');
+    });
+
+    it('a cashback window opens at the configured start fee', async () => {
+      const coin = await launch('CB60', { feeBps: 200, cashback: true });
+      const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
+      const d = await buy(coin, trader, traderBase, tt, 100_000_000n);
+      const c = await program.account.curve.fetch(coin.curve);
+      const feeTotal =
+        BigInt(c.protocolAccrued.toString()) +
+        BigInt(c.opsAccrued.toString()) +
+        d.burn +
+        BigInt(c.creatorBucketAccrued.toString());
+      // ~60% at t≈0 on a 120 s window: a few seconds of decay at most.
+      const rate = (feeTotal * 10000n) / d.spent;
+      assert.isTrue(rate > 5700n && rate <= 6000n, `effective rate was ${rate} bps`);
+      const want = splitWith(feeTotal, CUSTOM);
+      assert.equal(d.protocol, want.protocol);
+      assert.equal(d.ops, want.ops);
+      assert.equal(d.burn, want.burn);
+    });
+
+    it('is re-settable: restoring the defaults puts trading back on 15 / 10 / 6', async () => {
+      await setParams(DEFAULTS);
+      const p = await program.account.params.fetch(paramsPda);
+      assert.equal(p.feeProtocolBps, 1500);
+      assert.equal(p.maxFeeBps, 500);
+      assert.equal(gradOf(p), '69000000000');
+      await rejects(launch('WIDE8', { feeBps: 700 }), /FeeOutOfRange/);
+      const coin = await launch('BACK');
+      const c = await program.account.curve.fetch(coin.curve);
+      assert.equal(c.gradMcapBase.toString(), '69000000000');
+      const tt = await createAssociatedTokenAccount(conn, trader, coin.mint, trader.publicKey);
+      const d = await buy(coin, trader, traderBase, tt, 7_919n);
+      const fee = d.spent - d.curveBase;
+      const want = splitFee(fee);
+      assert.equal(d.protocol, want.protocol);
+      assert.equal(d.ops, want.ops);
+      assert.equal(d.burn, want.burn);
+      assert.equal(d.bucket, want.creatorBucket);
     });
   });
 });

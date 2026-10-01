@@ -10,7 +10,7 @@ pub enum LaunchpadError {
     LaunchPaused,
     #[msg("Withdrawals from this treasury are paused")]
     WithdrawalsPaused,
-    #[msg("Curve fee must be between 100 and 500 bps")]
+    #[msg("Curve fee is outside the configured min/max bounds (default 100-500 bps)")]
     FeeOutOfRange,
     #[msg("Supply must be one of 1M, 500M, 1B, 1T")]
     UnsupportedSupply,
@@ -88,4 +88,17 @@ pub enum LaunchpadError {
     ReferralNothingToClaim,
     #[msg("Referral claim would exceed today's cap")]
     ReferralDailyCapExceeded,
+    /// Runtime parameters (appended, positional).
+    #[msg("Params account is not the params PDA")]
+    ParamsAccountMismatch,
+    #[msg("fee_protocol_bps + fee_ops_bps + fee_burn_bps must not exceed 10000")]
+    ParamsFeeSplitTooLarge,
+    #[msg("min_fee_bps must not exceed max_fee_bps")]
+    ParamsFeeBoundsInvalid,
+    #[msg("cb_start_fee_bps must be between max_fee_bps and 10000")]
+    ParamsCashbackStartInvalid,
+    #[msg("cb_window_secs must be greater than zero")]
+    ParamsCashbackWindowInvalid,
+    #[msg("grad_mcap_usd_1e6 must be greater than zero")]
+    ParamsGradMcapInvalid,
 }

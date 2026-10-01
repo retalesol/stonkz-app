@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { encodeFunctionData, type Address, type Hex } from 'viem';
-import { GRAD, isEvm, type EvmNet } from '@stonkz/shared';
+import { isEvm, type EvmNet } from '@stonkz/shared';
 import { requireAuth, limit } from '../app/middleware.js';
 import { RATE_LIMITS } from '../redis/ratelimit.js';
 import type { AppEnv } from '../app/context.js';
@@ -106,13 +106,14 @@ export function graduateRoutes(): Hono<AppEnv> {
         programId: deps.env.solanaLaunchpadProgramId,
       },
     });
-    const view = serialiseToken(synced as TokenRow, deps.now());
+    const curveParams = await deps.params.get(net);
+    const view = serialiseToken(synced as TokenRow, deps.now(), undefined, curveParams);
     if (view.graduatedAt !== null) return c.json({ error: 'already_graduated' }, 409);
     if (!view.graduationReady) {
       return c.json(
         {
           error: 'not_graduable',
-          detail: `the curve is neither sold out nor at $${GRAD.toLocaleString('en-US')} market cap`,
+          detail: `the curve is neither sold out nor at $${curveParams.gradUsd.toLocaleString('en-US')} market cap`,
           mc: view.mc,
           curveComplete: view.curveComplete,
         },

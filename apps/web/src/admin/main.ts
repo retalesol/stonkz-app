@@ -18,6 +18,7 @@ import { renderAudit } from './views/audit.js';
 import { renderChain } from './views/chain.js';
 import { renderComms } from './views/comms.js';
 import { renderDashboard, unmountDashboard } from './views/dashboard.js';
+import { renderParams } from './views/params.js';
 import { renderSettings } from './views/settings.js';
 import { renderTokens } from './views/tokens.js';
 import { renderUsers } from './views/users.js';
@@ -25,7 +26,7 @@ import { renderUsers } from './views/users.js';
 /**
  * Stonkz admin console — a separate Vite entry (`admin.html`) so nothing here
  * ever reaches the terminal's bundle. Hash-routed sections in a left nav,
- * keyboard-first (1–8 jump sections, `/` focuses the first field, Esc closes),
+ * keyboard-first (1–9 jump sections, `/` focuses the first field, Esc closes),
  * mobile-tolerant (nav collapses under 820px).
  */
 type Section = {
@@ -41,9 +42,10 @@ const SECTIONS: Section[] = [
   { id: 'users', label: 'Users', key: '3', render: renderUsers },
   { id: 'tokens', label: 'Tokens', key: '4', render: renderTokens },
   { id: 'chain', label: 'Chain ops', key: '5', render: renderChain },
-  { id: 'comms', label: 'Comms', key: '6', render: (r) => renderComms(r) },
-  { id: 'audit', label: 'Audit log', key: '7', render: renderAudit },
-  { id: 'access', label: 'Access', key: '8', render: (r) => renderAccess(r) },
+  { id: 'params', label: 'Parameters', key: '6', render: (r) => renderParams(r) },
+  { id: 'comms', label: 'Comms', key: '7', render: (r) => renderComms(r) },
+  { id: 'audit', label: 'Audit log', key: '8', render: renderAudit },
+  { id: 'access', label: 'Access', key: '9', render: (r) => renderAccess(r) },
 ];
 
 function route(): { id: string; params: URLSearchParams } {
@@ -60,7 +62,7 @@ function paintNav(active: string): void {
     must('#admNav'),
     html`${SECTIONS.map((s) => html`<a href="#/${s.id}" class="${s.id === active ? 'on' : ''}">${s.label}<kbd>${s.key}</kbd></a>`)}
       <span class="grow"></span>
-      <span class="navfoot">/ FOCUS · ESC CLOSE · 1-8 JUMP</span>`,
+      <span class="navfoot">/ FOCUS · ESC CLOSE · 1-9 JUMP</span>`,
   );
 }
 

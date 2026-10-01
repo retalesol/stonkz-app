@@ -38,6 +38,8 @@ export interface BusEvents {
   tapeClear: void;
   /** The API is unreachable (`text`) or back (`null`); the board shows it in its empty lanes. */
   notice: { text: string | null };
+  /** The live launchpad parameters changed for some net (`state/params.ts`). */
+  params: void;
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;

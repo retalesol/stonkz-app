@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_CURVE_PARAMS } from '@stonkz/shared';
 import { moderateLaunch } from '../router/moderation.js';
 import {
+  checkCurveFee,
+  checkSupply,
   checkTelegram,
   checkUri,
   checkWebsite,
@@ -146,5 +149,37 @@ describe('moderateLaunch', () => {
     ]) {
       expect(moderateLaunch({ name, ticker: 'OK', descr: '' }).ok, name).toBe(true);
     }
+  });
+});
+
+describe('checkSupply / checkCurveFee — chain parameters', () => {
+  it('accepts the fixed supplies under the cap and names the offered ones otherwise', () => {
+    expect(checkSupply(1e9, DEFAULT_CURVE_PARAMS)).toEqual({ ok: true, value: 1e9 });
+    expect(checkSupply(42, DEFAULT_CURVE_PARAMS)).toEqual({
+      ok: false,
+      detail: 'supply must be one of 1e6, 5e8, 1e9, 1e12',
+    });
+    const capped = { ...DEFAULT_CURVE_PARAMS, maxSupply: 1e9 };
+    expect(checkSupply(1e9, capped).ok).toBe(true);
+    const r = checkSupply(1e12, capped);
+    expect(r.ok).toBe(false);
+    if (!r.ok)
+      expect(r.detail).toBe(
+        'supply must be one of 1M, 500M, 1B (this chain caps supply at 1,000,000,000)',
+      );
+  });
+
+  it('bounds the creator fee by the live min/max and quotes them', () => {
+    expect(checkCurveFee(2.5, DEFAULT_CURVE_PARAMS)).toEqual({ ok: true, value: 2.5 });
+    expect(checkCurveFee(9, DEFAULT_CURVE_PARAMS)).toEqual({
+      ok: false,
+      detail: 'fee must be between 1.0 and 5.0 percent',
+    });
+    const tight = { ...DEFAULT_CURVE_PARAMS, minFeeBps: 50, maxFeeBps: 300 };
+    expect(checkCurveFee(0.5, tight).ok).toBe(true);
+    expect(checkCurveFee(4, tight)).toEqual({
+      ok: false,
+      detail: 'fee must be between 0.5 and 3.0 percent',
+    });
   });
 });

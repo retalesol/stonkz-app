@@ -1,5 +1,5 @@
 import {
-  FEE_SPLIT,
+  feeSplitOf,
   LOCKS,
   chainLockMult,
   effFee,
@@ -26,6 +26,7 @@ import {
 } from '../state/stake.js';
 import { saveUser } from '../state/user.js';
 import { nativeUnit } from '../state/wallet.js';
+import { coinParams } from '../state/params.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
 import { rewardText, stakePanel, stakePanelHTML } from './stake-view.js';
 
@@ -46,7 +47,7 @@ let afterChange: () => void = () => undefined;
 function earnText(c: SimCoin): string {
   const st = ensureStake(c.sym);
   if (api.mode === 'live') return rewardText(st, c.sym, nativeUnit());
-  return inCashback(c)
+  return inCashback(c, Date.now(), coinParams(c))
     ? num(st.rewTok || 0) + ' ' + c.sym
     : (st.rewSol || 0).toFixed(4) + ' ' + nativeUnit();
 }
@@ -75,8 +76,10 @@ function lockMultLabel(days: number, mult: number): string {
 
 export function renderStake(c: SimCoin): void {
   const st = ensureStake(c.sym);
-  const cb = inCashback(c);
-  const pie = feePie(1, poolFrac(c));
+  const p = coinParams(c);
+  const cb = inCashback(c, Date.now(), p);
+  const pie = feePie(1, poolFrac(c), p);
+  const split = feeSplitOf(p);
   const live = api.mode === 'live';
   const held = heldLock(c);
   if (held !== null) STK.lock = held;
@@ -137,21 +140,23 @@ export function renderStake(c: SimCoin): void {
             </div>
             <div>
               <i style="background:${attr(PIE_COLOURS.protocol)}"></i>PLATFORM<b
-                >${(FEE_SPLIT.protocol * 100).toFixed(0)}%</b
+                >${(split.protocol * 100).toFixed(0)}%</b
               >
             </div>
             <div>
               <i style="background:${attr(PIE_COLOURS.buyback)}"></i>$STONKZ BUYBACK<b
-                >${(FEE_SPLIT.buyback * 100).toFixed(0)}%</b
+                >${(split.buyback * 100).toFixed(0)}%</b
               >
             </div>
             <div>
               <i style="background:${attr(PIE_COLOURS.rwa)}"></i>RWA CRATES<b
-                >${(FEE_SPLIT.rwa * 100).toFixed(0)}%</b
+                >${(split.rwa * 100).toFixed(0)}%</b
               >
             </div>
             <div>
-              <i style="background:#2c3444"></i>TRADE FEE<b id="lg-fee">${effFee(c).toFixed(1)}%</b>
+              <i style="background:#2c3444"></i>TRADE FEE<b id="lg-fee"
+                >${effFee(c, Date.now(), p).toFixed(1)}%</b
+              >
             </div>
           </div>
         </div>
@@ -225,11 +230,11 @@ export function renderStake(c: SimCoin): void {
       <p class="hint">
         STAKE WEIGHT = AMOUNT x LOCK MULTIPLIER. THE POOL TAKES HALF THE CREATOR BUCKET WHEN ALL
         CIRCULATING SUPPLY IS STAKED, SCALING DOWN FROM THERE ${DOT} THAT IS
-        ${(FEE_SPLIT.creatorBucket * 50).toFixed(1)}% OF EVERY CURVE FEE AT
+        ${(split.creatorBucket * 50).toFixed(1)}% OF EVERY CURVE FEE AT
         MOST${cb ? '. DURING CASHBACK, REWARDS PAY IN ' + c.sym + '.' : '.'}
       </p>`,
   );
-  drawPie($<HTMLCanvasElement>('#stkPie'), poolFrac(c));
+  drawPie($<HTMLCanvasElement>('#stkPie'), poolFrac(c), p);
   refreshScrim('#stakeScrim');
 
   must('#stk-max').addEventListener('click', () => {
@@ -269,7 +274,8 @@ function multHint(c: SimCoin): string {
 export function syncStake(): void {
   const c = STK.c;
   if (!c) return;
-  const pie = feePie(1, poolFrac(c));
+  const p = coinParams(c);
+  const pie = feePie(1, poolFrac(c), p);
   const set = (id: string, v: string): void => {
     const e = $(id);
     if (e && e.textContent !== v) e.textContent = v;
@@ -282,7 +288,7 @@ export function syncStake(): void {
   set('#sv-share', (yourShare(c) * 100).toFixed(2) + '% OF POOL');
   set('#lg-pool', (pie.stakers * 100).toFixed(1) + '%');
   set('#lg-cre', (pie.creator * 100).toFixed(1) + '%');
-  set('#lg-fee', effFee(c).toFixed(1) + '%');
+  set('#lg-fee', effFee(c, Date.now(), p).toFixed(1) + '%');
   set('#sv-mult', multHint(c));
   const earn = earnText(c);
   set('#sv-earn', earn);

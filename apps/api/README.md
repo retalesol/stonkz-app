@@ -120,7 +120,9 @@ Before a first deploy:
 1. Set `JWT_SECRET` and `CRATE_HMAC_SECRET` to real values. The API refuses to
    boot in production on the dev defaults, and rotating `CRATE_HMAC_SECRET`
    changes every future crate roll.
-2. Set `RH_RPC_URL` to a provider endpoint.
+2. Set `RH_RPC_URL`, `BASE_RPC_URL` and `SOLANA_RPC_URL` to the project's
+   QuickNode endpoints (`docs/deployment.md`, "RPC endpoints"). Production
+   refuses the public hosts.
 3. Set `RH_ALLOWED_CHAIN_IDS` to that environment's id alone. Accepting
    staging's id in production is a cross-environment replay path.
 4. Set `CORS_ORIGINS` to the real origins, and drop the localhost entries.

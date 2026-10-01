@@ -1,10 +1,9 @@
 import { Hono } from 'hono';
 import { and, desc, eq, getTableColumns, gt, gte, ilike, lt, or, sql, type SQL } from 'drizzle-orm';
 import {
-  FEE_SPLIT,
-  GRAD,
   SUPPLY,
   effFee,
+  feeSplitOf,
   isEvm,
   laneOf,
   nativeUnit,
@@ -271,7 +270,7 @@ export function shapeHolders(input: {
  * of the cap; it is overridden here whenever curve state exists.
  */
 export async function tokenDetailExtras(
-  deps: { db: AppEnv['Variables']['deps']['db'] },
+  deps: Pick<AppEnv['Variables']['deps'], 'db' | 'params'>,
   net: Net,
   row: TokenRow,
   now: number,
@@ -297,6 +296,7 @@ export async function tokenDetailExtras(
   ]);
   const facts = curveFacts(row);
   const unit = nativeUnit(net);
+  const curveParams = await deps.params.get(net);
   const vol24Base = Number(day?.base ?? 0);
   const volTotalBase = Number(all?.base ?? 0);
   const vol24Recorded = Number(day?.usd ?? 0);
@@ -317,7 +317,7 @@ export async function tokenDetailExtras(
     volTotalBase,
     volTotalNative: Number(all?.nat ?? 0),
     tradeCount: Number(all?.n ?? 0),
-    graduationUsd: GRAD,
+    graduationUsd: curveParams.gradUsd,
     ...(facts
       ? {
           mcBase: facts.mcBase,
@@ -428,6 +428,7 @@ export function tokenRoutes(): Hono<AppEnv> {
 
     // USD figures are base × the live base price, resolved once per request.
     const prices = new LiveBaseUsd(deps);
+    const curveParams = await deps.params.all();
 
     // Every sort breaks ties on recency so paging with `offset` is stable:
     // two coins with the same cap never swap places between pages. MARKET CAP
@@ -481,7 +482,12 @@ export function tokenRoutes(): Hono<AppEnv> {
       },
       tokens: await Promise.all(
         rows.map(async (r) =>
-          serialiseToken(r as TokenRow, now, { baseUsd: await prices.liveForRow(r as TokenRow) }),
+          serialiseToken(
+            r as TokenRow,
+            now,
+            { baseUsd: await prices.liveForRow(r as TokenRow) },
+            curveParams[r.net as Net],
+          ),
         ),
       ),
     });
@@ -510,7 +516,12 @@ export function tokenRoutes(): Hono<AppEnv> {
     ]);
 
     return c.json({
-      ...serialiseToken({ ...(row as TokenRow), replies }, deps.now(), { baseUsd: liveUsd }),
+      ...serialiseToken(
+        { ...(row as TokenRow), replies },
+        deps.now(),
+        { baseUsd: liveUsd },
+        await deps.params.get(net),
+      ),
       ...(await tokenDetailExtras(deps, net, row as TokenRow, deps.now(), baseUsd)),
       // EVM v3 graduation only: the locked position's uncollected fees.
       ...(await poolFeesExtra(deps, net, row as TokenRow)),
@@ -810,12 +821,14 @@ export function tokenRoutes(): Hono<AppEnv> {
       .where(and(eq(trades.net, net), eq(trades.mint, token.mint ?? '')));
     const referrals = Number(ref?.total ?? 0);
     const feeBps = token.feeBps ?? 100;
+    const curveParams = await deps.params.get(net);
     // What a fill pays right now: the creator fee plus the decaying cashback
     // premium while that window is open (the same curve the ticket shows).
     const effFeeBps = Math.round(
       effFee(
         { tfee: feeBps / 100, cashback: token.cashback, cbStart: token.cbStartMs ?? undefined },
         deps.now(),
+        curveParams,
       ) * 100,
     );
     // The creator's own view reads the program's ledger (that is what the
@@ -834,7 +847,7 @@ export function tokenRoutes(): Hono<AppEnv> {
       unit: nativeUnit(net),
       feeBps,
       effFeeBps,
-      split: { ...FEE_SPLIT },
+      split: feeSplitOf(curveParams),
       totals: {
         // The DB protocol leg is credited net of referral commissions
         // (`ingest.ts` `reconcileFeeAccrued`), so the gross fee taken on
@@ -914,7 +927,12 @@ export function tokenRoutes(): Hono<AppEnv> {
     const staked = await stakedByWallet(deps, net, mint);
     // Position values on the tab: `amount × priceUsd`, at the live base price.
     const baseUsd = await new LiveBaseUsd(deps).liveForRow(token as TokenRow);
-    const view = serialiseToken(token as TokenRow, deps.now(), { baseUsd });
+    const view = serialiseToken(
+      token as TokenRow,
+      deps.now(),
+      { baseUsd },
+      await deps.params.get(net),
+    );
 
     const respond = (chain: ChainHolder[], source: 'explorer' | 'rpc' | 'db'): Response => {
       const shaped = shapeHolders({ chain, supply, facts, staked, cost, canon, evm, limit: max });

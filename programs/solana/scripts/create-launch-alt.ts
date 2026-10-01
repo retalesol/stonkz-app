@@ -11,7 +11,7 @@
  * script writes exactly that list (the same one
  * `apps/api/src/router/solana-alt.ts`'s `stonkzLaunchAltAddresses` builds).
  *
- *   ANCHOR_PROVIDER_URL=https://api.mainnet-beta.solana.com \
+ *   ANCHOR_PROVIDER_URL=https://withered-late-shadow.solana-mainnet.quiknode.pro/c42aacddfd044848fd4ff4351f9ceb41bb18af4a/ \
  *   ANCHOR_WALLET=/path/to/operator.json \
  *   STONKZ_PROGRAM_ID=FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg \
  *   pnpm exec ts-node scripts/create-launch-alt.ts [--table <ALT>] [--dry-run] [baseMint ...]
@@ -78,6 +78,7 @@ function launchAltAddresses(programId: PublicKey, baseMints: PublicKey[]): Publi
     ASSOCIATED_TOKEN_PROGRAM_ID,
     NATIVE_MINT,
     pda([enc('global')]),
+    pda([enc('params')]),
   ];
   for (const baseMint of baseMints) {
     out.push(

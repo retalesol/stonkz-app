@@ -1,9 +1,8 @@
 import {
   BUYBACK_SPLIT,
-  CB_MS,
-  FEE_SPLIT,
-  GRAD,
   SUPPLY,
+  cbWindowMs,
+  feeSplitOf,
   type NativeUnit,
   type Quote,
   type QuoteHop,
@@ -93,6 +92,7 @@ import { holdOf } from '../state/holdings.js';
 import { syncHoldingFromChain, safeSellAmountInput } from '../api/live-holding.js';
 import { SET, evmGasPreset, settingsSummary } from '../state/settings.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, nativeUsd } from '../state/wallet.js';
+import { coinParams } from '../state/params.js';
 import { confirmDialog } from '../modals/confirm.js';
 import { openStake } from '../modals/stake.js';
 import { stakeOf } from '../state/stake.js';
@@ -781,23 +781,26 @@ function quoteHTML(c: SimCoin, q: Quote): Html {
 
 /**
  * Where this order's curve fee goes — the 69 / 15 / 10 / 6 split both
- * programs assert on every fill (`FEE_SPLIT`), sized in the fee's own unit.
+ * programs apply on every fill (live from chain, `state/params.ts`), sized
+ * in the fee's own unit.
  */
 function feeSplitRow(feeNative: number, unit: string): Html {
   if (!(feeNative > 0)) return html``;
+  const split = feeSplitOf(coinParams(TV.c));
   const leg = (share: number): string => fmtNativeAmt(feeNative * share);
+  const pctOf = (share: number): string => (share * 100).toFixed(share * 100 % 1 ? 1 : 0);
   return html`<div class="qrow qsplit">
     <span>FEE SPLIT</span
     ><b
       ><span class="gd" title="Creator bucket, shared with stakers"
-        >CREATOR ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% ${leg(FEE_SPLIT.creatorBucket)}</span
+        >CREATOR ${pctOf(split.creatorBucket)}% ${leg(split.creatorBucket)}</span
       >
       ${DOT}
-      <span title="Platform">PLATFORM ${(FEE_SPLIT.protocol * 100).toFixed(0)}% ${leg(FEE_SPLIT.protocol)}</span>
+      <span title="Platform">PLATFORM ${pctOf(split.protocol)}% ${leg(split.protocol)}</span>
       ${DOT}
-      <span title="$STONKZ buyback">BUYBACK ${(FEE_SPLIT.buyback * 100).toFixed(0)}% ${leg(FEE_SPLIT.buyback)}</span>
+      <span title="$STONKZ buyback">BUYBACK ${pctOf(split.buyback)}% ${leg(split.buyback)}</span>
       ${DOT}
-      <span title="RWA crate fund">RWA ${(FEE_SPLIT.rwa * 100).toFixed(0)}% ${leg(FEE_SPLIT.rwa)}</span>
+      <span title="RWA crate fund">RWA ${pctOf(split.rwa)}% ${leg(split.rwa)}</span>
       <span class="dm">${unit}</span></b
     >
   </div>`;
@@ -1617,12 +1620,14 @@ export function renderX(handle: string): void {
 /* ------------------------------ cashback ---------------------------------- */
 
 function cbBannerHTML(c: SimCoin): Html {
-  if (!inCashback(c)) return html``;
-  const left = cbLeft(c);
-  const frac = left / CB_MS;
+  const p = coinParams(c);
+  const now = Date.now();
+  if (!inCashback(c, now, p)) return html``;
+  const left = cbLeft(c, now, p);
+  const frac = left / cbWindowMs(p);
   return html`<div class="cb-banner">
     <span class="cbl">CASHBACK LIVE</span
-    ><span class="cbv" id="cb-fee">${effFee(c).toFixed(1)}%</span
+    ><span class="cbv" id="cb-fee">${effFee(c, now, p).toFixed(1)}%</span
     ><span class="hint">FEE DECAYING TO ${Number(c.tfee).toFixed(1)}%</span
     ><span class="cbtrack"><i id="cb-bar" style="width:${attr((frac * 100).toFixed(1))}%"></i></span
     ><span class="cbv" id="cb-left">${Math.ceil(left / 1000)}S</span
@@ -1635,7 +1640,9 @@ function syncCashback(): void {
   if (!c) return;
   const wrap = $('#cbWrap');
   if (!wrap) return;
-  if (!inCashback(c)) {
+  const p = coinParams(c);
+  const now = Date.now();
+  if (!inCashback(c, now, p)) {
     clear(wrap);
     return;
   }
@@ -1643,12 +1650,12 @@ function syncCashback(): void {
     render(wrap, cbBannerHTML(c));
     return;
   }
-  const left = cbLeft(c);
+  const left = cbLeft(c, now, p);
   const f = $('#cb-fee');
   const b = $('#cb-bar');
   const l = $('#cb-left');
-  if (f) f.textContent = effFee(c).toFixed(1) + '%';
-  if (b) b.style.width = ((left / CB_MS) * 100).toFixed(1) + '%';
+  if (f) f.textContent = effFee(c, now, p).toFixed(1) + '%';
+  if (b) b.style.width = ((left / cbWindowMs(p)) * 100).toFixed(1) + '%';
   if (l) l.textContent = Math.ceil(left / 1000) + 'S';
 }
 
@@ -1709,7 +1716,7 @@ function updateCurveNote(): void {
     // `graduate` yet. Offer it to whoever is looking.
     render(
       n,
-      html`${c.curveComplete ? 'CURVE SOLD OUT' : usd(GRAD) + ' MARKET CAP REACHED'} ${MID}
+      html`${c.curveComplete ? 'CURVE SOLD OUT' : usd(coinParams(c).gradUsd) + ' MARKET CAP REACHED'} ${MID}
         READY TO GRADUATE. GRADUATION IS PERMISSIONLESS: ANY WALLET CAN TRIGGER IT, LIQUIDITY THEN
         MIGRATES TO ${NET_INFO[net].dex} AND ${NET_INFO[net].lpNote.replace(/ (WERE|IS) /, ' WILL BE ')}.
         <button type="button" class="custbtn" id="cv-graduate">GRADUATE NOW</button>`,
@@ -1726,7 +1733,7 @@ function updateCurveNote(): void {
     const gradUsd =
       detail && detail.graduationUsdLive !== undefined && detail.graduationUsdLive > 0
         ? detail.graduationUsdLive
-        : GRAD;
+        : coinParams(c).gradUsd;
     render(
       n,
       html`AT ${usd(gradUsd)} MARKET CAP${gradBase} THE CURVE FILLS, LIQUIDITY MIGRATES

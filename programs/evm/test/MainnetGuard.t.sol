@@ -28,6 +28,10 @@ import {SwitchPriceSource} from "../script/SwitchPriceSource.s.sol";
 import {UpgradeStockLaunch} from "../script/UpgradeStockLaunch.s.sol";
 import {DeployStockPriceSource} from "../script/DeployStockPriceSource.s.sol";
 import {UpgradeAttestedStockLaunch} from "../script/UpgradeAttestedStockLaunch.s.sol";
+import {UpgradeParams} from "../script/UpgradeParams.s.sol";
+import {SetParams} from "../script/SetParams.s.sol";
+import {SetRouterConfig} from "../script/SetRouterConfig.s.sol";
+import {CurveMath} from "../src/CurveMath.sol";
 import {MockAggregator} from "./mocks/Mocks.sol";
 import {MockPyth} from "./mocks/MockPyth.sol";
 import {V3Fixture} from "./mocks/V3Fixture.sol";
@@ -86,6 +90,9 @@ contract MainnetGuardTest is Test {
         UpgradeStockLaunch upgradeStock = new UpgradeStockLaunch();
         DeployStockPriceSource deployStock = new DeployStockPriceSource();
         UpgradeAttestedStockLaunch upgradeAttested = new UpgradeAttestedStockLaunch();
+        UpgradeParams upgradeParams = new UpgradeParams();
+        SetParams setParams = new SetParams();
+        SetRouterConfig setRouterConfig = new SetRouterConfig();
 
         vm.chainId(4663);
         vm.expectRevert(bytes(MISSING));
@@ -110,12 +117,24 @@ contract MainnetGuardTest is Test {
         deployStock.run();
         vm.expectRevert(bytes(MISSING));
         upgradeAttested.run();
+        vm.expectRevert(bytes(MISSING));
+        upgradeParams.run();
+        vm.expectRevert(bytes(MISSING));
+        setParams.run();
+        vm.expectRevert(bytes(MISSING));
+        setRouterConfig.run();
 
         vm.chainId(8453);
         vm.expectRevert(bytes(MISSING));
         deployMainnet.run();
         vm.expectRevert(bytes(MISSING));
         upgradeLaunchpad.run();
+        vm.expectRevert(bytes(MISSING));
+        upgradeParams.run();
+        vm.expectRevert(bytes(MISSING));
+        setParams.run();
+        vm.expectRevert(bytes(MISSING));
+        setRouterConfig.run();
         vm.expectRevert(bytes(MISSING));
         deployStock.run();
         vm.expectRevert(bytes(MISSING));
@@ -246,6 +265,35 @@ contract MainnetGuardTest is Test {
         assertEq(pad.trustedRouter(), address(0), "proxy untouched");
     }
 
+    /// And `UpgradeParams`: implementation, lens and (asked for) router are
+    /// deployed; the proxy is never called, so slots 17/18 stay zero and the
+    /// defaults stay in force.
+    function test_UpgradeParamsOnMainnetOnlyEmitsCalldata() public {
+        (StonkzLaunchpad pad,) = _governedPad();
+        vm.chainId(4663);
+        UpgradeParams s = new UpgradeParams();
+        UpgradeParams.Params memory p = s.defaults(address(pad));
+        p.gov = _gov();
+        p.deployRouter = true;
+        p.paramsWord = CurveMath.DEFAULT_PARAMS ^ (uint256(1) << 16);
+        UpgradeParams.Result memory r = s.execute(p, EOA_KEY);
+        assertTrue(r.impl.code.length > 0 && r.lens.code.length > 0 && r.router.code.length > 0, "deployed");
+        assertFalse(r.upgraded);
+        assertEq(pad.trustedRouter(), address(0), "proxy untouched");
+        assertEq(pad.paramsWord(), CurveMath.DEFAULT_PARAMS, "defaults still in force");
+        assertEq(uint256(vm.load(address(pad), bytes32(uint256(17)))), 0);
+        assertEq(uint256(vm.load(address(pad), bytes32(uint256(18)))), 0);
+
+        // An EOA-admin launchpad is refused outright.
+        address eoa = vm.addr(EOA_KEY);
+        StonkzLaunchpad eoaPad =
+            DeployPad.launchpad(eoa, address(1), ops, DeployPad.pushOracle(eoa, eoa, 1), migration);
+        p = s.defaults(address(eoaPad));
+        p.gov = _gov();
+        vm.expectRevert(bytes("MainnetGuard: launchpad admin is an EOA; run GovernanceHandover first"));
+        s.execute(p, EOA_KEY);
+    }
+
     function test_DeployMigratorOnMainnetOnlyEmitsCalldata() public {
         (StonkzLaunchpad pad,) = _governedPad();
         address before = address(pad.migrator());
@@ -337,6 +385,9 @@ contract MainnetGuardTest is Test {
         assertEq(address(pad.migrator()), r.v3Migrator, "V3 migrator installed");
         assertEq(address(pad.priceSource()), r.pythPriceSource, "Pyth is the live source");
         assertEq(pad.maxOracleStaleness(), 90_000);
+        assertEq(pad.paramsWord(), CurveMath.DEFAULT_PARAMS, "defaults in force, nothing set");
+        assertEq(uint256(vm.load(r.launchpad, bytes32(uint256(17)))), 0, "slot 17 = _params untouched");
+        assertEq(uint256(vm.load(r.launchpad, bytes32(uint256(18)))), 0, "slot 18 = _router untouched");
         // Layout pins (test_StorageLayoutIsAppendOnly), as the fork sees them.
         assertEq(address(uint160(uint256(vm.load(r.launchpad, bytes32(uint256(5)))))), r.timelock, "slot 5");
         assertEq(uint256(vm.load(r.launchpad, bytes32(uint256(15)))), 1, "slot 15 = _lock");

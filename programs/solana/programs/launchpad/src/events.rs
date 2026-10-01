@@ -222,3 +222,17 @@ pub struct ReferralConfigSet {
     pub paused: bool,
     pub ts: i64,
 }
+
+/// `set_params`: the runtime parameters after the change.
+#[event]
+pub struct ParamsSet {
+    pub fee_protocol_bps: u16,
+    pub fee_ops_bps: u16,
+    pub fee_burn_bps: u16,
+    pub min_fee_bps: u16,
+    pub max_fee_bps: u16,
+    pub cb_start_fee_bps: u16,
+    pub cb_window_secs: u32,
+    pub grad_mcap_usd_1e6: u64,
+    pub ts: i64,
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CIRC_FRACTION, CURVE_START_MC, GRAD, SUPPLY } from '../src/constants.js';
+import { DEFAULT_CURVE_PARAMS } from '../src/params.js';
 import {
   circ,
   circulatingSupply,
@@ -154,5 +155,26 @@ describe('circulatingSupply', () => {
     expect(circulatingSupply({ supply: 0, lpReserve: 0, curveTokens: 0 })).toBeNull();
     expect(circulatingSupply({ supply: 1e9, lpReserve: 1 })).toBeNull();
     expect(circulatingSupply({ supply: 1e9, curveTokens: 1 })).toBeNull();
+  });
+});
+
+describe('curve / laneOf with a live graduation cap', () => {
+  const p = { ...DEFAULT_CURVE_PARAMS, gradUsd: 100_000 };
+  const start = 100_000 / 16;
+
+  it('measures fill from the implied start to the live cap', () => {
+    expect(curve({ mc: start }, p)).toBe(0);
+    expect(curve({ mc: 100_000 }, p)).toBe(100);
+    expect(curve({ mc: start + (100_000 - start) / 2 }, p)).toBeCloseTo(50, 9);
+    // $69K is no longer graduation when the cap is $100K.
+    expect(curve({ mc: GRAD }, p)).toBeLessThan(100);
+    expect(laneOf({ mc: GRAD }, p)).toBe('soon');
+    expect(laneOf({ mc: 100_000 }, p)).toBe('grad');
+    expect(laneOf({ mc: start }, p)).toBe('new');
+  });
+
+  it('is the golden curve under the defaults', () => {
+    expect(curve({ mc: GRAD }, DEFAULT_CURVE_PARAMS)).toBe(curve({ mc: GRAD }));
+    expect(curve({ mc: 30_000 }, DEFAULT_CURVE_PARAMS)).toBe(curve({ mc: 30_000 }));
   });
 });

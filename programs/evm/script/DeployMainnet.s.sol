@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
+import {CurveMath} from "../src/CurveMath.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
 import {FeeLocker, ILaunchpadMigrator} from "../src/FeeLocker.sol";
@@ -49,7 +50,12 @@ import {RouterWiring} from "./RouterWiring.sol";
 ///      §2.3).
 ///   6. `StonkzRouter(UR, proxy, WETH, SwapRouter02, MAX_BUY_NATIVE, Pyth,
 ///      StockPriceSourceV2)` and the launchpad implementation that trusts it
-///      (`upgradeToAndCall` while the deployer is still admin).
+///      (`upgradeToAndCall` while the deployer is still admin). The cap, Pyth
+///      and sink are starting values: the timelock changes them later with
+///      `StonkzRouter.setConfig` (`script/SetRouterConfig.s.sol`), and the
+///      launchpad's tunables with `setParams` (`script/SetParams.s.sol`) —
+///      the deployment leaves `paramsWord() == CurveMath.DEFAULT_PARAMS`
+///      (slot 17 zero). See `docs/parameters.md`.
 ///   7. `FeeLocker` + `UniswapV3Migrator` on the chain's V3 factory at the 1%
 ///      tier; installed by the handover's `setMigrator`.
 ///   8. `GovernanceLib.handover` (atomic): `TimelockController(PROPOSERS,
@@ -67,7 +73,7 @@ import {RouterWiring} from "./RouterWiring.sol";
 /// `REFERRAL_SIGNER` (non-zero), `REFERRAL_MAX_PER_DAY` (wei; non-zero,
 /// not uncapped). Optional: `STONKZ_ORACLE_AUTHORITY` (0), `STOCK_PRICE_ATTESTER`
 /// (0 = attested leg off), `MAX_BUY_NATIVE` (0 = **uncapped**, printed as a
-/// warning), `PYTH_MAX_AGE` (120), `ETH_MIN_PRICE_1E6` (100e6),
+/// warning; changeable later via `setConfig`), `PYTH_MAX_AGE` (120), `ETH_MIN_PRICE_1E6` (100e6),
 /// `ETH_MAX_PRICE_1E6` (100 000e6), `EXPECT_CHAIN_ID`, `PRIVATE_KEY` (else
 /// sign with `--ledger` / `--account` + `--sender`).
 ///
@@ -384,11 +390,9 @@ contract DeployMainnet is Script {
         if (p.maxBuyNative == 0) {
             console2.log("");
             console2.log("!!! WARNING: MAX_BUY_NATIVE=0 - the router has NO per-buy cap on mainnet. !!!");
+            console2.log("!!! Set MAX_BUY_NATIVE (wei) for a capped soft launch, or set it later through !!!");
             console2.log(
-                "!!! Set MAX_BUY_NATIVE (wei) for a capped soft launch; the router is immutable, !!!"
-            );
-            console2.log(
-                "!!! so changing it later means a new router + implementation through the timelock. !!!"
+                "!!! the timelock with StonkzRouter.setConfig (script/SetRouterConfig.s.sol).    !!!"
             );
             console2.log("");
         } else {
@@ -417,6 +421,10 @@ contract DeployMainnet is Script {
         require(pad.protocolWithdrawAuthority() == p.protocolAuthority, "protocol authority");
         require(pad.opsWithdrawAuthority() == p.gov.opsAuthority, "ops authority");
         require(pad.pauser() == p.gov.pauser, "pauser");
+        // Nothing set: the defaults apply, and slots 17/18 were never written.
+        require(pad.paramsWord() == CurveMath.DEFAULT_PARAMS, "paramsWord is not the defaults");
+        require(uint256(vm.load(r.launchpad, bytes32(uint256(17)))) == 0, "slot 17 (_params) written");
+        require(uint256(vm.load(r.launchpad, bytes32(uint256(18)))) == 0, "slot 18 (_router) written");
         require(PythPriceSource(r.pythPriceSource).admin() == r.timelock, "pyth source admin");
         require(ChainlinkPriceSource(r.chainlinkPriceSource).admin() == r.timelock, "chainlink source admin");
         require(StockPriceSourceV2(r.stockPriceSourceV2).admin() == r.timelock, "stock source admin");
@@ -549,7 +557,10 @@ contract DeployMainnet is Script {
         console2.log("   getMinDelay() == MIN_DELAY, and the deployer holds no timelock role.");
         console2.log("3. launchpad.admin() == timelock, pauser() == PAUSER, migrator() == UniswapV3Migrator,");
         console2.log(
-            "   priceSource() == PythPriceSource, maxOracleStaleness() == 90000, trustedRouter() == router."
+            "   priceSource() == PythPriceSource, maxOracleStaleness() == 90000, trustedRouter() == router,"
+        );
+        console2.log(
+            "   paramsWord() == CurveMath.DEFAULT_PARAMS (docs/parameters.md); router.maxBuyNative()."
         );
         console2.log("4. Every price source + ReferralVault: admin() == timelock, pendingAdmin() == 0.");
         console2.log(

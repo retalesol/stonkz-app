@@ -6,11 +6,13 @@ import {
   cbLeft,
   creatorVsStakers,
   effFee,
+  effFeeBpsAt,
   feePie,
   inCashback,
   buybackSplit,
   splitFee,
 } from '../src/fees.js';
+import { DEFAULT_CURVE_PARAMS, type CurveParams } from '../src/params.js';
 
 const T0 = 1_757_000_000_000;
 
@@ -218,5 +220,88 @@ describe('feePie — GOLDEN', () => {
   it('conserves the whole fee', () => {
     const pie = feePie(3.3, 0.4);
     expect(pie.protocol + pie.buyback + pie.rwa + pie.creator + pie.stakers).toBeCloseTo(3.3, 9);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Live parameters: a non-default split / window                               */
+/* -------------------------------------------------------------------------- */
+
+describe('fee helpers with chain parameters', () => {
+  const custom: CurveParams = {
+    ...DEFAULT_CURVE_PARAMS,
+    feeProtocolBps: 2000,
+    feeOpsBps: 500,
+    feeBurnBps: 500,
+    cbStartFeeBps: 3000,
+    cbWindowSecs: 120,
+  };
+
+  it('splits by the live bps, creator bucket as the remainder', () => {
+    expect(splitFee(1, custom)).toEqual({
+      protocol: 0.2,
+      creatorBucket: 0.7,
+      buyback: 0.05,
+      rwa: 0.05,
+    });
+    const s = splitFee(0.02, custom);
+    expect(s.protocol + s.creatorBucket + s.buyback + s.rwa).toBeCloseTo(0.02, 12);
+    // Passing the defaults explicitly is the golden split.
+    expect(splitFee(1, DEFAULT_CURVE_PARAMS)).toEqual(splitFee(1));
+  });
+
+  it('runs the cashback window on the live length and start fee', () => {
+    const c = { tfee: 2, cashback: true, cbStart: T0 };
+    expect(cbLeft(c, T0, custom)).toBe(120_000);
+    expect(cbLeft(c, T0 + 60_000, custom)).toBe(60_000);
+    expect(inCashback(c, T0 + 119_999, custom)).toBe(true);
+    expect(inCashback(c, T0 + 120_000, custom)).toBe(false);
+    expect(effFee(c, T0, custom)).toBeCloseTo(30, 9);
+    expect(effFee(c, T0 + 60_000, custom)).toBeCloseTo(2 + (30 - 2) * 0.5, 9);
+    expect(effFee(c, T0 + 120_000, custom)).toBe(2);
+    // Under the defaults the same coin is still in its 5-minute window.
+    expect(inCashback(c, T0 + 120_000)).toBe(true);
+  });
+
+  it('feePie takes the live split too', () => {
+    const pie = feePie(1, 0.5, custom);
+    expect(pie.protocol).toBeCloseTo(0.2, 12);
+    expect(pie.buyback).toBeCloseTo(0.05, 12);
+    expect(pie.rwa).toBeCloseTo(0.05, 12);
+    expect(pie.creator).toBeCloseTo(0.35, 12);
+    expect(pie.stakers).toBeCloseTo(0.35, 12);
+  });
+});
+
+describe('effFeeBpsAt — the integer mirror', () => {
+  it('is the base fee outside a window', () => {
+    expect(effFeeBpsAt(200, false, 0, 1000)).toBe(200);
+    expect(effFeeBpsAt(200, true, 1000, 1300)).toBe(200);
+    expect(effFeeBpsAt(200, true, 1000, 5000)).toBe(200);
+  });
+
+  it('decays from the start fee in whole seconds, clamping a future start', () => {
+    expect(effFeeBpsAt(200, true, 1000, 1000)).toBe(5000);
+    expect(effFeeBpsAt(200, true, 1000, 1150)).toBe(2600);
+    expect(effFeeBpsAt(200, true, 1000, 1299)).toBe(216);
+    // A start stamped ahead of `now` cannot exceed the full window.
+    expect(effFeeBpsAt(200, true, 2000, 1000)).toBe(5000);
+    // Fractional seconds are floored, like the chain's clock.
+    expect(effFeeBpsAt(200, true, 1000.9, 1150.4)).toBe(2600);
+  });
+
+  it('honours a custom window and start fee', () => {
+    const p: CurveParams = { ...DEFAULT_CURVE_PARAMS, cbStartFeeBps: 3000, cbWindowSecs: 120 };
+    expect(effFeeBpsAt(200, true, 1000, 1000, p)).toBe(3000);
+    expect(effFeeBpsAt(200, true, 1000, 1060, p)).toBe(1600);
+    expect(effFeeBpsAt(200, true, 1000, 1120, p)).toBe(200);
+  });
+
+  it('agrees with effFee at second boundaries', () => {
+    const c = { tfee: 2, cashback: true, cbStart: T0 };
+    for (const dt of [0, 30, 150, 299]) {
+      const pct = effFee(c, T0 + dt * 1000);
+      expect(effFeeBpsAt(200, true, T0 / 1000, T0 / 1000 + dt)).toBe(Math.round(pct * 100));
+    }
   });
 });

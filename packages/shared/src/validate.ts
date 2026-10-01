@@ -1,13 +1,6 @@
-import {
-  MAX_CURVE_FEE_PCT,
-  MAX_TICKER_LEN,
-  MIN_CURVE_FEE_PCT,
-  MIN_TIP_ETH,
-  MIN_TIP_SOL,
-  MIN_TIP_USDC,
-  SUPPLIES,
-} from './constants.js';
+import { MAX_TICKER_LEN, MIN_TIP_ETH, MIN_TIP_SOL, MIN_TIP_USDC, SUPPLIES } from './constants.js';
 import { NET_INFO, isEvmNet } from './nets.js';
+import { DEFAULT_CURVE_PARAMS, feeBoundsPct, type CurveParams } from './params.js';
 import type { EvmNet, NativeUnit, Net } from './types.js';
 import { ALL_NETS } from './types.js';
 
@@ -76,12 +69,13 @@ export function isValidTip(amount: number, unit: NativeUnit): boolean {
   return Number.isFinite(amount) && amount >= minTip(unit);
 }
 
-/** Only the four fixed supplies from the launch stepper are accepted. */
-export function isValidSupply(supply: number): boolean {
-  return SUPPLIES.some(([v]) => v === supply);
+/** Only the four fixed supplies from the launch stepper, at or under the chain's `maxSupply`. */
+export function isValidSupply(supply: number, p: CurveParams = DEFAULT_CURVE_PARAMS): boolean {
+  return SUPPLIES.some(([v]) => v === supply) && supply <= p.maxSupply;
 }
 
-/** Creator-set curve fee must sit inside the 1.0–5.0% slider range. */
-export function isValidCurveFee(pct: number): boolean {
-  return Number.isFinite(pct) && pct >= MIN_CURVE_FEE_PCT && pct <= MAX_CURVE_FEE_PCT;
+/** Creator-set curve fee must sit inside the chain's `[minFeeBps, maxFeeBps]` (1.0–5.0% by default). */
+export function isValidCurveFee(pct: number, p: CurveParams = DEFAULT_CURVE_PARAMS): boolean {
+  const { min, max } = feeBoundsPct(p);
+  return Number.isFinite(pct) && pct >= min && pct <= max;
 }

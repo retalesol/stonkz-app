@@ -4,11 +4,13 @@
  * `anchor deploy` puts the program on chain; it does not create the `Global`
  * config account, and until that exists every instruction fails. This script
  * is the second half of a deployment: `initialize`, then `set_meteora_config`
- * so migration has a DLMM CPI target.
+ * so migration has a DLMM CPI target, then `set_params` with the program's
+ * built-in defaults so the runtime-params PDA exists from day one (the
+ * program behaves identically without it; `scripts/set-params.ts` changes it).
  *
  * Usage (see docs/deployment.md for the full runbook):
  *
- *   ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
+ *   ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
  *   ANCHOR_WALLET=~/.config/solana/id.json \
  *   STONKZ_CLUSTER=devnet \
  *   STONKZ_ADMIN=... \
@@ -25,6 +27,25 @@ import { requireMainnetGovernance } from './mainnet-guard';
 
 const { PublicKey, SystemProgram } = anchor.web3;
 type PublicKey = anchor.web3.PublicKey;
+
+/**
+ * `set_params` payload equal to `constants.rs` — the numbers the program
+ * applies while the PDA is absent. Mirrors `scripts/set-params.ts` DEFAULTS.
+ */
+const DEFAULT_PARAMS = {
+  feeProtocolBps: 1500,
+  feeOpsBps: 1000,
+  feeBurnBps: 600,
+  minFeeBps: 100,
+  maxFeeBps: 500,
+  cbStartFeeBps: 5000,
+  cbWindowSecs: 300,
+  // Anchor's runtime coder camel-cases `grad_mcap_usd_1e6` as `gradMcapUsd1E6`
+  // (its generated types say `gradMcapUsd1e6`); both spellings are set so the
+  // u64 is never silently encoded as 0.
+  gradMcapUsd1e6: new anchor.BN('69000000000'),
+  gradMcapUsd1E6: new anchor.BN('69000000000'),
+};
 
 /** Meteora `lb_clmm` — same program id on mainnet and devnet. */
 const METEORA_DLMM = new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
@@ -168,6 +189,27 @@ async function main() {
     console.log('  program :', METEORA_DLMM.toBase58());
     console.log('  preset  :', preset.toBase58());
     console.log('Until this lands, migrate_create_pool fails closed and nothing can graduate.');
+  }
+
+  // Runtime params: materialise the PDA with the defaults on a fresh
+  // deployment. Skipped when it already exists so a re-run never silently
+  // resets numbers an admin tuned later (use scripts/set-params.ts for that).
+  const [paramsPda] = PublicKey.findProgramAddressSync([Buffer.from('params')], program.programId);
+  const paramsInfo = await provider.connection.getAccountInfo(paramsPda);
+  if (paramsInfo) {
+    console.log('params PDA exists; leaving runtime params as they are:', paramsPda.toBase58());
+  } else if (provider.wallet.publicKey.equals(admin)) {
+    console.log('sending setParams (defaults)...');
+    const sig = await program.methods
+      .setParams(DEFAULT_PARAMS)
+      .accounts({ global: globalPda, params: paramsPda, admin, systemProgram: SystemProgram.programId })
+      .rpc();
+    console.log('  setParams:', sig);
+  } else {
+    console.log('');
+    console.log('=== Admin (Squads vault) should execute (optional: the program runs on these defaults until then) ===');
+    console.log('launchpad.setParams(1500/1000/600 bps, fee 100..500 bps, cashback 5000 bps / 300 s, $69,000) signed by', admin.toBase58());
+    console.log('  or: pnpm exec tsx programs/solana/scripts/set-params.ts');
   }
 
   const pauser = governance?.pauser ?? (process.env.STONKZ_PAUSER ? new PublicKey(process.env.STONKZ_PAUSER) : null);

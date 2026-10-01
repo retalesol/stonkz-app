@@ -2,7 +2,9 @@ import { paintWizArt, WIZART } from '../canvas/wizart.js';
 import { moneyRain } from '../fx/moneyRain.js';
 import { toast } from '../fx/toast.js';
 import { $, must } from '../lib/dom.js';
+import { usd } from '@stonkz/shared';
 import { DOT } from '../lib/fmt.js';
+import { currentParams } from '../state/params.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { USER, saveUser } from '../state/user.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
@@ -35,7 +37,8 @@ const WIZ_STEPS: WizStep[] = [
   {
     k: 'grad',
     tag: 'GRADUATION',
-    t: 'Token graduates at $69K.',
+    // The cap is a live parameter; `renderWiz` fills it in.
+    t: 'Token graduates at {GRAD}.',
     s: 'THE CURVE FILLS, LIQUIDITY MIGRATES TO THE DEX AND THE LP BURNS. FROM DEGENS TO DEGREES.',
   },
 ];
@@ -60,7 +63,7 @@ function renderWiz(): void {
     must('#wizBody'),
     html`${wizArt(st.k, st.tag)}
       <div>
-        <div class="wiz-step">${st.t}</div>
+        <div class="wiz-step">${st.t.replace('{GRAD}', usd(currentParams().gradUsd))}</div>
         <div class="wiz-sub">${st.s}</div>
       </div>
       <div class="wiz-foot">

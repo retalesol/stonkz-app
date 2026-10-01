@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {CurveMath} from "../../src/CurveMath.sol";
 import {StonkzLaunchpad} from "../../src/StonkzLaunchpad.sol";
+import {StonkzLens} from "../../src/StonkzLens.sol";
 import {StonkzToken} from "../../src/StonkzToken.sol";
 
 interface IWETHLike {
@@ -31,6 +32,7 @@ contract FeeJourneyForkTest is Test {
     address constant MEMEMAN = 0x847eb6311333f8F7F2cd0E9A89379214302aB2c9;
 
     StonkzLaunchpad pad;
+    StonkzLens lens;
     address token;
     address weth;
     address creator;
@@ -42,6 +44,7 @@ contract FeeJourneyForkTest is Test {
         if (bytes(rpc).length == 0) return false;
         vm.createSelectFork(rpc);
         pad = StonkzLaunchpad(vm.envOr("FEE_FORK_PROXY", BASE_PROXY));
+        lens = new StonkzLens();
         token = vm.envOr("FEE_FORK_TOKEN", MEMEMAN);
         StonkzLaunchpad.Coin memory c = pad.coinInfo(token);
         require(c.token == token, "fork: unknown token");
@@ -60,7 +63,7 @@ contract FeeJourneyForkTest is Test {
     }
 
     function _buy(address who, uint256 amount) internal returns (uint256 got, uint256 fee) {
-        (CurveMath.BuyFill memory q,,) = pad.quoteBuy(token, amount);
+        (CurveMath.BuyFill memory q,,) = lens.quoteBuy(pad, token, amount);
         vm.prank(who);
         got = pad.buy(token, amount, q.tokensOut);
         fee = q.fee;
@@ -82,11 +85,7 @@ contract FeeJourneyForkTest is Test {
 
     /// One fill's deltas across the three treasuries, the coin's four accrual
     /// ledgers and the creator/staker peel must be exactly `splitFee(fee)`.
-    function _assertFillSplit(
-        StonkzLaunchpad.Coin memory c0,
-        Vaults memory v0,
-        uint256 fee
-    ) internal view {
+    function _assertFillSplit(StonkzLaunchpad.Coin memory c0, Vaults memory v0, uint256 fee) internal view {
         StonkzLaunchpad.Coin memory c1 = pad.coinInfo(token);
         Vaults memory v1 = _vaults();
         CurveMath.FeeShares memory want = CurveMath.splitFee(fee);
@@ -123,7 +122,7 @@ contract FeeJourneyForkTest is Test {
         // Sell half back. The sell fee comes off the pool's base.
         vm.startPrank(trader);
         StonkzToken(token).approve(address(pad), type(uint256).max);
-        (CurveMath.SellFill memory sq,,) = pad.quoteSell(token, got / 2);
+        (CurveMath.SellFill memory sq,,) = lens.quoteSell(pad, token, got / 2);
         StonkzLaunchpad.Coin memory c1 = pad.coinInfo(token);
         Vaults memory v1 = _vaults();
         uint256 out = pad.sell(token, got / 2, sq.netBase);
@@ -149,9 +148,7 @@ contract FeeJourneyForkTest is Test {
         // the contract really holds the bucket plus the three treasuries.
         assertGe(c.bucketBase, c.creatorClaimableBase, "bucket covers the creator");
         Vaults memory v = _vaults();
-        assertGe(
-            v.held, v.protocol + v.ops + v.burn + c.bucketBase + c.realBase, "WETH backs every ledger"
-        );
+        assertGe(v.held, v.protocol + v.ops + v.burn + c.bucketBase + c.realBase, "WETH backs every ledger");
     }
 
     /* ------------------------------------------------------------ link 3 */
@@ -217,7 +214,7 @@ contract FeeJourneyForkTest is Test {
         assertEq(p.lockUntil, block.timestamp + 30 days, "lock stamped");
 
         // A fill: stakers take bucket * eligible / (2 * circulating), capped at half.
-        (CurveMath.BuyFill memory q,,) = pad.quoteBuy(token, 0.05 ether);
+        (CurveMath.BuyFill memory q,,) = lens.quoteBuy(pad, token, 0.05 ether);
         CurveMath.FeeShares memory s = CurveMath.splitFee(q.fee);
         uint256 circAfter = CurveMath.circulating(c0.tokensForSale, c0.realToken - q.tokensOut);
         (uint256 wantCreator, uint256 wantStakers) =

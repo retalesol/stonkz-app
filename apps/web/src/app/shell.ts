@@ -1,7 +1,9 @@
-import { GRAD, type Net, usd } from '@stonkz/shared';
+import { type Net, usd } from '@stonkz/shared';
+import { on } from '../lib/bus.js';
 import { api, disclosure } from '../api/index.js';
 import { setNetSwitchHandler } from '../views/board.js';
 import { netOf, savedNet, selectNet } from '../state/wallet.js';
+import { currentParams } from '../state/params.js';
 import { isDeployed, loadChains } from '../wallet/chain.js';
 import { initFx } from '../fx/debris.js';
 import { toast, initMememan } from '../fx/toast.js';
@@ -240,7 +242,13 @@ export async function boot(): Promise<void> {
   touchStreak();
   renderRank();
 
-  must('#gradCap').textContent = usd(GRAD);
+  // The footer's graduation cap follows the connected net's live parameters.
+  const paintGradCap = (): void => {
+    must('#gradCap').textContent = usd(currentParams().gradUsd);
+  };
+  paintGradCap();
+  on('params', paintGradCap);
+  on('wallet', paintGradCap);
   paintDisclosure();
 
   try {

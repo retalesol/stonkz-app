@@ -8,6 +8,7 @@
 
 export * from './types.js';
 export * from './nets.js';
+export * from './params.js';
 export * from './constants.js';
 export * from './rng.js';
 export * from './fmt.js';

@@ -835,3 +835,63 @@ pre.code {
 .p0 {
   padding: 0;
 }
+
+/* ---------------------------------------------------------- parameters */
+.pgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 10px;
+  margin: 6px 0;
+}
+.pgrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pgrid label .unit {
+  font-size: 10px;
+  color: var(--amber2);
+}
+.split-bar {
+  display: flex;
+  height: 8px;
+  border: 1px solid var(--line2);
+  overflow: hidden;
+  margin: 6px 0 4px;
+}
+.split-bar i {
+  display: block;
+  height: 100%;
+}
+.split-bar .s-creator {
+  background: #a273ff;
+}
+.split-bar .s-protocol {
+  background: #4d9bff;
+}
+.split-bar .s-buyback {
+  background: #ffd23f;
+}
+.split-bar .s-rwa {
+  background: #26d0c4;
+}
+.split-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  font-size: 11px;
+}
+.split-leg i {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+}
+.pword {
+  word-break: break-all;
+  font-size: 11px;
+}
+.mt6 {
+  margin-top: 6px;
+}

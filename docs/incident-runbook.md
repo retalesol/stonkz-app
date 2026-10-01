@@ -177,14 +177,24 @@ Weekly: confirm a branch-from-PITR actually works (create, query, delete).
 
 Each net's RPC is one env var per service (`RH_RPC_URL`, `BASE_RPC_URL`,
 `ARC_RPC_URL`, `SOLANA_RPC_URL`; the API also honours `SOLANA_PRIVATE_RPC_URL`
-for broadcast). The API's `/health` probes each head and marks a net `down`
-on failure; the indexer's `/health` shows `failedAttempts`.
+for broadcast). The primary provider is QuickNode — one endpoint per
+network, listed with chain ids and env vars in
+[`deployment.md`](deployment.md#0b-rpc-endpoints-quicknode); the mainnet
+endpoints sit on Railway as `*_MAINNET_RPC_URL` until the cut-over. The API's
+`/health` probes each head and marks a net `down` on failure; the indexer's
+`/health` shows `failedAttempts`.
 
 1. Confirm it is the provider: `cast block-number --rpc-url $RPC` /
-   `solana epoch-info -u $RPC` against a second provider.
+   `solana epoch-info -u $RPC` against a second endpoint. The keyless public
+   hosts (`https://rpc.mainnet.chain.robinhood.com`, `https://mainnet.base.org`,
+   `https://api.mainnet-beta.solana.com`) are fine for this read.
 2. Change the var on Railway for **both** services and redeploy. Keep the
    second provider's URL in the Railway variable description so this is a
-   paste, not a search.
+   paste, not a search. The public hosts are a **fallback only**: Robinhood
+   documents its public RPC as rate-limited and not for production, and
+   `env.ts` refuses the public hosts in production outside `STONKZ_STAGING`,
+   so a failover onto one is a degraded state to leave within the hour, not a
+   configuration.
 3. Pyth Hermes is separate (§2). Helius / WalletConnect on the web are build
    env on Vercel and need a redeploy there.
 

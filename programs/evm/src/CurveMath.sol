@@ -62,6 +62,116 @@ library CurveMath {
     /// `weight * acc` stay near 1e66 against a 1.15e77 ceiling.
     uint256 internal constant ACC_PRECISION = 1e36;
 
+    /* ------------------------------------------------------------ parameters */
+
+    /// @notice The runtime-tunable numbers, packed into one `uint256` so the
+    /// launchpad (at the EIP-170 ceiling) stores, reads and emits them as a
+    /// single word. The launchpad admin sets the word (`setParams`); every
+    /// fill, launch and graduation reads it. `0` means "never set", and the
+    /// constants above apply (`DEFAULT_PARAMS`), so an upgrade needs no
+    /// migration step.
+    ///
+    /// Layout, low bits first (the same order as `Params`, and the same bytes
+    /// Solidity would pack that struct into one slot):
+    ///   bits   0- 15  feeProtocolBps
+    ///   bits  16- 31  feeOpsBps
+    ///   bits  32- 47  feeBurnBps
+    ///   bits  48- 63  minFeeBps      (creator fee floor)
+    ///   bits  64- 79  maxFeeBps      (creator fee ceiling; the "set" sentinel)
+    ///   bits  80- 95  cbStartFeeBps  (where the cashback decay starts)
+    ///   bits  96-127  cbWindowSecs
+    ///   bits 128-191  gradMcapUsd1e6 (oracle-trigger graduation threshold)
+    ///   bits 192-255  maxSupply      (whole tokens; never above MAX_SUPPLY)
+    ///
+    /// The curve *shape* (`TOKENS_FOR_SALE_*`, `VIRTUAL_*`) and the staking
+    /// tables are deliberately not tunable: they are the invariants SPEC.md
+    /// §1 proves the pool-opening price against, and Solana mirrors them as
+    /// constants too.
+    struct Params {
+        uint16 feeProtocolBps;
+        uint16 feeOpsBps;
+        uint16 feeBurnBps;
+        uint16 minFeeBps;
+        uint16 maxFeeBps;
+        uint16 cbStartFeeBps;
+        uint32 cbWindowSecs;
+        uint64 gradMcapUsd1e6;
+        uint64 maxSupply;
+    }
+
+    uint256 internal constant DEFAULT_PARAMS = FEE_PROTOCOL_BPS | (FEE_OPS_BPS << 16) | (FEE_BURN_BPS << 32)
+        | (uint256(MIN_FEE_BPS) << 48) | (uint256(MAX_FEE_BPS) << 64) | (CB_START_FEE_BPS << 80)
+        | (CB_WINDOW_SECS << 96) | (GRAD_MCAP_USD_1E6 << 128) | (MAX_SUPPLY << 192);
+
+    function pFeeProtocolBps(uint256 w) internal pure returns (uint256) {
+        return w & 0xffff;
+    }
+
+    function pFeeOpsBps(uint256 w) internal pure returns (uint256) {
+        return (w >> 16) & 0xffff;
+    }
+
+    function pFeeBurnBps(uint256 w) internal pure returns (uint256) {
+        return (w >> 32) & 0xffff;
+    }
+
+    function pMinFeeBps(uint256 w) internal pure returns (uint256) {
+        return (w >> 48) & 0xffff;
+    }
+
+    function pMaxFeeBps(uint256 w) internal pure returns (uint256) {
+        return (w >> 64) & 0xffff;
+    }
+
+    function pCbStartFeeBps(uint256 w) internal pure returns (uint256) {
+        return (w >> 80) & 0xffff;
+    }
+
+    function pCbWindowSecs(uint256 w) internal pure returns (uint256) {
+        return (w >> 96) & 0xffffffff;
+    }
+
+    function pGradMcapUsd1e6(uint256 w) internal pure returns (uint256) {
+        return (w >> 128) & 0xffffffffffffffff;
+    }
+
+    function pMaxSupply(uint256 w) internal pure returns (uint256) {
+        return w >> 192;
+    }
+
+    function pack(Params memory p) internal pure returns (uint256) {
+        return uint256(p.feeProtocolBps) | (uint256(p.feeOpsBps) << 16) | (uint256(p.feeBurnBps) << 32)
+            | (uint256(p.minFeeBps) << 48) | (uint256(p.maxFeeBps) << 64) | (uint256(p.cbStartFeeBps) << 80)
+            | (uint256(p.cbWindowSecs) << 96) | (uint256(p.gradMcapUsd1e6) << 128)
+            | (uint256(p.maxSupply) << 192);
+    }
+
+    function unpack(uint256 w) internal pure returns (Params memory p) {
+        p.feeProtocolBps = uint16(pFeeProtocolBps(w));
+        p.feeOpsBps = uint16(pFeeOpsBps(w));
+        p.feeBurnBps = uint16(pFeeBurnBps(w));
+        p.minFeeBps = uint16(pMinFeeBps(w));
+        p.maxFeeBps = uint16(pMaxFeeBps(w));
+        p.cbStartFeeBps = uint16(pCbStartFeeBps(w));
+        p.cbWindowSecs = uint32(pCbWindowSecs(w));
+        p.gradMcapUsd1e6 = uint64(pGradMcapUsd1e6(w));
+        p.maxSupply = uint64(pMaxSupply(w));
+    }
+
+    /// @notice The bounds `setParams` holds every candidate word to. The three
+    /// treasury legs may not exceed the whole fee (the creator bucket is the
+    /// remainder and must not underflow); the creator fee range must sit under
+    /// the cashback start so `effFeeBps` never leaves `uint16`; `maxFeeBps`
+    /// doubles as the "set" sentinel so it may not be zero; `maxSupply` stays
+    /// under the ceiling every overflow bound in this file is sized against.
+    function validParams(uint256 w) internal pure returns (bool) {
+        uint256 maxFee = pMaxFeeBps(w);
+        uint256 cbStart = pCbStartFeeBps(w);
+        return pFeeProtocolBps(w) + pFeeOpsBps(w) + pFeeBurnBps(w) <= BPS_DEN && pMinFeeBps(w) <= maxFee
+            && maxFee > 0 && maxFee <= cbStart && cbStart <= BPS_DEN && pCbWindowSecs(w) > 0
+            && pGradMcapUsd1e6(w) > 0 && pMaxSupply(w) > 0 && pMaxSupply(w) <= MAX_SUPPLY;
+    }
+
     struct FeeShares {
         uint256 protocol;
         uint256 stonkzOps;
@@ -112,18 +222,24 @@ library CurveMath {
     /// @dev The bucket is the remainder rather than a fourth floor, which is
     /// exactly why the four shares reconstruct the fee for every input. At
     /// most 3 wei of floor dust lands in the bucket; none is ever lost.
-    /// Only the largest product is overflow-checked: FEE_PROTOCOL_BPS is the
-    /// biggest of the three legs, so if it fits the other two do, and the three
-    /// legs sum to 31% of the fee, so the remainder cannot underflow. Same
-    /// results and same revert condition as fully checked arithmetic, fewer bytes.
-    function splitFee(uint256 fee) internal pure returns (FeeShares memory s) {
-        uint256 p = fee * FEE_PROTOCOL_BPS;
+    /// Only the first product is overflow-checked: every leg is at most
+    /// `fee * BPS_DEN`, so if that fits the others do, and `validParams` holds
+    /// the three legs to at most the whole fee, so the remainder cannot
+    /// underflow. Same results as fully checked arithmetic, fewer bytes.
+    /// @param w The packed parameter word (`DEFAULT_PARAMS` for the 15/10/6/69 split).
+    function splitFee(uint256 fee, uint256 w) internal pure returns (FeeShares memory s) {
+        uint256 p = fee * pFeeProtocolBps(w);
         unchecked {
             s.protocol = p / BPS_DEN;
-            s.stonkzOps = (fee * FEE_OPS_BPS) / BPS_DEN;
-            s.burn = (fee * FEE_BURN_BPS) / BPS_DEN;
+            s.stonkzOps = (fee * pFeeOpsBps(w)) / BPS_DEN;
+            s.burn = (fee * pFeeBurnBps(w)) / BPS_DEN;
             s.creatorBucket = fee - s.protocol - s.stonkzOps - s.burn;
         }
+    }
+
+    /// @notice `splitFee` at the default split.
+    function splitFee(uint256 fee) internal pure returns (FeeShares memory) {
+        return splitFee(fee, DEFAULT_PARAMS);
     }
 
     /// @notice The fee a split came from.
@@ -155,35 +271,67 @@ library CurveMath {
     /// close to wall clock, loose over single seconds. A 300-second window is
     /// far longer than that looseness, so the decay is safe here — but nothing
     /// with a sub-minute deadline should rely on this clock.
-    function effFeeBps(uint16 baseBps, bool cashback, uint256 cbStart, uint256 nowSecs)
+    function effFeeBps(uint16 baseBps, bool cashback, uint256 cbStart, uint256 nowSecs, uint256 w)
         internal
         pure
         returns (uint16)
     {
         if (!cashback) return baseBps;
-        uint256 end = cbStart + CB_WINDOW_SECS;
+        uint256 window = pCbWindowSecs(w);
+        uint256 end = cbStart + window;
         if (nowSecs >= end) return baseBps;
         uint256 remaining = end - nowSecs;
-        if (remaining > CB_WINDOW_SECS) remaining = CB_WINDOW_SECS;
+        if (remaining > window) remaining = window;
         uint256 base = baseBps;
-        // Safe: `base <= MAX_FEE_BPS` and the added term is at most
-        // `CB_START_FEE_BPS - base`, so the sum never exceeds 5000.
+        uint256 start = pCbStartFeeBps(w);
+        // A coin launched under a higher fee ceiling than the current word
+        // allows still decays towards its own fee, never below it.
+        if (start < base) start = base;
+        // Safe: the added term is at most `start - base`, so the sum never
+        // exceeds `start <= BPS_DEN` (`validParams`).
         // forge-lint: disable-next-line(unsafe-typecast)
-        return uint16(base + ((CB_START_FEE_BPS - base) * remaining) / CB_WINDOW_SECS);
+        return uint16(base + ((start - base) * remaining) / window);
+    }
+
+    /// @notice `effFeeBps` at the default window.
+    function effFeeBps(uint16 baseBps, bool cashback, uint256 cbStart, uint256 nowSecs)
+        internal
+        pure
+        returns (uint16)
+    {
+        return effFeeBps(baseBps, cashback, cbStart, nowSecs, DEFAULT_PARAMS);
     }
 
     /* ----------------------------------------------------------- parameters */
 
-    function gradMcapBaseAtoms(uint256 price1e6, uint8 baseDecimals) internal pure returns (uint256) {
+    function gradMcapBaseAtoms(uint256 price1e6, uint8 baseDecimals, uint256 gradMcapUsd1e6)
+        internal
+        pure
+        returns (uint256)
+    {
         require(price1e6 > 0, "price");
         require(baseDecimals <= 18, "decimals");
-        return (GRAD_MCAP_USD_1E6 * (10 ** uint256(baseDecimals))) / price1e6;
+        return (gradMcapUsd1e6 * (10 ** uint256(baseDecimals))) / price1e6;
+    }
+
+    function gradMcapBaseAtoms(uint256 price1e6, uint8 baseDecimals) internal pure returns (uint256) {
+        return gradMcapBaseAtoms(price1e6, baseDecimals, GRAD_MCAP_USD_1E6);
     }
 
     /// @notice Derive the curve shape. See SPEC.md §1 for why these constants
     /// put graduation at exactly $69,000 with the pool opening at the curve's
     /// closing price.
     function deriveCurve(uint256 supplyAtoms, uint256 price1e6, uint8 baseDecimals)
+        internal
+        pure
+        returns (CurveParams memory)
+    {
+        return deriveCurve(supplyAtoms, price1e6, baseDecimals, GRAD_MCAP_USD_1E6);
+    }
+
+    /// @param gradMcapUsd1e6 The graduation threshold the curve is shaped
+    /// around (`pGradMcapUsd1e6(w)`); the default is `GRAD_MCAP_USD_1E6`.
+    function deriveCurve(uint256 supplyAtoms, uint256 price1e6, uint8 baseDecimals, uint256 gradMcapUsd1e6)
         internal
         pure
         returns (CurveParams memory p)
@@ -194,7 +342,7 @@ library CurveMath {
         p.virtualToken = (supplyAtoms * VIRTUAL_TOKEN_NUM) / VIRTUAL_TOKEN_DEN;
         require(p.virtualToken > p.tokensForSale, "shape");
 
-        p.gradMcapBase = gradMcapBaseAtoms(price1e6, baseDecimals);
+        p.gradMcapBase = gradMcapBaseAtoms(price1e6, baseDecimals, gradMcapUsd1e6);
         // Ceil, matching Rust: graduation mcap is 15x this, so the residue has
         // to land above target rather than below it.
         p.virtualBase = ceilDiv(p.gradMcapBase, VIRTUAL_BASE_DEN);
@@ -270,11 +418,7 @@ library CurveMath {
         return (st.virtualBase * supplyAtoms) / st.virtualToken;
     }
 
-    function mcapUsd1e6(uint256 mcap, uint256 price1e6, uint8 baseDecimals)
-        internal
-        pure
-        returns (uint256)
-    {
+    function mcapUsd1e6(uint256 mcap, uint256 price1e6, uint8 baseDecimals) internal pure returns (uint256) {
         return (mcap * price1e6) / (10 ** uint256(baseDecimals));
     }
 

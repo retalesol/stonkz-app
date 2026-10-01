@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { decodeFunctionData, encodeFunctionResult, type Hex } from 'viem';
+import { decodeFunctionData, encodeFunctionResult, toFunctionSelector, type Hex } from 'viem';
 import type { StakePoolSummary, TokenFees } from '@stonkz/shared';
 import { LAUNCHPAD_ABI } from '../router/evm-abi.js';
 import { COINS_WORD, STAKE_VIEW_ABI } from '../chain/stake-reads.js';
@@ -57,6 +57,9 @@ function coinsWords(pool: FakePool): string {
 
 function launchpad(data: string): string {
   const selector = data.slice(0, 10);
+  // The params reader probes `paramsWord()` once per net; this launchpad
+  // predates it (empty answer → defaults) and it is not a `coins` read.
+  if (selector === toFunctionSelector('paramsWord()')) return '0x';
   try {
     const call = decodeFunctionData({ abi: STAKE_VIEW_ABI, data: data as Hex });
     chain.calls.push(call.functionName);

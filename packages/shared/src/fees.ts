@@ -1,4 +1,10 @@
-import { CB_MS, CB_START_FEE } from './constants.js';
+import {
+  DEFAULT_CURVE_PARAMS,
+  cbStartFeePct,
+  cbWindowMs,
+  feeSplitOf,
+  type CurveParams,
+} from './params.js';
 
 /** The subset of a coin the fee math reads. */
 export interface FeeCoin {
@@ -15,26 +21,62 @@ export interface FeeCoin {
 
 /**
  * Milliseconds left in the cashback window, 0 when closed or absent.
- * `now` is injected so this stays pure. `index.html:1567`
+ * `now` is injected so this stays pure; `p` is the live chain parameters
+ * (window length), defaulting to the contract defaults. `index.html:1567`
  */
-export function cbLeft(c: FeeCoin, now: number = Date.now()): number {
-  return c.cashback ? Math.max(0, (c.cbStart ?? 0) + CB_MS - now) : 0;
+export function cbLeft(
+  c: FeeCoin,
+  now: number = Date.now(),
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): number {
+  return c.cashback ? Math.max(0, (c.cbStart ?? 0) + cbWindowMs(p) - now) : 0;
 }
 
-/** Is the coin inside its 5-minute cashback window. `index.html:1568` */
-export function inCashback(c: FeeCoin, now: number = Date.now()): boolean {
-  return !!c.cashback && cbLeft(c, now) > 0;
+/** Is the coin inside its cashback window (5 minutes by default). `index.html:1568` */
+export function inCashback(
+  c: FeeCoin,
+  now: number = Date.now(),
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): boolean {
+  return !!c.cashback && cbLeft(c, now, p) > 0;
 }
 
 /**
  * Effective curve fee in percent. Outside a cashback window this is the
- * creator's own fee; inside it decays linearly from `CB_START_FEE` (50%) down
- * to that fee across `CB_MS`. `index.html:1569`
+ * creator's own fee; inside it decays linearly from `p.cbStartFeeBps` (50% by
+ * default) down to that fee across the window. `index.html:1569`
  */
-export function effFee(c: FeeCoin, now: number = Date.now()): number {
+export function effFee(
+  c: FeeCoin,
+  now: number = Date.now(),
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): number {
   const base = +(c.tfee || 1);
-  if (!inCashback(c, now)) return base;
-  return base + (CB_START_FEE - base) * (cbLeft(c, now) / CB_MS);
+  if (!inCashback(c, now, p)) return base;
+  return base + (cbStartFeePct(p) - base) * (cbLeft(c, now, p) / cbWindowMs(p));
+}
+
+/**
+ * Integer mirror of {@link effFee} in bps and whole seconds — the granularity
+ * the programs charge at (`Clock`/`block.timestamp`). A client quoting from a
+ * millisecond timer must come through here, or it shows a fee the chain will
+ * not take. Same arithmetic as `@stonkz/curve-sim`'s `effFeeBps`, with the
+ * window and start fee taken from `p`.
+ */
+export function effFeeBpsAt(
+  baseBps: number,
+  cashback: boolean,
+  cbStartSecs: number,
+  nowSecs: number,
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): number {
+  if (!cashback) return baseBps;
+  const window = BigInt(p.cbWindowSecs);
+  let remaining = BigInt(Math.floor(cbStartSecs)) + window - BigInt(Math.floor(nowSecs));
+  if (remaining <= 0n) return baseBps;
+  if (remaining > window) remaining = window;
+  const base = BigInt(baseBps);
+  return Number(base + ((BigInt(p.cbStartFeeBps) - base) * remaining) / window);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -42,10 +84,12 @@ export function effFee(c: FeeCoin, now: number = Date.now()): number {
 /* -------------------------------------------------------------------------- */
 
 /**
- * How every curve fee divides. These four ratios are load-bearing: changing
- * one changes creator payouts, platform revenue, the `$STONKZ` flywheel and the
- * crate fund at once. Golden tests pin them, and both programs assert the same
- * integer split on every fill (`programs/curve.json` `feeSplitBps`).
+ * How every curve fee divides **by default**. These four ratios are
+ * load-bearing: changing one changes creator payouts, platform revenue, the
+ * `$STONKZ` flywheel and the crate fund at once. Golden tests pin them, and
+ * both programs apply the same integer split on every fill — read live from
+ * chain as `CurveParams` (`feeSplitOf`), which is what every helper below
+ * takes; this constant is the contract default they fall back to.
  *
  * On-chain names differ from these for history: the buyback vault is
  * `stonkz_ops` / `ops_vault` on chain and the RWA crate fund is the former
@@ -80,12 +124,13 @@ export interface FeeSplit {
  *
  * Settlement is on-chain. This is the preview/accounting mirror.
  */
-export function splitFee(feeAmount: number): FeeSplit {
+export function splitFee(feeAmount: number, p: CurveParams = DEFAULT_CURVE_PARAMS): FeeSplit {
+  const r = feeSplitOf(p);
   return {
-    protocol: feeAmount * FEE_SPLIT.protocol,
-    creatorBucket: feeAmount * FEE_SPLIT.creatorBucket,
-    buyback: feeAmount * FEE_SPLIT.buyback,
-    rwa: feeAmount * FEE_SPLIT.rwa,
+    protocol: feeAmount * r.protocol,
+    creatorBucket: feeAmount * r.creatorBucket,
+    buyback: feeAmount * r.buyback,
+    rwa: feeAmount * r.rwa,
   };
 }
 
@@ -150,8 +195,12 @@ export interface FeePie {
  * The whole pie in one call — what `drawPie` in the stake modal renders.
  * `protocol + buyback + rwa + creator + stakers === feeAmount`.
  */
-export function feePie(feeAmount: number, poolFraction: number): FeePie {
-  const { protocol, creatorBucket, buyback, rwa } = splitFee(feeAmount);
+export function feePie(
+  feeAmount: number,
+  poolFraction: number,
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): FeePie {
+  const { protocol, creatorBucket, buyback, rwa } = splitFee(feeAmount, p);
   const { creator, stakers } = creatorVsStakers(creatorBucket, poolFraction);
   return { protocol, buyback, rwa, creator, stakers };
 }

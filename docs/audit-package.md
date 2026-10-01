@@ -400,7 +400,9 @@ No stock bases on Base.
 cd programs/evm && forge build --sizes && forge test
 
 # Fork tests: each is skipped unless its env is set. All take an RPC URL and
-# the live proxy / addresses to fork against.
+# the live proxy / addresses to fork against. Use the project's QuickNode
+# endpoints (docs/deployment.md "RPC endpoints"): `export RH_RPC_URL=<RH
+# testnet QuickNode URL>` and pass the same / the Base one as <rpc>.
 RH_RPC_URL=<rpc> forge test --match-test Fork                          # Router.t.sol: UR + Permit2 hold code
 FEE_FORK_RPC=<rpc> FEE_FORK_PROXY=<launchpad> FEE_FORK_TOKEN=<coin> \
   forge test --match-path test/fork/FeeJourneyFork.t.sol

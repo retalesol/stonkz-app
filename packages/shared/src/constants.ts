@@ -1,7 +1,12 @@
+import { DEFAULT_CURVE_PARAMS } from './params.js';
 import type { AchievementKey, CrateTier, NativeUnit, Net } from './types.js';
 
-/** Graduation market cap, USD. `index.html:1084` */
-export const GRAD = 69000;
+/**
+ * Graduation market cap, USD — the **contract default**. Live code reads the
+ * chain's value through `CurveParams.gradUsd`; this stays for the sim and as
+ * the fallback. `index.html:1084`
+ */
+export const GRAD: number = DEFAULT_CURVE_PARAMS.gradUsd;
 
 /**
  * Implied USD market cap at launch from virtual reserves (`GRAD / 16`, matching
@@ -13,11 +18,11 @@ export const CURVE_START_MC = GRAD / 16;
 /** Default fixed supply when a coin does not set one. `index.html:1084` */
 export const SUPPLY = 1e9;
 
-/** Cashback window length, ms (5 minutes). `index.html:1563` */
-export const CB_MS = 300000;
+/** Cashback window length, ms (5 minutes) — contract default; see `CurveParams.cbWindowSecs`. `index.html:1563` */
+export const CB_MS: number = DEFAULT_CURVE_PARAMS.cbWindowSecs * 1000;
 
-/** Fee, in percent, the cashback window decays from down to the coin's own fee. `index.html:1564` */
-export const CB_START_FEE = 50;
+/** Fee, in percent, the cashback window decays from — contract default; see `CurveParams.cbStartFeeBps`. `index.html:1564` */
+export const CB_START_FEE: number = DEFAULT_CURVE_PARAMS.cbStartFeeBps / 100;
 
 /** One hour in ms — crate cooldown unit. `index.html:2088` */
 export const HOUR = 3600000;
@@ -40,9 +45,9 @@ export const CURVE_MC_BASE = 1400;
 export const CURVE_MC_COEFF = 2600;
 export const CURVE_MC_EXP = 1.12;
 
-/** Creator-set curve fee bounds, percent. Launch slider range. */
-export const MIN_CURVE_FEE_PCT = 1.0;
-export const MAX_CURVE_FEE_PCT = 5.0;
+/** Creator-set curve fee bounds, percent — contract defaults; see `CurveParams.minFeeBps`/`maxFeeBps`. */
+export const MIN_CURVE_FEE_PCT: number = DEFAULT_CURVE_PARAMS.minFeeBps / 100;
+export const MAX_CURVE_FEE_PCT: number = DEFAULT_CURVE_PARAMS.maxFeeBps / 100;
 
 /** Max ticker length enforced by the launch stepper. `index.html:3859` */
 export const MAX_TICKER_LEN = 10;

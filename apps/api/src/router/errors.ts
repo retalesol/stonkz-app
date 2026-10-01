@@ -77,6 +77,28 @@ export class MaxTradeUsdExceededError extends RouterError {
   }
 }
 
+/**
+ * The buy's `msg.value` is over the router's `maxBuyNative` (an admin
+ * parameter the EVM router enforces on every buy). Refused here, before
+ * signing, so the trader reads a cap instead of a revert.
+ */
+export class MaxBuyExceededError extends RouterError {
+  readonly code = 'max_buy_exceeded';
+  readonly httpStatus = 400;
+
+  constructor(
+    readonly net: string,
+    readonly amountNative: string,
+    readonly maxNative: string,
+    readonly unit: string,
+  ) {
+    super(
+      `${net} buys are capped at ${maxNative} ${unit} per transaction right now; this one is ${amountNative} ${unit}`,
+    );
+    this.name = 'MaxBuyExceededError';
+  }
+}
+
 /** The trader's native balance cannot cover hop 1 plus fees. */
 export class InsufficientNativeError extends RouterError {
   readonly code = 'insufficient_native';

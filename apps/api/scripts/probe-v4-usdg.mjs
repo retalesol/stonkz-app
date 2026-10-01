@@ -44,7 +44,13 @@ const stateAbi = [
   },
 ];
 
-const client = createPublicClient({ transport: http('https://rpc.testnet.chain.robinhood.com') });
+// RH testnet: `RH_RPC_URL`, else the project's QuickNode endpoint (docs/deployment.md).
+const client = createPublicClient({
+  transport: http(
+    process.env.RH_RPC_URL ||
+      'https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/',
+  ),
+});
 const WETH = '0x7943e237c7F95DA44E0301572D358911207852Fa';
 const USDG = '0x7E955252E15c84f5768B83c41a71F9eba181802F';
 const ZERO = '0x0000000000000000000000000000000000000000';

@@ -2,7 +2,7 @@
  * One-shot: initialize launchpad on Solana devnet, launch DEVCOIN (WSOL base),
  * buy then sell, print mint/curve for API seeding.
  *
- *   ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
+ *   ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
  *   ANCHOR_WALLET=/path/to/funded.json \
  *   pnpm exec tsx programs/solana/scripts/devnet-smoke.ts
  */
@@ -55,6 +55,7 @@ async function main() {
   console.log('payer', payer.publicKey.toBase58());
 
   const globalPda = PublicKey.findProgramAddressSync([enc('global')], pid)[0];
+  const paramsPda = PublicKey.findProgramAddressSync([enc('params')], pid)[0];
   const vault = (seed: string, key: PublicKey) =>
     PublicKey.findProgramAddressSync([enc(seed), key.toBuffer()], pid)[0];
   const oraclePda = PublicKey.findProgramAddressSync([enc('oracle'), NATIVE_MINT.toBuffer()], pid)[0];
@@ -135,6 +136,7 @@ async function main() {
         creator: payer.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
         systemProgram: SystemProgram.programId,
       })
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
@@ -174,6 +176,7 @@ async function main() {
       traderTokenAccount: traderToken,
       tokenProgram: TOKEN_PROGRAM_ID,
       baseTokenProgram: TOKEN_PROGRAM_ID,
+      params: paramsPda,
     })
     .rpc();
 
@@ -201,6 +204,7 @@ async function main() {
       traderTokenAccount: traderToken,
       tokenProgram: TOKEN_PROGRAM_ID,
       baseTokenProgram: TOKEN_PROGRAM_ID,
+      params: paramsPda,
     })
     .rpc();
 

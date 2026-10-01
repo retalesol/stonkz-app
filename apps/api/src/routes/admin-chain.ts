@@ -16,18 +16,23 @@ import {
   buildSolanaAdminInstruction,
   composeSolanaAdminTransaction,
   decodeSolanaBaseOracle,
+  decodeSolanaParams,
   prepareEvmAdminTx,
   readEvmLaunchpadState,
+  readEvmParamsViews,
+  readEvmRouterConfig,
   readEvmVaults,
   readPushPriceSource,
   readSolanaGlobal,
   safeTransactionBuilderJson,
+  solanaParamsPda,
   type EvmAdminAction,
   type SolanaAdminAction,
 } from '../admin/chain-ops.js';
+import { ZERO_EVM_ADDRESS } from '../env.js';
 import { requireAdmin, audited, type AdminEnv } from '../admin/middleware.js';
 import { bad, confirmed, netParam, readBody, str } from '../admin/http.js';
-import { evmChainId, evmLaunchpadAddress } from '../chain/evm-net.js';
+import { evmChainId, evmLaunchpadAddress, evmRouterAddress } from '../chain/evm-net.js';
 import type { ChainRpc, SolanaAccountDataSource } from '../chain/types.js';
 import { indexerCursors, tokens, treasuries } from '../db/schema.js';
 import { derivePdas } from '../router/solana-idl.js';
@@ -51,10 +56,14 @@ function solanaReader(rpc: ChainRpc): SolanaAccountDataSource | null {
   return typeof c.getAccountDataBase64 === 'function' ? (c as SolanaAccountDataSource) : null;
 }
 
-/** Owner-only actions: anything that moves funds or hands over control. */
+/** Owner-only actions: anything that moves funds, changes the economics or hands over control. */
 const OWNER_ACTIONS = new Set([
   'withdrawTreasury',
   'withdraw_treasury',
+  'set_params',
+  'setParams',
+  'setRouterConfig',
+  'setTrustedRouter',
   'proposeAdmin',
   'propose_admin',
   'setMigrator',
@@ -139,11 +148,11 @@ export function adminChainRoutes(): Hono<AdminEnv> {
           const reader = solanaReader(deps.rpcs.SOL);
           if (!reader) return { ...base, state: null, error: 'RPC cannot read accounts' };
           const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
-          const { global, pauser } = await readSolanaGlobal(reader, programId);
+          const { global, pauser, params } = await readSolanaGlobal(reader, programId);
           return {
             ...base,
             programId: programId.toBase58(),
-            state: global ? { ...global, pauser } : null,
+            state: global ? { ...global, pauser, params } : null,
             error: global ? null : 'Global account not found (program not initialised?)',
           };
         } catch (err) {
@@ -311,6 +320,113 @@ export function adminChainRoutes(): Hono<AdminEnv> {
     });
   });
 
+  /**
+   * `GET /admin/chain/params/:net` — the launchpad's runtime parameters as the
+   * API applies them (`deps.params`, 60-s cache) next to the raw chain reads
+   * the Parameters view edits: the packed word / `trustedRouter` on EVM plus
+   * the router's `maxBuyNative` / `pyth` / `attestationSink`; the `params`
+   * PDA on Solana. `effective.set` says whether anything was ever set.
+   */
+  app.get('/admin/chain/params/:net', requireAdmin('viewer'), async (c) => {
+    const deps = c.get('deps');
+    const net = netParam(c);
+    if (!net) return bad(c, 'net is required');
+    const deployed = isNetDeployed(deps.env, net);
+    const effective = await deps.params.get(net);
+    if (!deployed) return c.json({ net, deployed: false, effective, chain: null });
+    if (isEvmNet(net)) {
+      const eth = ethCallerOf(deps.rpcs[net]);
+      const launchpad = evmLaunchpadAddress(deps.env, net);
+      const routerAddr = evmRouterAddress(deps.env, net);
+      const router =
+        routerAddr && routerAddr.toLowerCase() !== ZERO_EVM_ADDRESS ? routerAddr : null;
+      if (!eth) {
+        return c.json({
+          net,
+          deployed: true,
+          effective,
+          chain: { kind: 'evm', launchpad, router, error: 'RPC cannot eth_call' },
+        });
+      }
+      try {
+        const [views, routerConfig] = await Promise.all([
+          readEvmParamsViews(eth, launchpad),
+          router ? readEvmRouterConfig(eth, router) : Promise.resolve(null),
+        ]);
+        return c.json({
+          net,
+          deployed: true,
+          effective,
+          chain: {
+            kind: 'evm',
+            launchpad,
+            router,
+            chainId: evmChainId(deps.env, net),
+            ...views,
+            routerConfig,
+            error: null,
+          },
+        });
+      } catch (err) {
+        return c.json({
+          net,
+          deployed: true,
+          effective,
+          chain: {
+            kind: 'evm',
+            launchpad,
+            router,
+            chainId: evmChainId(deps.env, net),
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
+    }
+    const reader = solanaReader(deps.rpcs.SOL);
+    const programId = new PublicKey(deps.env.solanaLaunchpadProgramId);
+    const pda = solanaParamsPda(programId).toBase58();
+    if (!reader) {
+      return c.json({
+        net,
+        deployed: true,
+        effective,
+        chain: {
+          kind: 'sol',
+          programId: programId.toBase58(),
+          pda,
+          error: 'RPC cannot read accounts',
+        },
+      });
+    }
+    try {
+      const raw = await reader.getAccountDataBase64(pda);
+      return c.json({
+        net,
+        deployed: true,
+        effective,
+        chain: {
+          kind: 'sol',
+          programId: programId.toBase58(),
+          pda,
+          params: decodeSolanaParams(raw),
+          error: null,
+        },
+      });
+    } catch (err) {
+      return c.json({
+        net,
+        deployed: true,
+        effective,
+        chain: {
+          kind: 'sol',
+          programId: programId.toBase58(),
+          pda,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+    }
+  });
+
   /* --------------------------------------------------------------- prepare */
 
   app.post('/admin/chain/prepare/:net', requireAdmin('admin'), async (c) => {
@@ -339,11 +455,15 @@ export function adminChainRoutes(): Hono<AdminEnv> {
     try {
       if (isEvmNet(net)) {
         const chainId = evmChainId(deps.env, net);
+        const routerAddr = evmRouterAddress(deps.env, net);
         const tx = prepareEvmAdminTx(
           net as EvmNet,
           chainId,
           evmLaunchpadAddress(deps.env, net),
           action as EvmAdminAction,
+          {
+            router: routerAddr && routerAddr.toLowerCase() !== ZERO_EVM_ADDRESS ? routerAddr : null,
+          },
         );
         const safe = safeTransactionBuilderJson({
           chainId,
@@ -411,6 +531,11 @@ export function adminChainRoutes(): Hono<AdminEnv> {
       txHash,
       summary: str(body['summary'], 500) ?? null,
     });
+    // A parameter change was just broadcast: drop this process's 60-s cache so
+    // the operator's next read (and the public status) picks the new values up
+    // as soon as the chain has them.
+    if (/^set_?params$|^setRouterConfig$|^setTrustedRouter$/i.test(kind))
+      c.get('deps').params.invalidate(net);
     return c.json({ ok: true });
   });
 

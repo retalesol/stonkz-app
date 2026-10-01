@@ -116,19 +116,20 @@ contract StonkzRouter {
     /// factory, so pinned-fee aggregator hops use SwapRouter02 instead.
     ISwapRouter02 public immutable swapRouter02;
     /// @notice Hard ceiling on `msg.value` per buy, in native wei; `0` means no cap.
-    /// @dev Set only on chains where "testing" means real funds (Arc: native USDC,
-    /// 18 decimals at the EVM layer, so 25 USDC is `25e18`). The API and the UI
-    /// enforce the same number; this is the layer that cannot be bypassed.
-    uint256 public immutable maxBuyNative;
+    /// @dev Settable (`setConfig`, launchpad admin — the timelock after the
+    /// governance handover) so the cap moves without a router redeploy. The
+    /// API and the UI enforce the same number; this is the layer that cannot
+    /// be bypassed.
+    uint256 public maxBuyNative;
     /// @notice Pyth Core, for the in-transaction price update every launch
     /// entry point accepts. `address(0)` where the chain has none (the launch
     /// then relies on whatever price is already on chain; a non-empty update
-    /// reverts `NoPyth`).
-    IPyth public immutable pyth;
+    /// reverts `NoPyth`). Settable with the cap.
+    IPyth public pyth;
     /// @notice Where `priceUpdate` entries starting with `"STKA"` (signed
     /// stock-price attestations) are posted — `StockPriceSourceV2`. Zero:
-    /// such entries are dropped (never forwarded to Pyth).
-    IStockAttestationSink public immutable attestationSink;
+    /// such entries are dropped (never forwarded to Pyth). Settable with the cap.
+    IStockAttestationSink public attestationSink;
 
     /// @notice Ceiling on the tolerance a caller may declare against the
     /// aggregator's quote.
@@ -219,7 +220,13 @@ contract StonkzRouter {
     }
 
     error BuyAboveCap(uint256 value, uint256 cap);
+    error NotAdmin();
 
+    event ConfigSet(uint256 maxBuyNative, address pyth, address attestationSink);
+
+    /// @param _maxBuyNative Initial per-buy cap (`0` = none); `setConfig` changes it.
+    /// @param _pyth Initial Pyth Core; `setConfig` changes it.
+    /// @param _attestationSink Initial attestation sink; `setConfig` changes it.
     constructor(
         IUniversalRouter _universalRouter,
         StonkzLaunchpad _launchpad,
@@ -243,9 +250,25 @@ contract StonkzRouter {
         attestationSink = _attestationSink;
     }
 
+    /// @notice Retune the router without redeploying it. Only the knobs that
+    /// were constructor arguments: the per-buy native cap, the Pyth contract
+    /// and the attestation sink. The approval targets (`universalRouter`,
+    /// `swapRouter02`, `launchpad`) stay immutable — a settable target on a
+    /// contract that grants token approvals is a drain waiting for a
+    /// compromised key. Gated by the launchpad's `admin`, so governance over
+    /// the curve and over its router is one key (the timelock on mainnet).
+    function setConfig(uint256 _maxBuyNative, IPyth _pyth, IStockAttestationSink _attestationSink) external {
+        if (msg.sender != launchpad.admin()) revert NotAdmin();
+        maxBuyNative = _maxBuyNative;
+        pyth = _pyth;
+        attestationSink = _attestationSink;
+        emit ConfigSet(_maxBuyNative, address(_pyth), address(_attestationSink));
+    }
+
     /// @dev Every native-in entry point runs through this before touching a curve.
     modifier underCap() {
-        if (maxBuyNative != 0 && msg.value > maxBuyNative) revert BuyAboveCap(msg.value, maxBuyNative);
+        uint256 cap = maxBuyNative;
+        if (cap != 0 && msg.value > cap) revert BuyAboveCap(msg.value, cap);
         _;
     }
 
@@ -363,21 +386,23 @@ contract StonkzRouter {
         // none), everything else to Pyth, which is paid for its subset only.
         bytes[] memory forPyth = new bytes[](priceUpdate.length - attestations);
         uint256 n;
+        IStockAttestationSink sink = attestationSink;
         for (uint256 i = 0; i < priceUpdate.length; i++) {
             if (!_isAttestation(priceUpdate[i])) {
                 forPyth[n++] = priceUpdate[i];
-            } else if (address(attestationSink) != address(0)) {
-                attestationSink.postAttestation(priceUpdate[i]);
+            } else if (address(sink) != address(0)) {
+                sink.postAttestation(priceUpdate[i]);
             }
         }
         if (n > 0) fee = _postPyth(forPyth);
     }
 
     function _postPyth(bytes[] memory updates) private returns (uint256 fee) {
-        if (address(pyth) == address(0)) revert NoPyth();
-        fee = pyth.getUpdateFee(updates);
+        IPyth p = pyth;
+        if (address(p) == address(0)) revert NoPyth();
+        fee = p.getUpdateFee(updates);
         if (fee > msg.value) revert UpdateFeeUnpaid(fee, msg.value);
-        pyth.updatePriceFeeds{value: fee}(updates);
+        p.updatePriceFeeds{value: fee}(updates);
     }
 
     function _isAttestation(bytes calldata entry) private pure returns (bool) {

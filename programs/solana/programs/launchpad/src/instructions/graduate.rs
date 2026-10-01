@@ -39,10 +39,14 @@ pub struct Graduate<'info> {
     pub curve_token_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     pub caller: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
+    /* Appended after the original 8 accounts (runtime-params upgrade). */
+    /// CHECK: PDA verified in load_params; empty account means defaults
+    pub params: UncheckedAccount<'info>,
 }
 
 pub fn graduate(ctx: Context<Graduate>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
+    let params = load_params(&ctx.accounts.params, ctx.program_id)?;
     let c = &ctx.accounts.curve;
     require!(!c.graduated, LaunchpadError::AlreadyGraduated);
 
@@ -77,7 +81,10 @@ pub fn graduate(ctx: Context<Graduate>) -> Result<()> {
         );
         let price = read_fresh_price(oracle, &ctx.accounts.global, now)?;
         let usd = mcap_usd_1e6(mcap, price, c.base_decimals).ok_or(LaunchpadError::MathOverflow)?;
-        require!(usd >= GRAD_MCAP_USD_1E6, LaunchpadError::NotGraduable);
+        require!(
+            usd >= params.grad_mcap_usd_1e6 as u128,
+            LaunchpadError::NotGraduable
+        );
         require!(c.real_base > 0, LaunchpadError::NotGraduable);
         (GraduationReason::OraclePrice, usd)
     };
@@ -770,10 +777,14 @@ pub struct ClaimDexFees<'info> {
     pub caller: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
     pub base_token_program: Interface<'info, TokenInterface>,
+    /* Appended after the original 24 accounts (runtime-params upgrade). */
+    /// CHECK: PDA verified in load_params; empty account means defaults
+    pub params: UncheckedAccount<'info>,
 }
 
 pub fn claim_dex_fees(ctx: Context<ClaimDexFees>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
+    let params = load_params(&ctx.accounts.params, ctx.program_id)?;
     require!(ctx.accounts.curve.migrated, LaunchpadError::NotMigrated);
 
     let mint_key = ctx.accounts.mint.key();
@@ -930,7 +941,7 @@ pub fn claim_dex_fees(ctx: Context<ClaimDexFees>) -> Result<()> {
     );
 
     // 2) Base side: the curve's split, to the same vaults a fill pays.
-    let s = split_fee(fee_base);
+    let s = split_fee(fee_base, &params);
     {
         let legs = [
             (ctx.accounts.protocol_vault.to_account_info(), s.protocol),
@@ -962,7 +973,7 @@ pub fn claim_dex_fees(ctx: Context<ClaimDexFees>) -> Result<()> {
         accrue_bucket_base(&mut ctx.accounts.curve, s.creator_bucket, circ)?;
 
     // 3) Token side: the 69% bucket in tokens; the treasury legs are burned.
-    let t = split_fee(fee_token);
+    let t = split_fee(fee_token, &params);
     let tokens_burned = fee_token
         .checked_sub(t.creator_bucket)
         .ok_or(LaunchpadError::MathOverflow)?;

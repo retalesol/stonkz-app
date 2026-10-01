@@ -24,7 +24,7 @@ import {DeployPad} from "./DeployPad.sol";
 /// export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
 /// export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...  # must differ from protocol
 /// forge script script/DeployBaseSepolia.s.sol:DeployBaseSepolia \
-///   --rpc-url https://sepolia.base.org --broadcast -vvv
+///   --rpc-url https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/ --broadcast -vvv
 /// ```
 contract DeployBaseSepolia is Script {
     function run() external {
@@ -104,7 +104,7 @@ contract DeployBaseSepolia is Script {
         console2.log("");
         console2.log("=== apps/api + indexer env ===");
         console2.log("BASE_CHAIN_ID=84532");
-        console2.log("BASE_RPC_URL=https://sepolia.base.org");
+        console2.log("BASE_RPC_URL=https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/");
         console2.log("BASE_LAUNCHPAD_ADDRESS=%s", address(launchpad));
         console2.log("BASE_ROUTER_ADDRESS=%s", address(router));
         console2.log("BASE_V3_FACTORY_ADDRESS=%s", BaseSepolia.UNISWAP_V3_FACTORY);

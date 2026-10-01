@@ -1,4 +1,4 @@
-import { feePie } from '@stonkz/shared';
+import { DEFAULT_CURVE_PARAMS, feePie, type CurveParams } from '@stonkz/shared';
 import { fitCanvas } from './pix.js';
 
 /**
@@ -29,12 +29,16 @@ export const PIE_COLOURS = {
  *
  * @see plan step 23, "Fee pie"
  */
-export function drawPie(cv: HTMLCanvasElement | null, poolFraction: number): void {
+export function drawPie(
+  cv: HTMLCanvasElement | null,
+  poolFraction: number,
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): void {
   if (!cv) return;
   const w = cv.clientWidth;
   const h = cv.clientHeight;
   if (w < 2) {
-    setTimeout(() => drawPie(cv, poolFraction), 40);
+    setTimeout(() => drawPie(cv, poolFraction, p), 40);
     return;
   }
   const g = fitCanvas(cv);
@@ -45,7 +49,7 @@ export function drawPie(cv: HTMLCanvasElement | null, poolFraction: number): voi
   const cy = h / 2;
   const R = Math.min(w, h) / 2 - 6;
   const r0 = R * 0.56;
-  const pie = feePie(1, poolFraction);
+  const pie = feePie(1, poolFraction, p);
   const parts: Array<[number, string]> = [
     [pie.stakers, PIE_COLOURS.stakers],
     [pie.creator, PIE_COLOURS.creator],

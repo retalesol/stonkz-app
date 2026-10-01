@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {StonkzLens} from "../src/StonkzLens.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
 
@@ -19,7 +20,7 @@ contract SmokeGraduate is Script {
         StonkzLaunchpad pad = StonkzLaunchpad(PAD);
         PushPriceSource oracle = PushPriceSource(ORACLE);
 
-        (uint256 mcapBase,) = pad.marketCap(TOKEN);
+        (uint256 mcapBase,) = new StonkzLens().marketCap(pad, TOKEN);
         // Price the base high enough that mcap clears $69,000 (1e6-scaled).
         uint256 needed = (69_000_000_000 * 1e18) / mcapBase + 1;
         console2.log("mcapBase", mcapBase);

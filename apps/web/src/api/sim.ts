@@ -12,7 +12,7 @@ import {
   type Venue,
   type Wallet,
   crateBy,
-  FEE_SPLIT,
+  feeSplitOf,
   crateReadyAt,
   crateXp,
   curveMc,
@@ -48,6 +48,7 @@ import {
 } from '../state/coins.js';
 import { HOLD, creditTokens, holdOf, initPortfolio, noteTrade } from '../state/holdings.js';
 import { SET } from '../state/settings.js';
+import { coinParams } from '../state/params.js';
 import { ensureStake, poolFrac, stakeOf, totalWeight } from '../state/stake.js';
 import {
   USER,
@@ -187,15 +188,16 @@ function beat(): void {
  * rest of it, and platform, buyback and the RWA fund never touch either. `index.html:3605`
  */
 function accrueFees(c: SimCoin, now: number): void {
-  if (c.cashback && !inCashback(c, now)) c.cashback = false;
-  if (laneOf(c) === 'grad') return;
+  const p = coinParams(c);
+  if (c.cashback && !inCashback(c, now, p)) c.cashback = false;
+  if (laneOf(c, p) === 'grad') return;
   const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
-  const feeNative = (turnover * (effFee(c, now) / 100)) / NATIVE_PRICE.usd;
-  const bucket = feeNative * FEE_SPLIT.creatorBucket;
+  const feeNative = (turnover * (effFee(c, now, p) / 100)) / NATIVE_PRICE.usd;
+  const bucket = feeNative * feeSplitOf(p).creatorBucket;
   const share = poolFrac(c);
   if (c.mine) {
     c.fee = (c.fee ?? 0) + bucket * (1 - share);
-    if (inCashback(c, now))
+    if (inCashback(c, now, p))
       c.feeTokens = (c.feeTokens ?? 0) + (bucket * (1 - share) * NATIVE_PRICE.usd) / price(c);
   }
   accrueStake(c, now);
@@ -205,14 +207,15 @@ function accrueFees(c: SimCoin, now: number): void {
 function accrueStake(c: SimCoin, now: number): void {
   const st = stakeOf(c.sym);
   if (!st || st.amt <= 0) return;
+  const p = coinParams(c);
   const turnover = (vol24(c) / 86400) * (TICK_MS / 1000);
-  const feeNative = (turnover * (effFee(c, now) / 100)) / NATIVE_PRICE.usd;
+  const feeNative = (turnover * (effFee(c, now, p) / 100)) / NATIVE_PRICE.usd;
   // Only the creator's 69% bucket funds stakers, and poolFrac splits that
   // bucket between the creator and the pool. Platform, buyback and RWA never enter it.
-  const pool = feeNative * FEE_SPLIT.creatorBucket * poolFrac(c);
+  const pool = feeNative * feeSplitOf(p).creatorBucket * poolFrac(c);
   const weight = totalWeight(c);
   const mine = weight > 0 ? (st.amt * stakeMult(st, now)) / weight : 0;
-  if (inCashback(c, now)) st.rewTok += (pool * mine * NATIVE_PRICE.usd) / price(c);
+  if (inCashback(c, now, p)) st.rewTok += (pool * mine * NATIVE_PRICE.usd) / price(c);
   else st.rewSol += pool * mine;
 }
 
@@ -239,7 +242,7 @@ function buildQuote(input: QuoteInput): Quote {
   const unit = nativeUnit();
   const base = c.base || unit;
   const twoHop = base !== unit;
-  const feePct = effFee(c);
+  const feePct = effFee(c, Date.now(), coinParams(c));
   const p = price(c);
   const impact = Math.min(32, ((amountIn * NATIVE_PRICE.usd) / Math.max(1, liq(c))) * 100 * 2.2);
   // The aggregator leg is priced at parity in the sim; only its impact is real
@@ -385,7 +388,7 @@ export const simApi: StonkzApi = {
     addXP(xpForTrade(nativeAmt), (buy ? 'BUY ' : 'SELL ') + c.sym);
     unlock('first');
     if (nativeAmt * NATIVE_PRICE.usd >= 1000) unlock('whale');
-    if (inCashback(c)) unlock('cashback');
+    if (inCashback(c, Date.now(), coinParams(c))) unlock('cashback');
     emit('coins');
     return toFill(c, t);
   },
@@ -398,16 +401,17 @@ export const simApi: StonkzApi = {
     const net = c.net ?? WALLET.net;
     const feePct = Number(c.tfee || 1);
     const grossUsd = vol24(c) * Math.min(40, Math.max(0.15, c.age / 1440)) * (feePct / 100);
+    const p = coinParams(c);
     const gross = grossUsd / nativeUsd(unitFor(net));
-    const s = splitFee(gross);
+    const s = splitFee(gross, p);
     const stakers = s.creatorBucket * poolFrac(c);
     return {
       sym: c.sym,
       net,
       unit: unitFor(net),
       feeBps: Math.round(feePct * 100),
-      effFeeBps: Math.round(effFee(c) * 100),
-      split: { ...FEE_SPLIT },
+      effFeeBps: Math.round(effFee(c, Date.now(), p) * 100),
+      split: feeSplitOf(p),
       totals: {
         gross,
         protocol: s.protocol,
@@ -656,7 +660,7 @@ export const simApi: StonkzApi = {
   },
 };
 
-/** Exposed for the board so a graduation can be detected without re-deriving. */
+/** Exposed for the board so a graduation can be detected without re-deriving (sim: the contract default). */
 export const GRAD_MC = GRAD;
 
 export type { Fill };

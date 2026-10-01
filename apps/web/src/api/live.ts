@@ -88,6 +88,7 @@ import {
   type SeriesAnchor,
 } from './live-fills.js';
 import { NATIVE_PRICE, WALLET, selectNet, nativeUsd } from '../state/wallet.js';
+import { applyPlatformParams, coinParams } from '../state/params.js';
 import { activeWallet, isRejection, pendingSignature, requireWallet } from '../wallet/index.js';
 import { LaunchPendingError, LaunchedDevBuyError, type LaunchHooks } from './launch-errors.js';
 import { fetchRewards, openCrateLive, type LiveRewardsSnapshot } from './social.js';
@@ -1033,6 +1034,22 @@ async function refreshNativePrices(): Promise<void> {
   }
 }
 
+/**
+ * The launchpad's live parameters per net from `GET /platform/status`
+ * (`params`), into `state/params.ts`. Failure keeps whatever is there — the
+ * contract defaults at worst — so a sim-shaped offline session still works.
+ */
+async function refreshLiveParams(): Promise<void> {
+  try {
+    const res = await getJson<{ params?: Parameters<typeof applyPlatformParams>[0] }>(
+      '/platform/status',
+    );
+    applyPlatformParams(res.params);
+  } catch {
+    // Offline or an older API without `params`: keep the current record.
+  }
+}
+
 async function fetchToken(net: Net, sym: string, mint?: string): Promise<ApiToken | null> {
   try {
     const qs = mint ? `&mint=${encodeURIComponent(mint)}` : '';
@@ -1587,6 +1604,8 @@ function startPolling(): void {
     if (!wsUp || n % 6 === 0) void refreshBoard();
     // Native marks change slowly — refresh every ~30s with the board poll.
     if (n % 6 === 0) void refreshNativePrices();
+    // Launchpad parameters change only when the admin sets them; one read a minute.
+    if (n % 12 === 0) void refreshLiveParams();
   }, 5000);
 }
 
@@ -1907,7 +1926,7 @@ function applyConfirmedTrade(
   // ledger credits on the matching chain_events row once the indexer sees it.
   unlock('first');
   if (nativeAmt * NATIVE_PRICE.usd >= 1000) unlock('whale');
-  if (inCashback(c)) unlock('cashback');
+  if (inCashback(c, Date.now(), coinParams(c))) unlock('cashback');
   emit('coins');
   // `coins` rebuilds the board; `tick` is what redraws the open chart.
   emit('tick');
@@ -2831,7 +2850,7 @@ export const liveApi: StonkzApi = {
 
   async ready(): Promise<void> {
     // Guests land on both chains; connect() narrows to the wallet's net.
-    await refreshNativePrices();
+    await Promise.all([refreshNativePrices(), refreshLiveParams()]);
     const list = await fetchTokens(boardScope());
     if (list === null) noteApiDown();
     COINS.length = 0;

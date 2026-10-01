@@ -6,7 +6,14 @@
 //! quoted as evidence.
 
 use crate::constants::*;
+use crate::instructions::params::{validate_params, ParamsArgs};
 use crate::math::*;
+use crate::state::Params;
+
+/// The shipped defaults — what every instruction runs on until `set_params`.
+fn dp() -> Params {
+    Params::defaults()
+}
 
 /// Deterministic xorshift64*, so every run explores the same cases.
 struct Rng(u64);
@@ -39,7 +46,7 @@ const USDC: (u64, u8) = (1_000_000, 6);
 const WSOL: (u64, u8) = (200_000_000, 9);
 
 fn params(supply: u64, base: (u64, u8)) -> CurveParams {
-    derive_curve(supply, base.0, base.1).expect("curve derives")
+    derive_curve(supply, base.0, base.1, GRAD_MCAP_USD_1E6 as u64).expect("curve derives")
 }
 
 fn fresh(supply: u64, base: (u64, u8)) -> (CurveParams, CurveState) {
@@ -65,7 +72,7 @@ fn fresh(supply: u64, base: (u64, u8)) -> (CurveParams, CurveState) {
 #[test]
 fn split_fee_is_exact_for_every_small_fee() {
     for fee in 0u64..100_000 {
-        let s = split_fee(fee);
+        let s = split_fee(fee, &dp());
         assert_eq!(
             s.protocol + s.stonkz_ops + s.burn + s.creator_bucket,
             fee,
@@ -85,7 +92,7 @@ fn split_fee_is_exact_across_the_whole_u64_range() {
     let mut rng = Rng::new(0xF00D_BEEF);
     for _ in 0..200_000 {
         let fee = rng.next() >> (rng.next() % 64);
-        let s = split_fee(fee);
+        let s = split_fee(fee, &dp());
         assert_eq!(s.protocol + s.stonkz_ops + s.burn + s.creator_bucket, fee);
         assert_eq!(s.protocol as u128, fee as u128 * 1_500 / 10_000);
         assert_eq!(s.stonkz_ops as u128, fee as u128 * 1_000 / 10_000);
@@ -119,7 +126,7 @@ fn fee_split_is_exact_on_every_random_buy_and_sell() {
                     continue;
                 };
 
-                let s = split_fee(f.fee);
+                let s = split_fee(f.fee, &dp());
                 assert_eq!(
                     s.protocol + s.stonkz_ops + s.burn + s.creator_bucket,
                     f.fee,
@@ -148,7 +155,7 @@ fn fee_split_is_exact_on_every_random_buy_and_sell() {
                     continue;
                 };
 
-                let s = split_fee(f.fee);
+                let s = split_fee(f.fee, &dp());
                 assert_eq!(
                     s.protocol + s.stonkz_ops + s.burn + s.creator_bucket,
                     f.fee,
@@ -290,7 +297,7 @@ fn exhausting_the_curve_lands_within_a_hair_of_69k() {
     for &supply in ALLOWED_SUPPLIES.iter() {
         for base in [USDC, WSOL, (10, 5), (4_312_500_000, 8)] {
             let supply_atoms = supply * 10u64.pow(TOKEN_DECIMALS as u32);
-            let Some(p) = derive_curve(supply_atoms, base.0, base.1) else {
+            let Some(p) = derive_curve(supply_atoms, base.0, base.1, GRAD_MCAP_USD_1E6 as u64) else {
                 continue;
             };
             let mut st = CurveState {
@@ -367,23 +374,23 @@ fn start_mcap_is_one_sixteenth_of_graduation() {
 fn cashback_decays_from_50pct_to_the_creator_fee_across_300s() {
     for base_bps in [100u16, 250, 500] {
         let start = 1_700_000_000i64;
-        assert_eq!(eff_fee_bps(base_bps, true, start, start), 5_000);
-        assert_eq!(eff_fee_bps(base_bps, true, start, start + 300), base_bps);
-        assert_eq!(eff_fee_bps(base_bps, true, start, start + 301), base_bps);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start, &dp()), 5_000);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start + 300, &dp()), base_bps);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start + 301, &dp()), base_bps);
         assert_eq!(
-            eff_fee_bps(base_bps, true, start, start + 100_000),
+            eff_fee_bps(base_bps, true, start, start + 100_000, &dp()),
             base_bps
         );
 
         // Halfway through, halfway down.
-        let mid = eff_fee_bps(base_bps, true, start, start + 150);
+        let mid = eff_fee_bps(base_bps, true, start, start + 150, &dp());
         let want = base_bps as u64 + (5_000 - base_bps as u64) / 2;
         assert!(mid as u64 == want, "mid {mid} != {want}");
 
         // Monotone non-increasing, never below the creator fee, never above 50%.
         let mut prev = 5_001u16;
         for t in 0..=320i64 {
-            let f = eff_fee_bps(base_bps, true, start, start + t);
+            let f = eff_fee_bps(base_bps, true, start, start + t, &dp());
             assert!(f <= prev, "fee rose at t={t}");
             assert!(f >= base_bps && f <= 5_000);
             prev = f;
@@ -391,8 +398,8 @@ fn cashback_decays_from_50pct_to_the_creator_fee_across_300s() {
 
         // A non-cashback coin is flat, and a clock before the window opened
         // cannot be used to stretch it past 50%.
-        assert_eq!(eff_fee_bps(base_bps, false, start, start), base_bps);
-        assert_eq!(eff_fee_bps(base_bps, true, start, start - 10_000), 5_000);
+        assert_eq!(eff_fee_bps(base_bps, false, start, start, &dp()), base_bps);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start - 10_000, &dp()), 5_000);
     }
 }
 
@@ -406,12 +413,12 @@ fn cashback_fills_still_split_15_10_6_69() {
     for _ in 0..20_000 {
         let base_bps = rng.range(100, 500) as u16;
         let t = rng.range(0, 300) as i64;
-        let bps = eff_fee_bps(base_bps, true, start, start + t);
+        let bps = eff_fee_bps(base_bps, true, start, start + t, &dp());
         let (_, st) = fresh(SUPPLY_1B, USDC);
         let Some(f) = buy_quote(&st, bps, rng.range(1_000, 10_000_000_000)) else {
             continue;
         };
-        let s = split_fee(f.fee);
+        let s = split_fee(f.fee, &dp());
         assert_eq!(s.protocol + s.stonkz_ops + s.burn + s.creator_bucket, f.fee);
         assert_eq!(s.protocol as u128, f.fee as u128 * 1_500 / 10_000);
         assert_eq!(s.stonkz_ops as u128, f.fee as u128 * 1_000 / 10_000);
@@ -426,7 +433,7 @@ fn cashback_fills_still_split_15_10_6_69() {
 fn cashback_swap_consumes_only_the_creator_bucket() {
     let (_, st) = fresh(SUPPLY_1B, USDC);
     let f = buy_quote(&st, 5_000, 1_000_000_000).unwrap();
-    let s = split_fee(f.fee);
+    let s = split_fee(f.fee, &dp());
 
     let swapped = zero_fee_buy(&st, s.creator_bucket).unwrap();
     let would_be_whole_fee = zero_fee_buy(&st, f.fee).unwrap();
@@ -485,7 +492,7 @@ fn protocol_and_ops_never_enter_the_stake_pool() {
         let Some(f) = buy_quote(&st, fee_bps, rng.range(10_000, 20_000_000_000)) else {
             continue;
         };
-        let s = split_fee(f.fee);
+        let s = split_fee(f.fee, &dp());
 
         // Fully staked: circulating == eligible_staked, the worst case for the
         // creator and the best case for stakers.
@@ -636,7 +643,7 @@ fn two_coins_do_not_share_stake_weight() {
 
     // All the volume happens on coin A.
     let fa = buy_quote(&a, 300, 5_000_000_000).unwrap();
-    let sa = split_fee(fa.fee);
+    let sa = split_fee(fa.fee, &dp());
     let (acc_a, _) = advance_acc(0, sa.creator_bucket / 2, weight).unwrap();
 
     // Coin B saw no fills, so its accumulator never moved.
@@ -655,7 +662,7 @@ fn two_coins_do_not_share_stake_weight() {
 
     // Trading B afterwards still leaves A's already-settled staker unaffected.
     let fb = buy_quote(&b, 300, 5_000_000_000).unwrap();
-    let sb = split_fee(fb.fee);
+    let sb = split_fee(fb.fee, &dp());
     let (acc_b, _) = advance_acc(acc_b, sb.creator_bucket / 2, weight).unwrap();
     assert_eq!(
         pending_reward(weight, acc_a, 0).unwrap(),
@@ -690,8 +697,8 @@ fn degenerate_inputs_are_rejected_not_wrapped() {
     assert!(buy_quote(&st, 300, 0).is_none());
     assert!(sell_quote(&st, 300, 0).is_none());
     assert!(buy_quote(&st, 10_000, 1_000_000).is_none());
-    assert!(derive_curve(0, 1_000_000, 6).is_none());
-    assert!(derive_curve(SUPPLY_1B, 0, 6).is_none());
+    assert!(derive_curve(0, 1_000_000, 6, GRAD_MCAP_USD_1E6 as u64).is_none());
+    assert!(derive_curve(SUPPLY_1B, 0, 6, GRAD_MCAP_USD_1E6 as u64).is_none());
     // An empty pool has no base to pay a seller with.
     assert!(sell_quote(&st, 300, 1_000_000).is_none());
 }
@@ -838,4 +845,171 @@ fn pauser_can_never_unpause() {
             && g.protocol_withdrawals_paused
             && g.ops_withdrawals_paused
     );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Runtime parameters — non-default `Params` thread through the math          */
+/* -------------------------------------------------------------------------- */
+
+fn custom_params() -> Params {
+    Params {
+        fee_protocol_bps: 2_000,
+        fee_ops_bps: 1_500,
+        fee_burn_bps: 500,
+        min_fee_bps: 50,
+        max_fee_bps: 800,
+        cb_start_fee_bps: 6_000,
+        cb_window_secs: 120,
+        grad_mcap_usd_1e6: 100_000_000_000,
+        ..Params::defaults()
+    }
+}
+
+#[test]
+fn defaults_match_the_constants() {
+    let d = Params::defaults();
+    assert_eq!(d.fee_protocol_bps as u64, FEE_PROTOCOL_BPS);
+    assert_eq!(d.fee_ops_bps as u64, FEE_OPS_BPS);
+    assert_eq!(d.fee_burn_bps as u64, FEE_BURN_BPS);
+    assert_eq!(d.min_fee_bps, MIN_FEE_BPS);
+    assert_eq!(d.max_fee_bps, MAX_FEE_BPS);
+    assert_eq!(d.cb_start_fee_bps as u64, CB_START_FEE_BPS);
+    assert_eq!(d.cb_window_secs as i64, CB_WINDOW_SECS);
+    assert_eq!(d.grad_mcap_usd_1e6 as u128, GRAD_MCAP_USD_1E6);
+    // The defaults are themselves a valid `set_params` payload.
+    validate_params(&ParamsArgs::from(&d)).expect("defaults validate");
+}
+
+#[test]
+fn split_fee_follows_the_configured_shares_and_stays_exact() {
+    let p = custom_params();
+    let mut rng = Rng::new(0x9A4A_0001);
+    for i in 0..200_000u64 {
+        let fee = if i < 50_000 { i } else { rng.next() >> (rng.next() % 64) };
+        let s = split_fee(fee, &p);
+        assert_eq!(s.protocol as u128, fee as u128 * 2_000 / 10_000);
+        assert_eq!(s.stonkz_ops as u128, fee as u128 * 1_500 / 10_000);
+        assert_eq!(s.burn as u128, fee as u128 * 500 / 10_000);
+        assert_eq!(s.total(), fee, "shares must reconstruct fee, fee={fee}");
+        assert!(s.creator_bucket >= fee / 10_000 * 6_000);
+    }
+
+    // The extremes `set_params` admits: all to the bucket, and nothing to it.
+    let none = Params {
+        fee_protocol_bps: 0,
+        fee_ops_bps: 0,
+        fee_burn_bps: 0,
+        ..Params::defaults()
+    };
+    let s = split_fee(12_345, &none);
+    assert_eq!((s.protocol, s.stonkz_ops, s.burn, s.creator_bucket), (0, 0, 0, 12_345));
+    let all = Params {
+        fee_protocol_bps: 5_000,
+        fee_ops_bps: 3_000,
+        fee_burn_bps: 2_000,
+        ..Params::defaults()
+    };
+    for fee in [0u64, 1, 9, 10, 10_001, u64::MAX] {
+        let s = split_fee(fee, &all);
+        assert_eq!(s.total(), fee);
+        // Floor dust (up to 2 atoms here) still lands in the bucket.
+        assert!(s.creator_bucket <= 2, "fee={fee} bucket={}", s.creator_bucket);
+    }
+}
+
+#[test]
+fn eff_fee_bps_follows_the_configured_window_and_start() {
+    let p = custom_params();
+    let start = 1_700_000_000i64;
+    for base_bps in [50u16, 300, 800] {
+        assert_eq!(eff_fee_bps(base_bps, true, start, start, &p), 6_000);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start + 120, &p), base_bps);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start + 121, &p), base_bps);
+        // Halfway through the 120 s window, halfway down from 6000.
+        let mid = eff_fee_bps(base_bps, true, start, start + 60, &p) as u64;
+        assert_eq!(mid, base_bps as u64 + (6_000 - base_bps as u64) / 2);
+        // Still monotone and bounded by the configured start.
+        let mut prev = 6_001u16;
+        for t in 0..=130i64 {
+            let f = eff_fee_bps(base_bps, true, start, start + t, &p);
+            assert!(f <= prev && f >= base_bps && f <= 6_000, "t={t} f={f}");
+            prev = f;
+        }
+        assert_eq!(eff_fee_bps(base_bps, false, start, start, &p), base_bps);
+        // The default window is a different shape entirely.
+        assert_eq!(eff_fee_bps(base_bps, true, start, start, &dp()), 5_000);
+        assert_eq!(eff_fee_bps(base_bps, true, start, start + 120, &dp()) > base_bps, true);
+    }
+
+    // A coin created under a wider earlier bound (fee above the current
+    // cb_start) never decays upward: it simply gets no premium.
+    let narrow = Params {
+        cb_start_fee_bps: 200,
+        ..custom_params()
+    };
+    assert_eq!(eff_fee_bps(500, true, start, start, &narrow), 500);
+    assert_eq!(eff_fee_bps(500, true, start, start + 60, &narrow), 500);
+
+    // The widest admissible start (100%) still fits a u16 at t=0.
+    let max = Params {
+        cb_start_fee_bps: 10_000,
+        ..custom_params()
+    };
+    assert_eq!(eff_fee_bps(800, true, start, start, &max), 10_000);
+}
+
+#[test]
+fn derive_curve_scales_with_the_configured_graduation_cap() {
+    let p69 = derive_curve(SUPPLY_1B, USDC.0, USDC.1, GRAD_MCAP_USD_1E6 as u64).unwrap();
+    let p100 = derive_curve(SUPPLY_1B, USDC.0, USDC.1, 100_000_000_000).unwrap();
+    assert_eq!(p100.grad_mcap_base, 100_000_000_000);
+    assert_eq!(p100.virtual_base, 100_000_000_000 / 15 + 1); // ceil
+    // Token-side shape is untouched by the cap.
+    assert_eq!(p100.tokens_for_sale, p69.tokens_for_sale);
+    assert_eq!(p100.virtual_token, p69.virtual_token);
+    assert!(p100.virtual_base > p69.virtual_base);
+    assert!(grad_mcap_base_atoms(USDC.0, USDC.1, 0).is_none());
+
+    // Exhausting a 100K curve lands at $100K, same tolerance as the 69K gate.
+    let mut st = CurveState {
+        virtual_base: p100.virtual_base,
+        virtual_token: p100.virtual_token,
+        real_base: 0,
+        real_token: p100.tokens_for_sale,
+        k: p100.k,
+    };
+    let f = buy_quote(&st, 100, u64::MAX / 4).unwrap();
+    assert!(f.curve_complete);
+    st.virtual_base += f.net_base as u128;
+    st.virtual_token -= f.tokens_out as u128;
+    st.real_base += f.net_base;
+    st.real_token -= f.tokens_out;
+    let usd = mcap_usd_1e6(mcap_base(&st, SUPPLY_1B).unwrap(), USDC.0, USDC.1).unwrap();
+    let tol = 100_000_000_000u128 / 1_000_000;
+    assert!(usd + tol >= 100_000_000_000 && usd <= 100_000_000_000 + tol, "{usd}");
+}
+
+#[test]
+fn set_params_validation_rejects_every_inconsistent_payload() {
+    let ok = ParamsArgs::from(&custom_params());
+    validate_params(&ok).expect("custom params validate");
+
+    let cases: [(&str, ParamsArgs); 7] = [
+        ("split > 100%", ParamsArgs { fee_protocol_bps: 5_000, fee_ops_bps: 4_000, fee_burn_bps: 1_001, ..ok }),
+        ("min > max", ParamsArgs { min_fee_bps: 801, ..ok }),
+        ("max > cb_start", ParamsArgs { max_fee_bps: 6_001, ..ok }),
+        ("cb_start > 100%", ParamsArgs { cb_start_fee_bps: 10_001, ..ok }),
+        ("window 0", ParamsArgs { cb_window_secs: 0, ..ok }),
+        ("grad 0", ParamsArgs { grad_mcap_usd_1e6: 0, ..ok }),
+        ("max > cb_start via cb", ParamsArgs { cb_start_fee_bps: 799, ..ok }),
+    ];
+    for (why, bad) in cases {
+        assert!(validate_params(&bad).is_err(), "{why} must be rejected");
+    }
+    // Boundaries are inclusive.
+    validate_params(&ParamsArgs { fee_protocol_bps: 5_000, fee_ops_bps: 4_000, fee_burn_bps: 1_000, ..ok })
+        .expect("split == 100%");
+    validate_params(&ParamsArgs { min_fee_bps: 800, max_fee_bps: 800, cb_start_fee_bps: 800, ..ok })
+        .expect("min == max == cb_start");
+    validate_params(&ParamsArgs { cb_start_fee_bps: 10_000, ..ok }).expect("cb_start == 100%");
 }

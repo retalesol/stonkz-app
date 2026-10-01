@@ -1,11 +1,12 @@
 import {
-  GRAD,
+  DEFAULT_CURVE_PARAMS,
   cbLeft,
   curve,
   effFee,
   inCashback,
   liq,
   type Coin,
+  type CurveParams,
   type Lane,
   type Net,
 } from '@stonkz/shared';
@@ -87,7 +88,17 @@ export interface LivePricing {
   baseUsd: number;
 }
 
-export function serialiseToken(row: TokenRow, now: number, live?: LivePricing): SerialisedToken {
+/**
+ * `p` is the row's net's live launchpad parameters (`deps.params.get(net)`):
+ * the cashback window / start fee and the USD graduation cap for rows without
+ * curve columns. Defaults to the contract defaults.
+ */
+export function serialiseToken(
+  row: TokenRow,
+  now: number,
+  live?: LivePricing,
+  p: CurveParams = DEFAULT_CURVE_PARAMS,
+): SerialisedToken {
   const feeCoin = {
     tfee: row.feeBps / 100,
     cashback: row.cashback,
@@ -112,14 +123,14 @@ export function serialiseToken(row: TokenRow, now: number, live?: LivePricing): 
   const supply = row.supply > 0 ? row.supply : 0;
   // Curve progress in base terms when the chain state is known; the snapshot
   // `mc` (base-proportional by construction) for older rows.
-  const curvePct = facts ? facts.fillPct : curve({ mc: row.mc });
+  const curvePct = facts ? facts.fillPct : curve({ mc: row.mc }, p);
   // Only a real curve (`k` set) can be complete; fixture rows default to '0'.
   const curveComplete =
     !!row.curveK && row.curveK !== '0' && (row.curveRealToken === '0' || row.curveRealToken === '');
   // Base terms when the chain state is known. The snapshot-priced `mc` is the
   // same test by construction (`gradMcapBase = $69K / snapshot price`), and
   // stays as the check for rows without curve columns.
-  const atGraduation = (facts?.atGraduation ?? false) || row.mc >= GRAD;
+  const atGraduation = (facts?.atGraduation ?? false) || row.mc >= p.gradUsd;
 
   return {
     // The board keys cards by ticker; `(net, sym)` is the real identity.
@@ -158,9 +169,9 @@ export function serialiseToken(row: TokenRow, now: number, live?: LivePricing): 
     curvePct,
     priceUsd: supply > 0 ? mc / supply : 0,
     liqUsd: facts ? facts.realBase * baseUsd : liq({ mc }),
-    effFeePct: effFee(feeCoin, now),
-    inCashback: inCashback(feeCoin, now),
-    cbLeftMs: cbLeft(feeCoin, now),
+    effFeePct: effFee(feeCoin, now, p),
+    inCashback: inCashback(feeCoin, now, p),
+    cbLeftMs: cbLeft(feeCoin, now, p),
     graduatedAt: row.graduatedAt?.getTime() ?? null,
     curveComplete,
     graduationReady: row.graduatedAt == null && !!row.mint && (curveComplete || atGraduation),

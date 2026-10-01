@@ -7,6 +7,7 @@
 //! this module so both chains can be checked against one table.
 
 use crate::constants::*;
+use crate::state::Params;
 
 /// Every rounding decision in this file is "toward the pool". Traders never
 /// gain an atom from truncation; the curve invariant only ever tightens.
@@ -30,14 +31,17 @@ fn mul_div_floor(a: u128, b: u128, d: u128) -> Option<u128> {
 /* Fee split                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/// The four destinations of one curve fee: 15% platform (`protocol`), 10%
-/// `$STONKZ` buyback (`stonkz_ops`; half of what it buys goes into crates,
-/// half is burned), 6% RWA crate fund (`burn`), 69% creator bucket.
+/// The four destinations of one curve fee: by default 15% platform
+/// (`protocol`), 10% `$STONKZ` buyback (`stonkz_ops`; half of what it buys
+/// goes into crates, half is burned), 6% RWA crate fund (`burn`), 69% creator
+/// bucket. The three treasury shares come from `Params` (`fee_*_bps`).
 ///
 /// `protocol`, `stonkz_ops` and `burn` are floors of their nominal shares;
 /// `creator_bucket` is the **remainder**, so the identity
 /// `protocol + stonkz_ops + burn + creator_bucket == fee` holds for every
 /// input with no exceptions. At most 3 atoms of floor dust land in the bucket.
+/// `set_params` guarantees the three shares sum to at most 10_000 bps, so the
+/// remainder never underflows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FeeShares {
     pub protocol: u64,
@@ -53,17 +57,23 @@ impl FeeShares {
     }
 }
 
-pub fn split_fee(fee: u64) -> FeeShares {
+pub fn split_fee(fee: u64, p: &Params) -> FeeShares {
     let f = fee as u128;
-    // Every share is < fee, so the casts below cannot truncate.
-    let protocol = (f * FEE_PROTOCOL_BPS as u128 / BPS_DEN as u128) as u64;
-    let stonkz_ops = (f * FEE_OPS_BPS as u128 / BPS_DEN as u128) as u64;
-    let burn = (f * FEE_BURN_BPS as u128 / BPS_DEN as u128) as u64;
+    // Every share is <= fee (each bps <= 10_000), so the casts cannot truncate.
+    let protocol = (f * p.fee_protocol_bps as u128 / BPS_DEN as u128) as u64;
+    let stonkz_ops = (f * p.fee_ops_bps as u128 / BPS_DEN as u128) as u64;
+    let burn = (f * p.fee_burn_bps as u128 / BPS_DEN as u128) as u64;
+    // The three bps sum to <= 10_000 (enforced by `set_params`), so the three
+    // floors sum to <= fee and the remainder is exact. `saturating_sub` only
+    // guards a hand-built `Params` that skipped validation.
     FeeShares {
         protocol,
         stonkz_ops,
         burn,
-        creator_bucket: fee - protocol - stonkz_ops - burn,
+        creator_bucket: fee
+            .saturating_sub(protocol)
+            .saturating_sub(stonkz_ops)
+            .saturating_sub(burn),
     }
 }
 
@@ -105,20 +115,29 @@ pub fn split_creator_bucket(bucket: u64, eligible_staked: u64, circulating: u64)
 /// Effective curve fee in basis points at `now`.
 ///
 /// Outside a cashback window this is the creator's own fee. Inside it decays
-/// linearly from 5000 bps to that fee across 300 seconds. Whole-second
-/// granularity, because that is what `Clock` gives us.
-pub fn eff_fee_bps(base_bps: u16, cashback: bool, cb_start: i64, now: i64) -> u16 {
+/// linearly from `p.cb_start_fee_bps` (default 5000) to that fee across
+/// `p.cb_window_secs` (default 300). Whole-second granularity, because that
+/// is what `Clock` gives us.
+pub fn eff_fee_bps(base_bps: u16, cashback: bool, cb_start: i64, now: i64, p: &Params) -> u16 {
     if !cashback {
         return base_bps;
     }
-    let remaining = cb_start + CB_WINDOW_SECS - now;
+    let window = p.cb_window_secs as i64;
+    if window <= 0 {
+        return base_bps;
+    }
+    let remaining = cb_start.saturating_add(window).saturating_sub(now);
     if remaining <= 0 {
         return base_bps;
     }
-    let remaining = core::cmp::min(remaining, CB_WINDOW_SECS) as u64;
+    let remaining = core::cmp::min(remaining, window) as u64;
     let base = base_bps as u64;
-    // base_bps is capped at 500, so the sum cannot exceed 5000 and fits a u16.
-    (base + (CB_START_FEE_BPS - base) * remaining / CB_WINDOW_SECS as u64) as u16
+    // `set_params` enforces `max_fee_bps <= cb_start_fee_bps <= 10_000`, so for
+    // any creator fee inside the bounds the result is <= cb_start_fee_bps and
+    // fits a u16. The `max` covers a coin created under a wider earlier bound:
+    // its fee never decays *up*, it just gets no cashback premium.
+    let start = (p.cb_start_fee_bps as u64).max(base);
+    (base + (start - base) * remaining / window as u64) as u16
 }
 
 /* -------------------------------------------------------------------------- */
@@ -133,23 +152,35 @@ pub struct CurveParams {
     pub virtual_token: u128,
     pub virtual_base: u128,
     pub k: u128,
-    /// Base atoms that equal $69,000 at the oracle price read at creation.
+    /// Base atoms that equal the graduation cap (default $69,000) at the
+    /// oracle price read at creation.
     pub grad_mcap_base: u128,
 }
 
-/// Base atoms worth $69,000 at `price_1e6` USD per whole base token.
-pub fn grad_mcap_base_atoms(price_1e6: u64, base_decimals: u8) -> Option<u128> {
-    if price_1e6 == 0 || base_decimals > 18 {
+/// Base atoms worth `grad_mcap_usd_1e6` (default $69,000) at `price_1e6` USD
+/// per whole base token.
+pub fn grad_mcap_base_atoms(
+    price_1e6: u64,
+    base_decimals: u8,
+    grad_mcap_usd_1e6: u64,
+) -> Option<u128> {
+    if price_1e6 == 0 || base_decimals > 18 || grad_mcap_usd_1e6 == 0 {
         return None;
     }
     let scale = 10u128.checked_pow(base_decimals as u32)?;
-    GRAD_MCAP_USD_1E6
+    (grad_mcap_usd_1e6 as u128)
         .checked_mul(scale)?
         .checked_div(price_1e6 as u128)
 }
 
-/// Derive every curve parameter from the fixed supply and the base price.
-pub fn derive_curve(supply_atoms: u64, price_1e6: u64, base_decimals: u8) -> Option<CurveParams> {
+/// Derive every curve parameter from the fixed supply, the base price and the
+/// graduation cap in force at launch.
+pub fn derive_curve(
+    supply_atoms: u64,
+    price_1e6: u64,
+    base_decimals: u8,
+    grad_mcap_usd_1e6: u64,
+) -> Option<CurveParams> {
     if supply_atoms == 0 {
         return None;
     }
@@ -165,7 +196,7 @@ pub fn derive_curve(supply_atoms: u64, price_1e6: u64, base_decimals: u8) -> Opt
         return None;
     }
 
-    let grad_mcap_base = grad_mcap_base_atoms(price_1e6, base_decimals)?;
+    let grad_mcap_base = grad_mcap_base_atoms(price_1e6, base_decimals, grad_mcap_usd_1e6)?;
     // Ceil, not floor. Graduation mcap is `15 · virtual_base`, so rounding up
     // here guarantees the curve closes at or fractionally above $69,000 and
     // never below it. With a floor the residue lands on the wrong side: for a

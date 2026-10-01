@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {CurveMath} from "../src/CurveMath.sol";
+import {StonkzLens} from "../src/StonkzLens.sol";
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -20,6 +21,7 @@ contract LaunchpadTest is Test {
     StonkzLaunchpad pad;
     PushPriceSource oracle;
     MockERC20 base;
+    StonkzLens lens;
 
     address admin = address(0xA11CE);
     address protocolCold = address(0xC01D1);
@@ -50,6 +52,7 @@ contract LaunchpadTest is Test {
         base = new MockERC20("Global Dollar", "USDG", BASE_DECIMALS);
         oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
         pad = DeployPad.launchpad(admin, protocolCold, opsCold, oracle, migAuth);
+        lens = new StonkzLens();
 
         vm.prank(oracleAuth);
         oracle.pushPrice(address(base), BASE_PRICE_1E6, 0);
@@ -131,9 +134,7 @@ contract LaunchpadTest is Test {
     /* ----------------------------------------------------------- fee split */
 
     /// The gate: 20/10/10/60, exact to the wei, on every fill.
-    function testFuzz_FeeSplitIsExactOnEveryFill(uint96 amountIn, uint16 feeSeed, bool sellSome)
-        public
-    {
+    function testFuzz_FeeSplitIsExactOnEveryFill(uint96 amountIn, uint16 feeSeed, bool sellSome) public {
         uint16 feeBps = uint16(100 + (uint256(feeSeed) % 401));
         // Bounded by the curve's total capacity: past `gradMcapBase / 5` the
         // fill is capped and the coin completes, which is its own test.
@@ -145,7 +146,7 @@ contract LaunchpadTest is Test {
         uint256 padBase0 = base.balanceOf(address(pad));
         StonkzLaunchpad.Coin memory c0 = pad.coinInfo(token);
 
-        (CurveMath.BuyFill memory q,,) = pad.quoteBuy(token, amount);
+        (CurveMath.BuyFill memory q,,) = lens.quoteBuy(pad, token, amount);
         vm.assume(q.tokensOut > 0);
         _buy(token, trader, amount);
 
@@ -161,7 +162,7 @@ contract LaunchpadTest is Test {
             // A sell too small to return a single atom of base reverts rather
             // than burning the seller's tokens for nothing. That is its own
             // test; here it just means there is no fill to check.
-            try pad.quoteSell(token, held / 2) returns (
+            try lens.quoteSell(pad, token, held / 2) returns (
                 CurveMath.SellFill memory, CurveMath.FeeShares memory, uint16
             ) {
                 StonkzLaunchpad.Coin memory c1 = pad.coinInfo(token);
@@ -200,7 +201,7 @@ contract LaunchpadTest is Test {
     function test_MinOutIsEnforcedOnTheCurveHopAlone() public {
         address token = _launch("SLIP", 250, false);
         uint256 amount = FILL / 8;
-        (CurveMath.BuyFill memory q,,) = pad.quoteBuy(token, amount);
+        (CurveMath.BuyFill memory q,,) = lens.quoteBuy(pad, token, amount);
 
         vm.prank(trader);
         vm.expectRevert(bytes("slippage"));
@@ -256,7 +257,7 @@ contract LaunchpadTest is Test {
         address token = _launch("CB", 100, true);
 
         // t=0: the effective fee is the 50% opening rate, not the creator's 1%.
-        (,, uint16 bps0) = pad.quoteBuy(token, ONE);
+        (,, uint16 bps0) = lens.quoteBuy(pad, token, ONE);
         assertEq(bps0, 5_000, "cashback opens at 50%");
 
         uint256 p0 = pad.protocolRevenue(address(base));
@@ -282,21 +283,21 @@ contract LaunchpadTest is Test {
 
         // Halfway through: 1% + 49% * 150/300 = 2550 bps.
         vm.warp(block.timestamp + 150);
-        (,, uint16 bpsMid) = pad.quoteBuy(token, ONE);
+        (,, uint16 bpsMid) = lens.quoteBuy(pad, token, ONE);
         assertEq(bpsMid, 2_550, "linear decay to the creator's own fee");
 
         // Past the window: the creator's own fee, forever.
         vm.warp(block.timestamp + 151);
-        (,, uint16 bpsEnd) = pad.quoteBuy(token, ONE);
+        (,, uint16 bpsEnd) = lens.quoteBuy(pad, token, ONE);
         assertEq(bpsEnd, 100, "settles at the creator fee");
         vm.warp(block.timestamp + 400 days);
-        (,, uint16 bpsLater) = pad.quoteBuy(token, ONE);
+        (,, uint16 bpsLater) = lens.quoteBuy(pad, token, ONE);
         assertEq(bpsLater, 100, "and stays there");
     }
 
     function test_ANonCashbackCoinIsFlatFromTheFirstBlock() public {
         address token = _launch("FLAT", 300, false);
-        (,, uint16 bps) = pad.quoteBuy(token, ONE);
+        (,, uint16 bps) = lens.quoteBuy(pad, token, ONE);
         assertEq(bps, 300);
         assertEq(pad.coinInfo(token).creatorClaimableToken, 0, "no conversion without cashback");
     }
@@ -310,9 +311,7 @@ contract LaunchpadTest is Test {
         // Converting a sell's bucket would be buy pressure the seller never
         // asked for, so it accrues in base.
         assertEq(
-            pad.coinInfo(token).creatorClaimableToken,
-            tokenBucketBefore,
-            "a sell adds no token to the bucket"
+            pad.coinInfo(token).creatorClaimableToken, tokenBucketBefore, "a sell adds no token to the bucket"
         );
     }
 
@@ -613,7 +612,7 @@ contract LaunchpadTest is Test {
     function test_ExhaustedCurveClosesAt69k() public {
         address token = _launch("K69", 250, false);
         _exhaust(token);
-        (, uint256 usd) = pad.marketCap(token);
+        (, uint256 usd) = lens.marketCap(pad, token);
         // Within a part per million of $69,000.
         assertApproxEqRel(usd, CurveMath.GRAD_MCAP_USD_1E6, 1e12, "closes at $69,000");
     }
@@ -624,11 +623,10 @@ contract LaunchpadTest is Test {
             if (pad.coinInfo(token).realToken == 0) break;
             uint256 amount = 2_000 * ONE;
             base.mint(trader, amount);
-            (CurveMath.BuyFill memory q,,) = pad.quoteBuy(token, amount);
+            (CurveMath.BuyFill memory q,,) = lens.quoteBuy(pad, token, amount);
             if (q.tokensOut == 0) break;
             _buy(token, trader, amount);
         }
         assertEq(pad.coinInfo(token).realToken, 0, "the script must exhaust the curve");
     }
-
 }

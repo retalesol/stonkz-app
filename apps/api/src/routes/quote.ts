@@ -108,6 +108,7 @@ export function quoteRoutes(): Hono<AppEnv> {
             usdPrice,
             now,
             aggregator,
+            params: await deps.params.get(net),
           });
           if (side === 'sell') assertUnderMaxTradeUsd(net, quote.amountOut, usdPrice);
           return quote;

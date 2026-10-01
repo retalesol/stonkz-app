@@ -1,6 +1,6 @@
 import { and, eq, gt, sql } from 'drizzle-orm';
 import {
-  FEE_SPLIT,
+  feeSplitOf,
   chainLockMult,
   isEvm,
   nativeUnit,
@@ -373,7 +373,7 @@ export async function stakePoolSummary(
     circulating,
     stakedFrac: circulating > 0 ? Math.min(1, totalStaked / circulating) : 0,
     bucketShare,
-    feeShare: bucketShare * FEE_SPLIT.creatorBucket,
+    feeShare: bucketShare * feeSplitOf(await deps.params.get(net)).creatorBucket,
     lifetimeNative: vault?.stakerPoolNative ?? 0,
     baseSym: token.baseSymbol,
     ...(lifetimeBase !== undefined ? { lifetimeBase } : {}),

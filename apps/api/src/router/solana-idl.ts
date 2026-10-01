@@ -36,6 +36,8 @@ export const LAUNCHPAD_SEEDS = {
   opsVault: 'ops_vault',
   burnVault: 'burn_vault',
   oracle: 'oracle',
+  /** Runtime-tunable `Params` PDA (`set_params`); may not exist yet — the program then uses its defaults. */
+  params: 'params',
 } as const;
 
 export function anchorDiscriminator(instructionName: string): Buffer {
@@ -55,13 +57,15 @@ export interface LaunchpadPdas {
   opsVault: PublicKey;
   burnVault: PublicKey;
   oracle: PublicKey;
+  /** `["params"]` — appended as the last account of `create_token` / `buy` / `sell` / `graduate` / `claim_dex_fees`. */
+  params: PublicKey;
 }
 
 function pda(programId: PublicKey, seeds: (Buffer | Uint8Array)[]): PublicKey {
   return PublicKey.findProgramAddressSync(seeds, programId)[0];
 }
 
-/** Every PDA `buy`/`sell`/`claim_creator_fees` need, derived from `mint` and `baseMint` alone. */
+/** Every PDA `buy`/`sell`/`claim_creator_fees` need, derived from `mint` and `baseMint` alone (plus the global `params` PDA). */
 export function derivePdas(
   programId: PublicKey,
   mint: PublicKey,
@@ -94,6 +98,7 @@ export function derivePdas(
   const opsVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.opsVault), baseMint.toBuffer()]);
   const burnVault = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.burnVault), baseMint.toBuffer()]);
   const oracle = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.oracle), baseMint.toBuffer()]);
+  const params = pda(programId, [Buffer.from(LAUNCHPAD_SEEDS.params)]);
   return {
     global,
     curve,
@@ -107,6 +112,7 @@ export function derivePdas(
     opsVault,
     burnVault,
     oracle,
+    params,
   };
 }
 

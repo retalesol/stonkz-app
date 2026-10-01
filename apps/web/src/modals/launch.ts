@@ -1,6 +1,7 @@
 import {
-  FEE_SPLIT,
-  GRAD,
+  cbStartFeePct,
+  feeBoundsPct,
+  feeSplitOf,
   MAJORS,
   SUPPLIES,
   type SupplyOption,
@@ -26,6 +27,7 @@ import { DOT, MID, fmtSupply } from '../lib/fmt.js';
 import { type Html, attr, html, render } from '../lib/html.js';
 import { SquareCropper, imageNaturalSize, isSquareAspect } from '../lib/crop.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, netOf } from '../state/wallet.js';
+import { currentParams } from '../state/params.js';
 import { addChat } from '../views/chat.js';
 import { closeScrim, isOpen, openScrim, refreshScrim, wireBackdrop } from './scrim.js';
 import {
@@ -82,6 +84,23 @@ interface Draft {
 
 let NEW: Draft = newDefaults();
 let cropper: SquareCropper | null = null;
+
+/** The connected net's live launchpad parameters, as the stepper's copy and limits read them. */
+const split = (): ReturnType<typeof feeSplitOf> => feeSplitOf(currentParams());
+const feeBounds = (): { min: number; max: number } => feeBoundsPct(currentParams());
+/** Supplies the stepper offers on this net: the fixed four, capped by the chain's `maxSupply`. */
+const offeredSupplies = (): readonly (readonly [number, string])[] =>
+  SUPPLIES.filter((s) => s[0] <= currentParams().maxSupply);
+const clampFee = (fee: number): number => {
+  const { min, max } = feeBounds();
+  return Math.min(max, Math.max(min, fee));
+};
+/** "5 MINUTES" / "90 SECONDS" for the cashback window. */
+const cbWindowLabel = (): string => {
+  const secs = currentParams().cbWindowSecs;
+  return secs % 60 === 0 ? `${secs / 60} MINUTE${secs === 60 ? '' : 'S'}` : `${secs} SECONDS`;
+};
+const cbStartLabel = (): string => cbStartFeePct(currentParams()).toFixed(0) + '%';
 let cropBusy = false;
 
 /** A launch is in flight: the stepper is read-only and LAUNCH cannot fire twice. */
@@ -108,8 +127,8 @@ function newDefaults(): Draft {
     base: nativeUnit(),
     tab: 'majors',
     q: '',
-    supply: 1e9,
-    fee: 2,
+    supply: Math.min(1e9, currentParams().maxSupply),
+    fee: clampFee(2),
     buy: 0,
     buyRaw: '',
     cashback: false,
@@ -316,7 +335,7 @@ ${NEW.desc}</textarea>
       DEFAULT ART IS MEMEMAN ON AMBER ${DOT} UPLOAD A SQUARE PNG, JPEG, WEBP OR GIF UNDER 5 MB (OR
       CROP ONE) TO REPLACE IT ON IPFS ${DOT} FIXED SUPPLY
       ${evm ? '' : html`${DOT} MINT AND FREEZE AUTHORITY REVOKED AT DEPLOY`} ${DOT} LP BURNS WHEN
-      THE CURVE HITS ${usd(GRAD)}.
+      THE CURVE HITS ${usd(currentParams().gradUsd)}.
     </p>`;
 }
 
@@ -435,7 +454,7 @@ function ncStep2(): Html {
     <div>
       <span class="lbl" id="nc-sup-lbl">TOTAL SUPPLY</span>
       <div class="supply-row" role="radiogroup" aria-labelledby="nc-sup-lbl">
-        ${SUPPLIES.map(
+        ${offeredSupplies().map(
           (sp) =>
             html`<button
               type="button"
@@ -455,8 +474,8 @@ function ncStep2(): Html {
         <input
           type="range"
           id="f-fee"
-          min="1"
-          max="5"
+          min="${attr(feeBounds().min)}"
+          max="${attr(feeBounds().max)}"
           step="0.1"
           value="${attr(NEW.fee)}"
           aria-valuetext="${attr(Number(NEW.fee).toFixed(1) + ' percent')}"
@@ -464,10 +483,10 @@ function ncStep2(): Html {
         /><span class="fee-val" id="feeVal" aria-hidden="true">${Number(NEW.fee).toFixed(1)}%</span>
       </div>
       <p class="hint" id="nc-fee-hint">
-        CHARGED ON EVERY BUY AND SELL ${DOT} ${(FEE_SPLIT.creatorBucket * 100).toFixed(0)}% TO YOU
-        AS CREATOR FEES (STAKERS TAKE UP TO HALF OF THAT), ${(FEE_SPLIT.protocol * 100).toFixed(0)}%
-        PLATFORM, ${(FEE_SPLIT.buyback * 100).toFixed(0)}% $STONKZ BUYBACK (HALF INTO CRATES, HALF
-        BURNED), ${(FEE_SPLIT.rwa * 100).toFixed(0)}% RWA CRATE FUND (BUYS REAL-WORLD ASSETS FOR
+        CHARGED ON EVERY BUY AND SELL ${DOT} ${(split().creatorBucket * 100).toFixed(0)}% TO YOU AS
+        CREATOR FEES (STAKERS TAKE UP TO HALF OF THAT), ${(split().protocol * 100).toFixed(0)}%
+        PLATFORM, ${(split().buyback * 100).toFixed(0)}% $STONKZ BUYBACK (HALF INTO CRATES, HALF
+        BURNED), ${(split().rwa * 100).toFixed(0)}% RWA CRATE FUND (BUYS REAL-WORLD ASSETS FOR
         CRATES).
       </p>
     </div>`;
@@ -518,10 +537,10 @@ function ncStep3(): Html {
       ><span
         ><span class="cbt">CASHBACK LAUNCH ${DOT} NO DEV BUY</span
         ><span class="cbs"
-          >FOR THE FIRST 5 MINUTES THE TRADING FEE STARTS AT 50% AND DECAYS TO
-          ${Number(NEW.fee).toFixed(1)}%. EVERY FEE IN THAT WINDOW IS SPENT BUYING
-          ${NEW.tick || 'YOUR TOKEN'} ON THE CHART AND THE ALLOCATION GOES TO YOU. AFTER 5 MINUTES
-          FEES ACCRUE IN ${unit}.</span
+          >FOR THE FIRST ${cbWindowLabel()} THE TRADING FEE STARTS AT ${cbStartLabel()} AND DECAYS
+          TO ${Number(NEW.fee).toFixed(1)}%. EVERY FEE IN THAT WINDOW IS SPENT BUYING
+          ${NEW.tick || 'YOUR TOKEN'} ON THE CHART AND THE ALLOCATION GOES TO YOU. AFTER
+          ${cbWindowLabel()} FEES ACCRUE IN ${unit}.</span
         ></span
       >
     </button>
@@ -786,12 +805,13 @@ function commitStep1(): boolean {
     setErr(`${NEW.base} ISN'T AVAILABLE ON ${netOf().name} YET ${DOT} PICK ANOTHER BASE TOKEN`);
     return false;
   }
-  if (!SUPPLIES.some((s) => s[0] === NEW.supply)) {
+  if (!offeredSupplies().some((s) => s[0] === NEW.supply)) {
     setErr('PICK A SUPPLY');
     return false;
   }
-  if (!(NEW.fee >= 1 && NEW.fee <= 5)) {
-    setErr('FEE MUST BE BETWEEN 1.0% AND 5.0%');
+  const { min, max } = feeBounds();
+  if (!(NEW.fee >= min && NEW.fee <= max)) {
+    setErr(`FEE MUST BE BETWEEN ${min.toFixed(1)}% AND ${max.toFixed(1)}%`);
     return false;
   }
   return true;
@@ -1018,7 +1038,8 @@ function previewBuy(): void {
     html`<b>${NEW.tick}</b> / ${NEW.base} ${DOT} SUPPLY <b>${fmtSupply(NEW.supply)}</b> ${DOT} FEE
       <b>${Number(NEW.fee).toFixed(1)}%</b> ${DOT}${
         NEW.cashback && buy <= 0
-          ? html` <b>CASHBACK</b> ${MID} FEE OPENS AT 50% AND DECAYS FOR 5 MINUTES`
+          ? html` <b>CASHBACK</b> ${MID} FEE OPENS AT ${cbStartLabel()} AND DECAYS FOR
+              ${cbWindowLabel()}`
           : html` ENTRY <b>${px(p0)}</b> ${MID} AFTER YOUR BUY <b>${px(p1)}</b>`
       }`,
   );
@@ -1137,7 +1158,7 @@ async function doLaunch(): Promise<void> {
   closeLaunch();
   toast(
     cashback
-      ? 'DEPLOYED ' + sym + '/' + base + ' ' + DOT + ' CASHBACK LIVE FOR 5 MINUTES'
+      ? 'DEPLOYED ' + sym + '/' + base + ' ' + DOT + ' CASHBACK LIVE FOR ' + cbWindowLabel()
       : 'DEPLOYED ' +
           sym +
           '/' +

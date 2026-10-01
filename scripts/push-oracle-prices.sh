@@ -11,6 +11,9 @@
 #   SOL_KEYPAIR   path to the Solana oracle authority keypair (omit to skip)
 #   SOL_MAX_STALENESS  optional: also set global.max_oracle_staleness (admin)
 #   NETS          which chains to push (default "RH BASE SOL")
+#   RH_RPC_URL / BASE_RPC_URL / SOLANA_RPC_URL  override the RPCs; the defaults
+#                 are the project's QuickNode testnet endpoints
+#                 (docs/deployment.md "RPC endpoints")
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,8 +27,8 @@ push_evm() { # net rpc launchpad weth stable...
   echo "== $net priceSource $src"
   local me; me=$(cast wallet address --private-key "$EVM_PK")
   while [ $# -gt 0 ]; do
-    # Public RPCs are load-balanced: a node a block behind hands out a stale
-    # nonce ("replacement transaction underpriced"). Use the pending nonce and
+    # Load-balanced RPCs: a node a block behind hands out a stale nonce
+    # ("replacement transaction underpriced"). Use the pending nonce and
     # retry instead of aborting the whole run.
     local ok=0
     for attempt in 1 2 3 4; do
@@ -44,10 +47,13 @@ push_evm() { # net rpc launchpad weth stable...
 }
 FAILED=0
 NETS=${NETS:-RH BASE SOL}
+RH_RPC_URL=${RH_RPC_URL:-https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/}
+BASE_RPC_URL=${BASE_RPC_URL:-https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/}
+export SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/}
 want() { case " $NETS " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 if [ -n "${EVM_PK:-}" ] && want RH; then
-  push_evm RH https://rpc.testnet.chain.robinhood.com 0xe308287C9A85E2B53F1027a1c589B5e3969928e8 \
+  push_evm RH "$RH_RPC_URL" 0xe308287C9A85E2B53F1027a1c589B5e3969928e8 \
     0x7943e237c7F95DA44E0301572D358911207852Fa "$ETH" \
     0x7E955252E15c84f5768B83c41a71F9eba181802F 1000000 \
     0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E 250000000 \
@@ -57,7 +63,7 @@ if [ -n "${EVM_PK:-}" ] && want RH; then
     0x71178BAc73cBeb415514eB542a8995b82669778d 160000000
 fi
 if [ -n "${EVM_PK:-}" ] && want BASE; then
-  push_evm BASE https://sepolia.base.org 0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 \
+  push_evm BASE "$BASE_RPC_URL" 0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 \
     0x4200000000000000000000000000000000000006 "$ETH" \
     0x036CbD53842c5426634e7929541eC2318f3dCF7e 1000000
 fi
@@ -72,7 +78,7 @@ const disc = (n) => createHash("sha256").update(`global:${n}`).digest().subarray
 const program = new PublicKey("FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg");
 const wsol = new PublicKey("So11111111111111111111111111111111111111112");
 const signer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(process.env.SOL_KEYPAIR, "utf8"))));
-const conn = new Connection(process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com", "confirmed");
+const conn = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 const [global] = PublicKey.findProgramAddressSync([Buffer.from("global")], program);
 const [oracle] = PublicKey.findProgramAddressSync([Buffer.from("oracle"), wsol.toBuffer()], program);
 const tx = new Transaction();

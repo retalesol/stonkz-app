@@ -1,7 +1,10 @@
-import { buyQuote, effFeeBps, sellQuote, type BuyFill, type SellFill } from '@stonkz/curve-sim';
+import { buyQuote, sellQuote, type BuyFill, type SellFill } from '@stonkz/curve-sim';
 import {
+  DEFAULT_CURVE_PARAMS,
   effFee,
+  effFeeBpsAt,
   nativeUnit,
+  type CurveParams,
   type NativeUnit,
   type Net,
   type Quote,
@@ -75,6 +78,12 @@ export interface ComposeQuoteInput {
    * on-chain.
    */
   slippagePct?: number;
+  /**
+   * The net's live launchpad parameters (`deps.params.get(net)`): the cashback
+   * window and start fee shape the effective fee. Defaults to the contract
+   * defaults, which is what every pre-params deployment charges.
+   */
+  params?: CurveParams | undefined;
 }
 
 export interface ComposedQuote extends Quote {
@@ -92,17 +101,19 @@ export interface ComposedQuote extends Quote {
  * numbers) and sets its own short validity window on the response instead.
  */
 
-function effFeePctForRow(row: TokenRow, now: number): number {
+function effFeePctForRow(row: TokenRow, now: number, p: CurveParams): number {
   return effFee(
     { tfee: row.feeBps / 100, cashback: row.cashback, cbStart: row.cbStartMs ?? undefined },
     now,
+    p,
   );
 }
 
-function effFeeBpsForRow(row: TokenRow, now: number): number {
-  const cbStartSecs = BigInt(Math.floor((row.cbStartMs ?? 0) / 1000));
-  const nowSecs = BigInt(Math.floor(now / 1000));
-  return effFeeBps(row.feeBps, row.cashback, cbStartSecs, nowSecs);
+/** Whole-second integer fee the chain charges (`@stonkz/curve-sim`'s `effFeeBps`, with the live window). */
+function effFeeBpsForRow(row: TokenRow, now: number, p: CurveParams): number {
+  const cbStartSecs = Math.floor((row.cbStartMs ?? 0) / 1000);
+  const nowSecs = Math.floor(now / 1000);
+  return effFeeBpsAt(row.feeBps, row.cashback, cbStartSecs, nowSecs, p);
 }
 
 /**
@@ -229,7 +240,7 @@ async function composeCurveQuote(
   const { net, side, amount, row, usdPrice, now } = input;
   const slippagePct = input.slippagePct ?? 0;
   const state = liveCurveState(row);
-  const bps = effFeeBpsForRow(row, now);
+  const bps = effFeeBpsForRow(row, now, input.params ?? DEFAULT_CURVE_PARAMS);
   const nativeDecimals = nativeDecimalsFor(net);
 
   const hops: QuoteHop[] = [];
@@ -506,7 +517,7 @@ async function composeIndicativeQuote(
   aggregatorVenue: Venue | null,
 ): Promise<ComposedQuote> {
   const { net, side, amount, row, usdPrice, now } = input;
-  const feePct = effFeePctForRow(row, now);
+  const feePct = effFeePctForRow(row, now, input.params ?? DEFAULT_CURVE_PARAMS);
   const hops: QuoteHop[] = [];
   const baseAmount = amount;
   const feeAmount = baseAmount * (feePct / 100);

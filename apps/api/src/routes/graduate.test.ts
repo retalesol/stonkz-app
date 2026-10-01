@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { Transaction } from '@solana/web3.js';
+import { PublicKey, Transaction } from '@solana/web3.js';
 import { decodeFunctionData, getAddress } from 'viem';
 import { tokens } from '../db/schema.js';
 import { deriveCurveColumns } from '../router/curve-state.js';
@@ -131,6 +131,15 @@ describe('POST /tokens/:sym/graduate/prepare', () => {
     expect(ix.keys[4]!.pubkey.toBase58()).toBe(h.deps.env.solanaLaunchpadProgramId);
     expect(ix.keys[6]!.pubkey.toBase58()).toBe(address);
     expect(ix.keys[6]!.isSigner).toBe(true);
+    // Account 8 (appended last) is the runtime `["params"]` PDA, read-only.
+    expect(ix.keys).toHaveLength(9);
+    expect(ix.keys[8]!.pubkey.toBase58()).toBe(
+      PublicKey.findProgramAddressSync(
+        [Buffer.from('params')],
+        new PublicKey(h.deps.env.solanaLaunchpadProgramId),
+      )[0].toBase58(),
+    );
+    expect(ix.keys[8]!.isWritable).toBe(false);
   });
 
   it('arms the Solana oracle trigger when the cap is over $69K with tokens left', async () => {

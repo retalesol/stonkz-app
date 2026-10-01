@@ -9,8 +9,11 @@ import { RATE_LIMITS } from '../redis/ratelimit.js';
 /**
  * `GET /platform/status` — the public read side of the admin panel's comms
  * and feature flags: the maintenance banner, active notices for a net, any
- * live/scheduled maintenance window and the per-net launch/trading switches.
- * The web shell polls it (`apps/web/src/admin/banner.ts`).
+ * live/scheduled maintenance window, the per-net launch/trading switches and
+ * the **live launchpad parameters per net** (`params`: fee split, cashback
+ * window, graduation cap, supply cap, router buy cap — `chain/params.ts`).
+ * The web shell polls it (`apps/web/src/admin/banner.ts`,
+ * `apps/web/src/api/live.ts`).
  */
 export function platformRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -66,6 +69,7 @@ export function platformRoutes(): Hono<AppEnv> {
         launch: Object.fromEntries(ALL_NETS.map((n) => [n, settings.launchEnabled(n)])),
         trading: Object.fromEntries(ALL_NETS.map((n) => [n, settings.tradingEnabled(n)])),
       },
+      params: await deps.params.all(),
     });
   });
 

@@ -5,8 +5,6 @@ import type { Address } from 'viem';
 import { and, eq, isNull, gt, lte, ne, sql } from 'drizzle-orm';
 import {
   isEvm,
-  isValidCurveFee,
-  isValidSupply,
   isValidTicker,
   normalizeTicker,
   nativeUnit,
@@ -35,6 +33,7 @@ import { RouterError, SolanaTransactionTooLargeError } from '../router/errors.js
 import { moderateLaunch } from '../router/moderation.js';
 import { gate } from '../admin/index.js';
 import { toAtoms } from '../router/units.js';
+import { assertUnderMaxBuyNative } from '../router/max-buy.js';
 import type { JupiterQuoteResponseRaw } from '../router/jupiter.js';
 import {
   asSolanaBlockhashSource,
@@ -73,17 +72,19 @@ import {
   type EvmConfirmedDevBuy,
 } from './launch-evm.js';
 import {
-  EVM_MAX_NAME_CHARS,
-  MAX_DESCR_CHARS,
-  MAX_URI_BYTES,
-  SOLANA_MAX_NAME_BYTES,
+  checkCurveFee,
+  checkSupply,
   checkTelegram,
   checkUri,
   checkWebsite,
   checkXHandle,
+  EVM_MAX_NAME_CHARS,
   imageUrlFromUri,
+  MAX_DESCR_CHARS,
+  MAX_URI_BYTES,
   sanitizeDescr,
   sanitizeName,
+  SOLANA_MAX_NAME_BYTES,
   utf8Length,
 } from './launch-validate.js';
 
@@ -347,18 +348,15 @@ export function launchRoutes(): Hono<AppEnv> {
       const website = webCheck.ok ? webCheck.value : null;
       const telegram = tgCheck.ok ? tgCheck.value : null;
 
-      if (!isValidSupply(supply)) {
-        return c.json(
-          { error: 'invalid_supply', detail: 'supply must be one of 1e6, 5e8, 1e9, 1e12' },
-          422,
-        );
+      // Supply cap and creator-fee bounds are admin parameters on chain
+      // (`deps.params`); the details quote the live bounds.
+      const curveParams = await deps.params.get(net);
+      const supplyCheck = checkSupply(supply, curveParams);
+      if (!supplyCheck.ok) {
+        return c.json({ error: 'invalid_supply', detail: supplyCheck.detail }, 422);
       }
-      if (!isValidCurveFee(feePct)) {
-        return c.json(
-          { error: 'invalid_fee', detail: 'fee must be between 1.0 and 5.0 percent' },
-          422,
-        );
-      }
+      const feeCheck = checkCurveFee(feePct, curveParams);
+      if (!feeCheck.ok) return c.json({ error: 'invalid_fee', detail: feeCheck.detail }, 422);
       if (devBuyNative < 0 || !Number.isFinite(devBuyNative)) {
         return c.json(
           { error: 'bad_request', detail: 'devBuyNative must be a non-negative number' },
@@ -373,6 +371,15 @@ export function launchRoutes(): Hono<AppEnv> {
           },
           422,
         );
+      }
+      // The EVM router caps `msg.value` on every buy, the atomic dev buy included.
+      if (isEvm(net) && devBuyNative > 0) {
+        try {
+          assertUnderMaxBuyNative(net, curveParams, toAtoms(devBuyNative, 18));
+        } catch (err) {
+          if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
+          throw err;
+        }
       }
       // Plan step 90: cashback only if the native-denominated dev buy is zero.
       if (cashback && devBuyNative > 0) {

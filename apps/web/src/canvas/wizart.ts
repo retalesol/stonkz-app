@@ -1,4 +1,5 @@
 import { MEMEMAN_FULL_SRC } from '../lib/avatar.js';
+import { currentParams } from '../state/params.js';
 import { paintFace } from './face.js';
 import { fitCanvas, miniAv } from './pix.js';
 
@@ -257,7 +258,7 @@ const grad: ArtFn = (g, w, h) => {
   g.fillStyle = '#2bff8f';
   g.font = '700 30px "IBM Plex Sans Condensed", sans-serif';
   g.textBaseline = 'middle';
-  g.fillText('$69,000', bx + 14, 52);
+  g.fillText('$' + currentParams().gradUsd.toLocaleString('en-US'), bx + 14, 52);
   g.fillStyle = '#ffd23f';
   g.font = '700 12px "IBM Plex Sans Condensed", sans-serif';
   g.fillText('+1,420.69%', bx + 14, 74);

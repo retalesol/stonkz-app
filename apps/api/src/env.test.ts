@@ -148,6 +148,31 @@ describe('readEnv production provider gates', () => {
     expect(() => readEnv({ ...paid, ...over })).toThrow(pattern);
   });
 
+  it('accepts the QuickNode provider endpoints (testnet and mainnet hosts) in production', () => {
+    // Shape of the project's endpoints: `<name>.<network>.quiknode.pro/<key>/`.
+    // The guard is a deny-list of public hosts, so these must all pass, with
+    // and without SOLANA_PRIVATE_RPC_URL set.
+    const quiknode = {
+      ...paid,
+      RH_RPC_URL: 'https://icy-example.robinhood-testnet.quiknode.pro/0123abcd/',
+      BASE_RPC_URL: 'https://bold-example.base-sepolia.quiknode.pro/0123abcd/',
+      SOLANA_RPC_URL: 'https://practical-example.solana-devnet.quiknode.pro/0123abcd/',
+    };
+    expect(() => readEnv(quiknode)).not.toThrow();
+    expect(readEnv(quiknode).solanaPrivateRpcUrl).toBeUndefined();
+    expect(() =>
+      readEnv({
+        ...quiknode,
+        RH_CHAIN_ID: '4663',
+        BASE_CHAIN_ID: '8453',
+        RH_RPC_URL: 'https://thrumming-example.robinhood-mainnet.quiknode.pro/0123abcd/',
+        BASE_RPC_URL: 'https://muddy-example.base-mainnet.quiknode.pro/0123abcd/',
+        SOLANA_RPC_URL: 'https://withered-example.solana-mainnet.quiknode.pro/0123abcd/',
+        SOLANA_PRIVATE_RPC_URL: 'https://withered-example.solana-mainnet.quiknode.pro/0123abcd/',
+      }),
+    ).not.toThrow();
+  });
+
   it('refuses the defaults (public Base + Solana RPCs, Jupiter lite-api) in production', () => {
     const { BASE_RPC_URL: _b, SOLANA_RPC_URL: _s, JUPITER_API_BASE_URL: _j, ...rest } = paid;
     expect(() => readEnv(rest)).toThrow(/BASE_RPC_URL/);

@@ -1,5 +1,4 @@
 import {
-  GRAD,
   RANKS,
   ago,
   inCashback,
@@ -64,6 +63,7 @@ import {
 } from '../state/social.js';
 import { USER, addXP, saveUser, unlock } from '../state/user.js';
 import { NATIVE_PRICE, WALLET, nativeUnit } from '../state/wallet.js';
+import { coinParams, currentParams } from '../state/params.js';
 import { explorerTxUrl } from '../wallet/chain.js';
 import { openClaim } from '../modals/claim.js';
 import { openEdit } from '../modals/edit.js';
@@ -274,7 +274,7 @@ function stakedPanelHTML(): Html {
   const list = stakedList();
   if (!list.length) return html`<div class="empty">NO STAKED POSITIONS ${DOT}<br>OPEN A TOKEN AND HIT STAKE</div>`;
   return html`${list.map(({ c, st }) => {
-    const cb = inCashback(c);
+    const cb = inCashback(c, Date.now(), coinParams(c));
     const locked = st.until > Date.now();
     const earn = cb ? num(st.rewTok || 0) + ' ' + c.sym : (st.rewSol || 0).toFixed(4) + ' ' + nativeUnit();
     return html`<div class="stk-row" data-stk="${attr(c.sym)}" data-mint="${attr(c.mint || '')}">
@@ -586,7 +586,7 @@ export function renderProfile(addr?: string): void {
           <section class="pnl"><div class="pnl-hd"><h2>${own ? 'Coins You Launched' : 'Coins Launched'}</h2
             >${own ? html`<button class="hdbtn" id="claimBtn"${canClaim ? '' : ' disabled'}>CLAIM FEES</button>` : ''}</div
             ><div id="pfMine">${minedHTML(mine)}</div
-            >${own ? html`<div class="pnl-note">DEPLOYING A COIN PAYS 50 XP ${DOT} BONDING PAYS 250 XP ${DOT} LP BURNS AT ${usd(GRAD)}</div>` : ''}</section
+            >${own ? html`<div class="pnl-note">DEPLOYING A COIN PAYS 50 XP ${DOT} BONDING PAYS 250 XP ${DOT} LP BURNS AT ${usd(currentParams().gradUsd)}</div>` : ''}</section
           ><section class="pnl"><div class="pnl-hd"><h2>${friendsTitle}</h2
             ><span class="pnl-tabs">${
               live

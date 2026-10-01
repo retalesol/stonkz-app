@@ -133,6 +133,10 @@ pub struct CreateToken<'info> {
     /// CHECK: pinned to the Metaplex Token Metadata program id.
     #[account(address = TOKEN_METADATA_PROGRAM_ID @ LaunchpadError::Unauthorized)]
     pub token_metadata_program: UncheckedAccount<'info>,
+
+    /* Appended after the 17 accounts above (runtime-params upgrade). */
+    /// CHECK: PDA verified in load_params; empty account means defaults
+    pub params: UncheckedAccount<'info>,
 }
 
 fn valid_ticker(t: &str) -> bool {
@@ -162,8 +166,9 @@ pub fn create_token(
         name.len() <= MAX_NAME_LEN && uri.len() <= MAX_URI_LEN,
         LaunchpadError::MetadataTooLong
     );
+    let params = load_params(&ctx.accounts.params, ctx.program_id)?;
     require!(
-        (MIN_FEE_BPS..=MAX_FEE_BPS).contains(&fee_bps),
+        (params.min_fee_bps..=params.max_fee_bps).contains(&fee_bps),
         LaunchpadError::FeeOutOfRange
     );
     require!(
@@ -178,8 +183,8 @@ pub fn create_token(
     let supply_atoms = supply
         .checked_mul(10u64.pow(TOKEN_DECIMALS as u32))
         .ok_or(LaunchpadError::MathOverflow)?;
-    let p =
-        derive_curve(supply_atoms, price_1e6, base_decimals).ok_or(LaunchpadError::MathOverflow)?;
+    let p = derive_curve(supply_atoms, price_1e6, base_decimals, params.grad_mcap_usd_1e6)
+        .ok_or(LaunchpadError::MathOverflow)?;
 
     let mint_key = ctx.accounts.mint.key();
     let curve_bump = ctx.bumps.curve;

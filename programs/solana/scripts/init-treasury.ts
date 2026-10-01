@@ -6,7 +6,7 @@
  * two that already exist, without touching them. Trades revert until every
  * base mint a curve uses has its burn vault.
  *
- *   ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
+ *   ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
  *   ANCHOR_WALLET=/path/to/funded.json \
  *   pnpm exec tsx programs/solana/scripts/init-treasury.ts [mint ...]
  *

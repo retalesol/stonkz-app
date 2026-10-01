@@ -7,7 +7,12 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
+import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
+import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
+import {CurveMath} from "../src/CurveMath.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
+import {MockERC20} from "./mocks/Mocks.sol";
+import {MockUniversalRouter, MockWETH, MockSwapRouter02} from "./mocks/MockUniversalRouter.sol";
 import {IPriceSource} from "../src/oracle/IPriceSource.sol";
 import {DeployPad} from "../script/DeployPad.sol";
 import {GovernanceHandover} from "../script/GovernanceHandover.s.sol";
@@ -87,6 +92,16 @@ contract GovernanceTest is Test {
         pad.setMigrator(currentMigrator, eoa);
         vm.expectRevert(bytes("not admin"));
         pad.setWithdrawAuthorities(eoa, eoa);
+        vm.expectRevert(bytes("not admin"));
+        pad.setParams(CurveMath.DEFAULT_PARAMS);
+        vm.expectRevert(bytes("not admin"));
+        pad.setTrustedRouter(eoa);
+        vm.expectRevert(bytes("not admin"));
+        pad.setPriceSource(IPriceSource(oracle));
+        vm.expectRevert(bytes("not admin"));
+        pad.setMaxOracleStaleness(1);
+        vm.expectRevert(bytes("not admin"));
+        pad.setPauser(eoa);
         vm.expectRevert(bytes("not admin"));
         PushPriceSource(oracle).setOracleAuthority(eoa);
         vm.expectRevert(bytes("not admin"));
@@ -174,6 +189,71 @@ contract GovernanceTest is Test {
         vm.prank(safe);
         tl.execute(address(pad), 0, unpause, 0, bytes32("u"));
         assertFalse(pad.tradingPaused() || pad.launchPaused(), "the timelock unpaused");
+    }
+
+    /// A router bound to the launchpad, as the app deploys one.
+    function _router() internal returns (StonkzRouter) {
+        MockWETH weth = new MockWETH();
+        MockERC20 usdg = new MockERC20("Global Dollar", "USDG", 6);
+        return new StonkzRouter(
+            IUniversalRouter(address(new MockUniversalRouter(weth, usdg, 3_000e6))),
+            pad,
+            IWETH9(address(weth)),
+            ISwapRouter02(address(new MockSwapRouter02(weth, usdg, 3_000e6))),
+            0,
+            IPyth(address(0)),
+            IStockAttestationSink(address(0))
+        );
+    }
+
+    /// The runtime parameters, the trusted router and the router's own
+    /// `setConfig` are admin powers like any other: after the handover the
+    /// EOA has none of them, and the Safe exercises each through the timelock
+    /// after `MIN_DELAY`. `setConfig` is gated by `launchpad.admin()`, so it
+    /// follows the handover without a router change.
+    function test_TheTimelockGovernsParamsTheRouterAndItsConfig() public {
+        StonkzRouter router = _router();
+        TimelockController tl = script.execute(_config(true), EOA_KEY);
+
+        vm.startPrank(eoa);
+        vm.expectRevert(bytes("not admin"));
+        pad.setParams(CurveMath.DEFAULT_PARAMS);
+        vm.expectRevert(bytes("not admin"));
+        pad.setTrustedRouter(address(router));
+        vm.expectRevert(StonkzRouter.NotAdmin.selector);
+        router.setConfig(1 ether, IPyth(address(0)), IStockAttestationSink(address(0)));
+        vm.stopPrank();
+        vm.prank(safe);
+        vm.expectRevert(StonkzRouter.NotAdmin.selector);
+        router.setConfig(1 ether, IPyth(address(0)), IStockAttestationSink(address(0)));
+
+        CurveMath.Params memory p = CurveMath.unpack(CurveMath.DEFAULT_PARAMS);
+        (p.feeProtocolBps, p.feeOpsBps, p.feeBurnBps) = (2_000, 500, 500);
+        uint256 word = CurveMath.pack(p);
+        address[] memory targets = new address[](3);
+        uint256[] memory values = new uint256[](3);
+        bytes[] memory payloads = new bytes[](3);
+        targets[0] = address(pad);
+        payloads[0] = abi.encodeCall(pad.setParams, (word));
+        targets[1] = address(pad);
+        payloads[1] = abi.encodeCall(pad.setTrustedRouter, (address(router)));
+        targets[2] = address(router);
+        payloads[2] =
+            abi.encodeCall(router.setConfig, (1 ether, IPyth(address(0)), IStockAttestationSink(address(0))));
+
+        vm.prank(safe);
+        tl.scheduleBatch(targets, values, payloads, 0, bytes32("params"), DELAY);
+        vm.prank(safe);
+        vm.expectRevert(); // not ready
+        tl.executeBatch(targets, values, payloads, 0, bytes32("params"));
+        assertEq(pad.paramsWord(), CurveMath.DEFAULT_PARAMS, "nothing moved before the delay");
+        vm.warp(block.timestamp + DELAY);
+        vm.prank(safe);
+        tl.executeBatch(targets, values, payloads, 0, bytes32("params"));
+
+        assertEq(pad.paramsWord(), word, "the timelock set the parameters");
+        assertEq(pad.trustedRouter(), address(router), "the timelock set the trusted router");
+        assertEq(router.maxBuyNative(), 1 ether, "the timelock set the router's cap");
     }
 
     /// The two-step handover as the task describes it: the multisig accepts.

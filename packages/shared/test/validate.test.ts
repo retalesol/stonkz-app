@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MIN_TIP_ETH, MIN_TIP_SOL, SUPPLIES } from '../src/constants.js';
+import { DEFAULT_CURVE_PARAMS } from '../src/params.js';
 import {
   isTickerTaken,
   isValidCurveFee,
@@ -133,6 +134,28 @@ describe('isValidSupply', () => {
   it('rejects anything else', () => {
     expect(isValidSupply(1234)).toBe(false);
     expect(isValidSupply(0)).toBe(false);
+  });
+});
+
+describe('isValidSupply with a chain cap', () => {
+  it('refuses a fixed supply above maxSupply', () => {
+    const p = { ...DEFAULT_CURVE_PARAMS, maxSupply: 1e9 };
+    expect(isValidSupply(1e9, p)).toBe(true);
+    expect(isValidSupply(5e8, p)).toBe(true);
+    expect(isValidSupply(1e12, p)).toBe(false);
+    // Still only the four fixed values, even under the cap.
+    expect(isValidSupply(2e8, p)).toBe(false);
+  });
+});
+
+describe('isValidCurveFee with chain bounds', () => {
+  it('reads the slider range off minFeeBps / maxFeeBps', () => {
+    const p = { ...DEFAULT_CURVE_PARAMS, minFeeBps: 50, maxFeeBps: 300 };
+    expect(isValidCurveFee(0.5, p)).toBe(true);
+    expect(isValidCurveFee(3, p)).toBe(true);
+    expect(isValidCurveFee(0.4, p)).toBe(false);
+    expect(isValidCurveFee(3.1, p)).toBe(false);
+    expect(isValidCurveFee(5, p)).toBe(false);
   });
 });
 

@@ -1,5 +1,8 @@
 use anchor_lang::prelude::*;
 
+use crate::constants::*;
+use crate::errors::LaunchpadError;
+
 /// Program-wide configuration and the pause switches.
 ///
 /// `admin`, `protocol_withdraw_authority` and `ops_withdraw_authority` are
@@ -199,4 +202,77 @@ pub struct ReferralClaimState {
     pub base_mint: Pubkey,
     pub recipient: Pubkey,
     pub claimed: u64,
+}
+
+/// Admin-tunable numbers, in their own PDA (`["params"]`) so no existing
+/// account layout changes and the upgrade needs no migration: every reader
+/// goes through [`load_params`], which returns [`Params::defaults`] while the
+/// account does not exist yet. The curve *shape* (supply menu, 4/5 sale
+/// fraction, virtual-reserve ratios, lock tables) is deliberately not here —
+/// those are parity invariants shared with the EVM mirror, not tunables.
+#[account]
+#[derive(InitSpace)]
+pub struct Params {
+    pub bump: u8,
+    /// Platform revenue share of every fee, bps.
+    pub fee_protocol_bps: u16,
+    /// `$STONKZ` buyback share, bps (historical `ops` name on chain).
+    pub fee_ops_bps: u16,
+    /// RWA crate fund share, bps (historical `burn` name on chain).
+    pub fee_burn_bps: u16,
+    /// Creator-set curve fee bounds, inclusive.
+    pub min_fee_bps: u16,
+    pub max_fee_bps: u16,
+    /// The fee a cashback window decays down from.
+    pub cb_start_fee_bps: u16,
+    /// Cashback window length, seconds.
+    pub cb_window_secs: u32,
+    /// Graduation market cap, USD scaled 1e6.
+    pub grad_mcap_usd_1e6: u64,
+    pub _reserved: [u8; 64],
+}
+
+impl Params {
+    /// The numbers the program shipped with (`constants.rs`), used verbatim
+    /// until `set_params` has been called once.
+    pub fn defaults() -> Self {
+        Params {
+            bump: 0,
+            fee_protocol_bps: FEE_PROTOCOL_BPS as u16,
+            fee_ops_bps: FEE_OPS_BPS as u16,
+            fee_burn_bps: FEE_BURN_BPS as u16,
+            min_fee_bps: MIN_FEE_BPS,
+            max_fee_bps: MAX_FEE_BPS,
+            cb_start_fee_bps: CB_START_FEE_BPS as u16,
+            cb_window_secs: CB_WINDOW_SECS as u32,
+            grad_mcap_usd_1e6: GRAD_MCAP_USD_1E6 as u64,
+            _reserved: [0; 64],
+        }
+    }
+}
+
+/// Read the runtime parameters from the (possibly not yet created) `Params`
+/// account.
+///
+/// - `info.key` must be the `["params"]` PDA of this program, else
+///   [`LaunchpadError::ParamsAccountMismatch`].
+/// - An **empty** account (never initialised) yields [`Params::defaults`].
+///   This is what lets the program upgrade land before `set_params` with
+///   nothing changing in between.
+/// - Otherwise the account must be program-owned and carry the `Params`
+///   discriminator.
+pub fn load_params(info: &AccountInfo, program_id: &Pubkey) -> Result<Params> {
+    let (expected, _) = Pubkey::find_program_address(&[SEED_PARAMS], program_id);
+    require_keys_eq!(*info.key, expected, LaunchpadError::ParamsAccountMismatch);
+    if info.data_len() == 0 {
+        return Ok(Params::defaults());
+    }
+    require_keys_eq!(
+        *info.owner,
+        *program_id,
+        ErrorCode::AccountOwnedByWrongProgram
+    );
+    let data = info.try_borrow_data()?;
+    let mut slice: &[u8] = &data;
+    Params::try_deserialize(&mut slice)
 }

@@ -10,6 +10,10 @@ pub const BPS_DEN: u64 = 10_000;
 /* -------------------------------------------------------------------------- */
 /* Fee split — see SPEC.md §2                                                  */
 /* -------------------------------------------------------------------------- */
+// The fee split, the creator fee bounds, the cashback window and the
+// graduation cap are the *defaults* of the admin-settable `Params` account
+// (`set_params`). Until that account exists the program runs on exactly
+// these numbers.
 
 /// Platform revenue share of the curve fee (15%).
 pub const FEE_PROTOCOL_BPS: u64 = 1_500;
@@ -243,6 +247,9 @@ pub const TOKEN_METADATA_PROGRAM_ID: Pubkey =
 pub const SEED_METADATA: &[u8] = b"metadata";
 /// The emergency pauser config PDA.
 pub const SEED_PAUSER: &[u8] = b"pauser";
+/// Runtime-tunable parameters (`Params`). Empty / absent means the defaults
+/// in this file — see `state::load_params`.
+pub const SEED_PARAMS: &[u8] = b"params";
 /// `CreateMetadataAccountV3` — Metaplex's native (non-Anchor) one-byte
 /// instruction tag.
 pub const METAPLEX_CREATE_METADATA_V3_IX: u8 = 33;

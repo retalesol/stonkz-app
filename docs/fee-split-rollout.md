@@ -35,7 +35,7 @@ export PRIVATE_KEY=0x...                                   # launchpad admin
 export LAUNCHPAD_ADDRESS=0x2588E500B1e5fCF18253F44b6f2607BF2B14161C
 export EXPECT_CHAIN_ID=46630
 forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad \
-  --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+  --rpc-url https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/ --broadcast -vvv
 ```
 
 The script reads `stonkzBurn(address(0))` back through the proxy, so a
@@ -48,7 +48,7 @@ half-applied upgrade fails loudly. Record `newImpl` in
 export LAUNCHPAD_ADDRESS=0x02032371b6B2173211b8aa0Fa90c216d6a3a4E3A
 export EXPECT_CHAIN_ID=84532
 forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad \
-  --rpc-url https://sepolia.base.org --broadcast -vvv
+  --rpc-url https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/ --broadcast -vvv
 ```
 
 The `StonkzRouter` is immutable and unchanged by the split; it does not need
@@ -60,7 +60,7 @@ a redeploy (its new per-buy cap defaults to 0 = unlimited on both testnets).
 cd programs/solana
 anchor build
 anchor deploy --provider.cluster devnet         # program id stays FF1f3V47…
-ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=~/.config/solana/deployer.json \
+ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ ANCHOR_WALLET=~/.config/solana/deployer.json \
   pnpm exec tsx scripts/init-treasury.ts        # wrapped SOL burn vault
 # then once per non-native base mint the deployment allows (USDC, stock tokens):
 #   pnpm exec tsx scripts/init-treasury.ts <baseMint> [<baseMint> ...]
@@ -199,9 +199,9 @@ API, migration and indexer ship first and the programs follow.
 ```
 cd programs/evm
 LAUNCHPAD_ADDRESS=0xe308287C9A85E2B53F1027a1c589B5e3969928e8 EXPECT_CHAIN_ID=46630 \
-  forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+  forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad --rpc-url https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/ --broadcast -vvv
 LAUNCHPAD_ADDRESS=0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35 EXPECT_CHAIN_ID=84532 \
-  forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad --rpc-url https://sepolia.base.org --broadcast -vvv
+  forge script script/UpgradeLaunchpad.s.sol:UpgradeLaunchpad --rpc-url https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/ --broadcast -vvv
 ```
 
 Before broadcasting, `forge inspect StonkzLaunchpad storage-layout` must be

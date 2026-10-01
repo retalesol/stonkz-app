@@ -483,6 +483,9 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
 
     trustedProxyDepth: int(src, 'TRUSTED_PROXY_DEPTH', 1),
 
+    // Public devnet is the local-dev default only. Deployed stacks set the
+    // project's QuickNode endpoint (docs/deployment.md "RPC endpoints");
+    // production refuses this host below.
     solanaRpcUrl: str(src, 'SOLANA_RPC_URL', 'https://api.devnet.solana.com'),
     jitoBlockEngineUrl: (() => {
       const raw = src['JITO_BLOCK_ENGINE_URL']?.trim();
@@ -785,6 +788,9 @@ function hostOf(url: string): string | null {
   }
 }
 
+// Deny-lists, not allow-lists: the project's provider endpoints
+// (`*.quiknode.pro`, see docs/deployment.md "RPC endpoints") and any other
+// keyed host pass. Only the keyless public hosts are named here.
 const PUBLIC_BASE_RPC_HOSTS = new Set(['sepolia.base.org', 'mainnet.base.org']);
 /** `api.mainnet-beta.solana.com`, `api.devnet.solana.com`, `api.testnet.solana.com`. */
 const PUBLIC_SOLANA_RPC_HOST = /^api\.[a-z0-9-]+\.solana\.com$/;

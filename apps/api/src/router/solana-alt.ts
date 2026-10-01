@@ -105,6 +105,7 @@ export function stonkzLaunchAltAddresses(
     ASSOCIATED_TOKEN_PROGRAM_ID,
     NATIVE_MINT,
     derivePdas(programId, PublicKey.default, NATIVE_MINT).global,
+    derivePdas(programId, PublicKey.default, NATIVE_MINT).params,
   ];
   for (const baseMint of baseMints) {
     // Mint-keyed PDAs are unused; any mint works for the base-keyed ones.

@@ -3,17 +3,30 @@ import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { decodeFunctionData, getAddress, toFunctionSelector } from 'viem';
 import {
+  DEFAULT_CURVE_PARAMS,
+  DEFAULT_PARAMS_WORD,
+  packParamsWord,
+  unpackParamsWord,
+} from '@stonkz/shared';
+import {
   LAUNCHPAD_ADMIN_ABI,
   PUSH_PRICE_SOURCE_ABI,
+  ROUTER_ADMIN_ABI,
+  checkParamsWord,
+  readEvmRouterConfig,
   buildSolanaAdminInstruction,
   composeSolanaAdminTransaction,
+  SOLANA_PARAMS_DEFAULTS,
   decodeSolanaBaseOracle,
   decodeSolanaGlobal,
+  decodeSolanaParams,
   decodeSolanaPauserConfig,
+  encodeSetParamsData,
   prepareEvmAdminTx,
   readEvmLaunchpadState,
   safeTransactionBuilderJson,
   solanaGlobalPda,
+  solanaParamsPda,
   solanaPauserPda,
 } from './chain-ops.js';
 
@@ -238,6 +251,7 @@ describe('Solana admin instructions', () => {
         { kind: 'push_price', baseMint: other.toBase58(), price1e6: '214080000', conf1e6: '1000' },
         'push_price',
       ],
+      [{ kind: 'set_params', params: { ...SOLANA_PARAMS_DEFAULTS } }, 'set_params'],
     ];
     for (const [action, name] of cases) {
       const { ix } = buildSolanaAdminInstruction(PROGRAM, admin, action);
@@ -372,5 +386,294 @@ describe('Solana admin instructions', () => {
       publishTime: 1_700_000_000,
     });
     expect(() => decodeSolanaGlobal(Buffer.alloc(10).toString('base64'))).toThrow(/too short/);
+  });
+});
+
+describe('Solana runtime params', () => {
+  const CUSTOM = {
+    feeProtocolBps: 2000,
+    feeOpsBps: 1500,
+    feeBurnBps: 500,
+    minFeeBps: 50,
+    maxFeeBps: 800,
+    cbStartFeeBps: 6000,
+    cbWindowSecs: 120,
+    gradMcapUsd1e6: '100000000000',
+  };
+
+  it('set_params takes global, the params PDA (writable), the admin and the system program', () => {
+    const { ix, signer, summary } = buildSolanaAdminInstruction(PROGRAM, admin, {
+      kind: 'set_params',
+      params: CUSTOM,
+    });
+    expect(signer).toBe('admin');
+    expect(ix.keys).toHaveLength(4);
+    expect(ix.keys[0]!.pubkey.equals(solanaGlobalPda(PROGRAM))).toBe(true);
+    expect(ix.keys[1]!.pubkey.equals(solanaParamsPda(PROGRAM))).toBe(true);
+    expect(ix.keys[1]!.isWritable).toBe(true);
+    expect(ix.keys[2]!.isSigner && ix.keys[2]!.isWritable).toBe(true);
+    expect(summary).toContain('grad=$100000');
+  });
+
+  it('encodes ParamsArgs as Borsh: six u16, a u32 and a u64, little-endian', () => {
+    const data = encodeSetParamsData(CUSTOM);
+    expect(Buffer.from(data.subarray(0, 8)).equals(disc('set_params'))).toBe(true);
+    expect([...data.subarray(8)]).toEqual([
+      0xd0,
+      0x07, // 2000
+      0xdc,
+      0x05, // 1500
+      0xf4,
+      0x01, // 500
+      0x32,
+      0x00, // 50
+      0x20,
+      0x03, // 800
+      0x70,
+      0x17, // 6000
+      0x78,
+      0x00,
+      0x00,
+      0x00, // 120
+      0x00,
+      0xe8,
+      0x76,
+      0x48,
+      0x17,
+      0x00,
+      0x00,
+      0x00, // 100_000_000_000
+    ]);
+  });
+
+  it("refuses what the program's validate_params refuses", () => {
+    const bad = (patch: Partial<typeof CUSTOM>, re: RegExp): void =>
+      expect(() => encodeSetParamsData({ ...CUSTOM, ...patch })).toThrow(re);
+    bad({ feeProtocolBps: 5000, feeOpsBps: 4000, feeBurnBps: 1001 }, /<= 10000/);
+    bad({ minFeeBps: 801 }, /minFeeBps/);
+    bad({ cbStartFeeBps: 799 }, /cbStartFeeBps/);
+    bad({ cbStartFeeBps: 10_001 }, /0\.\.=10000/);
+    bad({ cbWindowSecs: 0 }, /cbWindowSecs/);
+    bad({ gradMcapUsd1e6: '0' }, /gradMcapUsd1e6/);
+    bad({ feeProtocolBps: 1.5 }, /integer/);
+    // Inclusive boundaries pass.
+    expect(() =>
+      encodeSetParamsData({ ...CUSTOM, feeProtocolBps: 5000, feeOpsBps: 4000, feeBurnBps: 1000 }),
+    ).not.toThrow();
+    expect(() => encodeSetParamsData({ ...CUSTOM, cbStartFeeBps: 10_000 })).not.toThrow();
+    expect(() => encodeSetParamsData(SOLANA_PARAMS_DEFAULTS)).not.toThrow();
+  });
+
+  it('decodes the Params account, and an absent one as the uninitialised defaults', () => {
+    expect(decodeSolanaParams(null)).toEqual({ initialised: false, ...SOLANA_PARAMS_DEFAULTS });
+    expect(decodeSolanaParams('')).toEqual({ initialised: false, ...SOLANA_PARAMS_DEFAULTS });
+
+    const body = Buffer.alloc(1 + 12 + 4 + 8 + 64);
+    body[0] = 253; // bump
+    let o = 1;
+    for (const v of [2000, 1500, 500, 50, 800, 6000]) {
+      body.writeUInt16LE(v, o);
+      o += 2;
+    }
+    body.writeUInt32LE(120, o);
+    o += 4;
+    body.writeBigUInt64LE(100_000_000_000n, o);
+    const account = Buffer.concat([Buffer.alloc(8, 9), body]);
+    expect(decodeSolanaParams(account.toString('base64'))).toEqual({
+      initialised: true,
+      ...CUSTOM,
+    });
+    // The set_params payload round-trips through the account layout.
+    const data = encodeSetParamsData(CUSTOM);
+    expect(Buffer.from(data.subarray(8)).equals(body.subarray(1, 1 + 24))).toBe(true);
+    expect(() => decodeSolanaParams(Buffer.alloc(12).toString('base64'))).toThrow(/too short/);
+  });
+});
+
+/* --------------------------------------------------- runtime parameters (EVM) */
+
+describe('EVM runtime parameters', () => {
+  const CUSTOM = {
+    ...DEFAULT_CURVE_PARAMS,
+    feeProtocolBps: 2000,
+    feeOpsBps: 500,
+    feeBurnBps: 500,
+    maxFeeBps: 300,
+    cbWindowSecs: 120,
+    gradUsd: 100_000,
+    maxSupply: 1e9,
+  };
+
+  it('setParams / setTrustedRouter / router.setConfig carry the Solidity selectors', () => {
+    const word = packParamsWord(CUSTOM);
+    const setParams = prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+      kind: 'setParams',
+      word: word.toString(),
+    });
+    expect(setParams.data.slice(0, 10)).toBe(toFunctionSelector('setParams(uint256)'));
+    expect(setParams.to).toBe(LAUNCHPAD);
+    expect(setParams.signer).toBe('admin');
+    expect(setParams.summary).toContain('grad=$100000');
+    const decoded = decodeFunctionData({
+      abi: LAUNCHPAD_ADMIN_ABI,
+      data: setParams.data as `0x${string}`,
+    });
+    expect(decoded.functionName).toBe('setParams');
+    expect(decoded.args).toEqual([word]);
+    expect(unpackParamsWord(decoded.args![0] as bigint)).toEqual({
+      feeProtocolBps: 2000,
+      feeOpsBps: 500,
+      feeBurnBps: 500,
+      minFeeBps: 100,
+      maxFeeBps: 300,
+      cbStartFeeBps: 5000,
+      cbWindowSecs: 120,
+      gradUsd: 100_000,
+      maxSupply: 1e9,
+    });
+    // A 0x-hex word is accepted too (what a Safe export shows).
+    expect(
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+        kind: 'setParams',
+        word: `0x${word.toString(16)}`,
+      }).data,
+    ).toBe(setParams.data);
+
+    const trusted = prepareEvmAdminTx('BASE', 84532, LAUNCHPAD, {
+      kind: 'setTrustedRouter',
+      router: A,
+    });
+    expect(trusted.data.slice(0, 10)).toBe(toFunctionSelector('setTrustedRouter(address)'));
+    expect(trusted.to).toBe(LAUNCHPAD);
+
+    const cfg = prepareEvmAdminTx(
+      'BASE',
+      84532,
+      LAUNCHPAD,
+      { kind: 'setRouterConfig', maxBuyNative: '2500000000000000000', pyth: A, attestationSink: B },
+      { router: B },
+    );
+    expect(cfg.data.slice(0, 10)).toBe(toFunctionSelector('setConfig(uint256,address,address)'));
+    expect(cfg.to).toBe(B);
+    expect(cfg.signer).toBe('admin');
+    const d = decodeFunctionData({ abi: ROUTER_ADMIN_ABI, data: cfg.data as `0x${string}` });
+    expect(d.args).toEqual([2_500_000_000_000_000_000n, A, B]);
+    expect(cfg.summary).toContain('maxBuyNative=2500000000000000000 wei');
+  });
+
+  it('refuses a word the contract would refuse, and router config without a router', () => {
+    const bad = (p: Partial<typeof CUSTOM>): string =>
+      packParamsWord({ ...CUSTOM, ...p }).toString();
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, { kind: 'setParams', word: '0' }),
+    ).toThrow(/non-zero/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, { kind: 'setParams', word: 'abc' }),
+    ).toThrow(/integer/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+        kind: 'setParams',
+        word: bad({ feeProtocolBps: 6000, feeOpsBps: 3000, feeBurnBps: 2000 }),
+      }),
+    ).toThrow(/at most 10000/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+        kind: 'setParams',
+        word: bad({ minFeeBps: 400 }),
+      }),
+    ).toThrow(/minFeeBps/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+        kind: 'setParams',
+        word: bad({ cbStartFeeBps: 200 }),
+      }),
+    ).toThrow(/cbStartFeeBps/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+        kind: 'setParams',
+        word: bad({ cbWindowSecs: 0 }),
+      }),
+    ).toThrow(/cbWindowSecs/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, { kind: 'setParams', word: bad({ gradUsd: 0 }) }),
+    ).toThrow(/gradUsd/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, { kind: 'setParams', word: bad({ maxSupply: 0 }) }),
+    ).toThrow(/maxSupply/);
+    expect(() =>
+      prepareEvmAdminTx('RH', 46630, LAUNCHPAD, {
+        kind: 'setRouterConfig',
+        maxBuyNative: '1',
+        pyth: A,
+        attestationSink: B,
+      }),
+    ).toThrow(/no StonkzRouter/);
+    expect(() =>
+      prepareEvmAdminTx(
+        'RH',
+        46630,
+        LAUNCHPAD,
+        { kind: 'setRouterConfig', maxBuyNative: '-1', pyth: A, attestationSink: B },
+        { router: B },
+      ),
+    ).toThrow(/maxBuyNative/);
+    expect(checkParamsWord(DEFAULT_PARAMS_WORD.toString()).fields.gradUsd).toBe(69_000);
+  });
+
+  it('reads trustedRouter / paramsWord tolerantly and the router config per field', async () => {
+    const word = (hex: string): string => '0x' + hex.padStart(64, '0');
+    const base: Record<string, string> = {
+      [toFunctionSelector('admin()')]: word(A.slice(2)),
+      [toFunctionSelector('maxOracleStaleness()')]: word('78'),
+      [toFunctionSelector('tokenCount()')]: word('1'),
+    };
+    // A pre-params implementation: both views revert (the fake answers nothing).
+    const old = await readEvmLaunchpadState(
+      {
+        ethCall: async (_to, data) => {
+          const a = base[data.slice(0, 10)];
+          if (a) return a;
+          const sel = data.slice(0, 10);
+          if (
+            sel === toFunctionSelector('trustedRouter()') ||
+            sel === toFunctionSelector('paramsWord()')
+          )
+            throw new Error('execution reverted');
+          return word('0');
+        },
+      },
+      LAUNCHPAD,
+    );
+    expect(old.trustedRouter).toBeNull();
+    expect(old.paramsWord).toBeNull();
+    expect(old.admin).toBe(A);
+
+    const packed = packParamsWord(CUSTOM);
+    const fresh = await readEvmLaunchpadState(
+      {
+        ethCall: async (_to, data) => {
+          const sel = data.slice(0, 10);
+          if (sel === toFunctionSelector('trustedRouter()')) return word(B.slice(2));
+          if (sel === toFunctionSelector('paramsWord()')) return word(packed.toString(16));
+          return base[sel] ?? word('0');
+        },
+      },
+      LAUNCHPAD,
+    );
+    expect(fresh.trustedRouter).toBe(B);
+    expect(fresh.paramsWord).toBe(packed.toString());
+
+    const cfg = await readEvmRouterConfig(
+      {
+        ethCall: async (_to, data) => {
+          const sel = data.slice(0, 10);
+          if (sel === toFunctionSelector('maxBuyNative()')) return word('de0b6b3a7640000');
+          if (sel === toFunctionSelector('pyth()')) return word(A.slice(2));
+          throw new Error('execution reverted'); // old router: no attestationSink()
+        },
+      },
+      B,
+    );
+    expect(cfg).toEqual({ maxBuyNative: '1000000000000000000', pyth: A, attestationSink: null });
   });
 });

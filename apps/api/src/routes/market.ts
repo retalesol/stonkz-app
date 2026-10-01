@@ -52,15 +52,19 @@ export function marketRoutes(): Hono<AppEnv> {
 
     const now = deps.now();
     const prices = new LiveBaseUsd(deps);
+    const curveParams = await deps.params.all();
     const kings = await Promise.all(
       rows.map(async (row) => {
         const token = await resolveTokenRow(deps.db, row.net, { sym: row.sym });
         // The crown's cap follows the live base price like the card does; the
         // `koth` row itself is the indexer's snapshot at crowning.
         const view = token
-          ? serialiseToken(token as TokenRow, now, {
-              baseUsd: await prices.liveForRow(token as TokenRow),
-            })
+          ? serialiseToken(
+              token as TokenRow,
+              now,
+              { baseUsd: await prices.liveForRow(token as TokenRow) },
+              curveParams[row.net as Net],
+            )
           : null;
         return {
           net: row.net as Net,

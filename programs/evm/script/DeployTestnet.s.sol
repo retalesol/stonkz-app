@@ -24,7 +24,7 @@ import {DeployPad} from "./DeployPad.sol";
 /// export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
 /// export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...  # must differ from protocol
 /// forge script script/DeployTestnet.s.sol:DeployTestnet \
-///   --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+///   --rpc-url https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/ --broadcast -vvv
 /// ```
 contract DeployTestnet is Script {
     function run() external {
@@ -98,7 +98,7 @@ contract DeployTestnet is Script {
         console2.log("");
         console2.log("=== apps/api + indexer env ===");
         console2.log("RH_CHAIN_ID=46630");
-        console2.log("RH_RPC_URL=https://rpc.testnet.chain.robinhood.com");
+        console2.log("RH_RPC_URL=https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/");
         console2.log("RH_LAUNCHPAD_ADDRESS=%s", address(launchpad));
         console2.log("RH_ROUTER_ADDRESS=%s", address(router));
     }

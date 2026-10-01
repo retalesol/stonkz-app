@@ -47,11 +47,13 @@ export interface CreateTokenArgs {
  * `create_token(name, ticker, uri, supply, fee_bps, cashback, salt)` — plan step 90.
  *
  * The program also CPIs Metaplex `CreateMetadataAccountV3` (name / ticker as
- * symbol / uri, immutable, curve PDA as update authority), so the last two
- * accounts are the Metaplex metadata PDA and the Metaplex program. They are
- * appended after the original fifteen, so every earlier index is unchanged.
- * The launched mint must be classic SPL Token — the program rejects
- * Token-2022 for `token_program` with `UnsupportedTokenProgram`.
+ * symbol / uri, immutable, curve PDA as update authority), so accounts 15 and
+ * 16 are the Metaplex metadata PDA and the Metaplex program. They were
+ * appended after the original fifteen, so every earlier index is unchanged;
+ * the runtime-params upgrade appended the `["params"]` PDA as account 17
+ * (`load_params`: an empty account means the program's defaults). The
+ * launched mint must be classic SPL Token — the program rejects Token-2022
+ * for `token_program` with `UnsupportedTokenProgram`.
  */
 export function buildCreateTokenInstruction(
   accounts: CreateTokenAccounts,
@@ -91,6 +93,8 @@ export function buildCreateTokenInstruction(
     // Appended in the Metaplex metadata upgrade.
     { pubkey: metadata, isSigner: false, isWritable: true },
     { pubkey: TOKEN_METADATA_PROGRAM_ID, isSigner: false, isWritable: false },
+    // Appended in the runtime-params upgrade (read-only, may not exist yet).
+    { pubkey: pdas.params, isSigner: false, isWritable: false },
   ];
 
   return {
@@ -178,6 +182,9 @@ function tradeKeys(accounts: TradeAccounts) {
       { pubkey: atas.token, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      // Appended in the runtime-params upgrade: `["params"]`, read-only, may
+      // not exist yet (the program then trades on its defaults).
+      { pubkey: pdas.params, isSigner: false, isWritable: false },
     ],
   };
 }
@@ -388,6 +395,9 @@ export function buildGraduateInstruction(accounts: GraduateAccounts): Transactio
     { pubkey: pdas.curveTokenVault, isSigner: false, isWritable: true },
     { pubkey: accounts.caller, isSigner: true, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    // Appended in the runtime-params upgrade (the oracle trigger reads the
+    // graduation cap from `["params"]`; empty account = defaults).
+    { pubkey: pdas.params, isSigner: false, isWritable: false },
   ];
   return new TransactionInstruction({
     programId: accounts.programId,

@@ -169,6 +169,15 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     /// at worst halt the launchpad until governance unpauses it. Zero: none.
     address public pauser;
 
+    /// @notice The tunables, slot 17: one packed word in the `CurveMath.Params`
+    /// layout. Zero until `setParams` is first called, and then
+    /// `CurveMath.DEFAULT_PARAMS` applies — see `paramsWord`. Read through
+    /// `_w()`, never directly.
+    uint256 internal _params;
+    /// @notice Storage override for `trustedRouter`, slot 18. Zero means the
+    /// implementation's constructor default applies.
+    address internal _router;
+
     /* -------------------------------------------------------------- events */
 
     event TokenCreated(
@@ -257,6 +266,8 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     event Unstaked(address indexed token, address indexed owner, uint256 amount);
     event StakeClaimed(address indexed token, address indexed owner, uint256 base, uint256 tokens);
     event PauserSet(address pauser);
+    event ParamsSet(uint256 params);
+    event TrustedRouterSet(address router);
 
     /* ------------------------------------------------------------ modifiers */
 
@@ -283,20 +294,25 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         require(msg.sender == admin, "not admin");
     }
 
-    /// @notice The one router allowed to call `createTokenFor`, i.e. to launch a
-    /// coin on a user's behalf and dev-buy it in the same transaction.
-    /// @dev An `immutable`, so it lives in the implementation's bytecode and
-    /// takes **no storage slot** (the proxy layout is append-only and pinned by
-    /// `test_StorageLayoutIsAppendOnly`). Changing it means deploying a new
-    /// implementation and `upgradeToAndCall` — the same admin gate as any
-    /// other logic change. `address(0)` disables `createTokenFor` entirely.
+    /// @dev The constructor-time router: what `trustedRouter()` answers until
+    /// `setTrustedRouter` writes the storage override (slot 18). Lives in the
+    /// implementation's bytecode, takes no storage slot.
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
-    address public immutable trustedRouter;
+    address private immutable _defaultRouter;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _trustedRouter) {
-        trustedRouter = _trustedRouter;
+        _defaultRouter = _trustedRouter;
         _disableInitializers();
+    }
+
+    /// @notice The one router allowed to call `createTokenFor`, i.e. to launch a
+    /// coin on a user's behalf and dev-buy it in the same transaction.
+    /// `address(0)` disables `createTokenFor` entirely. Changed with
+    /// `setTrustedRouter` (admin), no implementation redeploy needed.
+    function trustedRouter() public view returns (address) {
+        address r = _router;
+        return r == address(0) ? _defaultRouter : r;
     }
 
     function initialize(
@@ -394,6 +410,40 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     function setMaxOracleStaleness(uint64 s) external onlyAdmin {
         require(s > 0, "staleness");
         maxOracleStaleness = s;
+    }
+
+    /* ----------------------------------------------------------- parameters */
+
+    /// @notice Retune the launchpad without redeploying it: fee split, creator
+    /// fee bounds, cashback window, graduation threshold, supply ceiling — one
+    /// packed word in the `CurveMath.Params` layout (`CurveMath.pack`).
+    /// Applies to every coin from the next fill on (a coin's own `feeBps` and
+    /// `cbStart` are stamped at creation and untouched). Bounds in
+    /// `CurveMath.validParams`. The router's own knobs (buy cap, Pyth,
+    /// attestation sink) live on the router, gated by this contract's admin.
+    function setParams(uint256 w) external onlyAdmin {
+        require(CurveMath.validParams(w), "params");
+        _params = w;
+        emit ParamsSet(w);
+    }
+
+    /// @notice Point `createTokenFor` at a new router — no implementation
+    /// redeploy needed. `address(0)` falls back to the constructor default.
+    function setTrustedRouter(address r) external onlyAdmin {
+        _router = r;
+        emit TrustedRouterSet(r);
+    }
+
+    /// @notice The parameter word in force: what was set, or
+    /// `CurveMath.DEFAULT_PARAMS` before anything was. Decode with
+    /// `CurveMath.unpack` / the layout documented there.
+    function paramsWord() external view returns (uint256) {
+        return _w();
+    }
+
+    function _w() internal view returns (uint256 w) {
+        w = _params;
+        if (w == 0) w = CurveMath.DEFAULT_PARAMS;
     }
 
     /// @return ok Whether there is a usable price right now.
@@ -517,7 +567,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         uint16 feeBps,
         bool cashback
     ) external nonReentrant returns (address) {
-        require(msg.sender == trustedRouter, "not router");
+        require(msg.sender == trustedRouter(), "not router");
         return _create(creator, name, ticker, uri, supply, baseToken, feeBps, cashback);
     }
 
@@ -533,19 +583,22 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
     ) private returns (address token) {
         require(!launchPaused, "launch paused");
         require(_validTicker(ticker), "ticker");
-        require(feeBps >= CurveMath.MIN_FEE_BPS && feeBps <= CurveMath.MAX_FEE_BPS, "fee");
-        // Ceiling of the product's supply set (1e6/5e8/1e9/1e12). Unbounded,
-        // a direct caller could launch a coin whose `mcapBase` overflows
-        // mid-curve, so `graduate` always reverts and buyers' base is frozen
-        // once the curve completes. See test/LaunchSupply.t.sol.
-        require(supply <= CurveMath.MAX_SUPPLY, "supply");
+        uint256 w = _w();
+        require(feeBps >= CurveMath.pMinFeeBps(w) && feeBps <= CurveMath.pMaxFeeBps(w), "fee");
+        // Ceiling of the product's supply set (1e6/5e8/1e9/1e12), never above
+        // `CurveMath.MAX_SUPPLY`. Unbounded, a direct caller could launch a
+        // coin whose `mcapBase` overflows mid-curve, so `graduate` always
+        // reverts and buyers' base is frozen once the curve completes. See
+        // test/LaunchSupply.t.sol.
+        require(supply <= CurveMath.pMaxSupply(w), "supply");
         // Latest-by-ticker pointer only — duplicate tickers are allowed; the
         // app enforces a short cooldown, not a permanent bind.
 
         uint8 baseDecimals = IERC20(baseToken).decimals();
         uint256 price = _freshPrice(baseToken);
         uint256 supplyAtoms = supply * 1e18;
-        CurveMath.CurveParams memory p = CurveMath.deriveCurve(supplyAtoms, price, baseDecimals);
+        CurveMath.CurveParams memory p =
+            CurveMath.deriveCurve(supplyAtoms, price, baseDecimals, CurveMath.pGradMcapUsd1e6(w));
 
         token = address(new StonkzToken(name, ticker, uri, supplyAtoms));
         tokenByTicker[keccak256(bytes(ticker))] = token;
@@ -602,11 +655,12 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         _tradeGuard(c);
         _positive(amountBase);
 
-        uint16 bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
+        uint256 w = _w();
+        uint16 bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp, w);
         bool inCashback = bps > c.feeBps;
 
         CurveMath.BuyFill memory f = CurveMath.buyQuote(_state(c), bps, amountBase);
-        CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee);
+        CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee, w);
         // Slippage, then the identity the fee model rests on, asserted on every fill.
         _checkFill(f.tokensOut, minOut, s, f.fee);
 
@@ -685,11 +739,12 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         _tradeGuard(c);
         _positive(amountToken);
 
-        uint16 bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
+        uint256 w = _w();
+        uint16 bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp, w);
         bool inCashback = bps > c.feeBps;
 
         CurveMath.SellFill memory f = CurveMath.sellQuote(_state(c), bps, amountToken);
-        CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee);
+        CurveMath.FeeShares memory s = CurveMath.splitFee(f.fee, w);
         _checkFill(f.netBase, minOut, s, f.fee);
 
         _pullTokens(token, amountToken);
@@ -830,7 +885,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
             require(c.realBase > 0, "no base raised");
             uint256 price = _freshPrice(c.baseToken);
             usd = CurveMath.mcapUsd1e6(mcap, price, c.baseDecimals);
-            require(usd >= CurveMath.GRAD_MCAP_USD_1E6, "not graduable");
+            require(usd >= CurveMath.pGradMcapUsd1e6(_w()), "not graduable");
         }
 
         // Unsold allocation is burned, not folded into the pool: adding it would
@@ -893,7 +948,7 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
         if (baseAmount > 0) _pull(c.baseToken, msg.sender, baseAmount);
         if (tokenAmount > 0) _pullTokens(token, tokenAmount);
 
-        CurveMath.FeeShares memory s = CurveMath.splitFee(baseAmount);
+        CurveMath.FeeShares memory s = CurveMath.splitFee(baseAmount, _w());
         _creditFees(c, s);
         c.bucketBase += s.creatorBucket;
         c.bucketToken += tokenAmount;
@@ -909,27 +964,9 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     /* ---------------------------------------------------------------- views */
 
-    function quoteBuy(address token, uint256 amountBase)
-        external
-        view
-        returns (CurveMath.BuyFill memory fill, CurveMath.FeeShares memory shares, uint16 bps)
-    {
-        Coin storage c = _coins[token];
-        bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
-        fill = CurveMath.buyQuote(_state(c), bps, amountBase);
-        shares = CurveMath.splitFee(fill.fee);
-    }
-
-    function quoteSell(address token, uint256 amountToken)
-        external
-        view
-        returns (CurveMath.SellFill memory fill, CurveMath.FeeShares memory shares, uint16 bps)
-    {
-        Coin storage c = _coins[token];
-        bps = CurveMath.effFeeBps(c.feeBps, c.cashback, c.cbStart, block.timestamp);
-        fill = CurveMath.sellQuote(_state(c), bps, amountToken);
-        shares = CurveMath.splitFee(fill.fee);
-    }
+    /// @dev `quoteBuy` / `quoteSell` / `marketCap` moved off chain: `coinInfo`
+    /// plus `paramsWord` and `CurveMath` reproduce them exactly (see
+    /// `src/StonkzLens.sol`); the contract sits at the EIP-170 ceiling.
 
     /// @notice The whole coin record in one read.
     /// @dev The generated `coins` getter returns a 25-field positional tuple,
@@ -950,12 +987,6 @@ contract StonkzLaunchpad is Initializable, UUPSUpgradeable {
 
     function positionInfo(address token, address owner) external view returns (Position memory) {
         return positions[token][owner];
-    }
-
-    function marketCap(address token) external view returns (uint256 base, uint256 usd1e6) {
-        Coin storage c = _coins[token];
-        base = CurveMath.mcapBase(_state(c), c.supply);
-        usd1e6 = CurveMath.mcapUsd1e6(base, c.creationPrice1e6, c.baseDecimals);
     }
 
     function pendingStakeRewards(address token, address owner)

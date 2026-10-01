@@ -120,6 +120,7 @@ describe('graduation → Meteora DLMM → claim_dex_fees (real lb_clmm)', () => 
   let traderBase: PublicKey;
 
   const globalPda = PublicKey.findProgramAddressSync([enc('global')], pid)[0];
+  const paramsPda = PublicKey.findProgramAddressSync([enc('params')], pid)[0];
   const oraclePdaFor = (m: PublicKey) =>
     PublicKey.findProgramAddressSync([enc('oracle'), m.toBuffer()], pid)[0];
   const vault = (seed: string, key: PublicKey) =>
@@ -196,6 +197,7 @@ describe('graduation → Meteora DLMM → claim_dex_fees (real lb_clmm)', () => 
         creator: creator.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
         systemProgram: SystemProgram.programId,
       })
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
@@ -225,6 +227,7 @@ describe('graduation → Meteora DLMM → claim_dex_fees (real lb_clmm)', () => 
         traderTokenAccount: traderToken,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
       })
       .preInstructions([
         createAssociatedTokenAccountIdempotentInstruction(
@@ -250,6 +253,7 @@ describe('graduation → Meteora DLMM → claim_dex_fees (real lb_clmm)', () => 
         curveTokenVault: coin.curveTokenVault,
         caller: cranker.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
       })
       .signers([cranker])
       .rpc();
@@ -426,6 +430,7 @@ describe('graduation → Meteora DLMM → claim_dex_fees (real lb_clmm)', () => 
         caller: cranker.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
         baseTokenProgram: TOKEN_PROGRAM_ID,
+        params: paramsPda,
       })
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
       .signers([cranker])

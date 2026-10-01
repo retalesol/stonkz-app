@@ -1,4 +1,5 @@
 import type { Net } from '@stonkz/shared';
+import type { CurveParamsReader } from '../chain/params.js';
 import type { ChainRpcs, PriceOracle } from '../chain/types.js';
 import type { Db } from '../db/client.js';
 import type { ApiEnv } from '../env.js';
@@ -33,6 +34,8 @@ export interface AppDeps {
   metrics: Metrics;
   rpcs: ChainRpcs;
   oracle: PriceOracle;
+  /** Live launchpad tunables per net (fee split, cashback window, graduation cap, caps), 60-s cached. */
+  params: CurveParamsReader;
   jwt: JwtService;
   auth: AuthService;
   quotes: QuoteCache;

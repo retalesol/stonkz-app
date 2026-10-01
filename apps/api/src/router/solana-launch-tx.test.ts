@@ -133,14 +133,14 @@ function wireSize(base64: string): number {
   return Buffer.from(base64, 'base64').length;
 }
 
-describe('buildCreateTokenInstruction — Metaplex accounts', () => {
-  it('appends the metadata PDA and the Metaplex program after the original 15 accounts', () => {
+describe('buildCreateTokenInstruction — Metaplex + params accounts', () => {
+  it('appends the metadata PDA, the Metaplex program and the params PDA after the original 15 accounts', () => {
     const creator = Keypair.generate().publicKey;
     const { instruction, mint, metadata } = buildCreateTokenInstruction(
       { programId, creator, baseMint: USDC, salt: 7n },
       { ...maxArgs(), salt: 7n },
     );
-    expect(instruction.keys).toHaveLength(17);
+    expect(instruction.keys).toHaveLength(18);
     // Original layout untouched: creator stays at index 11.
     expect(instruction.keys[11]!.pubkey.equals(creator)).toBe(true);
     expect(instruction.keys[11]!.isSigner).toBe(true);
@@ -150,6 +150,12 @@ describe('buildCreateTokenInstruction — Metaplex accounts', () => {
     expect(instruction.keys[15]).toEqual({ pubkey: expected, isSigner: false, isWritable: true });
     expect(instruction.keys[16]).toEqual({
       pubkey: TOKEN_METADATA_PROGRAM_ID,
+      isSigner: false,
+      isWritable: false,
+    });
+    // Runtime params PDA last, read-only (it may not exist on chain yet).
+    expect(instruction.keys[17]).toEqual({
+      pubkey: derivePdas(programId, mint, USDC).params,
       isSigner: false,
       isWritable: false,
     });
@@ -170,14 +176,21 @@ describe('composeSolanaLaunchTransaction — compute budget', () => {
   });
 
   it('native dev buy: the implicit default already covers the budget, so no limit ix', () => {
+    // Maximal metadata + native dev buy no longer fits legacy since the
+    // runtime-params PDA joined create_token and buy (+34 bytes); it
+    // compiles v0 against the operator table. See the wire-size report.
+    const alt = syntheticLookupTable(stonkzLaunchAltAddresses(programId, [NATIVE_MINT]));
     const out = composeSolanaLaunchTransaction(
-      composition({ devBuy: { curveAmountIn: 1_000_000_000n, curveMinOut: 1n } }),
+      composition({
+        devBuy: { curveAmountIn: 1_000_000_000n, curveMinOut: 1n },
+        lookupTables: [alt],
+      }),
       blockhash,
     );
     const u = LAUNCH_COMPUTE_UNITS;
     const budget = u.createToken + 2 * u.ataCreate + u.nativeWrap + u.devBuy;
-    const tx = decode(out.base64);
-    // No explicit limit: those ~41 bytes are what keeps a maximal launch in one packet.
+    const tx = decode(out.base64, [alt]);
+    // No explicit limit: those ~41 bytes are what keeps a near-maximal launch in one legacy packet.
     expect(limitsIn(tx)).toEqual([]);
     // ATA, transfer (builtin), SyncNative, create_token, ATA, buy.
     expect(implicitComputeUnitLimit(tx.instructions)).toBe(5 * 200_000 + 3_000);
@@ -240,16 +253,40 @@ describe('composeSolanaLaunchTransaction — compute budget', () => {
 });
 
 describe('composeSolanaLaunchTransaction — wire size', () => {
-  it('fits one packet with the longest name/ticker/uri, with and without a native dev buy', () => {
+  it('fits one packet with the longest name/ticker/uri; a native dev buy on top needs the operator table', () => {
     const createOnly = wireSize(composeSolanaLaunchTransaction(composition(), blockhash).base64);
-    const withBuy = wireSize(
+    expect(createOnly).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+    // 32-byte name + 200-byte uri + native dev buy: 1259 bytes legacy since the
+    // runtime-params PDA was appended to create_token and buy (it was 1225, 7
+    // under the packet). Without a lookup table that is a structured refusal...
+    expect(() =>
       composeSolanaLaunchTransaction(
         composition({ devBuy: { curveAmountIn: 1n, curveMinOut: 1n } }),
         blockhash,
-      ).base64,
+      ),
+    ).toThrow(SolanaTransactionTooLargeError);
+    // ...and with the operator table (which carries the params PDA) it is a
+    // comfortable v0 message.
+    const withBuy = composeSolanaLaunchTransaction(
+      composition({
+        devBuy: { curveAmountIn: 1n, curveMinOut: 1n },
+        lookupTables: [syntheticLookupTable(stonkzLaunchAltAddresses(programId, [NATIVE_MINT]))],
+      }),
+      blockhash,
     );
-    expect(createOnly).toBeLessThanOrEqual(PACKET_DATA_SIZE);
-    expect(withBuy).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+    expect(withBuy.version).toBe(0);
+    expect(wireSize(withBuy.base64)).toBeLessThanOrEqual(PACKET_DATA_SIZE);
+    // A Pinata-length uri (113 bytes) with the longest name and a native dev
+    // buy still fits legacy with no table at all.
+    const pinata = composeSolanaLaunchTransaction(
+      composition({
+        createArgs: { ...maxArgs(), uri: `https://${'u'.repeat(105)}` },
+        devBuy: { curveAmountIn: 1n, curveMinOut: 1n },
+      }),
+      blockhash,
+    );
+    expect(pinata.version).toBe('legacy');
+    expect(wireSize(pinata.base64)).toBeLessThanOrEqual(PACKET_DATA_SIZE);
   });
 });
 
@@ -342,8 +379,8 @@ describe('composeSolanaLaunchTransaction — v0 with address lookup tables', () 
     expect(swapIdx).toBeGreaterThan(0);
     expect(createIdx).toBeGreaterThan(swapIdx);
     expect(buyIdx).toBe(tx.instructions.length - 1);
-    // The decompiled create_token still names all 17 accounts, table-loaded or not.
-    expect(tx.instructions[createIdx]!.keys).toHaveLength(17);
+    // The decompiled create_token still names all 18 accounts, table-loaded or not.
+    expect(tx.instructions[createIdx]!.keys).toHaveLength(18);
   });
 
   it('stores the v0 message verbatim, lookups included, and /launch/confirm re-derives it from the wire', () => {
@@ -424,9 +461,11 @@ describe('composeSolanaLaunchTransaction — v0 with address lookup tables', () 
     );
   });
 
-  it('a no-Jupiter launch stays legacy even when tables are available', () => {
+  it('a no-Jupiter launch stays legacy even when tables are available, going v0 only when legacy cannot fit', () => {
     const out = composeSolanaLaunchTransaction(
       composition({
+        // Longest name, Pinata-length uri: fits legacy, so the table is unused.
+        createArgs: { ...maxArgs(), uri: `https://${'u'.repeat(105)}` },
         devBuy: { curveAmountIn: 1n, curveMinOut: 1n },
         lookupTables: [stonkzAlt()],
       }),
@@ -434,6 +473,15 @@ describe('composeSolanaLaunchTransaction — v0 with address lookup tables', () 
     );
     expect(out.version).toBe('legacy');
     expect(decode(out.base64).version).toBe('legacy');
+    // The maximal uri on top is 27 bytes over legacy: the same table turns it into v0.
+    const maximal = composeSolanaLaunchTransaction(
+      composition({
+        devBuy: { curveAmountIn: 1n, curveMinOut: 1n },
+        lookupTables: [stonkzAlt()],
+      }),
+      blockhash,
+    );
+    expect(maximal.version).toBe(0);
   });
 
   it('throws a structured error, not a raw one, when even v0 cannot fit', () => {
@@ -516,7 +564,10 @@ describe('composeSolanaLaunchTransaction — Pyth price sync', () => {
   });
 
   it('without a price update the composition is unchanged (no sync)', () => {
-    const c = composition({ devBuy: { curveAmountIn: 1n, curveMinOut: 1n } });
+    const c = composition({
+      createArgs: { ...maxArgs(), uri: `https://${'u'.repeat(105)}` },
+      devBuy: { curveAmountIn: 1n, curveMinOut: 1n },
+    });
     const a = composeSolanaLaunchTransaction(c, blockhash);
     expect(decode(a.base64).instructions.some(isSync)).toBe(false);
     expect(launchComputeUnitLimit({ devBuy: true, nativeWrap: true, pythSync: false })).toBe(
@@ -593,12 +644,15 @@ describe('composeSolanaLaunchTransaction — Pyth price sync', () => {
     }
     console.info('solana launch legacy tx sizes with Pyth sync:', JSON.stringify(sizes));
 
-    // Before the sync the worst case fit legacy with 7 bytes to spare...
-    expect(sizes['name32_uri200_nativeBuy_noSync']).toBe('legacy:1225');
-    // ...the sync costs 49 bytes (one 32-byte key + a 17-byte instruction),
-    expect(sizes['name32_uri200_nativeBuy_sync']).toBe('over:1274');
-    // so the worst case needs the operator ALT, and fits with it (v0).
+    // The worst case (32-byte name, 200-byte uri, native dev buy) is 27 bytes
+    // over legacy on its own: it was 1225 (7 to spare) until the runtime-params
+    // PDA was appended to create_token and buy (+32-byte key, +2 index bytes)...
+    expect(sizes['name32_uri200_nativeBuy_noSync']).toBe('over:1259');
+    // ...and the sync costs a further 49 bytes (one 32-byte key + a 17-byte instruction),
+    expect(sizes['name32_uri200_nativeBuy_sync']).toBe('over:1308');
+    // so the worst case needs the operator ALT (which holds the params PDA), and fits with it (v0).
     expect(sizes['name32_uri200_nativeBuy_sync+stonkzAlt']).toMatch(/^0:/);
+    expect(sizes['name32_uri200_nativeBuy_noSync']).toBe(sizes['name32_uri200_nativeBuy_noSync']);
     expect(
       Number(sizes['name32_uri200_nativeBuy_sync+stonkzAlt']!.split(':')[1]),
     ).toBeLessThanOrEqual(PACKET_DATA_SIZE);
@@ -609,8 +663,13 @@ describe('composeSolanaLaunchTransaction — Pyth price sync', () => {
       sizes['name20_uri113_nativeBuy_sync'],
     );
     // Legacy with the sync and a native dev buy fits while name + ticker +
-    // uri stay within 200 bytes (42 under the 32 + 10 + 200 maxima).
-    expect(sizes['name20_uri150_nativeBuy_sync']).toBe('legacy:1212');
+    // uri stay within ~166 bytes (the 200-byte margin before the params PDA,
+    // less its 34 bytes): a 20-byte name with a 150-byte uri is now 14 over
+    // and goes v0 through the table, while the longest name with a Pinata uri
+    // (32 + 10 + 113) still fits with 11 to spare.
+    expect(sizes['name20_uri150_nativeBuy_sync']).toBe('over:1246');
+    expect(sizes['name20_uri150_nativeBuy_noSync']).toBe('legacy:1197');
+    expect(sizes['name32_uri113_nativeBuy_sync']).toBe('legacy:1221');
     // Create-only drops the explicit compute limit (41 bytes) for the sync.
     expect(sizes['name32_uri200_createOnly_sync']).toMatch(/^legacy:/);
     for (const [k, v] of Object.entries(sizes)) {

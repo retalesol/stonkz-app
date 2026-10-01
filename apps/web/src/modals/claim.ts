@@ -1,4 +1,5 @@
 import { hash, inCashback, num, usd, vol24 } from '@stonkz/shared';
+import { coinParams } from '../state/params.js';
 import { api } from '../api/index.js';
 import { SignerCancelledError } from '../app/signer.js';
 import { describeWalletError, isRejection } from '../wallet/index.js';
@@ -48,7 +49,7 @@ function simRows(): ClaimRow[] {
       seed: c.seed,
       native: c.fee ?? 0,
       tokens: c.feeTokens ?? 0,
-      cashback: inCashback(c),
+      cashback: inCashback(c, Date.now(), coinParams(c)),
       vol: vol24(c),
     }));
 }
@@ -63,7 +64,7 @@ function liveRows(vaults: Awaited<ReturnType<typeof api.claimableFees>>): ClaimR
       seed: c?.seed ?? hash(v.sym),
       native: v.native,
       tokens: v.tokens,
-      cashback: c ? inCashback(c) : false,
+      cashback: c ? inCashback(c, Date.now(), coinParams(c)) : false,
       // The detail read's real 24h volume when the board has it; never the
       // seed-derived sim figure on a live coin.
       vol: c?.vol24Usd ?? null,

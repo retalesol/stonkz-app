@@ -335,6 +335,9 @@ export type Launchpad = {
         },
         {
           "name": "baseTokenProgram"
+        },
+        {
+          "name": "params"
         }
       ],
       "args": [
@@ -888,6 +891,9 @@ export type Launchpad = {
         },
         {
           "name": "baseTokenProgram"
+        },
+        {
+          "name": "params"
         }
       ],
       "args": []
@@ -1713,6 +1719,9 @@ export type Launchpad = {
         {
           "name": "tokenMetadataProgram",
           "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "params"
         }
       ],
       "args": [
@@ -1925,6 +1934,9 @@ export type Launchpad = {
         },
         {
           "name": "tokenProgram"
+        },
+        {
+          "name": "params"
         }
       ],
       "args": []
@@ -3185,6 +3197,9 @@ export type Launchpad = {
         },
         {
           "name": "baseTokenProgram"
+        },
+        {
+          "name": "params"
         }
       ],
       "args": [
@@ -3343,6 +3358,86 @@ export type Launchpad = {
         {
           "name": "authority",
           "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "setParams",
+      "docs": [
+        "Admin: the fee split, creator fee bounds, cashback window and",
+        "graduation cap, in the `[\"params\"]` PDA (created on first call). Until",
+        "it exists every instruction runs on the `constants.rs` defaults, so the",
+        "program upgrade that introduced this needs no migration step."
+      ],
+      "discriminator": [
+        27,
+        234,
+        178,
+        52,
+        147,
+        2,
+        187,
+        141
+      ],
+      "accounts": [
+        {
+          "name": "global",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "params",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  97,
+                  109,
+                  115
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "global"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "paramsArgs"
+            }
+          }
         }
       ]
     },
@@ -4233,6 +4328,19 @@ export type Launchpad = {
       ]
     },
     {
+      "name": "params",
+      "discriminator": [
+        129,
+        232,
+        120,
+        183,
+        156,
+        198,
+        9,
+        242
+      ]
+    },
+    {
       "name": "pauserConfig",
       "discriminator": [
         154,
@@ -4349,6 +4457,19 @@ export type Launchpad = {
         128,
         146,
         13
+      ]
+    },
+    {
+      "name": "paramsSet",
+      "discriminator": [
+        57,
+        111,
+        33,
+        252,
+        120,
+        76,
+        98,
+        245
       ]
     },
     {
@@ -4506,7 +4627,7 @@ export type Launchpad = {
     {
       "code": 6004,
       "name": "feeOutOfRange",
-      "msg": "Curve fee must be between 100 and 500 bps"
+      "msg": "Curve fee is outside the configured min/max bounds (default 100-500 bps)"
     },
     {
       "code": 6005,
@@ -4692,6 +4813,36 @@ export type Launchpad = {
       "code": 6041,
       "name": "referralDailyCapExceeded",
       "msg": "Referral claim would exceed today's cap"
+    },
+    {
+      "code": 6042,
+      "name": "paramsAccountMismatch",
+      "msg": "Params account is not the params PDA"
+    },
+    {
+      "code": 6043,
+      "name": "paramsFeeSplitTooLarge",
+      "msg": "fee_protocol_bps + fee_ops_bps + fee_burn_bps must not exceed 10000"
+    },
+    {
+      "code": 6044,
+      "name": "paramsFeeBoundsInvalid",
+      "msg": "min_fee_bps must not exceed max_fee_bps"
+    },
+    {
+      "code": 6045,
+      "name": "paramsCashbackStartInvalid",
+      "msg": "cb_start_fee_bps must be between max_fee_bps and 10000"
+    },
+    {
+      "code": 6046,
+      "name": "paramsCashbackWindowInvalid",
+      "msg": "cb_window_secs must be greater than zero"
+    },
+    {
+      "code": 6047,
+      "name": "paramsGradMcapInvalid",
+      "msg": "grad_mcap_usd_1e6 must be greater than zero"
     }
   ],
   "types": [
@@ -5360,6 +5511,179 @@ export type Launchpad = {
             "docs": [
               "`1` once the position is held by the per-mint escrow PDA."
             ],
+            "type": "u64"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "params",
+      "docs": [
+        "Admin-tunable numbers, in their own PDA (`[\"params\"]`) so no existing",
+        "account layout changes and the upgrade needs no migration: every reader",
+        "goes through [`load_params`], which returns [`Params::defaults`] while the",
+        "account does not exist yet. The curve *shape* (supply menu, 4/5 sale",
+        "fraction, virtual-reserve ratios, lock tables) is deliberately not here —",
+        "those are parity invariants shared with the EVM mirror, not tunables."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "feeProtocolBps",
+            "docs": [
+              "Platform revenue share of every fee, bps."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "feeOpsBps",
+            "docs": [
+              "`$STONKZ` buyback share, bps (historical `ops` name on chain)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "feeBurnBps",
+            "docs": [
+              "RWA crate fund share, bps (historical `burn` name on chain)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "minFeeBps",
+            "docs": [
+              "Creator-set curve fee bounds, inclusive."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "maxFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "cbStartFeeBps",
+            "docs": [
+              "The fee a cashback window decays down from."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "cbWindowSecs",
+            "docs": [
+              "Cashback window length, seconds."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "gradMcapUsd1e6",
+            "docs": [
+              "Graduation market cap, USD scaled 1e6."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "paramsArgs",
+      "docs": [
+        "Everything on `Params` an admin can set. Same field order as the account",
+        "minus `bump` / `_reserved`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "feeProtocolBps",
+            "type": "u16"
+          },
+          {
+            "name": "feeOpsBps",
+            "type": "u16"
+          },
+          {
+            "name": "feeBurnBps",
+            "type": "u16"
+          },
+          {
+            "name": "minFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "cbStartFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "cbWindowSecs",
+            "type": "u32"
+          },
+          {
+            "name": "gradMcapUsd1e6",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "paramsSet",
+      "docs": [
+        "`set_params`: the runtime parameters after the change."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "feeProtocolBps",
+            "type": "u16"
+          },
+          {
+            "name": "feeOpsBps",
+            "type": "u16"
+          },
+          {
+            "name": "feeBurnBps",
+            "type": "u16"
+          },
+          {
+            "name": "minFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "cbStartFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "cbWindowSecs",
+            "type": "u32"
+          },
+          {
+            "name": "gradMcapUsd1e6",
             "type": "u64"
           },
           {

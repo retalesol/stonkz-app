@@ -77,6 +77,19 @@ describe('derivePdas', () => {
     // But never the per-coin curve/vaults.
     expect(other.curve.toBase58()).not.toBe(first.curve.toBase58());
   });
+
+  it('derives the program-wide params PDA from the seed alone', () => {
+    const first = derivePdas(programId, mint, baseMint);
+    const other = derivePdas(
+      programId,
+      new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'),
+      new PublicKey('So11111111111111111111111111111111111111112'),
+    );
+    expect(other.params.toBase58()).toBe(first.params.toBase58());
+    expect(first.params.toBase58()).toBe(
+      PublicKey.findProgramAddressSync([Buffer.from('params')], programId)[0].toBase58(),
+    );
+  });
 });
 
 describe('deriveMintPda', () => {

@@ -9,8 +9,12 @@
  * and the exit code is 1; nothing is written anywhere.
  *
  *   pnpm --filter @stonkz/indexer exec tsx ../../scripts/reconcile-fees.ts --net BASE --mint 0x847eb6311333f8F7F2cd0E9A89379214302aB2c9 \
- *     [--rpc https://sepolia.base.org] [--launchpad 0x2f19…] [--from 47348724] [--api https://api.example]
- *   pnpm --filter @stonkz/indexer exec tsx ../../scripts/reconcile-fees.ts --net SOL --mint <mint> [--rpc https://api.devnet.solana.com] [--program FF1f…]
+ *     [--rpc $BASE_RPC_URL] [--launchpad 0x2f19…] [--from 47348724] [--api https://api.example]
+ *   pnpm --filter @stonkz/indexer exec tsx ../../scripts/reconcile-fees.ts --net SOL --mint <mint> [--rpc $SOLANA_RPC_URL] [--program FF1f…]
+ *
+ * `--rpc` defaults to `RH_RPC_URL` / `BASE_RPC_URL` / `SOLANA_RPC_URL` from the
+ * environment, then to the project's QuickNode testnet endpoints
+ * (docs/deployment.md "RPC endpoints").
  *
  * What is checked, per fill and in total (atoms, exact):
  *   - every `FeeAccrued` is the integer v2 split of its `feeTotal`
@@ -68,20 +72,37 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
+/** `<VAR>` from the environment when set and non-blank, else `fallback`. */
+function envOr(key: string, fallback: string): string {
+  const v = process.env[key]?.trim();
+  return v ? v : fallback;
+}
+
+// Operator script, never shipped to a browser: the fallbacks are the project's
+// QuickNode testnet endpoints (docs/deployment.md "RPC endpoints").
 const DEFAULTS: Record<Net, { rpc: string; launchpad: string; from: number }> = {
   BASE: {
-    rpc: 'https://sepolia.base.org',
+    rpc: envOr(
+      'BASE_RPC_URL',
+      'https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/',
+    ),
     launchpad: '0x2f197741C3ca71e3FE885a4F74C0D44e3A774D35',
     from: 47_348_724,
   },
   RH: {
-    rpc: 'https://rpc.testnet.chain.robinhood.com',
+    rpc: envOr(
+      'RH_RPC_URL',
+      'https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/',
+    ),
     launchpad: '0xe308287C9A85E2B53F1027a1c589B5e3969928e8',
     from: 124_871_527,
   },
-  ARC: { rpc: '', launchpad: '', from: 0 },
+  ARC: { rpc: envOr('ARC_RPC_URL', ''), launchpad: '', from: 0 },
   SOL: {
-    rpc: 'https://api.devnet.solana.com',
+    rpc: envOr(
+      'SOLANA_RPC_URL',
+      'https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/',
+    ),
     launchpad: 'FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg',
     from: 0,
   },

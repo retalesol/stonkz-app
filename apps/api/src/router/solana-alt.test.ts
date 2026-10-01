@@ -28,9 +28,10 @@ import {
 } from './solana-alt.js';
 import { composeSolanaTradeTransaction } from './solana-tx.js';
 import {
+  derivePdas,
+  pinnedPythFeedId,
   PYTH_PUSH_ORACLE_PROGRAM_ID,
   PYTH_RECEIVER_PROGRAM_ID,
-  pinnedPythFeedId,
   pythPriceFeedAccount,
 } from './solana-idl.js';
 
@@ -107,9 +108,10 @@ describe('stonkzLaunchAltAddresses', () => {
     const list = stonkzLaunchAltAddresses(programId, [NATIVE_MINT, USDC, NATIVE_MINT]);
     const s = list.map((k) => k.toBase58());
     expect(new Set(s).size).toBe(s.length);
-    // 6 shared + global + 5 per base (the WSOL mint appears once) + each
-    // base's pinned Pyth push-feed account.
-    expect(list).toHaveLength(6 + 5 + 4 + 2);
+    // 7 shared (incl. global + the runtime-params PDA) + 5 per base (the
+    // WSOL mint appears once) + each base's pinned Pyth push-feed account.
+    expect(list).toHaveLength(7 + 5 + 4 + 2);
+    expect(s).toContain(derivePdas(programId, PublicKey.default, NATIVE_MINT).params.toBase58());
     expect(s).toContain('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
     expect(s).toContain(USDC.toBase58());
     // Sponsored SOL/USD feed (same address on devnet and mainnet).
@@ -124,8 +126,8 @@ describe('stonkzLaunchAltAddresses', () => {
     const bonk = new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263');
     expect(pinnedPythFeedId(bonk)).toBeNull();
     const withBonk = stonkzLaunchAltAddresses(programId, [NATIVE_MINT, bonk]);
-    // 6 shared + WSOL's 4 PDAs + its feed + BONK's mint and 4 PDAs.
-    expect(withBonk).toHaveLength(6 + 4 + 1 + 5);
+    // 7 shared + WSOL's 4 PDAs + its feed + BONK's mint and 4 PDAs.
+    expect(withBonk).toHaveLength(7 + 4 + 1 + 5);
   });
 });
 

@@ -24,6 +24,7 @@ import {
   SlippageExceededError,
 } from '../router/errors.js';
 import { assertUnderMaxTradeUsd } from '../router/max-trade.js';
+import { assertUnderMaxBuyNative } from '../router/max-buy.js';
 import { isOracleHopRaw } from '../router/oracle-hop.js';
 import { isV3PoolHopRaw } from '../router/v3-pool-hop.js';
 import {
@@ -230,9 +231,15 @@ export function tradeRoutes(): Hono<AppEnv> {
       );
     }
 
+    // The net's live launchpad parameters: the router's per-buy cap and the
+    // cashback window the fee is quoted with. Cached 60 s; defaults on a miss.
+    const params = await deps.params.get(net);
+
     // A buy's `amount` *is* the native leg, so a capped net (Arc: real funds,
     // 25 USD) can refuse before touching the DB or an RPC. Sells are checked
-    // again below once the curve has priced the native proceeds.
+    // again below once the curve has priced the native proceeds. The EVM
+    // router also enforces `maxBuyNative` on `msg.value`; refusing here turns
+    // a guaranteed revert into a readable 400.
     if (side === 'buy') {
       try {
         assertUnderMaxTradeUsd(
@@ -240,6 +247,7 @@ export function tradeRoutes(): Hono<AppEnv> {
           amount,
           await deps.oracle.nativeUsd(nativeUnit(net)).catch(() => null),
         );
+        if (isEvm(net)) assertUnderMaxBuyNative(net, params, toAtoms(amount, 18));
       } catch (err) {
         if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);
         throw err;
@@ -377,6 +385,7 @@ export function tradeRoutes(): Hono<AppEnv> {
         now,
         aggregator,
         slippagePct: s.slip,
+        params,
       });
     } catch (err) {
       if (err instanceof RouterError) return c.json(err.toResponse(), err.httpStatus);

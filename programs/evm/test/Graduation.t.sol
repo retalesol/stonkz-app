@@ -13,6 +13,7 @@ import {IPriceSource} from "../src/oracle/IPriceSource.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {CurveMath} from "../src/CurveMath.sol";
+import {StonkzLens} from "../src/StonkzLens.sol";
 import {MockERC20} from "./mocks/Mocks.sol";
 import {MockPyth} from "./mocks/MockPyth.sol";
 import {MockUniversalRouter, MockWETH, MockSwapRouter02} from "./mocks/MockUniversalRouter.sol";
@@ -38,6 +39,7 @@ contract GraduationTest is Test {
     PushPriceSource push;
     StonkzV2Factory factory;
     UniswapV2Migrator migrator;
+    StonkzLens lens;
 
     address admin = address(0xA11CE);
     address migAuth = address(0x11165);
@@ -60,6 +62,7 @@ contract GraduationTest is Test {
         vm.stopPrank();
 
         pad = DeployPad.launchpad(admin, admin, admin, source, migAuth);
+        lens = new StonkzLens();
         MockERC20 usdg = new MockERC20("Global Dollar", "USDG", 6);
         MockUniversalRouter ur = new MockUniversalRouter(weth, usdg, 3_000e6);
         MockSwapRouter02 sr02 = new MockSwapRouter02(weth, usdg, 3_000e6);
@@ -119,12 +122,12 @@ contract GraduationTest is Test {
     /// the oracle knows the cap moved.
     function _buyMostOfTheWay(address token) internal {
         for (uint256 i = 0; i < 40; i++) {
-            (, uint256 usd) = pad.marketCap(token);
+            (, uint256 usd) = lens.marketCap(pad, token);
             if (usd >= 40_000e6) break;
             vm.prank(trader);
             pad.buy(token, 1 ether, 0);
         }
-        (, uint256 usdAtLaunch) = pad.marketCap(token);
+        (, uint256 usdAtLaunch) = lens.marketCap(pad, token);
         assertLt(usdAtLaunch, CurveMath.GRAD_MCAP_USD_1E6, "under the cap at the launch price");
         assertGt(pad.coinInfo(token).realToken, 0, "tokens remain on the curve");
     }

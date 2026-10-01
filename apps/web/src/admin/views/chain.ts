@@ -42,7 +42,7 @@ interface NetState {
   state: Record<string, unknown> | null;
   error: string | null;
 }
-interface Prepared {
+export interface Prepared {
   ok: true;
   net: Net;
   kind: string;
@@ -128,6 +128,12 @@ const EVM_ACTIONS: {
     owner: true,
   },
   { kind: 'acceptAdmin', label: 'acceptAdmin (signed by the pending admin)', fields: [] },
+  {
+    kind: 'setTrustedRouter',
+    label: 'setTrustedRouter (the StonkzRouter the launchpad trusts)',
+    fields: [['router', 'router address', 'text']],
+    owner: true,
+  },
   {
     kind: 'withdrawTreasury',
     label: 'withdrawTreasury',
@@ -329,7 +335,7 @@ async function prepareFlow(n: NetState, refresh: () => Promise<void>): Promise<v
   await reviewAndSign(prepared, refresh);
 }
 
-async function reviewAndSign(p: Prepared, refresh: () => Promise<void>): Promise<void> {
+export async function reviewAndSign(p: Prepared, refresh: () => Promise<void>): Promise<void> {
   await dialog<void>(
     `Sign ${p.kind} · ${p.net}`,
     (done) => {
@@ -627,6 +633,14 @@ export async function renderChain(root: HTMLElement, params: URLSearchParams): P
                         </dd>
                         <dt>staleness</dt>
                         <dd>${String(s['maxOracleStaleness'] ?? '—')}s</dd>
+                        ${
+                          s['trustedRouter'] !== undefined
+                            ? html`<dt>trusted router</dt>
+                                <dd class="mono">
+                                  ${s['trustedRouter'] ? String(s['trustedRouter']) : 'n/a (pre-params implementation)'}
+                                </dd>`
+                            : ''
+                        }
                         <dt>tokens</dt>
                         <dd>${String(s['tokenCount'] ?? '—')} · cursor ${n.cursor}</dd>
                         <dt>switches</dt>

@@ -11,7 +11,10 @@
 //!   and make the graduation pool open at the curve's closing price.
 //! - Every fee splits 15% platform / 10% `$STONKZ` buyback (`ops`) / 6% RWA
 //!   crate fund (`burn`) / remainder (69%) to the creator bucket. The
-//!   remainder form is what makes the split exact.
+//!   remainder form is what makes the split exact. Those shares, the creator
+//!   fee bounds, the cashback window and the graduation cap are the defaults
+//!   of the admin-settable `Params` PDA (`set_params`); the curve shape is not
+//!   tunable.
 //! - The staker peel happens strictly inside the creator bucket, after the
 //!   other three shares have already left for their own vaults.
 
@@ -269,5 +272,15 @@ pub mod launchpad {
         deadline: i64,
     ) -> Result<()> {
         instructions::referral::claim_referral(ctx, cumulative_amount, deadline)
+    }
+
+    /* ---------------------------------------------------- runtime params */
+
+    /// Admin: the fee split, creator fee bounds, cashback window and
+    /// graduation cap, in the `["params"]` PDA (created on first call). Until
+    /// it exists every instruction runs on the `constants.rs` defaults, so the
+    /// program upgrade that introduced this needs no migration step.
+    pub fn set_params(ctx: Context<SetParams>, args: ParamsArgs) -> Result<()> {
+        instructions::params::set_params(ctx, args)
     }
 }

@@ -1,3 +1,11 @@
+import {
+  SUPPLIES,
+  feeBoundsPct,
+  isValidCurveFee,
+  isValidSupply,
+  type CurveParams,
+} from '@stonkz/shared';
+
 /**
  * Pure input hygiene for `POST /launch/prepare` — everything here is
  * deterministic string work so it can be unit-tested without an app.
@@ -119,6 +127,32 @@ export function nameSkeleton(raw: string): string {
 }
 
 export type Checked<T> = { ok: true; value: T } | { ok: false; detail: string };
+
+/**
+ * Supply: one of the stepper's fixed values, at or under the chain's live
+ * `maxSupply` (an admin parameter; 1e12 by default).
+ */
+export function checkSupply(supply: number, p: CurveParams): Checked<number> {
+  if (isValidSupply(supply, p)) return { ok: true, value: supply };
+  const offered = SUPPLIES.filter(([v]) => v <= p.maxSupply).map(([, label]) => label);
+  return {
+    ok: false,
+    detail:
+      offered.length === SUPPLIES.length
+        ? 'supply must be one of 1e6, 5e8, 1e9, 1e12'
+        : `supply must be one of ${offered.join(', ')} (this chain caps supply at ${p.maxSupply.toLocaleString('en-US')})`,
+  };
+}
+
+/** Creator fee, percent, inside the chain's live `[minFeeBps, maxFeeBps]`. */
+export function checkCurveFee(pct: number, p: CurveParams): Checked<number> {
+  if (isValidCurveFee(pct, p)) return { ok: true, value: pct };
+  const { min, max } = feeBoundsPct(p);
+  return {
+    ok: false,
+    detail: `fee must be between ${min.toFixed(1)} and ${max.toFixed(1)} percent`,
+  };
+}
 
 function hasInvisible(s: string): boolean {
   return /[\s\p{Cc}\p{Cf}]/u.test(s);

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {CurveMath} from "../src/CurveMath.sol";
+import {StonkzLens} from "../src/StonkzLens.sol";
 import {StonkzRouter, IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
 import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
@@ -30,6 +31,7 @@ contract RouterTest is Test {
     PushPriceSource oracle;
     MockERC20 base;
     address token;
+    StonkzLens lens;
 
     address admin = address(0xA11CE);
     address oracleAuth = address(0x0AC1E);
@@ -59,6 +61,7 @@ contract RouterTest is Test {
         weth = new MockWETH();
         oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
         pad = DeployPad.launchpad(admin, admin, admin, oracle, admin);
+        lens = new StonkzLens();
         ur = new MockUniversalRouter(weth, base, RATE);
         MockSwapRouter02 sr02 = new MockSwapRouter02(weth, base, RATE);
         router = new StonkzRouter(
@@ -141,7 +144,7 @@ contract RouterTest is Test {
 
     /// Net base the curve will pay for `amount`, after its own fee.
     function _quoteSellNet(uint256 amount) internal view returns (uint256) {
-        (CurveMath.SellFill memory fill,,) = pad.quoteSell(token, amount);
+        (CurveMath.SellFill memory fill,,) = lens.quoteSell(pad, token, amount);
         return fill.netBase;
     }
 

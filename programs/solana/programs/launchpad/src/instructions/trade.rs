@@ -9,7 +9,7 @@ use crate::events::*;
 use crate::math::*;
 use crate::state::*;
 
-/// One account set serves both sides of the curve hop. Fifteen accounts is
+/// One account set serves both sides of the curve hop. Seventeen accounts is
 /// deliberately lean: this instruction has to fit inside a transaction that
 /// already carries a Jupiter route in front of it.
 #[derive(Accounts)]
@@ -54,6 +54,11 @@ pub struct TradeCtx<'info> {
 
     pub token_program: Interface<'info, TokenInterface>,
     pub base_token_program: Interface<'info, TokenInterface>,
+
+    /* Appended after the original 16 accounts so existing indices are
+     * unchanged. */
+    /// CHECK: PDA verified in load_params; empty account means defaults
+    pub params: UncheckedAccount<'info>,
 }
 
 impl<'info> TradeCtx<'info> {
@@ -215,14 +220,15 @@ pub fn buy(ctx: Context<TradeCtx>, amount_base: u64, min_out: u64) -> Result<()>
     require!(amount_base > 0, LaunchpadError::ZeroAmount);
 
     let now = Clock::get()?.unix_timestamp;
+    let params = load_params(&ctx.accounts.params, ctx.program_id)?;
     let c = &ctx.accounts.curve;
-    let bps = eff_fee_bps(c.fee_bps, c.cashback, c.cb_start, now);
+    let bps = eff_fee_bps(c.fee_bps, c.cashback, c.cb_start, now, &params);
     let in_cashback = bps > c.fee_bps;
 
     let fill = buy_quote(&live_state(c), bps, amount_base).ok_or(LaunchpadError::MathOverflow)?;
     require!(fill.tokens_out >= min_out, LaunchpadError::SlippageExceeded);
 
-    let shares = split_fee(fill.fee);
+    let shares = split_fee(fill.fee, &params);
     // The identity the whole fee model rests on. Cheap to assert, so assert it
     // on every fill rather than trusting the unit tests alone.
     require!(shares.total() == fill.fee, LaunchpadError::MathOverflow);
@@ -336,14 +342,15 @@ pub fn sell(ctx: Context<TradeCtx>, amount_token: u64, min_out: u64) -> Result<(
     require!(amount_token > 0, LaunchpadError::ZeroAmount);
 
     let now = Clock::get()?.unix_timestamp;
+    let params = load_params(&ctx.accounts.params, ctx.program_id)?;
     let c = &ctx.accounts.curve;
-    let bps = eff_fee_bps(c.fee_bps, c.cashback, c.cb_start, now);
+    let bps = eff_fee_bps(c.fee_bps, c.cashback, c.cb_start, now, &params);
     let in_cashback = bps > c.fee_bps;
 
     let fill = sell_quote(&live_state(c), bps, amount_token).ok_or(LaunchpadError::MathOverflow)?;
     require!(fill.net_base >= min_out, LaunchpadError::SlippageExceeded);
 
-    let shares = split_fee(fill.fee);
+    let shares = split_fee(fill.fee, &params);
     require!(shares.total() == fill.fee, LaunchpadError::MathOverflow);
 
     // Tokens in first, then base out of the pool.

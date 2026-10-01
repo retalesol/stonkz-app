@@ -2,6 +2,7 @@ import { JwtService } from '../auth/jwt.js';
 import { AuthService } from '../auth/service.js';
 import type { EthCaller } from '../auth/siwe.js';
 import { EvmRpc } from '../chain/evm.js';
+import { CurveParamsReader, curveParamsTargets } from '../chain/params.js';
 import type { ChainRpc } from '../chain/types.js';
 import {
   CachedPriceOracle,
@@ -193,6 +194,15 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     );
 
   const ethCaller = asEthCaller(rpcs.RH) ?? asEthCaller(rpcs.BASE);
+  const params = new CurveParamsReader({
+    target: curveParamsTargets(env, rpcs),
+    now,
+    onError: (net, err) =>
+      logger.warn('curve params read failed; serving last good / defaults', {
+        net,
+        err: err instanceof Error ? err.message : String(err),
+      }),
+  });
   const publisher = new Publisher(redis, now);
   const jwt = new JwtService(
     {
@@ -346,6 +356,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
     metrics,
     rpcs,
     oracle,
+    params,
     jwt,
     auth,
     quotes: new QuoteCache(redis, env.quoteCacheTtlSeconds, now),

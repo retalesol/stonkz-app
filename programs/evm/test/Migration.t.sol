@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
+import {StonkzLens} from "../src/StonkzLens.sol";
 import {StonkzToken} from "../src/StonkzToken.sol";
 import {UniswapV2Migrator, IUniswapV2Factory} from "../src/UniswapV2Migrator.sol";
 import {PushPriceSource} from "../src/oracle/PushPriceSource.sol";
@@ -26,6 +27,7 @@ contract MigrationTest is Test {
     UniswapV2Migrator migrator;
     StonkzV2Factory factory;
     MockERC20 base;
+    StonkzLens lens;
 
     address admin = address(0xA11CE);
     address oracleAuth = address(0x0AC1E);
@@ -42,6 +44,7 @@ contract MigrationTest is Test {
         base = new MockERC20("Global Dollar", "USDG", BASE_DECIMALS);
         oracle = DeployPad.pushOracle(admin, oracleAuth, 90_000);
         pad = DeployPad.launchpad(admin, admin, admin, oracle, migAuth);
+        lens = new StonkzLens();
         factory = new StonkzV2Factory();
         migrator = new UniswapV2Migrator(IUniswapV2Factory(address(factory)), address(pad));
 
@@ -468,7 +471,7 @@ contract MigrationTest is Test {
         assertGt(unsold, 0, "tokens remain on the curve");
         uint256 supplyBefore = StonkzToken(token).totalSupply();
 
-        (uint256 mcapBase,) = pad.marketCap(token);
+        (uint256 mcapBase,) = lens.marketCap(pad, token);
         // Price the base high enough that the mcap clears $69,000.
         uint256 needed = (69_000_000_000 * 10 ** BASE_DECIMALS) / mcapBase + 1;
         vm.prank(oracleAuth);

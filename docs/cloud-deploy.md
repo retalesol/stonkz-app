@@ -48,6 +48,14 @@ Build context is the repo root.
 
 Both run `tsx` because workspace packages export TypeScript.
 
+RPC variables on **both** services are the project's QuickNode endpoints
+(`RH_RPC_URL`, `BASE_RPC_URL`, `SOLANA_RPC_URL` for the test chains, plus
+`RH_MAINNET_RPC_URL`, `BASE_MAINNET_RPC_URL`, `SOLANA_MAINNET_RPC_URL` held
+for the mainnet cut-over) — the table in
+[`deployment.md`](deployment.md#0b-rpc-endpoints-quicknode). They carry keys:
+never copy them into a Vercel `VITE_*` variable or `apps/web/public/chains.json`;
+the wallets keep the public RPCs there.
+
 ## Vercel
 
 `vercel.json` at the repo root installs the workspace and builds
@@ -134,7 +142,8 @@ locally shows the compiled routes in `.vercel/output/config.json`.
 ## After a program deploy
 
 Unset `STONKZ_STAGING`, set `RH_LAUNCHPAD_ADDRESS`, `RH_ROUTER_ADDRESS`,
-`RH_RPC_URL` (provider), `INDEXER_SOURCE=chain`, and the start
+`RH_RPC_URL` (the QuickNode endpoint for that chain id — on mainnet the
+value of `RH_MAINNET_RPC_URL`), `INDEXER_SOURCE=chain`, and the start
 slot/block. Then this stack is still not a mainnet claim — see
 `docs/launch-checklist.md`.
 

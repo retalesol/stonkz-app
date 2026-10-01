@@ -66,6 +66,51 @@ See `programs/evm/deployments/46630.json` and `docs/real-vs-simulated.md`
 
 ---
 
+## 0b. RPC endpoints (QuickNode)
+
+The project's provider is QuickNode, one endpoint per network. Every runbook
+command below and every operator script (`scripts/push-oracle-prices.sh`,
+`scripts/reconcile-fees.ts`, the `programs/*/scripts` helpers, the fork
+tests) uses these; both Railway services (`stonkz-backend`, `stonkz-indexer`)
+carry all six.
+
+| Network           | Chain id | URL                                                                                                       | Env var (API + indexer)  |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Robinhood Testnet | 46630    | `https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/` | `RH_RPC_URL`             |
+| Robinhood Mainnet | 4663     | `https://thrumming-wild-shape.robinhood-mainnet.quiknode.pro/e928f474b84a91ae2a3e1202b4830a4e8ff8739f/`   | `RH_MAINNET_RPC_URL`     |
+| Base Sepolia      | 84532    | `https://bold-morning-cherry.base-sepolia.quiknode.pro/e3b199333fe5835cdfe212994bd562e853860ffb/`         | `BASE_RPC_URL`           |
+| Base Mainnet      | 8453     | `https://muddy-long-snow.base-mainnet.quiknode.pro/2d3c9d5f0c802e809f0c140855a39a5e0bac2606/`             | `BASE_MAINNET_RPC_URL`   |
+| Solana Devnet     | —        | `https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/`      | `SOLANA_RPC_URL`         |
+| Solana Mainnet    | —        | `https://withered-late-shadow.solana-mainnet.quiknode.pro/c42aacddfd044848fd4ff4351f9ceb41bb18af4a/`      | `SOLANA_MAINNET_RPC_URL` |
+
+- **The `*_MAINNET_RPC_URL` vars are reserved for the mainnet cut-over.**
+  No code reads them today (`apps/api/src/env.ts` / `apps/indexer/src/config.ts`
+  read only `RH_RPC_URL`, `BASE_RPC_URL`, `SOLANA_RPC_URL`, `ARC_RPC_URL`,
+  `SOLANA_PRIVATE_RPC_URL`). They sit on Railway so the cut-over (§3) is a
+  copy of three values next to the chain-id flip, not a provider sign-up.
+  Point `SOLANA_PRIVATE_RPC_URL` at the Solana mainnet endpoint too (or a
+  staked relay) when RELAY mode should mean something; unset, broadcast falls
+  back to `SOLANA_RPC_URL`.
+- **These URLs carry keys.** They belong in server env, this runbook, and
+  operator scripts — never in `apps/web` source, a Vercel `VITE_*` variable,
+  `scripts/emit-chains.mjs` or `apps/web/public/chains.json`. The wallets keep
+  the keyless public RPCs there (`programs/evm/deployments/*.json#rpc`).
+- **Production refuses the public hosts** outside `STONKZ_STAGING`
+  (`env.ts`: `rpc.mainnet.chain.robinhood.com`, `sepolia.base.org` /
+  `mainnet.base.org`, `api.*.solana.com`); `*.quiknode.pro` passes. The
+  built-in defaults stay public so a bare checkout runs.
+- **Fallback only:** `https://rpc.mainnet.chain.robinhood.com` works for RH
+  4663 reads (`rpc.chain.robinhood.com` refuses TLS) and Robinhood documents
+  it as rate-limited and not for production. Use it for a one-off `cast call`
+  or a failover while QuickNode is down (`incident-runbook.md` §6), not as a
+  configured value.
+- **Fork tests** (`programs/evm/test/fork/*`, `Router.t.sol::test_Fork*`)
+  read `RH_RPC_URL` and their own `*_FORK_RPC` vars: export the QuickNode URL
+  from this table for the chain under test, e.g.
+  `export RH_RPC_URL=https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/`.
+
+---
+
 ## 1. Solana
 
 ### 1.1 Build and deploy
@@ -110,7 +155,7 @@ together.
 instruction fails until it exists.
 
 ```bash
-ANCHOR_PROVIDER_URL=https://api.devnet.solana.com \
+ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
 ANCHOR_WALLET=~/.config/solana/id.json \
 STONKZ_CLUSTER=devnet \
 STONKZ_ADMIN=<pubkey> \
@@ -208,6 +253,55 @@ so its staleness bound is short (90s) — deliberately unlike the EVM side's,
 which must accommodate a 24h Chainlink heartbeat. Run the pusher on a cadence
 comfortably inside that window or graduations stall.
 
+### 1.5 Runtime parameters (Solana)
+
+The fee split (platform / `$STONKZ` buyback / RWA fund, creator bucket as the
+remainder), the creator fee bounds, the cashback start fee and window, and the
+graduation market cap live in the `["params"]` PDA, settable by the admin with
+`set_params` — no redeploy. **The account is optional:** every instruction that
+reads it (`create_token`, `buy`, `sell`, `graduate`, `claim_dex_fees`) passes
+the PDA as its last account and treats an empty account as the built-in
+defaults (`constants.rs`: 1500/1000/600 bps, 100–500 bps, 5000 bps over 300 s,
+$69,000). So the program upgrade that introduced it needs no migration step,
+and the order that avoids downtime is: deploy the API/web (they append the
+params account, which the old program ignores as a trailing account), upgrade
+the program, then `set_params` whenever you actually want different numbers.
+
+```bash
+# Devnet: show the current values, send nothing.
+ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
+ANCHOR_WALLET=/path/to/admin.json \
+STONKZ_CLUSTER=devnet \
+pnpm exec tsx programs/solana/scripts/set-params.ts --dry-run
+
+# Devnet: set them. Every STONKZ_* is optional and defaults to the built-in value.
+ANCHOR_PROVIDER_URL=https://practical-quaint-meme.solana-devnet.quiknode.pro/c8aa47382db29af890d18e52774284dabdb6845a/ \
+ANCHOR_WALLET=/path/to/admin.json \
+STONKZ_CLUSTER=devnet \
+STONKZ_FEE_PROTOCOL_BPS=1500 STONKZ_FEE_OPS_BPS=1000 STONKZ_FEE_BURN_BPS=600 \
+STONKZ_MIN_FEE_BPS=100 STONKZ_MAX_FEE_BPS=500 \
+STONKZ_CB_START_FEE_BPS=5000 STONKZ_CB_WINDOW_SECS=300 \
+STONKZ_GRAD_MCAP_USD=69000 \
+pnpm exec tsx programs/solana/scripts/set-params.ts
+```
+
+The program rejects `protocol + ops + burn > 10000`, `min > max`,
+`max > cb_start`, `cb_start > 10000`, a zero window and a zero cap
+(`Params*` errors), and the script applies the same checks before sending.
+`scripts/init-deployment.ts` sends `set_params` with the defaults on a fresh
+deployment and leaves an existing PDA alone. On mainnet-beta the admin is the
+Squads vault: the script refuses without `STONKZ_SQUADS_VAULT`, and when the
+wallet is not admin it prints the instruction (accounts + base64 data) for the
+multisig instead of sending. The admin console prepares the same instruction
+(`POST /admin/chain/prepare/SOL` with `{ kind: "set_params", params: {...} }`,
+owner role) and `GET /admin/chain/state` shows the live values with
+`params.initialised` telling you whether the PDA exists yet.
+
+Existing coins are affected immediately by a new split / cashback shape (fees
+are split at fill time); a new graduation cap applies to coins launched after
+the change (each curve stores its own `grad_mcap_base`) and to the oracle
+trigger of every coin.
+
 ---
 
 ## 2. Robinhood Chain
@@ -224,7 +318,7 @@ export STONKZ_ADMIN=$(cast wallet address --private-key "$PRIVATE_KEY")
 export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...   # distinct throwaway
 export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...        # distinct from protocol
 forge script script/DeployTestnet.s.sol:DeployTestnet \
-  --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vvv
+  --rpc-url https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/ --broadcast -vvv
 ```
 
 That script deploys UUPS proxies for `PushPriceSource` + `StonkzLaunchpad`, a
@@ -237,10 +331,10 @@ Operational smoke after deploy (funded admin key):
 ```bash
 # Oracle-graduate + migrate an existing token (LP → 0x…dEaD)
 forge script script/SmokeGraduate.s.sol:SmokeGraduate \
-  --rpc-url https://rpc.testnet.chain.robinhood.com --broadcast -vv
+  --rpc-url https://icy-cosmopolitan-brook.robinhood-testnet.quiknode.pro/9c53e25ca5bbcb46f445fb61fa7049408ee9fcfb/ --broadcast -vv
 ```
 
-Set Railway `RH_CHAIN_ID=46630`, `RH_RPC_URL`, `RH_LAUNCHPAD_ADDRESS`,
+Set Railway `RH_CHAIN_ID=46630`, `RH_RPC_URL` (the QuickNode testnet endpoint, §0b), `RH_LAUNCHPAD_ADDRESS`,
 `RH_ROUTER_ADDRESS`, `BASE_MINT_OVERRIDES_RH`, and
 `INDEXER_RH_START_BLOCK` (deployment block). Set `INDEXER_SOURCE=chain` with
 `INDEXER_SOL_START_SLOT` once Solana is deployed — production refuses fixture
@@ -364,6 +458,9 @@ that the V3 factory has the 1% tier, and ends governed:
 
 ```bash
 cd programs/evm
+# RPCs: the QuickNode mainnet endpoints from §0b (on Railway as *_MAINNET_RPC_URL)
+export RH_RPC_URL=https://thrumming-wild-shape.robinhood-mainnet.quiknode.pro/e928f474b84a91ae2a3e1202b4830a4e8ff8739f/
+export BASE_RPC_URL=https://muddy-long-snow.base-mainnet.quiknode.pro/2d3c9d5f0c802e809f0c140855a39a5e0bac2606/
 # Governance (MainnetGuard) — required on every mainnet chain id:
 export PROPOSERS=0x<team Safe>          # comma-separated; also cancellers
 export EXECUTORS=$PROPOSERS             # optional; 0x0 = anyone
@@ -441,6 +538,8 @@ env, check that the launchpad is already under the timelock, and **print the
 batch for the Safe instead of calling the proxy**
 ([`governance-handover.md`](governance-handover.md)).
 
+The fee split, fee bounds, cashback shape, graduation cap, supply cap and the router's cap / Pyth / sink are runtime parameters, not upgrades: [`parameters.md`](parameters.md).
+
 ### 2.3 Stock-token bases are not in v1 — opting one in later
 
 `StockBases.sol` has deliberately empty branches for 4663 and 8453, so
@@ -511,6 +610,9 @@ The deploy scripts print these lines. Set them in the API's environment:
 
 ```
 SOLANA_LAUNCHPAD_PROGRAM_ID=<solana program id>
+SOLANA_RPC_URL=<QuickNode, §0b>       # mainnet: the SOLANA_MAINNET_RPC_URL value
+RH_RPC_URL=<QuickNode, §0b>           # mainnet: the RH_MAINNET_RPC_URL value
+BASE_RPC_URL=<QuickNode, §0b>         # mainnet: the BASE_MAINNET_RPC_URL value
 RH_CHAIN_ID=4663                      # mainnet; 46630 on the testnet
 RH_LAUNCHPAD_ADDRESS=0x<StonkzLaunchpad>
 RH_ROUTER_ADDRESS=0x<StonkzRouter>
@@ -582,7 +684,7 @@ Load the web app at ~390px width (or open inside Phantom / Jupiter browser):
 
 **Robinhood Chain**
 
-- [ ] Fork rehearsal passed against the live chain before the broadcast: `MAINNET_FORK_RPC_RH=<rpc> forge test --match-path test/fork/MainnetDeployFork.t.sol` (and `MAINNET_FORK_RPC_BASE` for Base).
+- [ ] Fork rehearsal passed against the live chain before the broadcast: `MAINNET_FORK_RPC_RH=$RH_RPC_URL forge test --match-path test/fork/MainnetDeployFork.t.sol` (and `MAINNET_FORK_RPC_BASE=$BASE_RPC_URL` for Base) — the QuickNode mainnet endpoints from §0b.
 - [ ] `launchpad.admin()` is the `TimelockController`, `pauser()` is the pauser key, the deployer holds no timelock role; every price source and the `ReferralVault` have `admin() == timelock`.
 - [ ] `StonkzLaunchpad.migrator` is the `UniswapV3Migrator` (1% tier) and `migrationAuthority` is set.
 - [ ] `priceSource()` is the `PythPriceSource`, `maxOracleStaleness` is the 90000 clamp, `StonkzRouter.pyth()` is `0x8250f4aF…1487a`.
@@ -609,6 +711,7 @@ Deploying does not make the product live. Still outstanding — see
 - **External audit** — internal review only; see `docs/security-review-findings.md`
   and `docs/audit-package.md`.
 - **Keys and infra**: the Safe(s), pauser keys, cold withdraw authorities,
-  paid RPCs, a Hermes key — none of which this runbook can provision.
+  a Hermes key — none of which this runbook can provision. (RPCs are done:
+  QuickNode on every network, §0b.)
 - **Solana mainnet governance** (Squads + time lock, pauser) is a separate
   track from the EVM handover described here.

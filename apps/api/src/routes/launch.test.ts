@@ -319,7 +319,7 @@ describe('POST /launch/prepare + /launch/confirm', () => {
       const ixs = TransactionMessage.decompile(vtx.message, {
         addressLookupTableAccounts: [stonkzAlt, ...route.tables],
       }).instructions;
-      const create = ixs.find((ix) => ix.programId.equals(programId) && ix.keys.length === 17)!;
+      const create = ixs.find((ix) => ix.programId.equals(programId) && ix.keys.length === 18)!;
       expect(create.keys[1]!.pubkey.toBase58()).toBe(body.predictedMint);
 
       const [intent] = await mainnet.deps.db
@@ -1419,13 +1419,16 @@ describe('Solana dev buy pricing', () => {
         }).toString('base64'),
       );
       const { token } = await h.login('SOL');
-      // No PINATA_JWT and no SOLANA_LAUNCH_ALT here: a 200-byte image URL goes
-      // on-chain as-is, and name + ticker + uri (242 bytes) leave the sync no room.
+      // No PINATA_JWT and no SOLANA_LAUNCH_ALT here: a 170-byte image URL goes
+      // on-chain as-is, and name + ticker + uri (212 bytes) leave the sync no
+      // room while still fitting legacy without it (1229 of 1232 bytes; the
+      // params PDA appended to create_token/buy took 34 bytes off the old
+      // 200-byte uri headroom — a maximal uri now needs SOLANA_LAUNCH_ALT).
       const { status, body } = await prepare(token, {
         ...SOL_TICKER_BODY,
         ticker: 'LONGESTTKR',
         name: 'N'.repeat(32),
-        uri: `https://img.example/${'a'.repeat(200 - 20)}`,
+        uri: `https://img.example/${'a'.repeat(170 - 20)}`,
         devBuyNative: 0.5,
       });
       expect(status).toBe(200);

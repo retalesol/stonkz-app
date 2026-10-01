@@ -450,9 +450,10 @@ export function socialRoutes(): Hono<AppEnv> {
 
     const now = deps.now();
     const prices = new LiveBaseUsd(deps);
+    const curveParams = await deps.params.all();
     const launched = await Promise.all(
       launchedRows.map(async (r) =>
-        serialiseToken(r, now, { baseUsd: await prices.liveForRow(r) }),
+        serialiseToken(r, now, { baseUsd: await prices.liveForRow(r) }, curveParams[r.net as Net]),
       ),
     );
     const base = {
