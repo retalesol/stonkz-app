@@ -541,7 +541,7 @@ contract DeployMainnet is Script {
             "%s_V3_FEE_TIER_OVERRIDES=   # pin by hand per aggregator-hop base (docs/deployment.md 3.1)", net
         );
         console2.log(
-            "%s_V3_QUOTER_ADDRESS=       # a V3ExactInputQuoter-ABI quoter, or leave unset (no pool hop)", net
+            "%s_V3_QUOTER_ADDRESS=       # leave unset: the API defaults to the canonical QuoterV2 pinned in config", net
         );
         console2.log("INDEXER_%s_START_BLOCK=<this deployment's block>", net);
         console2.log(

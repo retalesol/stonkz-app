@@ -64,6 +64,11 @@ export const V3_POOL_ABI = [
   },
 ] as const;
 
+/**
+ * The flat `quoteExactInputSingle(tokenIn, tokenOut, fee, amountIn)` of our
+ * testnet `V3ExactInputQuoter` (`programs/evm/src/testnet`): RH testnet 46630
+ * has no canonical QuoterV2, so that is what is deployed there.
+ */
 export const V3_QUOTER_ABI = [
   {
     type: 'function',
@@ -78,6 +83,95 @@ export const V3_QUOTER_ABI = [
     outputs: [{ name: 'amountOut', type: 'uint256' }],
   },
 ] as const;
+
+/**
+ * Uniswap's canonical QuoterV2 — what mainnet uses (RH 4663
+ * `0x33e8…A9E7`, Base 8453 `0x3d4e…B76a`, pinned in `src/config/*.sol`),
+ * and Base Sepolia's `0xC529…5E27`. Same exact-input simulation, struct
+ * argument, four outputs; only `amountOut` is read.
+ */
+export const V3_QUOTER_V2_ABI = [
+  {
+    type: 'function',
+    name: 'quoteExactInputSingle',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: 'params',
+        type: 'tuple',
+        components: [
+          { name: 'tokenIn', type: 'address' },
+          { name: 'tokenOut', type: 'address' },
+          { name: 'amountIn', type: 'uint256' },
+          { name: 'fee', type: 'uint24' },
+          { name: 'sqrtPriceLimitX96', type: 'uint160' },
+        ],
+      },
+    ],
+    outputs: [
+      { name: 'amountOut', type: 'uint256' },
+      { name: 'sqrtPriceX96After', type: 'uint160' },
+      { name: 'initializedTicksCrossed', type: 'uint32' },
+      { name: 'gasEstimate', type: 'uint256' },
+    ],
+  },
+] as const;
+
+export type V3QuoterKind = 'v2' | 'flat';
+
+/**
+ * Which ABI each quoter address answered last. QuoterV2 is tried first (it is
+ * the mainnet contract); a quoter that rejects the struct selector is the
+ * flat testnet one. Remembered per address so RH testnet pays the extra
+ * `eth_call` once, not per quote.
+ */
+const quoterKinds = new Map<string, V3QuoterKind>();
+
+/** Tests only. */
+export function resetV3QuoterKinds(): void {
+  quoterKinds.clear();
+}
+
+export function v3QuoterKind(quoter: string): V3QuoterKind | undefined {
+  return quoterKinds.get(quoter.toLowerCase());
+}
+
+function decodeAmountOut(kind: V3QuoterKind, raw: string): bigint {
+  if (!raw || raw.length < 66) throw new Error('quoter returned no data');
+  if (kind === 'v2') {
+    const [amountOut] = decodeFunctionResult({
+      abi: V3_QUOTER_V2_ABI,
+      functionName: 'quoteExactInputSingle',
+      data: raw as Hex,
+    });
+    return amountOut;
+  }
+  return decodeFunctionResult({
+    abi: V3_QUOTER_ABI,
+    functionName: 'quoteExactInputSingle',
+    data: raw as Hex,
+  });
+}
+
+function encodeQuote(
+  kind: V3QuoterKind,
+  tokenIn: Address,
+  tokenOut: Address,
+  fee: number,
+  amountIn: bigint,
+): Hex {
+  return kind === 'v2'
+    ? encodeFunctionData({
+        abi: V3_QUOTER_V2_ABI,
+        functionName: 'quoteExactInputSingle',
+        args: [{ tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0n }],
+      })
+    : encodeFunctionData({
+        abi: V3_QUOTER_ABI,
+        functionName: 'quoteExactInputSingle',
+        args: [tokenIn, tokenOut, fee, amountIn],
+      });
+}
 
 /** `StockPriceSource`'s TWAP window. */
 export const STOCK_TWAP_SECONDS = 1800;
@@ -202,6 +296,11 @@ export function spotAmountOut(
   return (gross * BigInt(1_000_000 - fee)) / 1_000_000n;
 }
 
+/**
+ * Exact-input quote from either quoter ABI (see `V3_QUOTER_V2_ABI`). Throws
+ * when neither answers — the callers then fall back to the `slot0` ceiling
+ * or report no route, exactly as before.
+ */
 export async function v3QuoteExactInputSingle(
   eth: V3EthCaller,
   quoter: string,
@@ -210,20 +309,24 @@ export async function v3QuoteExactInputSingle(
   fee: number,
   amountIn: bigint,
 ): Promise<bigint> {
-  const raw = await eth.ethCall(
-    quoter,
-    encodeFunctionData({
-      abi: V3_QUOTER_ABI,
-      functionName: 'quoteExactInputSingle',
-      args: [tokenIn as Address, tokenOut as Address, fee, amountIn],
-    }),
-  );
-  if (!raw || raw.length < 66) throw new Error('quoter returned no data');
-  return decodeFunctionResult({
-    abi: V3_QUOTER_ABI,
-    functionName: 'quoteExactInputSingle',
-    data: raw as Hex,
-  });
+  const key = quoter.toLowerCase();
+  const known = quoterKinds.get(key);
+  const order: V3QuoterKind[] = known ? [known] : ['v2', 'flat'];
+  let lastErr: unknown;
+  for (const kind of order) {
+    try {
+      const raw = await eth.ethCall(
+        quoter,
+        encodeQuote(kind, tokenIn as Address, tokenOut as Address, fee, amountIn),
+      );
+      const out = decodeAmountOut(kind, raw);
+      quoterKinds.set(key, kind);
+      return out;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export type EthToTokenQuote =

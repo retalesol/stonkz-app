@@ -575,11 +575,16 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
         : // Uniswap v3 factory on Base mainnet (8453) — `Base.sol`, verified 2026-10-01.
           '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
     ),
-    // No default on any chain: `V3PoolHopClient` speaks the flat
-    // `V3ExactInputQuoter` ABI (`programs/evm/src/testnet`), not Uniswap's
-    // QuoterV2 struct ABI, so the canonical QuoterV2 pins must not be dropped
-    // in here. Zero = no on-chain pool hop (Trading API / oracle only).
-    baseV3QuoterAddress: str(src, 'BASE_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
+    // Uniswap's canonical QuoterV2 (`Base.sol` / `BaseSepolia.sol`, verified
+    // live 2026-10-01); the pool-hop client speaks both its struct ABI and the
+    // flat testnet quoter's. Zero = no on-chain pool hop (Trading API / oracle only).
+    baseV3QuoterAddress: str(
+      src,
+      'BASE_V3_QUOTER_ADDRESS',
+      int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID) === BASE_CHAIN_ID
+        ? '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a'
+        : '0xC5290058841028F1614F3A6F0F5816cAd0df5E27',
+    ),
     arcRpcUrl: str(src, 'ARC_RPC_URL', ARC_RPC_URL),
     arcExplorerUrl: str(src, 'ARC_EXPLORER', ARC_EXPLORER_URL).replace(/\/$/, ''),
     arcChainId: int(src, 'ARC_CHAIN_ID', ARC_CHAIN_ID),
@@ -669,7 +674,16 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
         ? '0xdf9e3D6ffaC4513dD7b053212bbECcbCD15ec932'
         : '0x1f7d7550B1b028f7571E69A784071F0205FD2EfA',
     ),
-    rhV3QuoterAddress: str(src, 'RH_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
+    // Mainnet: canonical QuoterV2 (`RobinhoodChain.sol`, verified live
+    // 2026-10-01). Testnet has none; `deployments/46630.json` names the
+    // flat `V3ExactInputQuoter` to pin here.
+    rhV3QuoterAddress: str(
+      src,
+      'RH_V3_QUOTER_ADDRESS',
+      int(src, 'RH_CHAIN_ID', RH_CHAIN_ID) === 46630
+        ? ZERO_EVM_ADDRESS
+        : '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7',
+    ),
 
     pythHermesUrl: src['PYTH_HERMES_URL']?.trim() || undefined,
     pythHermesApiKey: src['PYTH_HERMES_API_KEY']?.trim() || undefined,

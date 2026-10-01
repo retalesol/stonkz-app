@@ -1,7 +1,8 @@
 /**
  * On-chain Uniswap V3 exact-input quotes for RH when the Trading API cannot
  * (testnet 46630 is absent from its chain enum). Requires a seeded pool and a
- * deployed `V3ExactInputQuoter` (`programs/evm/src/testnet/V3ExactInputQuoter.sol`).
+ * quoter: Uniswap's canonical QuoterV2 on mainnet / Base Sepolia, or the
+ * testnet `V3ExactInputQuoter` on RH 46630 (`v3-pool-reads.ts` speaks both).
  *
  * Stamped `raw.source === 'v3-pool'` so `/trade/prepare` treats the hop as
  * executable (unlike oracle-priced hops).
@@ -12,6 +13,7 @@ import type { BaseMintRegistry } from './base-mints.js';
 import { NATIVE_ETH_MINT } from './compose.js';
 import { NoRouteError } from './errors.js';
 import { pinnedV3FeeTierFor } from './evm-router.js';
+import { v3QuoteExactInputSingle } from './v3-pool-reads.js';
 
 export const V3_POOL_HOP_SOURCE = 'v3-pool' as const;
 
@@ -49,21 +51,6 @@ const POOL_ABI = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'uint128' }],
-  },
-] as const;
-
-const QUOTER_ABI = [
-  {
-    type: 'function',
-    name: 'quoteExactInputSingle',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'tokenIn', type: 'address' },
-      { name: 'tokenOut', type: 'address' },
-      { name: 'fee', type: 'uint24' },
-      { name: 'amountIn', type: 'uint256' },
-    ],
-    outputs: [{ name: 'amountOut', type: 'uint256' }],
   },
 ] as const;
 
@@ -201,14 +188,8 @@ export class V3PoolHopClient implements AggregatorClient {
     fee: number,
     amountIn: bigint,
   ): Promise<bigint> {
-    const data = encodeFunctionData({
-      abi: QUOTER_ABI,
-      functionName: 'quoteExactInputSingle',
-      args: [tokenIn, tokenOut, fee, amountIn],
-    });
     try {
-      const raw = await this.eth.ethCall(this.quoter, data);
-      return BigInt(raw);
+      return await v3QuoteExactInputSingle(this.eth, this.quoter, tokenIn, tokenOut, fee, amountIn);
     } catch (err) {
       throw new NoRouteError(
         tokenIn,

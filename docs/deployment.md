@@ -629,9 +629,10 @@ on Base — the same pins as `src/config/*.sol`), the public RPC and explorer,
 the V3 factory and the referral asset all resolve to the mainnet values, and
 no stock tokens are listed. A chain id with no pinned table refuses to boot
 unless `BASE_MINT_OVERRIDES_<NET>` supplies at least `WETH:<address>`.
-`*_V3_QUOTER_ADDRESS` has no default on any chain: the pool-hop client speaks
-the flat `V3ExactInputQuoter` ABI, not Uniswap's QuoterV2, so either deploy
-that quoter or leave the hop off.
+`*_V3_QUOTER_ADDRESS` defaults to Uniswap's canonical QuoterV2 on RH 4663,
+Base 8453 and Base Sepolia (the pool-hop client speaks both QuoterV2's struct
+ABI and the flat testnet `V3ExactInputQuoter`); only RH testnet 46630, which
+has no QuoterV2, needs the deployed flat quoter pinned by env.
 
 `apps/api/src/env.ts` refuses to boot in production with
 `RH_LAUNCHPAD_ADDRESS` unset (unless `STONKZ_STAGING=1`) and always refuses a

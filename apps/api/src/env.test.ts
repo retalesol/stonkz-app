@@ -75,10 +75,17 @@ describe('readEnv mainnet defaults follow the chain id', () => {
     expect(main.baseRpcUrl).toBe('https://mainnet.base.org');
     expect(main.baseExplorerUrl).toBe('https://basescan.org');
     expect(main.baseV3FactoryAddress).toBe('0x33128a8fC17869897dcE68Ed026d694621f6FDfD');
-    expect(main.baseV3QuoterAddress).toBe(ZERO_EVM_ADDRESS);
+    expect(main.baseV3QuoterAddress).toBe('0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a');
     const dev = readEnv({ NODE_ENV: 'test' });
     expect(dev.baseRpcUrl).toBe('https://sepolia.base.org');
     expect(dev.baseExplorerUrl).toBe('https://sepolia.basescan.org');
+    expect(dev.baseV3QuoterAddress).toBe('0xC5290058841028F1614F3A6F0F5816cAd0df5E27');
+    expect(readEnv({ NODE_ENV: 'test', RH_CHAIN_ID: '4663' }).rhV3QuoterAddress).toBe(
+      '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7',
+    );
+    expect(readEnv({ NODE_ENV: 'test', RH_CHAIN_ID: '46630' }).rhV3QuoterAddress).toBe(
+      ZERO_EVM_ADDRESS,
+    );
   });
 
   it('defaults the RH referral asset to the WETH9 of the configured chain', () => {
