@@ -14,3 +14,18 @@
 .det canvas.av{image-rendering:pixelated;border:1px solid var(--line2);width:64px;height:64px;display:block}
 .rowf{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
+
+/* In-app confirm (modals/confirm.ts) */
+.cfm-win{max-width:430px}
+.cfm-head{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:19px;font-weight:700;letter-spacing:.04em;line-height:1.15;color:var(--gold)}
+.cfm-head.buy{color:var(--up)}
+.cfm-head.sell{color:var(--down)}
+.cfm-rows{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line2);background:#0b0e14;padding:7px 9px}
+.cfm-rows .row{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--txt2)}
+.cfm-rows .row b{color:var(--txt);font-weight:600;text-align:right}
+.cfm-note{margin:0;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+.cfm-btns{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.cfm-ok{border:1px solid #3fe08a;background:#0f7a3d;color:#eafff2;font-weight:700;letter-spacing:.12em;padding:6px 16px}
+.cfm-ok.sell{border-color:#ff7a6a;background:#8c2418;color:#fff3f1}
+.cfm-ok.plain{border-color:var(--amber2);background:#3a2a06;color:var(--amber)}
+.cfm-ok:hover{filter:brightness(1.12)}

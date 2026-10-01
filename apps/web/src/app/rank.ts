@@ -4,6 +4,7 @@ import { DOT, MID } from '../lib/fmt.js';
 import { html, render } from '../lib/html.js';
 import { reducedMotion } from '../lib/motion.js';
 import { USER, achCount, readyCount, rwaSummary, xpMult } from '../state/user.js';
+import { WALLET } from '../state/wallet.js';
 import { updateStrip } from '../views/rewards.js';
 
 /**
@@ -14,6 +15,28 @@ import { updateStrip } from '../views/rewards.js';
  * `index.html:2120`
  */
 export function renderRank(gained = false): void {
+  const btn = must('#rankBtn');
+  const guest = !WALLET.on;
+  btn.classList.toggle('guest', guest);
+  btn.setAttribute(
+    'aria-label',
+    guest ? 'Crate rewards, open rewards' : 'Rank progress, open rewards',
+  );
+  if (guest) {
+    must('#rk-lv').textContent = '\u25C6';
+    must('#rk-name').textContent = 'CRATE REWARDS';
+    must('#rk-fill').style.width = '0%';
+    must('#rk-xp').textContent = 'VIEW CRATES';
+    render(
+      must('#rankTip'),
+      html`<div class="hd">CRATE REWARDS</div>
+        <div class="row"><span>CRATE TIERS</span><b>${CRATES.length}</b></div>
+        <div class="row"><span>ACHIEVEMENTS</span><b>${ACH.length}</b></div>
+        <div class="row"><span>RANKS</span><b>${RANKS.length}</b></div>
+        <div class="cta">CLICK TO SEE THE CRATES ${DOT} CONNECT A WALLET TO EARN</div>`,
+    );
+    return;
+  }
   const r = rankOf(USER.xp);
   must('#rk-lv').textContent = 'LV ' + (r.i + 1);
   must('#rk-name').textContent = r.name;

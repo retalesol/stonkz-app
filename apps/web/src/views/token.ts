@@ -92,6 +92,7 @@ import { holdOf } from '../state/holdings.js';
 import { syncHoldingFromChain, safeSellAmountInput } from '../api/live-holding.js';
 import { SET, evmGasPreset, settingsSummary } from '../state/settings.js';
 import { NATIVE_PRICE, WALLET, nativeUnit, nativeUsd } from '../state/wallet.js';
+import { confirmDialog } from '../modals/confirm.js';
 import { openStake } from '../modals/stake.js';
 import { stakeOf } from '../state/stake.js';
 import { composerState, type ChatAccess } from './chat-access.js';
@@ -2136,16 +2137,28 @@ async function submitTrade(c: SimCoin): Promise<void> {
   }
   const buy = TV.side === 'BUY';
   if (SET.confirm) {
-    const label =
-      (buy ? 'BUY ' : 'SELL ') +
-      amount +
-      ' ' +
-      (buy ? coinUnit(c) : c.sym) +
-      ' OF $' +
-      c.sym +
-      '?\n' +
-      settingsSummary(c.net ?? WALLET.net);
-    if (!window.confirm(label)) {
+    const net = c.net ?? WALLET.net;
+    const ok = await confirmDialog(
+      {
+        title: buy ? 'Confirm Buy' : 'Confirm Sell',
+        sub: '$' + c.sym + ' ' + DOT + ' ' + NET_INFO[net].name,
+        headline:
+          (buy ? 'BUY ' : 'SELL ') + amount + ' ' + (buy ? coinUnit(c) : c.sym) + ' OF $' + c.sym,
+        rows: settingsSummary(net)
+          .split(DOT)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => {
+            const i = s.indexOf(' ');
+            return i > 0 ? ([s.slice(0, i), s.slice(i + 1)] as const) : ([s, ''] as const);
+          }),
+        note: 'YOUR WALLET WILL ASK YOU TO SIGN NEXT.',
+        ok: buy ? 'CONFIRM BUY' : 'CONFIRM SELL',
+        tone: buy ? 'buy' : 'sell',
+      },
+      must('#t-go'),
+    );
+    if (!ok) {
       toast('ORDER CANCELLED', 'red');
       return;
     }

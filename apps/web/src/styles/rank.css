@@ -24,3 +24,9 @@
 .rk-tip .cta{margin-top:5px;border-top:1px solid var(--line);padding-top:4px;font-size:9.5px;color:var(--amber);
   letter-spacing:.06em;line-height:1.35}
 
+
+/* Signed out: the widget is the door to the crates page, not a rank meter. */
+.rankw.guest .rk-lv{background:#2a1d05;color:var(--amber);min-width:0;padding:0 6px}
+.rankw.guest .rk-track{display:none}
+.rankw.guest .rk-name{color:var(--amber)}
+.rankw.guest .rk-xp{color:var(--dim)}

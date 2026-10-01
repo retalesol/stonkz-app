@@ -24,7 +24,8 @@ export type ScrimId =
   | '#txScrim'
   | '#walletScrim'
   | '#legalScrim'
-  | '#levelScrim';
+  | '#levelScrim'
+  | '#confirmScrim';
 
 const traps = new Map<ScrimId, FocusTrap>();
 
@@ -45,6 +46,7 @@ const ALL_SCRIMS: readonly ScrimId[] = [
   '#walletScrim',
   '#legalScrim',
   '#levelScrim',
+  '#confirmScrim',
 ];
 
 export function anyOpen(): boolean {

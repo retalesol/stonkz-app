@@ -1,3 +1,4 @@
+import { renderRank } from './rank.js';
 import { type Net, num } from '@stonkz/shared';
 import { isEvm } from '@stonkz/shared';
 import { api } from '../api/index.js';
@@ -69,7 +70,9 @@ export function renderWallet(): void {
     must('.wbal .lbl').textContent = unit + ' BALANCE';
     must('#wFull').textContent = WALLET.full.slice(0, 10) + '\u2026' + WALLET.full.slice(-6);
   }
-  (must('#rankBtn').parentNode as HTMLElement).hidden = !on;
+  // The rank widget stays visible when signed out: it becomes the door to the
+  // crate rewards page and flips to rank / level / SP once a wallet is on.
+  renderRank();
   const hello = $('#hello');
   if (hello) hello.hidden = on || !!USER.seenHello;
   const l = must('#createBtn');
