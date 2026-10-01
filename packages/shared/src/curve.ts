@@ -66,13 +66,43 @@ export function vol24(c: { mc: number; seed: number }): number {
 }
 
 /**
- * Circulating supply.
- *
- * TODO(Phase 4): this becomes curve-reserve-derived. The hard-coded 80% is a
- * simulation artifact and must not survive into production — see the plan's
- * "what must never ship" list (`circ = 80%` after Phase 4).
+ * **Simulated** circulating supply: a flat 80% of supply, for sim coins only.
+ * A live coin's circulating supply is what the curve has actually sold —
+ * {@link circulatingSupply}, from the token detail's reserve figures. No live
+ * code path may fall back to this fraction.
  * `index.html:1566`
  */
 export function circ(c: Pick<CurveCoin, 'supply'>): number {
   return (c.supply || SUPPLY) * CIRC_FRACTION;
+}
+
+/** The reserve figures `GET /tokens/:sym` serves (`curveFacts` in the API). */
+export interface CirculatingInputs {
+  supply?: number | undefined;
+  /** Tokens bought out of the curve so far — the API's own figure when present. */
+  circulating?: number | undefined;
+  /** Tokens still in the curve. */
+  curveTokens?: number | undefined;
+  /** Tokens parked for the graduation pool. */
+  lpReserve?: number | undefined;
+}
+
+/**
+ * Reserve-derived circulating supply for a live coin: the API's `circulating`
+ * when it sent one, else `supply − lpReserve − curveTokens` when it sent the
+ * reserves, else `null` — the caller shows "—". Never the simulation's 80%.
+ */
+export function circulatingSupply(c: CirculatingInputs): number | null {
+  if (c.circulating !== undefined && Number.isFinite(c.circulating) && c.circulating >= 0) {
+    return c.circulating;
+  }
+  if (
+    c.supply !== undefined &&
+    c.supply > 0 &&
+    c.curveTokens !== undefined &&
+    c.lpReserve !== undefined
+  ) {
+    return Math.max(0, c.supply - c.lpReserve - c.curveTokens);
+  }
+  return null;
 }

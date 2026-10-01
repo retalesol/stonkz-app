@@ -412,6 +412,10 @@ export class FakeSolanaRpc implements SolanaIndexRpc {
   blockhashes = new Map<number, string>();
   failNext: Error | null = null;
 
+  private sorted: FakeTx[] | null = null;
+  private position: Map<string, number> | null = null;
+  private bySignature: Map<string, FakeTx> | null = null;
+
   constructor(
     private readonly txs: FakeTx[],
     finalizedSlot?: number,
@@ -419,10 +423,34 @@ export class FakeSolanaRpc implements SolanaIndexRpc {
     this.finalizedSlot = finalizedSlot ?? Math.max(0, ...txs.map((t) => t.slot));
   }
 
+  /** Appends transactions, as the chain growing under the poller does. */
+  append(more: FakeTx[]): void {
+    this.txs.push(...more);
+    this.sorted = null;
+    this.position = null;
+    this.bySignature = null;
+    this.finalizedSlot = Math.max(this.finalizedSlot, ...more.map((t) => t.slot));
+  }
+
+  /**
+   * Newest first, indexed once. The catch-up tests page through tens of
+   * thousands of signatures, so the per-call sort and linear scans the first
+   * version did would dominate the suite.
+   */
   private get descending(): FakeTx[] {
-    return [...this.txs].sort((a, b) =>
-      a.slot !== b.slot ? b.slot - a.slot : a.signature < b.signature ? 1 : -1,
-    );
+    if (!this.sorted) {
+      this.sorted = [...this.txs].sort((a, b) =>
+        a.slot !== b.slot ? b.slot - a.slot : a.signature < b.signature ? 1 : -1,
+      );
+      this.position = new Map(this.sorted.map((t, i) => [t.signature, i]));
+      this.bySignature = new Map(this.sorted.map((t) => [t.signature, t]));
+    }
+    return this.sorted;
+  }
+
+  private indexOf(signature: string): number {
+    void this.descending;
+    return this.position?.get(signature) ?? -1;
   }
 
   async getSlot(commitment: Commitment): Promise<number> {
@@ -437,16 +465,18 @@ export class FakeSolanaRpc implements SolanaIndexRpc {
       this.failNext = null;
       throw err;
     }
-    let list = this.descending;
+    const list = this.descending;
+    let start = 0;
+    let end = list.length;
     if (page.before) {
-      const at = list.findIndex((t) => t.signature === page.before);
-      list = at === -1 ? list : list.slice(at + 1);
+      const at = this.indexOf(page.before);
+      if (at !== -1) start = at + 1;
     }
     if (page.until) {
-      const at = list.findIndex((t) => t.signature === page.until);
-      if (at !== -1) list = list.slice(0, at);
+      const at = this.indexOf(page.until);
+      if (at !== -1) end = Math.min(end, at);
     }
-    return list.slice(0, page.limit).map((t) => ({
+    return list.slice(start, Math.min(end, start + page.limit)).map((t) => ({
       signature: t.signature,
       slot: t.slot,
       err: t.err ?? null,
@@ -457,7 +487,8 @@ export class FakeSolanaRpc implements SolanaIndexRpc {
 
   async getTransaction(signature: string): Promise<SolanaTransaction | null> {
     this.calls.push({ method: 'getTransaction', params: signature });
-    const tx = this.txs.find((t) => t.signature === signature);
+    void this.descending;
+    const tx = this.bySignature?.get(signature);
     if (!tx) return null;
     return {
       slot: tx.slot,

@@ -34,6 +34,7 @@ import {
 import { defiLlamaClientFor, stockDefiLlamaCoins } from '../router/defillama.js';
 import { pinnedV3FeeTierFor } from '../router/evm-router.js';
 import { asEvmCallSimulator, type PreflightRefusal } from '../router/launch-preflight.js';
+import { staticPricePolicy } from '../router/price-policy.js';
 import { stockPriceCacheFor, stockPricer, type StockPrice } from '../router/stock-price.js';
 import { toAtoms } from '../router/units.js';
 import { attesterFromKey, stockAttestationsFor } from '../router/price-attest.js';
@@ -118,6 +119,7 @@ export function stockPricerFor(
       logger: deps.logger,
       now: deps.now,
       cache: stockPriceCacheFor(rpc),
+      staticPrices: staticPricePolicy(deps.env),
     },
     (symbol) => deps.baseMints.mintFor(net, symbol),
   );

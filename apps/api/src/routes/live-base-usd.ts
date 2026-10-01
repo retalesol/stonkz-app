@@ -2,7 +2,7 @@ import { sql, type SQL } from 'drizzle-orm';
 import { isEvm, isStockBase, type Net } from '@stonkz/shared';
 import type { AppDeps } from '../app/context.js';
 import { tokens } from '../db/schema.js';
-import { basePriceFor } from '../router/base-price.js';
+import { basePriceFor, staticPricePolicy } from '../router/base-price.js';
 import { snapshotBaseUsd } from './curve-facts.js';
 import { stockPricerFor } from './launch-evm.js';
 
@@ -18,7 +18,8 @@ import { stockPricerFor } from './launch-evm.js';
  *   `CachedPriceOracle`, so a board of 100 coins is one Redis read);
  * - USDC-like stables: $1 by definition;
  * - EVM stock-token bases: the live stock pricer (`router/stock-price.ts`);
- * - the RH testnet majors: the static table `PushPriceSource` was seeded with.
+ * - the RH testnet majors: the static table `PushPriceSource` was seeded with
+ *   (dev/test/staging only — production refuses it, `StaticPricePolicy`).
  *
  * When a source is down or a symbol is unknown the row's launch snapshot
  * (`basePriceUsd1e6`) is used instead, so a USD figure is always produced —
@@ -63,7 +64,11 @@ export class LiveBaseUsd {
   private async resolve(net: Net, baseSymbol: string): Promise<number> {
     const sym = baseSymbol.toUpperCase();
     const stock = isEvm(net) && isStockBase(net, sym) ? stockPricerFor(this.deps, net) : null;
-    const info = await basePriceFor(net, sym, this.deps.oracle, { stock });
+    const info = await basePriceFor(net, sym, this.deps.oracle, {
+      stock,
+      staticPrices: staticPricePolicy(this.deps.env),
+      logger: this.deps.logger,
+    });
     if (!info) return 0;
     const usd = Number(info.price1e6) / 1e6;
     return Number.isFinite(usd) && usd > 0 ? usd : 0;

@@ -24,10 +24,18 @@ library RobinhoodChain {
     address internal constant UNISWAP_V2_FACTORY = 0x8bcEaA40B9AcdfAedF85AdF4FF01F5Ad6517937f;
     address internal constant UNISWAP_V2_ROUTER02 = 0x89e5DB8B5aA49aA85AC63f691524311AEB649eba;
 
+    /// @dev Uniswap V3 on 4663. All four hold code (read 2026-10-01 via
+    /// `https://rpc.mainnet.chain.robinhood.com`); the factory has the 1% tier
+    /// enabled (`feeAmountTickSpacing(10000) == 200`), which is what
+    /// `UniswapV3Migrator` needs for the graduation pool.
     address internal constant UNISWAP_V3_FACTORY = 0x1f7d7550B1b028f7571E69A784071F0205FD2EfA;
     address internal constant UNISWAP_V3_SWAP_ROUTER02 = 0xCaf681a66D020601342297493863E78C959E5cb2;
     address internal constant UNISWAP_V3_QUOTER_V2 = 0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7;
+    /// Reference only: `FeeLocker` owns graduation positions directly in the
+    /// pool by `(locker, tickLower, tickUpper)` and never touches the NFPM.
     address internal constant UNISWAP_V3_NFPM = 0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3;
+    /// Graduation pool fee tier for `UniswapV3Migrator` (1%, tick spacing 200).
+    uint24 internal constant GRADUATION_POOL_FEE = 10_000;
 
     address internal constant UNISWAP_V4_POOL_MANAGER = 0x8366a39CC670B4001A1121B8F6A443A643e40951;
     address internal constant UNISWAP_V4_POSITION_MANAGER = 0x58daec3116aae6D93017bAAea7749052E8a04fA7;
@@ -36,6 +44,18 @@ library RobinhoodChain {
     address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     /* -------------------------------------------------------------- oracle */
+
+    /// @dev Pyth Core on 4663 — the same address as on 8453 and on RH testnet
+    /// 46630. Verified 2026-10-01 via `https://rpc.mainnet.chain.robinhood.com`:
+    /// holds code, `chainId() == 60101` (Pyth's Wormhole id for this chain),
+    /// `getValidTimePeriod() == 60`. Launches carry a Hermes update for it
+    /// in-tx (`StonkzRouter.createAndBuyWithEth` / `createWithPriceUpdate`),
+    /// which is why the launchpad's live price source is `PythPriceSource`
+    /// and the Chainlink feeds below are its fallback.
+    address internal constant PYTH = 0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a;
+    /// Pyth ETH/USD price feed id (the same on every chain).
+    bytes32 internal constant PYTH_ETH_USD =
+        0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
 
     /// @dev Chainlink `AggregatorV3Interface` proxies, USD-denominated, 8
     /// decimals. Sourced from `docs/robinhood-chain.md` rows 40/60 and the

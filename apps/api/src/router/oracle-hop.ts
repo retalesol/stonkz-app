@@ -1,8 +1,10 @@
 import type { PriceOracle } from '../chain/types.js';
+import type { Logger } from '../observability/logger.js';
 import type { AggregatorClient, AggregatorQuote, AggregatorQuoteRequest } from './aggregator.js';
 import type { BaseMintRegistry } from './base-mints.js';
 import { NATIVE_ETH_MINT } from './compose.js';
 import { NoRouteError } from './errors.js';
+import { STATIC_PRICES_ALLOWED, type StaticPricePolicy } from './price-policy.js';
 
 /**
  * Raw payload stamped on oracle-priced hops so `/trade/prepare` can tell a
@@ -29,7 +31,12 @@ export function isOracleHopRaw(raw: unknown): raw is OracleHopRaw {
 /** USD stables treated as $1.00 for the hop — same set `base-price.ts` uses. */
 const USD_STABLES = new Set(['USDC', 'USDT', 'USDG']);
 
-/** Whole-USD fallbacks for RH bases when the live oracle only knows native ETH. */
+/**
+ * Whole-USD fallbacks for RH bases when the live oracle only knows native
+ * ETH. Dev/test/staging only (`StaticPricePolicy`): in production a base
+ * without a live mark has no oracle hop, so `/quote` says no route and the
+ * terminal shows "—" instead of a table dollar.
+ */
 const RH_BASE_USD: Record<string, number> = {
   BTC: 95_000,
   SOL: 180,
@@ -66,6 +73,10 @@ export interface OracleHopClientOptions {
   baseMints: BaseMintRegistry;
   /** Chain-local WETH — treated as 1:1 with native ETH for this hop. */
   wethMint: string;
+  /** Whether `RH_BASE_USD` may answer; omitted, it may (dev/test). */
+  staticPrices?: StaticPricePolicy;
+  /** Receives the loud line when the escape hatch answers from the table. */
+  logger?: Logger;
 }
 
 /**
@@ -79,11 +90,15 @@ export class OracleHopClient implements AggregatorClient {
   private readonly oracle: PriceOracle;
   private readonly baseMints: BaseMintRegistry;
   private readonly wethMint: string;
+  private readonly staticPrices: StaticPricePolicy;
+  private readonly logger: Logger | undefined;
 
   constructor(opts: OracleHopClientOptions) {
     this.oracle = opts.oracle;
     this.baseMints = opts.baseMints;
     this.wethMint = opts.wethMint.toLowerCase();
+    this.staticPrices = opts.staticPrices ?? STATIC_PRICES_ALLOWED;
+    this.logger = opts.logger;
   }
 
   async quote(req: AggregatorQuoteRequest): Promise<AggregatorQuote> {
@@ -150,7 +165,15 @@ export class OracleHopClient implements AggregatorClient {
     }
     if (USD_STABLES.has(side.symbol)) return 1_000_000n;
     const table = RH_BASE_USD[side.symbol];
-    if (table === undefined) return 0n;
+    if (table === undefined || !this.staticPrices.allow) return 0n;
+    if (this.staticPrices.escapeHatch) {
+      this.logger?.error(
+        'oracle-hop: STATIC table price used in production (ALLOW_STATIC_PRICES=1)',
+        {
+          base: side.symbol,
+        },
+      );
+    }
     return BigInt(Math.round(table * 1e6));
   }
 }

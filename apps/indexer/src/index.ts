@@ -28,10 +28,17 @@ export {
   type UnstakedEvent,
 } from './events.js';
 
+export { CatchupMonitor, type CatchupState } from './catchup.js';
 export { ReplayCursors, type CursorState } from './cursors.js';
 export { Ingestor, type IngestOptions, type IngestReport } from './ingest.js';
 export { LagMonitor } from './lag.js';
 export { IndexerRunner, type PassResult } from './runner.js';
-export { FixtureEventSource, type EventSource } from './source.js';
+export {
+  FixtureEventSource,
+  isPartialProgressError,
+  type CatchupBacklog,
+  type EventSource,
+  type PollResult,
+} from './source.js';
 export { TF_MS, TIMEFRAMES, bucketStart, candleUpdatesFor, type Timeframe } from './candles.js';
 export { FixtureProducer, canonicalScenario, type ScenarioResult } from './fixtures/producer.js';

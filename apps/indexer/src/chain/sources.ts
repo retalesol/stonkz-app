@@ -63,6 +63,8 @@ export function buildChainSources(opts: ChainSourcesOptions): ChainSources {
       confirmations: config.confirmations.SOL,
       signaturePageSize: config.solanaSignaturePageSize,
       maxTxPerPass: config.solanaMaxTxPerPass,
+      maxSignaturePages: config.solanaMaxSignaturePages,
+      passBudgetMs: config.solanaPassBudgetMs,
       trackBlockhash: config.solanaTrackBlockhash,
     }),
     RH: new EvmChainSource({

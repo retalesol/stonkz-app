@@ -68,6 +68,39 @@ export interface PollResult {
   coveredTo: number;
   /** Source-specific resume hint to persist alongside the cursor. */
   bookmark?: string | null;
+  /**
+   * What the source knows is still waiting between the cursor and the tip.
+   * Reported by a source that pages by signature (Solana), where a pass may
+   * legitimately end with the range only partly walked; absent for a source
+   * that reads a closed window in one call.
+   */
+  backlog?: CatchupBacklog;
+}
+
+export interface CatchupBacklog {
+  /** Estimated unprocessed signatures between the cursor and the tip. A lower bound while `located` is false. */
+  remaining: number;
+  /** Whether the walk from the tip has reached the cursor, so `remaining` is the whole gap. */
+  located: boolean;
+  /** The pass ended on its page cap or time budget before the requested range was fully walked. */
+  partial: boolean;
+  /** Signature pages this pass spent. */
+  pages: number;
+}
+
+/**
+ * An error that means "more remains than one pass could walk", not "this
+ * range cannot be ingested". The runner never counts one towards a dead
+ * letter: the range is simply re-polled next pass. The Solana source no
+ * longer throws its `SolanaRangeTooBusyError` at all, but the marker keeps the
+ * runner safe against any source that does.
+ */
+export function isPartialProgressError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { partialProgress?: unknown }).partialProgress === true
+  );
 }
 
 /** Normalises a source to the `pollRange` shape, whether or not it implements it. */

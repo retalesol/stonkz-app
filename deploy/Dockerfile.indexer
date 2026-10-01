@@ -25,4 +25,15 @@ COPY apps/indexer apps/indexer
 ENV NODE_ENV=production
 WORKDIR /app/apps/indexer
 EXPOSE 8788
+
+# `/health` answers 200 inside the lag budget and 503 when a chain is behind
+# (apps/indexer/src/http.ts). Being behind is an alert, not a reason to
+# restart (a restart only lengthens the catch-up), so this probe treats any
+# HTTP answer as alive and only a dead socket as unhealthy. Railway ignores
+# Docker HEALTHCHECK and gates deploys on its own health-check path: set it
+# to /health (docs/cloud-deploy.md "Health checks"). Port order matches
+# apps/indexer/src/config.ts: INDEXER_HTTP_PORT, then PORT, then 8788.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.INDEXER_HTTP_PORT||process.env.PORT||8788)+'/health').then((r)=>process.exit(r.status===200||r.status===503?0:1)).catch(()=>process.exit(1))"
+
 CMD ["pnpm", "start"]

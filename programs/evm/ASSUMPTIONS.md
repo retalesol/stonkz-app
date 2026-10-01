@@ -77,11 +77,19 @@ another. `test_TreasuriesHaveNoUserFacingClaimPath` and
 ### 1.5 The oracle is a source contract, not a program account
 
 Solana carries a program-owned `BaseOracle` written by an `oracle_authority`.
-Here the launchpad reads an `IPriceSource`, and the deployed implementation on
-Robinhood Chain is `ChainlinkPriceSource` — Chainlink is the only oracle on
-chain 4663 and Pyth is not present. `PushPriceSource` mirrors the Solana shape
-and is what the test suite drives, so the suite does not depend on a forked
-mainnet aggregator.
+Here the launchpad reads an `IPriceSource`. On every EVM chain the live source
+is **`PythPriceSource`** over Pyth Core (`0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a`
+on RH 4663, RH 46630 *and* Base 8453 — verified on chain 2026-10-01; the
+earlier "Pyth is not present on 4663" reading in `docs/robinhood-chain.md`
+row 41 is stale): a launch carries a Hermes update in the same transaction
+(`StonkzRouter.createAndBuyWithEth` / `createWithPriceUpdate`), so the WETH
+feed's bound is 120 s and no keeper or server key prices anything. USD
+stables are fixed at $1.00 in that source. `ChainlinkPriceSource` is its
+mainnet **fallback** (ETH/USD, and USDG/USD on RH), consulted only for a base
+Pyth has no entry for. `PushPriceSource` mirrors the Solana shape, is what the
+unit suite drives, and on mainnet is deployed **fallback-only** behind
+`StockPriceSourceV2` (itself empty in v1); nobody can push to it unless the
+timelock sets an oracle authority. `DeployMainnet` wires all of this.
 
 ---
 
@@ -98,15 +106,18 @@ tree, and the Foundry lint for `block.timestamp` is disabled in `foundry.toml`
 with that reasoning — there is also no proposer to manipulate it, since ordering
 is first-come-first-served on a single sequencer.
 
-### 2.2 The oracle staleness bound is 90,000 seconds, not 3,600
+### 2.2 The launchpad's staleness clamp is 90,000 seconds, not 3,600
 
-The ETH/USD feed (`0x78F3556b…d3A9`) has a heartbeat of **86,400 seconds** and
-publishes 8 decimals (§8). A conventional one-hour guard would read a healthy
-feed as stale roughly 23 hours in every 24 and make oracle-triggered graduation
-unreachable — §4.4 names this the single most likely way to ship a graduation
-function that can never fire. The default is `86400 + 3600`, and the effective
-bound is the tighter of ours and the feed's own, because equity feeds update
-24/5 and one global number is wrong for one of them.
+The Chainlink ETH/USD feed (`0x78F3556b…d3A9`) has a heartbeat of **86,400
+seconds** and publishes 8 decimals (§8). A conventional one-hour guard would
+read a healthy feed as stale roughly 23 hours in every 24 and make
+oracle-triggered graduation unreachable — §4.4 names this the single most
+likely way to ship a graduation function that can never fire. The launchpad's
+`maxOracleStaleness` is therefore `86400 + 3600`, and the effective bound is
+the tighter of ours and the source's own: `PythPriceSource` reports 120 s for
+WETH (the in-transaction update makes that reachable), the Chainlink fallback
+reports heartbeat + grace, and equity feeds update 24/5 so one global number
+would be wrong for one of them.
 
 The consequence is accepted rather than hidden: the $69K threshold is fuzzy at
 the margin. It is a trigger, not a settlement price. Nothing is *priced* off the
@@ -229,24 +240,63 @@ anything that reads the Trading API. Both belong to `apps/api`; see
 
 ---
 
+## 3b. The launchpad sits at the EIP-170 ceiling
+
+`forge build --sizes` (solc 0.8.28, via-IR, `optimizer_runs = 100`):
+`StonkzLaunchpad` **24,385 B runtime, 191 B of headroom** under the 24,576 B
+limit (`StonkzRouter` 13,140 B, `StockPriceSourceV2` 15,906 B — both fine).
+Measured 2026-10-01, nothing trivial recovers 300 B:
+
+- Optimizer runs do not help: `runs = 1` gives 24,374 B (−11 B),
+  `runs = 200` gives 24,521 B (+136 B).
+- The 40 `require` strings are already one to three words ("not admin",
+  "nothing", "stale oracle", …); the longest is 24 bytes. Replacing them with
+  custom errors would save a few hundred bytes but changes the revert ABI
+  that `apps/api/src/router/launch-preflight.ts`, `chain/evm.ts`
+  (`revertReason`) and the web parse as `Error(string)` text — a coordinated
+  API/web change, not a behaviour-preserving one.
+- Modifiers already delegate to private functions (`_enter`, `_onlyAdmin`,
+  `_known`, …) so each check is emitted once.
+
+Rule until the ceiling is dealt with: **no new launchpad feature without
+extracting logic** into an external library or a satellite contract (as
+`FeeLocker` / `UniswapV3Migrator` already are). An audit fix that needs more
+than ~190 B must come with such an extraction; plan for it rather than
+discover it at the fix.
+
 ## 4. Re-verify before mainnet
 
 The chain is young and several facts below are single-sourced. `docs/robinhood-chain.md`
 §12 carries the full list; these are the ones that would break *this tree*:
 
-- [ ] Re-read every address in `src/config/RobinhoodChain.sol` on Blockscout.
+- [x] Every pin `DeployMainnet` uses was read on chain on 2026-10-01 — RH 4663
+      via `https://rpc.mainnet.chain.robinhood.com` (the `rpc.chain.robinhood.com`
+      host refuses TLS), Base 8453 via `https://mainnet.base.org`: code at each
+      address; SwapRouter02 / QuoterV2 `factory()` = the pinned V3 factory and
+      SwapRouter02 `WETH9()` = the pinned WETH; `feeAmountTickSpacing(10000) == 200`;
+      Pyth `chainId()` 60101 / 30 and `getValidTimePeriod() == 60`; Chainlink
+      "ETH / USD" 8 decimals (and "USDG / USD" on RH); USDG / USDC `decimals() == 6`.
+      The script re-checks code and the 1% tier before every run.
+- [ ] Re-read every address in `src/config/RobinhoodChain.sol` and
+      `src/config/Base.sol` on the explorers once more before the broadcast.
       Uniswap's own docs warn against assuming cross-chain address parity, and
       `@uniswap/sdk-core` does not carry chain 4663 at all.
-- [ ] Re-read the ETH/USD feed address, decimals and heartbeat from Chainlink's
-      canonical directory, and set `maxAgeSecs` per feed from what it says
-      rather than from the constant in this repo.
-- [ ] Confirm Uniswap v2 is deployed on **testnet 46630**; third-party testnet
-      addresses do not match the mainnet set, so the migration integration test
-      may need a mainnet fork instead.
-- [ ] Decide whether stock-token bases ship at all in v1. They are tokenised
-      debt securities barred from US persons; that is a jurisdiction gate and a
-      legal question, not an engineering one (§7.5).
-- [ ] Confirm the base token can be paused or can block an address mid-transfer
-      (a single registry transaction freezes every stock token on the chain) and
-      that the UI surfaces it as a first-class state rather than an unexplained
-      revert (§7.3).
+- [ ] Re-read the Chainlink ETH/USD (and USDG/USD) heartbeats from the
+      canonical directory; the fallback source's `maxAgeSecs` is heartbeat +
+      grace and must stay above the real heartbeat.
+- [x] Uniswap V2 on testnet 46630: moot — graduation is a Uniswap V3 full-range
+      position in `FeeLocker` on every chain (`UniswapV3Migrator`), and the
+      real V3 factories on 46630 / 84532 / 4663 / 8453 all carry the 1% tier.
+- [x] Stock-token bases do **not** ship in v1 on either mainnet
+      (`StockBases.sol` mainnet branches are empty; `StockPriceSourceV2` is
+      deployed with no base and `UpgradeAttestedStockLaunch` refuses a chain
+      with none). They are tokenised debt securities barred from US persons;
+      opting one in later is a legal decision first and a timelock batch second
+      (`docs/deployment.md` §2.3).
+- [ ] Before any stock base is opted in: confirm the base token can be paused
+      or can block an address mid-transfer (a single registry transaction
+      freezes every stock token on the chain) and that the UI surfaces it as a
+      first-class state rather than an unexplained revert (§7.3).
+- [ ] `MAX_BUY_NATIVE`: decide the router's per-buy cap for launch day. `0`
+      is uncapped; the script prints a warning. The router is immutable, so a
+      later change is a new router + implementation through the timelock.

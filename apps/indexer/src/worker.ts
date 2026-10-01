@@ -2,6 +2,8 @@ import { buildDeps } from '@stonkz/api/app/deps';
 import { createDb } from '@stonkz/api/db/client';
 import { runMigrations } from '@stonkz/api/db/migrate';
 import { readEnv } from '@stonkz/api/env';
+import { loggingAlertHook } from '@stonkz/api/observability/metrics';
+import { CatchupMonitor } from './catchup.js';
 import { readIndexerConfig } from './config.js';
 import { ReplayCursors } from './cursors.js';
 import { DeadLetters } from './deadletter.js';
@@ -82,6 +84,14 @@ const lag = new LagMonitor({
   logger,
   tickMs: env.chainTickMs,
 });
+// Same alert sink shape as `chain-lag`, so a persistent Solana catch-up
+// backlog pages the same way lag does instead of hiding in per-pass logs.
+const catchup = new CatchupMonitor({
+  logger,
+  onAlert: loggingAlertHook(logger),
+  alertAfterMs: config.catchupAlertAfterMs,
+  now: deps.now,
+});
 
 let sources: Record<Net, EventSource>;
 let rollback: ReorgRollback | undefined;
@@ -113,6 +123,8 @@ if (config.mode === 'chain') {
     rhStartBlock: config.rhStartBlock,
     confirmations: config.confirmations,
     reorgDepth: config.reorgDepth,
+    solanaMaxSignaturePages: config.solanaMaxSignaturePages,
+    solanaPassBudgetMs: config.solanaPassBudgetMs,
   });
   // Idle nets that stay on empty fixtures still need a cursor rewind so they
   // do not pretend to be mid-history from a prior fixtures deploy.
@@ -147,6 +159,7 @@ const runner = new IndexerRunner({
   maxBatchAttempts: config.maxBatchAttempts,
   reorgDepth: config.reorgDepth,
   deadLetters,
+  catchup,
   ...(rollback ? { rollback } : {}),
   onRollback: (net) => forgetCaches(net),
 });
@@ -161,6 +174,7 @@ const http = startIndexerHttp({
   maxLagSeconds: env.maxChainLagSeconds,
   mode: config.mode,
   isLeader: () => lock?.isHeld ?? true,
+  catchup: () => catchup.snapshot(),
   now: deps.now,
 });
 

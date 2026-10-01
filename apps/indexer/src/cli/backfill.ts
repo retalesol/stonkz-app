@@ -158,6 +158,12 @@ async function main(): Promise<void> {
     const window = Math.max(1, args.window ?? config.batchSize);
     const totals = { events: 0, accepted: 0, duplicates: 0, rejected: 0, xp: 0, passes: 0 };
     let cursor = args.from;
+    // Passes in a row that moved nothing while the Solana walk was still
+    // locating pages. Each such pass is bounded and advances the walk, so a
+    // historical window far below the tip can legitimately take hundreds;
+    // a provider that keeps answering without the walk ever finishing is
+    // the one case this stops.
+    let locating = 0;
 
     while (cursor < to) {
       const target = Math.min(to, cursor + window);
@@ -189,13 +195,24 @@ async function main(): Promise<void> {
       }
 
       // A source that covered less than it was asked for has not seen the
-      // rest; advancing to `target` would silently skip it.
+      // rest; advancing to `target` would silently skip it. A Solana pass
+      // that is still walking pages down from the tip (`backlog.partial`)
+      // *is* progress — the walk resumes where it stopped — so only a pass
+      // that neither moved nor is mid-walk stops the loop.
       if (covered <= cursor) {
+        if (polled.backlog?.partial && ++locating < 10_000) {
+          console.error(
+            `  (${cursor}, …]  still locating: ${polled.backlog.pages} pages this pass, ` +
+              `>=${polled.backlog.remaining} signatures located so far`,
+          );
+          continue;
+        }
         console.error(
           `backfill: source made no progress past ${cursor}; stopping rather than looping.`,
         );
         break;
       }
+      locating = 0;
       cursor = covered;
     }
 

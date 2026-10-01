@@ -3,7 +3,7 @@ import { and, desc, eq, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import { MAJORS, isEvm, nativeUnit, parseNet, stockBasesFor, type Net } from '@stonkz/shared';
 import { koth, tape, tokens, treasuries } from '../db/schema.js';
 import { limit } from '../app/middleware.js';
-import { basePriceFor } from '../router/base-price.js';
+import { basePriceFor, staticPricePolicy } from '../router/base-price.js';
 import { evmRouterAddress } from '../chain/evm-net.js';
 import { asEthCallSource, readRouterViaV3Support } from '../router/evm-pyth.js';
 import { fillId } from '../chain/trade-fills.js';
@@ -182,7 +182,9 @@ export function marketRoutes(): Hono<AppEnv> {
     // of letting a tester fill three steps and fail on the fourth.
     const available = async (symbol: string): Promise<boolean> => {
       if (!deps.baseMints.mintFor(net, symbol)) return false;
-      const price = await basePriceFor(net, symbol, deps.oracle).catch(() => null);
+      const price = await basePriceFor(net, symbol, deps.oracle, {
+        staticPrices: staticPricePolicy(deps.env),
+      }).catch(() => null);
       return price !== null;
     };
     // An EVM stock base trades 24/7 on its V3 pool and is priced on-chain

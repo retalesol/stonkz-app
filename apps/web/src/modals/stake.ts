@@ -2,7 +2,6 @@ import {
   FEE_SPLIT,
   LOCKS,
   chainLockMult,
-  circ,
   effFee,
   feePie,
   inCashback,
@@ -331,7 +330,6 @@ async function doStake(c: SimCoin, dir: 1 | -1): Promise<void> {
       (L[0] ? ' ' + DOT + ' ' + L[2] + ' LOCK ' + lockMultLabel(L[0], L[1]) : ' ' + DOT + ' FLEX') +
       (api.mode === 'live' ? '' : ' ' + DOT + ' SIMULATED'),
   );
-  void circ(c);
   settle(c);
 }
 

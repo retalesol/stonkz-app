@@ -2,7 +2,6 @@ import {
   SUPPLY,
   CRATES,
   inCashback,
-  liq,
   type AchievementKey,
   type CrateTier,
   type Fill,
@@ -1870,7 +1869,11 @@ function applyConfirmedTrade(
   if (verdict === 'add') {
     // Display-only nudge until the exact post-fill cap arrives — applied to
     // the base cap too, so the next native-price tick lands on the same figure.
-    const push = (nativeAmt * NATIVE_PRICE.usd) / Math.max(1, liq(c));
+    // Sized against the curve's *real* liquidity (the detail read's `liqUsd`);
+    // a coin whose detail has not loaded gets no nudge rather than one from
+    // the sim's cap fraction — `/trade/confirm` replaces this print anyway.
+    const liqUsd = c.liqUsd;
+    const push = liqUsd !== undefined && liqUsd > 0 ? (nativeAmt * NATIVE_PRICE.usd) / liqUsd : 0;
     c.lastMc = c.mc;
     const nudged = nudgedCap(c, 1 + (buy ? push : -push) * 0.55);
     c.mc = nudged.mc;

@@ -195,7 +195,17 @@ itself and that a client cannot inject (confirm with the hosting provider
 which header that is — Railway's own docs should say). Until then, treat
 `sessions.ip` as informational only, not as an abuse signal.
 
-### M2. Crate RNG is auditable, not publicly verifiable — already flagged in-repo, restated here as a review finding
+### M2. Crate RNG is auditable, not publicly verifiable — already flagged in-repo, restated here as a review finding — **PARTIALLY RESOLVED**
+
+**Status (2026-10-01):** commit–reveal shipped in `apps/api/src/game/crates.ts`
+(per-open server seed committed as `crate_commitments` and shown on
+`GET /rewards` before the open; the open mixes in a wallet-supplied
+`clientSeed`; the response and drop log reveal `serverSeed`, so a wallet can
+recompute its own roll with any HMAC tool; rolls from before the change are
+shown as not user-verifiable). This closes the operator-retry concern below.
+Public verifiability still rests on the revealed seed, not on a VRF: a VRF
+remains a **blocking item before crate odds are marketed as "provably
+fair"**, not before launch.
 
 **Location:** `apps/api/src/game/crates.ts` (`CrateService.roll`, header
 comment lines 70–98).

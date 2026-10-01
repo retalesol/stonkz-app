@@ -23,20 +23,28 @@ library V3Fixture {
     address internal constant FACTORY = 0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24;
 
     function deploy() internal returns (IUniswapV3Factory f) {
+        return deployAt(FACTORY);
+    }
+
+    /// @notice The same runtime at another address — e.g. a mainnet factory
+    /// pin — for tests that only read it (`feeAmountTickSpacing`). Only at
+    /// `FACTORY` can it also `createPool`: `NoDelegateCall` compares
+    /// `address(this)` with the address baked in at deployment.
+    function deployAt(address at) internal returns (IUniswapV3Factory f) {
         bytes memory code = vm.parseBytes(vm.readFile("test/fixtures/uniswap-v3-factory-84532.hex"));
         require(code.length > 20_000, "V3Fixture: fixture missing");
-        vm.etch(FACTORY, code);
-        vm.store(FACTORY, bytes32(uint256(3)), bytes32(uint256(uint160(address(0xF0)))));
-        _tier(100, 1);
-        _tier(500, 10);
-        _tier(3000, 60);
-        _tier(10_000, 200);
-        f = IUniswapV3Factory(FACTORY);
+        vm.etch(at, code);
+        vm.store(at, bytes32(uint256(3)), bytes32(uint256(uint160(address(0xF0)))));
+        _tier(at, 100, 1);
+        _tier(at, 500, 10);
+        _tier(at, 3000, 60);
+        _tier(at, 10_000, 200);
+        f = IUniswapV3Factory(at);
         require(f.feeAmountTickSpacing(10_000) == 200, "V3Fixture: tiers");
     }
 
-    function _tier(uint24 fee, int24 spacing) private {
-        vm.store(FACTORY, keccak256(abi.encode(uint256(fee), uint256(4))), bytes32(uint256(uint24(spacing))));
+    function _tier(address at, uint24 fee, int24 spacing) private {
+        vm.store(at, keccak256(abi.encode(uint256(fee), uint256(4))), bytes32(uint256(uint24(spacing))));
     }
 }
 

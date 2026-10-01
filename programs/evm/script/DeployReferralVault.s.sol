@@ -5,9 +5,6 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {StonkzLaunchpad} from "../src/StonkzLaunchpad.sol";
 import {ReferralVault} from "../src/ReferralVault.sol";
-import {RobinhoodChain} from "../src/config/RobinhoodChain.sol";
-import {RobinhoodChainTestnet} from "../src/config/RobinhoodChainTestnet.sol";
-import {BaseSepolia} from "../src/config/BaseSepolia.sol";
 import {RouterWiring} from "./RouterWiring.sol";
 import {MainnetGuard} from "./MainnetGuard.sol";
 
@@ -29,13 +26,14 @@ import {MainnetGuard} from "./MainnetGuard.sol";
 ///   rolling day — the blast radius of a leaked signer. Required and non-zero
 ///   (`0` would leave WETH disabled). `type(uint256).max` removes the cap;
 ///   refused on mainnet.
-/// - `WETH_ADDRESS`: optional override; defaults to the chain's pinned WETH9.
+/// - `WETH_ADDRESS`: optional override; defaults to the chain's pinned WETH9
+///   (`RouterWiring`: RH 46630/4663, Base 84532/8453). A fresh mainnet
+///   deployment gets its vault from `DeployMainnet` instead; this script is
+///   for adding or replacing one beside an existing launchpad.
 /// - `ADMIN`: testnets only, defaults to the deployer. On mainnet the vault's
 ///   admin is the launchpad's admin — the timelock — and the guard checks the
 ///   launchpad is already governed before anything is deployed.
 contract DeployReferralVault is Script {
-    address internal constant BASE_MAINNET_WETH9 = 0x4200000000000000000000000000000000000006;
-
     function run() external {
         // First: a mainnet run without the governance env stops here.
         MainnetGuard.Governance memory gov = MainnetGuard.requireOnMainnet();
@@ -53,7 +51,9 @@ contract DeployReferralVault is Script {
 
         address admin;
         if (MainnetGuard.isMainnet()) {
-            require(cap != type(uint256).max, "DeployReferralVault: an uncapped vault is not allowed on mainnet");
+            require(
+                cap != type(uint256).max, "DeployReferralVault: an uncapped vault is not allowed on mainnet"
+            );
             StonkzLaunchpad pad = StonkzLaunchpad(launchpad);
             MainnetGuard.requireTimelockAdmin(pad, gov);
             admin = pad.admin();
@@ -86,15 +86,7 @@ contract DeployReferralVault is Script {
         console2.log("      then fund: withdrawTreasury(0, weth, amount, vault) from the protocol authority.");
     }
 
-    function _pinnedWeth() internal view returns (address) {
-        if (
-            RobinhoodChainTestnet.isTestnet() || BaseSepolia.isTestnet()
-                || block.chainid == RobinhoodChain.MAINNET_CHAIN_ID
-        ) {
-            (, address weth,,) = RouterWiring.forChain();
-            return weth;
-        }
-        if (block.chainid == 8453) return BASE_MAINNET_WETH9;
-        return address(0);
+    function _pinnedWeth() internal view returns (address weth) {
+        if (RouterWiring.isPinned()) (, weth,,) = RouterWiring.forChain();
     }
 }

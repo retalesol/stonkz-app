@@ -5,9 +5,16 @@ import { nativeUnit } from '@stonkz/shared';
 import type { ReplayCursors } from './cursors.js';
 import type { DeadLetters } from './deadletter.js';
 import type { Ingestor, IngestReport } from './ingest.js';
+import type { CatchupMonitor } from './catchup.js';
 import type { LagMonitor } from './lag.js';
 import type { ReorgRollback, RollbackReport } from './rollback.js';
-import { confirmedHeadOf, pollSource, type EventSource } from './source.js';
+import {
+  confirmedHeadOf,
+  isPartialProgressError,
+  pollSource,
+  type CatchupBacklog,
+  type EventSource,
+} from './source.js';
 
 export interface RunnerOptions {
   cursors: ReplayCursors;
@@ -30,6 +37,8 @@ export interface RunnerOptions {
   reorgDepth?: Record<Net, number>;
   /** Called when a rollback removed rows, so caches keyed on chain data can be dropped. */
   onRollback?: (net: Net, report: RollbackReport) => void;
+  /** Receives each pass's catch-up backlog; drives the backlog gauge, log and alert. */
+  catchup?: CatchupMonitor;
 }
 
 export interface PassResult {
@@ -42,6 +51,14 @@ export interface PassResult {
   rolledBack?: RollbackReport;
   /** Set when this pass gave up on the range and dead-lettered it. */
   skipped?: { from: number; to: number; attempts: number; error: string };
+  /** What the source reported as still waiting after this pass (signature-paged sources only). */
+  backlog?: CatchupBacklog;
+  /**
+   * Set when the pass ended on "more remains" rather than on progress or
+   * failure, so the burst stops and the next tick resumes. Never counted as
+   * a failed attempt.
+   */
+  deferred?: boolean;
 }
 
 function emptyReport(): IngestReport {
@@ -76,6 +93,12 @@ function emptyReport(): IngestReport {
  * 3. **It gives up.** A range that fails `maxBatchAttempts` consecutive passes
  *    is dead-lettered and skipped, so a poison batch cannot hold a chain still
  *    forever.
+ *
+ * One thing it deliberately does **not** give up on: a range that is merely
+ * *bigger than one pass*. A signature-paged source reports that as partial
+ * progress (`PollResult.backlog`, or a `partialProgress` error from an older
+ * source), the cursor moves to whatever was fully walked, and the rest is the
+ * next pass's work — see `catchup.ts` for how that is surfaced to an operator.
  */
 export class IndexerRunner {
   private readonly batchSize: number;
@@ -142,6 +165,8 @@ export class IndexerRunner {
     // signatures per pass). Advancing to `to` would skip the remainder
     // permanently, so the cursor only ever moves to what was actually scanned.
     const covered = Math.max(from, Math.min(to, polled.coveredTo));
+    if (polled.backlog) this.opts.catchup?.observe(net, polled.backlog, { from, to });
+    else this.opts.catchup?.clear(net);
     const report = await this.opts.ingestor.apply(polled.events);
 
     // An event that failed its integrity check is recorded rather than merely
@@ -170,16 +195,29 @@ export class IndexerRunner {
         rejected: report.rejected.length,
       });
     }
-    this.opts.logger.info('batch ingested', {
+    // A pass that spent its whole budget locating pages and moved nothing is
+    // progress, but not a batch; the catch-up monitor reports it once a
+    // minute instead of this line reporting it once a pass.
+    if (covered > from || polled.events.length > 0 || !polled.backlog?.partial) {
+      this.opts.logger.info('batch ingested', {
+        net,
+        from,
+        to: covered,
+        accepted: report.accepted,
+        duplicates: report.duplicates,
+        xpAwarded: report.xpAwarded,
+        ...(polled.backlog ? { backlog: polled.backlog.remaining } : {}),
+      });
+    }
+
+    return {
       net,
       from,
       to: covered,
-      accepted: report.accepted,
-      duplicates: report.duplicates,
-      xpAwarded: report.xpAwarded,
-    });
-
-    return { net, from, to: covered, report, caughtUp: covered >= confirmed };
+      report,
+      caughtUp: covered >= confirmed,
+      ...(polled.backlog ? { backlog: polled.backlog } : {}),
+    };
   }
 
   /* ------------------------------------------------------------------ reorg */
@@ -261,6 +299,25 @@ export class IndexerRunner {
     err: unknown,
   ): Promise<PassResult> {
     const message = err instanceof Error ? err.message : String(err);
+
+    // "More remains" is not a failure and must never reach the dead-letter
+    // path: the range is intact, it is just larger than one pass. Leave the
+    // cursor and the failure counter alone, tell the monitor, and end this
+    // tick's burst so the next one picks the same range up again.
+    if (isPartialProgressError(err)) {
+      const backlog: CatchupBacklog = { remaining: 0, located: false, partial: true, pages: 0 };
+      this.opts.catchup?.observe(net, backlog, { from, to });
+      return {
+        net,
+        from,
+        to: from,
+        report: emptyReport(),
+        caughtUp: false,
+        backlog,
+        deferred: true,
+      };
+    }
+
     const attempts = await this.opts.cursors.recordFailure(net, message);
 
     if (!this.opts.deadLetters || attempts < this.maxBatchAttempts) {
@@ -301,7 +358,7 @@ export class IndexerRunner {
       results.push(result);
       // A rollback or a skip is progress of a sort but not a normal advance;
       // stop the burst and let the next tick re-evaluate from a clean read.
-      if (result.caughtUp || result.rolledBack || result.skipped) break;
+      if (result.caughtUp || result.rolledBack || result.skipped || result.deferred) break;
     }
     return results;
   }

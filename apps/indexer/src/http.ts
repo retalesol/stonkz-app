@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { ALL_NETS, type Net } from '@stonkz/shared';
 import type { Logger } from '@stonkz/api/observability/logger';
+import type { CatchupState } from './catchup.js';
 import type { CursorState, ReplayCursors } from './cursors.js';
 import type { DeadLetters } from './deadletter.js';
 
@@ -39,6 +40,12 @@ export interface IndexerHttpOptions {
   mode: string;
   /** Whether this replica holds the single-writer lock. */
   isLeader: () => boolean;
+  /**
+   * The in-process catch-up state (see `catchup.ts`). In-process by necessity:
+   * it describes the walk the running replica is in the middle of, which is
+   * exactly what a restart discards and re-derives from the cursor row.
+   */
+  catchup?: () => Record<Net, CatchupState>;
   now?: () => number;
 }
 
@@ -57,6 +64,10 @@ export interface ChainHealth {
   deadLetters: number;
   lastError: string | null;
   lastEventAgeSeconds: number | null;
+  /** Estimated signatures still to walk between the cursor and the tip (Solana); 0 when caught up. */
+  catchupBacklog: number;
+  /** How long the current backlog has persisted; `null` when there is none. */
+  catchupForSeconds: number | null;
   healthy: boolean;
 }
 
@@ -73,10 +84,11 @@ export async function readHealth(opts: IndexerHttpOptions): Promise<IndexerHealt
   const now = (opts.now ?? Date.now)();
   const chains: ChainHealth[] = [];
 
+  const catchup = opts.catchup?.();
   for (const net of NETS) {
     const cursor = await opts.cursors.read(net);
     const deadLetters = await opts.deadLetters.countOpen(net);
-    chains.push(chainHealthOf(cursor, deadLetters, opts, now));
+    chains.push(chainHealthOf(cursor, deadLetters, catchup?.[net], opts, now));
   }
 
   // A replica that does not hold the lock is *healthy* — it is correctly
@@ -93,6 +105,7 @@ export async function readHealth(opts: IndexerHttpOptions): Promise<IndexerHealt
 function chainHealthOf(
   cursor: CursorState,
   deadLetters: number,
+  catchup: CatchupState | undefined,
   opts: IndexerHttpOptions,
   now: number,
 ): ChainHealth {
@@ -115,6 +128,9 @@ function chainHealthOf(
     deadLetters,
     lastError: cursor.lastError,
     lastEventAgeSeconds: cursor.lastEventAt === null ? null : (now - cursor.lastEventAt) / 1000,
+    catchupBacklog: catchup?.remaining ?? 0,
+    catchupForSeconds:
+      catchup?.since === null || catchup?.since === undefined ? null : (now - catchup.since) / 1000,
     healthy: behindSeconds <= opts.maxLagSeconds,
   };
 }
@@ -203,6 +219,20 @@ export function renderPrometheus(health: IndexerHealth): string {
       'Consecutive failed passes at the current position. Reaching INDEXER_MAX_BATCH_ATTEMPTS dead-letters the batch.',
       'gauge',
       byNet((c) => c.failedAttempts),
+    ),
+    ...metricLines(
+      'stonkz_indexer_solana_catchup_backlog',
+      'Estimated program signatures still to walk between the cursor and the tip. 0 when caught up, and for chains that do not page by signature.',
+      'gauge',
+      byNet((c) => c.catchupBacklog),
+    ),
+    ...metricLines(
+      'stonkz_indexer_catchup_for_seconds',
+      'How long the current catch-up backlog has persisted. Absent when there is none.',
+      'gauge',
+      health.chains
+        .filter((c) => c.catchupForSeconds !== null)
+        .map((c) => [`{net="${c.net}"}`, c.catchupForSeconds ?? 0] as [string, number]),
     ),
     ...metricLines(
       'stonkz_indexer_last_event_age_seconds',

@@ -4,9 +4,9 @@ import { PublicKey } from '@solana/web3.js';
 /**
  * The tiny slice of `programs/solana/programs/launchpad`'s public interface
  * this API needs to build unsigned instructions against, hand-derived rather
- * than depending on `programs/solana/target/idl/launchpad.json` — that file
- * is a build artifact (`programs/solana/.gitignore` excludes `target/`), so a
- * fresh checkout that has not run `anchor build` would not have it. Every
+ * than depending on the IDL file. The IDL is now tracked at
+ * `programs/solana/idl/launchpad.json` (kept in sync by `scripts/sync-idl.mjs`);
+ * the API still mirrors only the slice it uses so a drift fails a test. Every
  * value below is instead derived the same way Anchor itself derives it, from
  * facts that are checked into the repo:
  * - discriminators: the first 8 bytes of `sha256("global:<ix_name>")`

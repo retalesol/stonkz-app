@@ -3,7 +3,13 @@ import { AuthService } from '../auth/service.js';
 import type { EthCaller } from '../auth/siwe.js';
 import { EvmRpc } from '../chain/evm.js';
 import type { ChainRpc } from '../chain/types.js';
-import { CachedPriceOracle, HttpPriceOracle } from '../chain/oracle.js';
+import {
+  CachedPriceOracle,
+  HttpPriceOracle,
+  MedianPriceOracle,
+  PythHermesNativeOracle,
+  type PriceSource,
+} from '../chain/oracle.js';
 import { SolanaRpc } from '../chain/solana.js';
 import type { ChainRpcs, PriceOracle } from '../chain/types.js';
 import { createDb, type Db } from '../db/client.js';
@@ -16,7 +22,13 @@ import { referralSignerFromEnv } from '../game/referral-signer.js';
 import { SocialCapsService } from '../game/social-caps.js';
 import { SpLevelService } from '../game/sp-levels.js';
 import { createLogger, type Logger } from '../observability/logger.js';
-import { Metrics, loggingAlertHook } from '../observability/metrics.js';
+import {
+  Metrics,
+  combineAlertHooks,
+  loggingAlertHook,
+  webhookAlertHook,
+  type AlertHook,
+} from '../observability/metrics.js';
 import { createRedis } from '../redis/ioredis.js';
 import { QuoteCache } from '../redis/quote-cache.js';
 import type { RedisLike } from '../redis/types.js';
@@ -26,8 +38,10 @@ import {
   parseBaseMintOverrides,
   type BaseMintRegistry,
 } from '../router/base-mints.js';
+import { hermesClientFor } from '../router/evm-pyth.js';
 import { HttpJupiterClient, type JupiterClient } from '../router/jupiter.js';
 import { OracleHopClient } from '../router/oracle-hop.js';
+import { staticPricePolicy } from '../router/price-policy.js';
 import { ResilientUniswapClient } from '../router/resilient-uniswap.js';
 import { HttpSolanaBroadcaster, type SolanaBroadcaster } from '../router/solana-broadcast.js';
 import { HttpUniswapClient, type UniswapClient } from '../router/uniswap.js';
@@ -72,10 +86,59 @@ export interface BuiltDeps {
   close(): Promise<void>;
 }
 
+/** Log lines always; plus `ALERT_WEBHOOK_URL` when set (`observability/metrics.ts`). */
+function buildAlertHook(env: ApiEnv, logger: Logger, now: () => number): AlertHook {
+  const logHook = loggingAlertHook(logger);
+  if (!env.alertWebhookUrl) return logHook;
+  return combineAlertHooks(
+    logHook,
+    webhookAlertHook({
+      url: env.alertWebhookUrl,
+      minSeverity: env.alertWebhookMinSeverity,
+      logger,
+      now,
+    }),
+  );
+}
+
+/**
+ * The native USD price behind `CachedPriceOracle`: Coinbase spot
+ * (`PRICE_ORACLE_URL`) and, when Hermes is configured, Pyth ETH/USD +
+ * SOL/USD — the median while they agree within 2 %, Pyth (plus an alert)
+ * when they do not, whichever answers when one is down, last-good for five
+ * minutes when neither does. Coinbase alone when `PYTH_HERMES_URL` is unset.
+ */
+function nativePriceSource(
+  env: ApiEnv,
+  opts: { alertHook: AlertHook; logger: Logger; now: () => number },
+): PriceOracle {
+  const coinbase: PriceSource = {
+    name: 'coinbase',
+    oracle: new HttpPriceOracle({ baseUrl: env.priceOracleUrl }),
+  };
+  const hermes = hermesClientFor(env, opts.logger);
+  if (!hermes) return coinbase.oracle;
+  const pyth: PriceSource = { name: 'pyth', oracle: new PythHermesNativeOracle({ hermes }) };
+  return new MedianPriceOracle([coinbase, pyth], {
+    preferred: 'pyth',
+    onAlert: opts.alertHook,
+    logger: opts.logger,
+    now: opts.now,
+  });
+}
+
 export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Promise<BuiltDeps> {
   const now = overrides.now ?? Date.now;
   const logger = overrides.logger ?? createLogger(env.logLevel, { svc: 'api' });
-  const metrics = new Metrics(env.maxChainLagSeconds, loggingAlertHook(logger), now);
+  const alertHook = buildAlertHook(env, logger, now);
+  const metrics = new Metrics(env.maxChainLagSeconds, alertHook, now);
+
+  const staticPrices = staticPricePolicy(env);
+  if (staticPrices.allow && staticPrices.escapeHatch) {
+    logger.error(
+      'ALLOW_STATIC_PRICES=1: static USD tables are enabled in PRODUCTION; launches and quotes may be sized from indicative prices',
+    );
+  }
 
   const closers: (() => Promise<void>)[] = [];
 
@@ -124,7 +187,7 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
   const oracle =
     overrides.oracle ??
     new CachedPriceOracle(
-      new HttpPriceOracle({ baseUrl: env.priceOracleUrl }),
+      nativePriceSource(env, { alertHook, logger, now }),
       redis,
       env.priceOracleTtlSeconds,
     );
@@ -207,6 +270,8 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       BASE: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_BASE']),
       ARC: parseBaseMintOverrides(process.env['BASE_MINT_OVERRIDES_ARC']),
       solanaCluster: env.solanaCluster,
+      rhChainId: env.rhChainId,
+      baseChainId: env.baseChainId,
     });
   const uniswap: UniswapClient =
     overrides.uniswap ??
@@ -221,7 +286,13 @@ export async function buildDeps(env: ApiEnv, overrides: DepsOverrides = {}): Pro
       // Trading API (mainnet) → on-chain V3 pool quoter (testnet seed) →
       // oracle-priced display hop. Prepare rejects oracle-only hops.
       if (!weth) return http;
-      const oracleHop = new OracleHopClient({ oracle, baseMints, wethMint: weth });
+      const oracleHop = new OracleHopClient({
+        oracle,
+        baseMints,
+        wethMint: weth,
+        staticPrices,
+        logger,
+      });
       const eth = asEthCaller(rpcs.RH);
       if (!eth) {
         return new ResilientUniswapClient(http, oracleHop);

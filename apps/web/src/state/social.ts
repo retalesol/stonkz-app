@@ -158,8 +158,15 @@ export function friendAddrs(addr: string): string[] {
   return out;
 }
 
-/** Simulated PnL over a window. `index.html:3286` */
+/**
+ * Simulated PnL over a window — sim only. Live profiles render `pnlUsd` from
+ * `GET /social/profile` (`views/profile-render.ts`) or "—"; the live
+ * branches of `views/profile.ts` never call this, and a stray call answers 0
+ * rather than a seed-derived figure.
+ * `index.html:3286`
+ */
 export function memProfit(addr: string, win: string): number {
+  if ((import.meta.env['VITE_API_MODE'] as string) === 'live') return 0;
   const r = rng(hash(addr + win));
   const scale = win === '24h' ? 1200 : win === '7d' ? 5400 : 19000;
   return (r() * 1.9 - 0.45) * scale;

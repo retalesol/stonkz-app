@@ -34,7 +34,9 @@ import {MainnetGuard} from "./MainnetGuard.sol";
 /// ```
 /// Optional env: `MAX_BUY_NATIVE`, `PYTH_ADDRESS` and `ATTESTATION_SINK`
 /// (default: the values of the router the proxy trusts today, else
-/// `RouterWiring` / none), `PAUSER`.
+/// `RouterWiring` / none), `PAUSER`. The Universal Router, WETH and
+/// SwapRouter02 are never env: `RouterWiring` resolves them from the chain id
+/// (RH 46630/4663, Base 84532/8453).
 ///
 /// **Implementation-only re-run** (`KEEP_ROUTER=1`, or `ROUTER_ADDRESS`):
 /// no new router; the new implementation trusts the router the proxy trusts

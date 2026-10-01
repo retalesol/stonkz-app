@@ -13,7 +13,10 @@
  *    (`observe([1800, 0])`) × **ETH/USD** from the same Hermes call (the
  *    API's own ETH oracle if Hermes has none).
  * 4. Otherwise the static indicative table — a last resort, logged at `warn`
- *    every time it is used, since it drifts from the market.
+ *    every time it is used, since it drifts from the market. Dev, test and
+ *    staging only: production (`StaticPricePolicy`) throws
+ *    `BasePriceUnavailableError` here instead, and `/launch/prepare` answers
+ *    503 + retry rather than sizing a curve from a guessed dollar.
  *
  * The TWAP is read whenever it can be, even when a better source wins, so
  * `divergenceBps` can compare DefiLlama with the price the chain will
@@ -35,6 +38,11 @@ import {
   type HermesSource,
 } from './evm-pyth.js';
 import { firstUsdPrice, type UsdPriceSource } from './defillama.js';
+import {
+  BasePriceUnavailableError,
+  STATIC_PRICES_ALLOWED,
+  type StaticPricePolicy,
+} from './price-policy.js';
 import {
   DEFAULT_STOCK_POOL_FEE,
   STOCK_TWAP_SECONDS,
@@ -119,6 +127,8 @@ export interface StockPriceContext {
   nowMs: number;
   /** Per-deployment cache; see {@link stockPriceCacheFor}. */
   cache?: StockPriceCache;
+  /** Whether step 4 (the static table) may answer; omitted, it may (dev/test). */
+  staticPrices?: StaticPricePolicy;
 }
 
 export type StockPriceCache = Map<string, { at: number; value: StockPrice | null }>;
@@ -202,18 +212,33 @@ async function resolveStockPrice(sym: string, ctx: StockPriceContext): Promise<S
   // 3. V3 TWAP (stock in WETH) × ETH/USD.
   if (twap1e6 !== null) return { price1e6: twap1e6, source: 'v3-twap', asOf: nowSec, ...extra };
 
-  // 4. The static table, loudly.
+  // 4. The static table, loudly — or, in production, not at all.
   const fallback = staticStockPrice(sym);
-  ctx.logger.warn(
-    'stock-price: no Pyth equity, DefiLlama or pool TWAP; using the STATIC table price',
-    {
-      net: ctx.net,
-      base: sym,
-      equityAgeS: equity ? nowSec - equity.publishTime : null,
-      staticUsd: STOCK_STATIC_USD[sym] ?? null,
-    },
+  if (!fallback) return null;
+  const policy = ctx.staticPrices ?? STATIC_PRICES_ALLOWED;
+  const detail = {
+    net: ctx.net,
+    base: sym,
+    equityAgeS: equity ? nowSec - equity.publishTime : null,
+    staticUsd: STOCK_STATIC_USD[sym] ?? null,
+  };
+  if (!policy.allow) {
+    ctx.logger.error(
+      'stock-price: no Pyth equity, DefiLlama or pool TWAP; static table refused in production',
+      detail,
+    );
+    throw new BasePriceUnavailableError(sym, 'static_refused');
+  }
+  const log = policy.escapeHatch
+    ? ctx.logger.error.bind(ctx.logger)
+    : ctx.logger.warn.bind(ctx.logger);
+  log(
+    policy.escapeHatch
+      ? 'stock-price: STATIC table price used in production (ALLOW_STATIC_PRICES=1)'
+      : 'stock-price: no Pyth equity, DefiLlama or pool TWAP; using the STATIC table price',
+    detail,
   );
-  return fallback ? { ...fallback, ...extra } : null;
+  return { ...fallback, ...extra };
 }
 
 async function twapPrice(
@@ -285,6 +310,7 @@ export interface StockPriceDeps {
   logger: Logger;
   now: () => number;
   cache?: StockPriceCache;
+  staticPrices?: StaticPricePolicy;
 }
 
 /** Binds {@link stockPriceFor} to one net's deps; `mintFor` resolves the stock's address. */
@@ -312,6 +338,7 @@ export function stockPricer(
       logger: deps.logger,
       nowMs: deps.now(),
       ...(deps.cache ? { cache: deps.cache } : {}),
+      ...(deps.staticPrices ? { staticPrices: deps.staticPrices } : {}),
     });
   };
 }

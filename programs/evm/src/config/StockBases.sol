@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {Base} from "./Base.sol";
+import {RobinhoodChain} from "./RobinhoodChain.sol";
 import {RobinhoodChainTestnet} from "./RobinhoodChainTestnet.sol";
 
 /// @title Per-chain stock-token bases for `StockPriceSource`.
@@ -9,10 +11,17 @@ import {RobinhoodChainTestnet} from "./RobinhoodChainTestnet.sol";
 /// and a sanity band. `script/DeployStockPriceSource.s.sol` configures every
 /// entry for `block.chainid`; `script/SeedStockPool.s.sol` looks pools up here.
 ///
-/// **Adding a chain (Base, RH mainnet).** Add a branch to `forChain` with the
-/// chain's stock-token and pool addresses — nothing else changes: the feed ids
-/// and bands are chain-independent (`_entry`). A stock with no pool yet cannot
-/// be listed (the source refuses a config without one); create the pool first
+/// **Mainnet (RH 4663, Base 8453): no stock bases in v1.** Both branches are
+/// deliberately empty, so `DeployMainnet` deploys `StockPriceSourceV2` with
+/// no base configured and the attested/TWAP legs idle; `createToken` against a
+/// stock token then fails preflight (no price) rather than pricing off nothing.
+/// Adding one later is a timelock operation, not a redeploy: pin the token
+/// and its stock/WETH pool here, then schedule
+/// `StockPriceSourceV2.setConfig(token, params)` (and, the first time,
+/// `PythPriceSource.setFallbackSource(StockPriceSourceV2)`) through the
+/// timelock — see `docs/deployment.md` §2.3. The feed ids and bands are
+/// chain-independent (`_entry`). A stock with no pool yet cannot be listed
+/// (the source refuses a config without one); create the pool first
 /// (`UniswapV3Factory.createPool`) and seed it with `SeedStockPool`.
 library StockBases {
     struct Entry {
@@ -64,9 +73,14 @@ library StockBases {
     address internal constant RH_TESTNET_NFLX_WETH = 0x5D311cD5096c2A48EC838968041A835Da4b4cCF0;
     address internal constant RH_TESTNET_AMD_WETH = 0x06cB034c1a2302d1d0Ac2C225d933594833610dC;
 
-    /// @return e Every stock base configured for this chain; empty where none
-    ///         are pinned yet (Base, RH mainnet).
+    /// @return e Every stock base configured for this chain; empty on the
+    ///         mainnets (v1 scope) and on Base Sepolia.
     function forChain() internal view returns (Entry[] memory e) {
+        if (block.chainid == RobinhoodChain.MAINNET_CHAIN_ID || block.chainid == Base.CHAIN_ID) {
+            // v1 mainnet: none. Opt in per token through the timelock (see the
+            // library notice above); never by editing the testnet branch.
+            return e;
+        }
         if (block.chainid == RobinhoodChainTestnet.CHAIN_ID) {
             address weth = RobinhoodChainTestnet.WETH9;
             e = new Entry[](5);
@@ -76,8 +90,7 @@ library StockBases {
             e[3] = _entry("NFLX", RH_TESTNET_NFLX, RH_TESTNET_NFLX_WETH, weth, PYTH_NFLX);
             e[4] = _entry("AMD", RH_TESTNET_AMD, RH_TESTNET_AMD_WETH, weth, PYTH_AMD);
         }
-        // Base (8453) / Base Sepolia (84532) / RH mainnet (4663): add a branch
-        // here with that chain's stock token + pool addresses when they exist.
+        // Base Sepolia (84532): no stock tokens exist there.
     }
 
     /// @return The entry for `token` on this chain; reverts if there is none.

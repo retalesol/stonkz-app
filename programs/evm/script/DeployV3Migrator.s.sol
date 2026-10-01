@@ -9,10 +9,8 @@ import {StonkzLaunchpad, IGraduationMigrator} from "../src/StonkzLaunchpad.sol";
 import {UniswapV3Migrator} from "../src/UniswapV3Migrator.sol";
 import {IUniswapV3Factory} from "../src/oracle/uniswap/IUniswapV3.sol";
 import {Arc} from "../src/config/Arc.sol";
-import {BaseSepolia} from "../src/config/BaseSepolia.sol";
-import {RobinhoodChain} from "../src/config/RobinhoodChain.sol";
-import {RobinhoodChainTestnet} from "../src/config/RobinhoodChainTestnet.sol";
 import {MainnetGuard} from "./MainnetGuard.sol";
+import {RouterWiring} from "./RouterWiring.sol";
 
 /// @title Deploy `FeeLocker` + `UniswapV3Migrator` and install the migrator
 /// with the launchpad's admin `setMigrator`.
@@ -24,10 +22,10 @@ import {MainnetGuard} from "./MainnetGuard.sol";
 ///
 /// Env:
 /// - `LAUNCHPAD_ADDRESS` (or `RH_LAUNCHPAD_ADDRESS`), `PRIVATE_KEY`;
-/// - `V3_FACTORY` — defaults to the chain's pin (RH 4663/46630, Base Sepolia
-///   84532, Arc 5042 when pinned); required anywhere else (Base mainnet:
-///   `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`, verify on the explorer);
-/// - `V3_FEE` — pool fee tier, default 10000 (1%); must be enabled on the factory;
+/// - `V3_FACTORY` — defaults to the chain's pin (`RouterWiring.v3`: RH
+///   4663/46630, Base 8453/84532; Arc 5042 once pinned); required anywhere else;
+/// - `V3_FEE` — pool fee tier, default the chain's `GRADUATION_POOL_FEE`
+///   (10000 = 1%); must be enabled on the factory;
 /// - `FEE_LOCKER` — reuse an existing locker (must be bound to this proxy)
 ///   instead of deploying one, e.g. when swapping the migrator;
 /// - `MIGRATION_AUTHORITY` — defaults to the launchpad's current one;
@@ -58,11 +56,12 @@ contract DeployV3Migrator is Script {
         if (expect != 0) require(block.chainid == expect, "DeployV3Migrator: unexpected chain id");
         address proxy = vm.envOr("LAUNCHPAD_ADDRESS", vm.envOr("RH_LAUNCHPAD_ADDRESS", address(0)));
         require(proxy.code.length > 0, "DeployV3Migrator: set LAUNCHPAD_ADDRESS");
+        (, uint24 defaultFee) = RouterWiring.v3();
         return execute(
             proxy,
             vm.envUint("PRIVATE_KEY"),
             vm.envOr("V3_FACTORY", defaultFactory()),
-            uint24(vm.envOr("V3_FEE", uint256(10_000))),
+            uint24(vm.envOr("V3_FEE", uint256(defaultFee == 0 ? 10_000 : defaultFee))),
             vm.envOr("FEE_LOCKER", address(0)),
             vm.envOr("MIGRATION_AUTHORITY", StonkzLaunchpad(proxy).migrationAuthority()),
             gov
@@ -70,12 +69,9 @@ contract DeployV3Migrator is Script {
     }
 
     /// The canonical Uniswap V3 factory for chains this repo pins; zero elsewhere.
-    function defaultFactory() public view returns (address) {
-        if (block.chainid == RobinhoodChain.MAINNET_CHAIN_ID) return RobinhoodChain.UNISWAP_V3_FACTORY;
-        if (block.chainid == RobinhoodChainTestnet.CHAIN_ID) return RobinhoodChainTestnet.UNISWAP_V3_FACTORY;
-        if (block.chainid == BaseSepolia.CHAIN_ID) return BaseSepolia.UNISWAP_V3_FACTORY;
-        if (block.chainid == Arc.CHAIN_ID) return Arc.UNISWAP_V3_FACTORY;
-        return address(0);
+    function defaultFactory() public view returns (address factory) {
+        (factory,) = RouterWiring.v3();
+        if (factory == address(0) && block.chainid == Arc.CHAIN_ID) factory = Arc.UNISWAP_V3_FACTORY;
     }
 
     /// @notice Deploy (and, if `pk` is the admin on a testnet, install). Public

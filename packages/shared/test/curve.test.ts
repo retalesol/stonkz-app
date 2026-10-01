@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { CIRC_FRACTION, CURVE_START_MC, GRAD, SUPPLY } from '../src/constants.js';
-import { circ, curve, curveMc, laneOf, liq, price, vol24 } from '../src/curve.js';
+import {
+  circ,
+  circulatingSupply,
+  curve,
+  curveMc,
+  laneOf,
+  liq,
+  price,
+  vol24,
+} from '../src/curve.js';
 
 describe('curveMc', () => {
   it('starts at the base market cap with no dev buy', () => {
@@ -118,5 +127,32 @@ describe('circ', () => {
   it('falls back to the default supply', () => {
     expect(circ({})).toBe(SUPPLY * CIRC_FRACTION);
     expect(circ({ supply: 0 })).toBe(SUPPLY * CIRC_FRACTION);
+  });
+});
+
+describe('circulatingSupply', () => {
+  it('takes the API figure when it sent one', () => {
+    expect(circulatingSupply({ circulating: 123_456, supply: 1e9 })).toBe(123_456);
+    expect(circulatingSupply({ circulating: 0 })).toBe(0);
+  });
+
+  it('derives it from the reserves otherwise, clamped at zero', () => {
+    expect(circulatingSupply({ supply: 1e9, lpReserve: 2e8, curveTokens: 7e8 })).toBe(1e8);
+    expect(circulatingSupply({ supply: 1e9, lpReserve: 2e8, curveTokens: 9e8 })).toBe(0);
+    // A bad `circulating` falls through to the reserves.
+    expect(
+      circulatingSupply({ circulating: -1, supply: 1e9, lpReserve: 0, curveTokens: 1e9 }),
+    ).toBe(0);
+    expect(
+      circulatingSupply({ circulating: Number.NaN, supply: 10, lpReserve: 1, curveTokens: 2 }),
+    ).toBe(7);
+  });
+
+  it('is null — never the sim 80% — when the API sent neither', () => {
+    expect(circulatingSupply({})).toBeNull();
+    expect(circulatingSupply({ supply: 1e9 })).toBeNull();
+    expect(circulatingSupply({ supply: 0, lpReserve: 0, curveTokens: 0 })).toBeNull();
+    expect(circulatingSupply({ supply: 1e9, lpReserve: 1 })).toBeNull();
+    expect(circulatingSupply({ supply: 1e9, curveTokens: 1 })).toBeNull();
   });
 });

@@ -109,6 +109,14 @@ export interface SimCoin extends Coin {
   mcBase?: number;
   /** Live mode: USD per base unit the API last served (a stable's $1, a stock base's live price). */
   baseUsd?: number;
+  /**
+   * Live mode: the curve's real liquidity and 24h volume in USD, from the
+   * last `GET /tokens/:sym` detail read (`views/token.ts`). Absent until the
+   * token page has fetched it — callers show "—" or skip, never the sim's
+   * cap-derived `liq()` / seed-derived `vol24()`.
+   */
+  liqUsd?: number;
+  vol24Usd?: number;
 }
 
 /** Seed rows: sym, name, desc, mcap, 24h %, replies, holders, age in minutes. */

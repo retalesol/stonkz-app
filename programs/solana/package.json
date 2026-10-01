@@ -4,6 +4,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "anchor build",
+    "idl:sync": "node ../../scripts/sync-idl.mjs",
+    "idl:check": "node ../../scripts/sync-idl.mjs --check",
     "test": "anchor test",
     "test:unit": "cargo test -p launchpad --lib",
     "init:deployment": "ts-node scripts/init-deployment.ts",

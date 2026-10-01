@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Nightly at 03:00 UTC: the Anchor toolchain job only (see `if:` below).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -14,6 +18,7 @@ env:
 
 jobs:
   verify:
+    if: github.event_name != 'schedule'
     name: typecheck + unit tests
     runs-on: ubuntu-latest
     steps:
@@ -56,6 +61,7 @@ jobs:
           retention-days: 7
 
   evm-programs:
+    if: github.event_name != 'schedule'
     name: forge test
     runs-on: ubuntu-latest
     steps:
@@ -76,6 +82,7 @@ jobs:
         run: forge test -vv
 
   solana-program:
+    if: github.event_name != 'schedule'
     name: cargo test (launchpad)
     runs-on: ubuntu-latest
     steps:
@@ -90,3 +97,70 @@ jobs:
       - name: Unit tests
         working-directory: programs/solana
         run: cargo test -p launchpad --lib
+
+      # EVM CurveMath and Rust math.rs are held atom-for-atom to
+      # programs/parity-vectors.json. programs/solana is its own pnpm project
+      # (not a workspace member), hence the separate install.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install (programs/solana)
+        working-directory: programs/solana
+        run: pnpm install --frozen-lockfile
+
+      - name: Cross-chain parity vectors
+        working-directory: programs/solana
+        run: pnpm verify:parity
+
+  # Needs the Solana + Anchor toolchain, so it runs nightly and on demand
+  # rather than on every push. Fails when the committed IDL
+  # (programs/solana/idl/) is stale against `anchor idl build`, then runs the
+  # full `anchor build` + `anchor test` (local validator cloning Raydium and
+  # Metaplex from devnet, per Anchor.toml) and prints the program hash to
+  # compare with deployments/<cluster>.json#programSha256.
+  anchor-nightly:
+    name: anchor idl build + anchor test (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      # Anchor's release image: pinned Solana + Anchor + Rust + Node. Keep the
+      # tag equal to the anchor-cli version in programs/solana/Cargo.toml.
+      image: backpackapp/build:v0.32.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: programs/solana
+
+      - name: Enable pnpm (Anchor.toml package_manager)
+        run: corepack enable && corepack prepare pnpm@10.12.1 --activate
+
+      - name: Install (programs/solana)
+        working-directory: programs/solana
+        run: pnpm install --frozen-lockfile
+
+      - name: Committed IDL matches anchor idl build
+        run: node scripts/sync-idl.mjs --check
+
+      - name: anchor build
+        working-directory: programs/solana
+        run: anchor build
+
+      - name: Program hash (compare with deployments/*.json programSha256)
+        run: node scripts/sync-idl.mjs --hash
+
+      - name: anchor test
+        working-directory: programs/solana
+        env:
+          ANCHOR_WALLET: /root/.config/solana/id.json
+        run: |
+          mkdir -p /root/.config/solana
+          [ -f "$ANCHOR_WALLET" ] || solana-keygen new --no-bip39-passphrase -s -o "$ANCHOR_WALLET"
+          anchor test

@@ -11,6 +11,7 @@ import { JsonRpcError } from '../chain/jsonrpc.js';
 import type { Logger } from '../observability/logger.js';
 import { basePriceFor } from './base-price.js';
 import { stockDefiLlamaCoins, type UsdPriceSource } from './defillama.js';
+import { BasePriceUnavailableError, STATIC_PRICES_REFUSED } from './price-policy.js';
 import {
   PYTH_EQUITY_FEED_IDS,
   PYTH_ETH_USD_FEED_ID,
@@ -211,6 +212,27 @@ describe('stockPriceFor', () => {
     const p = await stockPriceFor('TSLA', ctx({ eth: fakeChain(chainOpts), logger }));
     expect(p).toMatchObject({ price1e6: 250_000_000n, source: 'static', asOf: null });
     expect(logger.warns.some((w) => /STATIC table/.test(w))).toBe(true);
+  });
+
+  it('refuses the static table in production: BasePriceUnavailableError, nothing cached', async () => {
+    const logger = spyLogger();
+    const eth = fakeChain({ pool: false });
+    const cache = stockPriceCacheFor(eth);
+    const base = ctx({ eth, logger, cache, staticPrices: STATIC_PRICES_REFUSED });
+    await expect(stockPriceFor('TSLA', base)).rejects.toBeInstanceOf(BasePriceUnavailableError);
+    expect(cache.size).toBe(0);
+    // An unknown ticker is still "no source", not a retry.
+    await expect(stockPriceFor('ZZZZ', { ...base, token: POOL })).resolves.toBeNull();
+    // The escape hatch answers, but at error level.
+    const errors: string[] = [];
+    const loud: Logger = { ...logger, error: (m) => void errors.push(m), child: () => loud };
+    const p = await stockPriceFor('TSLA', {
+      ...base,
+      logger: loud,
+      staticPrices: { allow: true, escapeHatch: true },
+    });
+    expect(p?.source).toBe('static');
+    expect(errors.some((m) => /ALLOW_STATIC_PRICES=1/.test(m))).toBe(true);
   });
 
   it('caches an answer for ~10 s per net and symbol', async () => {

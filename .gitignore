@@ -28,6 +28,8 @@ cache/
 out/
 *.keypair.json
 !programs/**/Anchor.toml
+# The Anchor IDL is committed (scripts/sync-idl.mjs copies it out of target/).
+!programs/solana/idl/
 
 # editors / os
 .DS_Store

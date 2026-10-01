@@ -5,6 +5,7 @@ import type { EvmNet, Net } from '@stonkz/shared';
 import { DEFAULT_DUST, DEFAULT_WHALE_CUT } from '@stonkz/shared';
 import { ARC_BLOCK_MS, ARC_CHAIN_ID, ARC_EXPLORER_URL, ARC_RPC_URL } from './chain/arc.js';
 import {
+  BASE_CHAIN_ID,
   BASE_SEPOLIA_CHAIN_ID,
   BASE_SEPOLIA_EXPLORER_URL,
   BASE_SEPOLIA_RPC_URL,
@@ -15,6 +16,10 @@ import {
   RH_TESTNET_CHAIN_ID,
   RH_TESTNET_PUBLIC_RPC_URL,
 } from './chain/evm.js';
+
+/** Base's public mainnet RPC: rate-limited, a dev default only — set `BASE_RPC_URL` to a provider. */
+const BASE_PUBLIC_RPC_URL = 'https://mainnet.base.org';
+const BASE_EXPLORER_URL = 'https://basescan.org';
 
 /**
  * Every knob the API reads, resolved once at boot. Defaults target
@@ -114,6 +119,28 @@ export interface ApiEnv {
 
   priceOracleUrl: string;
   priceOracleTtlSeconds: number;
+  /**
+   * `STONKZ_STAGING=1`: a production image on Railway/Vercel before the
+   * programs are live. Skips the checks that assume paid RPCs and a deployed
+   * launchpad, and keeps the indicative static USD tables available.
+   */
+  stonkzStaging: boolean;
+  /**
+   * `ALLOW_STATIC_PRICES=1`: the escape hatch that lets a production boot
+   * (not staging) still size launches / quote display hops from the static
+   * USD tables (`router/base-price.ts`, `router/stock-price.ts`,
+   * `router/oracle-hop.ts`). Off, production fails closed:
+   * `base_price_unavailable` instead of a guessed dollar. Logged loudly.
+   */
+  allowStaticPrices: boolean;
+  /**
+   * `ALERT_WEBHOOK_URL`: optional JSON POST target for `Metrics` alerts
+   * (Slack / Discord incoming-webhook compatible `text` payload). Unset,
+   * alerts stay log lines. `ALERT_WEBHOOK_MIN_SEVERITY` (`warn` | `critical`)
+   * filters what is posted; `warn` posts everything.
+   */
+  alertWebhookUrl: string | undefined;
+  alertWebhookMinSeverity: 'warn' | 'critical';
 
   crateHmacSecret: string;
   dailyXpCap: number;
@@ -516,8 +543,23 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       return [...new Set(merged)];
     })(),
     rhNetworkLabel: str(src, 'RH_NETWORK_LABEL', 'ROBINHOOD'),
-    baseRpcUrl: str(src, 'BASE_RPC_URL', BASE_SEPOLIA_RPC_URL),
-    baseExplorerUrl: str(src, 'BASE_EXPLORER', BASE_SEPOLIA_EXPLORER_URL).replace(/\/$/, ''),
+    // Base RPC/explorer defaults follow the configured chain id, as RH's do:
+    // a mainnet id must never pair with the Sepolia endpoint. The public
+    // mainnet RPC is a dev default only; set BASE_RPC_URL to a provider.
+    baseRpcUrl: str(
+      src,
+      'BASE_RPC_URL',
+      int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID) === BASE_CHAIN_ID
+        ? BASE_PUBLIC_RPC_URL
+        : BASE_SEPOLIA_RPC_URL,
+    ),
+    baseExplorerUrl: str(
+      src,
+      'BASE_EXPLORER',
+      int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID) === BASE_CHAIN_ID
+        ? BASE_EXPLORER_URL
+        : BASE_SEPOLIA_EXPLORER_URL,
+    ).replace(/\/$/, ''),
     baseChainId: int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID),
     baseLaunchpadAddress: str(src, 'BASE_LAUNCHPAD_ADDRESS', ZERO_EVM_ADDRESS),
     baseRouterAddress: str(src, 'BASE_ROUTER_ADDRESS', ZERO_EVM_ADDRESS),
@@ -527,9 +569,13 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       'BASE_V3_FACTORY_ADDRESS',
       int(src, 'BASE_CHAIN_ID', BASE_SEPOLIA_CHAIN_ID) === BASE_SEPOLIA_CHAIN_ID
         ? '0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24'
-        : // Uniswap v3 factory on Base mainnet (8453).
+        : // Uniswap v3 factory on Base mainnet (8453) — `Base.sol`, verified 2026-10-01.
           '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
     ),
+    // No default on any chain: `V3PoolHopClient` speaks the flat
+    // `V3ExactInputQuoter` ABI (`programs/evm/src/testnet`), not Uniswap's
+    // QuoterV2 struct ABI, so the canonical QuoterV2 pins must not be dropped
+    // in here. Zero = no on-chain pool hop (Trading API / oracle only).
     baseV3QuoterAddress: str(src, 'BASE_V3_QUOTER_ADDRESS', ZERO_EVM_ADDRESS),
     arcRpcUrl: str(src, 'ARC_RPC_URL', ARC_RPC_URL),
     arcExplorerUrl: str(src, 'ARC_EXPLORER', ARC_EXPLORER_URL).replace(/\/$/, ''),
@@ -551,6 +597,15 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
 
     priceOracleUrl: str(src, 'PRICE_ORACLE_URL', 'https://api.coinbase.com/v2/prices'),
     priceOracleTtlSeconds: int(src, 'PRICE_ORACLE_TTL_SECONDS', 30),
+    stonkzStaging: str(src, 'STONKZ_STAGING', '') === '1',
+    allowStaticPrices: str(src, 'ALLOW_STATIC_PRICES', '') === '1',
+    alertWebhookUrl: src['ALERT_WEBHOOK_URL']?.trim() || undefined,
+    alertWebhookMinSeverity: oneOf(
+      src,
+      'ALERT_WEBHOOK_MIN_SEVERITY',
+      ['warn', 'critical'] as const,
+      'warn',
+    ),
 
     crateHmacSecret: str(src, 'CRATE_HMAC_SECRET', DEV_CRATE_SECRET),
     dailyXpCap: int(src, 'DAILY_XP_CAP', 25_000),
@@ -630,7 +685,10 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       RH: referralAsset(
         src,
         'REFERRAL_ASSET_RH',
-        '0x7943e237c7F95DA44E0301572D358911207852Fa:18:WETH',
+        // WETH9 on the configured RH chain (`RobinhoodChain.sol` / `RobinhoodChainTestnet.sol`).
+        int(src, 'RH_CHAIN_ID', RH_TESTNET_CHAIN_ID) === RH_CHAIN_ID
+          ? '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73:18:WETH'
+          : '0x7943e237c7F95DA44E0301572D358911207852Fa:18:WETH',
       ),
       BASE: referralAsset(
         src,
@@ -678,7 +736,7 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
    * still required — this only skips the checks that assume a live
    * launchpad and a paid RH RPC, which we do not have yet.
    */
-  const staging = str(src, 'STONKZ_STAGING', '') === '1';
+  const staging = env.stonkzStaging;
 
   if (env.nodeEnv === 'production') {
     if (env.jwtSecret === DEV_JWT_SECRET) throw new Error('JWT_SECRET must be set in production');
@@ -705,8 +763,63 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
           'RH_LAUNCHPAD_ADDRESS must be set in production; no deployment address is checked in',
         );
       }
+      // The same rule for every other public endpoint the API would fall
+      // back to: Base's and Solana's public RPCs are rate-limited, and
+      // Jupiter's lite-api is the keyless tier. The user has paid providers;
+      // this only makes forgetting to point at one a boot error, not a
+      // production outage at the first burst of traffic.
+      const publicProvider = publicProviderInUse(env);
+      if (publicProvider) throw new Error(publicProvider);
     }
   }
 
   return env;
+}
+
+/** Hostname of `url`, lower-cased; `null` when it does not parse. */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+const PUBLIC_BASE_RPC_HOSTS = new Set(['sepolia.base.org', 'mainnet.base.org']);
+/** `api.mainnet-beta.solana.com`, `api.devnet.solana.com`, `api.testnet.solana.com`. */
+const PUBLIC_SOLANA_RPC_HOST = /^api\.[a-z0-9-]+\.solana\.com$/;
+const JUPITER_LITE_HOST = 'lite-api.jup.ag';
+
+/**
+ * The first public (rate-limited, keyless) provider a production boot would
+ * depend on, as the error message to refuse it with — or `null` when every
+ * provider is a paid / private endpoint. Pure, so `env.test.ts` can cover
+ * each case without a full production env.
+ */
+export function publicProviderInUse(
+  env: Pick<
+    ApiEnv,
+    'baseRpcUrl' | 'solanaRpcUrl' | 'solanaPrivateRpcUrl' | 'jupiterApiBaseUrl' | 'jupiterApiKey'
+  >,
+): string | null {
+  const baseHost = hostOf(env.baseRpcUrl);
+  if (baseHost !== null && PUBLIC_BASE_RPC_HOSTS.has(baseHost)) {
+    return `BASE_RPC_URL must be a provider endpoint in production; ${baseHost} is the public, rate-limited RPC`;
+  }
+  const solHost = hostOf(env.solanaRpcUrl);
+  if (solHost !== null && PUBLIC_SOLANA_RPC_HOST.test(solHost)) {
+    return `SOLANA_RPC_URL must be a provider endpoint in production; ${solHost} is the public, rate-limited RPC`;
+  }
+  const solPrivateHost = env.solanaPrivateRpcUrl ? hostOf(env.solanaPrivateRpcUrl) : null;
+  if (solPrivateHost !== null && PUBLIC_SOLANA_RPC_HOST.test(solPrivateHost)) {
+    return `SOLANA_PRIVATE_RPC_URL must be a private endpoint in production; ${solPrivateHost} is the public RPC`;
+  }
+  const jupHost = hostOf(env.jupiterApiBaseUrl);
+  if (jupHost === JUPITER_LITE_HOST && !env.jupiterApiKey) {
+    return (
+      'JUPITER_API_BASE_URL points at lite-api.jup.ag (the keyless, rate-limited tier) in production; ' +
+      'set JUPITER_API_KEY or move JUPITER_API_BASE_URL to a paid plan base URL'
+    );
+  }
+  return null;
 }

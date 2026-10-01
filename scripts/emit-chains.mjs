@@ -12,6 +12,14 @@
  * testnet) and any capped mainnet used for testing (Arc); `main` holds the
  * production chains. A net missing from an environment is "not deployed
  * there yet" and the apps must refuse to trade it.
+ *
+ * Mainnet: `programs/evm/deployments/4663.json` (RH) and `8453.json` (Base)
+ * do not exist until `script/DeployMainnet.s.sol` has been broadcast — it
+ * prints the record to write, with the same `contracts` keys as the testnet
+ * records (`StonkzLaunchpad`, `StonkzRouter`, `PythPriceSource`,
+ * `UniswapV3Migrator`, `FeeLocker`, `StockPriceSourceV2`, `ReferralVault`,
+ * `TimelockController`). Nothing here fabricates an address: until those
+ * files exist `main` stays empty and the live build offers no EVM net.
  */
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -55,8 +63,15 @@ for (const f of existsSync(evmDir) ? readdirSync(evmDir) : []) {
     deployedAt: rec.deployedAt ?? null,
     launchpad: c.StonkzLaunchpad ?? null,
     router: c.StonkzRouter ?? null,
-    migrator: c.UniswapV2Migrator ?? null,
-    priceSource: c.PushPriceSource ?? null,
+    // The installed graduation migrator: V3 + FeeLocker where rolled out, else V2.
+    migrator: c.UniswapV3Migrator ?? c.UniswapV2Migrator ?? null,
+    feeLocker: c.FeeLocker ?? null,
+    // The launchpad's live price source: Pyth where rolled out, else the push oracle.
+    priceSource: c.PythPriceSource ?? c.PushPriceSource ?? null,
+    stockPriceSource: c.StockPriceSourceV2 ?? c.StockPriceSource ?? null,
+    referralVault: c.ReferralVault ?? null,
+    // Mainnet only: the TimelockController that is admin of everything.
+    timelock: c.TimelockController ?? null,
     v2Factory: c.StonkzV2Factory ?? null,
     tokens: rec.tokens ?? {},
     // Arc: the router itself refuses buys above this (native wei).

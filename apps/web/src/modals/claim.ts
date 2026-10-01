@@ -35,7 +35,8 @@ interface ClaimRow {
   native: number;
   tokens: number;
   cashback: boolean;
-  vol: number;
+  /** 24h volume, USD; `null` when live mode has no detail figure for the coin yet. */
+  vol: number | null;
 }
 
 function simRows(): ClaimRow[] {
@@ -63,7 +64,9 @@ function liveRows(vaults: Awaited<ReturnType<typeof api.claimableFees>>): ClaimR
       native: v.native,
       tokens: v.tokens,
       cashback: c ? inCashback(c) : false,
-      vol: c ? vol24(c) : 0,
+      // The detail read's real 24h volume when the board has it; never the
+      // seed-derived sim figure on a live coin.
+      vol: c?.vol24Usd ?? null,
     };
   });
 }
@@ -89,7 +92,7 @@ function claimHTML(rows: ClaimRow[]): Html {
             <div class="sy">${r.sym}</div>
             <div class="mt">
               ${r.name} ${DOT} VOL 24H
-              ${usd(r.vol)}${r.cashback ? html` ${DOT} <span class="tag cb">CASHBACK</span>` : ''}
+              ${r.vol === null ? '\u2014' : usd(r.vol)}${r.cashback ? html` ${DOT} <span class="tag cb">CASHBACK</span>` : ''}
             </div>
           </div>
           <div class="amt">

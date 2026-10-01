@@ -25,7 +25,11 @@ import { peekRateLimit, rateLimit, RATE_LIMITS, type RateLimitRule } from '../re
 import type { AppEnv } from '../app/context.js';
 import { RpcError, type SolanaTransactionStatusSource } from '../chain/types.js';
 import { aggregatorFor, nativeAggregatorMint, nativeDecimalsFor } from '../router/compose.js';
-import { basePriceFor } from '../router/base-price.js';
+import {
+  BasePriceUnavailableError,
+  basePriceFor,
+  staticPricePolicy,
+} from '../router/base-price.js';
 import { deriveCurveColumns, type CurveStateColumns } from '../router/curve-state.js';
 import { RouterError, SolanaTransactionTooLargeError } from '../router/errors.js';
 import { moderateLaunch } from '../router/moderation.js';
@@ -429,12 +433,41 @@ export function launchRoutes(): Hono<AppEnv> {
       }
       // EVM stock bases are priced live, from the inputs `StockPriceSource`
       // reads on-chain (fresh Pyth equity, else pool TWAP × ETH/USD) — 24/7.
-      const basePrice = await basePriceFor(
-        net,
-        baseSymbol,
-        deps.oracle,
-        isEvm(net) ? { stock: stockPricerFor(deps, net) } : {},
-      ).catch(() => null);
+      // In production the static USD tables are refused (`StaticPricePolicy`):
+      // a base whose live source is down is 503 + retry, never a guessed dollar.
+      const basePriceOpts = {
+        staticPrices: staticPricePolicy(deps.env),
+        logger: deps.logger,
+        ...(isEvm(net) ? { stock: stockPricerFor(deps, net) } : {}),
+      };
+      let basePrice: Awaited<ReturnType<typeof basePriceFor>>;
+      try {
+        basePrice = await basePriceFor(net, baseSymbol, deps.oracle, basePriceOpts);
+      } catch (err) {
+        if (err instanceof BasePriceUnavailableError) {
+          deps.logger.warn('launch/prepare: base price unavailable; refusing', {
+            net,
+            base: baseSymbol,
+            reason: err.reason,
+            err: err.message,
+          });
+          c.header('Retry-After', String(err.retryAfterSeconds));
+          return c.json(
+            {
+              error: 'base_price_unavailable',
+              detail: `no live USD price is available for ${baseSymbol} right now; retry shortly`,
+              retryAfter: err.retryAfterSeconds,
+            },
+            503,
+          );
+        }
+        deps.logger.warn('launch/prepare: base price lookup threw', {
+          net,
+          base: baseSymbol,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        basePrice = null;
+      }
       if (basePrice?.source) {
         deps.logger.info('launch/prepare: stock base priced', {
           net,
@@ -1156,9 +1189,10 @@ export function launchRoutes(): Hono<AppEnv> {
           // The program priced this curve off its BaseOracle; read the same
           // account so the DB mirror matches. Off-chain price is the fallback
           // until the indexer corrects it from chain state.
-          const offChain = await basePriceFor(net, intent.baseSymbol, deps.oracle).catch(
-            () => null,
-          );
+          const offChain = await basePriceFor(net, intent.baseSymbol, deps.oracle, {
+            staticPrices: staticPricePolicy(deps.env),
+            logger: deps.logger,
+          }).catch(() => null);
           const accounts = asSolanaAccountDataSource(deps.rpcs.SOL);
           const onChain = accounts
             ? await readSolanaBaseOracle(
@@ -1259,8 +1293,12 @@ export function launchRoutes(): Hono<AppEnv> {
           }
 
           const baseDecimals =
-            (await basePriceFor(net, intent.baseSymbol, deps.oracle).catch(() => null))
-              ?.baseDecimals ?? (USD_STABLES.has(intent.baseSymbol.toUpperCase()) ? 6 : 18);
+            (
+              await basePriceFor(net, intent.baseSymbol, deps.oracle, {
+                staticPrices: staticPricePolicy(deps.env),
+                logger: deps.logger,
+              }).catch(() => null)
+            )?.baseDecimals ?? (USD_STABLES.has(intent.baseSymbol.toUpperCase()) ? 6 : 18);
           mint = decoded.token;
           curveColumns = {
             tokenDecimals: EVM_TOKEN_DECIMALS,

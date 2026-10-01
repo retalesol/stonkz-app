@@ -57,8 +57,22 @@ export interface IndexerConfig {
   solanaSignaturePageSize: number;
   /** Upper bound on transactions fetched per pass, so one pass stays bounded. */
   solanaMaxTxPerPass: number;
+  /**
+   * `getSignaturesForAddress` calls one pass may spend walking the gap
+   * between the cursor and the tip. Reaching it ends the pass with partial
+   * progress — never with an error — and the walk resumes next pass.
+   */
+  solanaMaxSignaturePages: number;
+  /** Wall-clock budget for that walk, per pass. */
+  solanaPassBudgetMs: number;
   /** Whether to spend a `getBlock` call per pass to fetch the cursor slot's blockhash. */
   solanaTrackBlockhash: boolean;
+  /**
+   * How long a catch-up backlog may persist before `solana-catchup-backlog:<net>`
+   * alerts. Shorter than this is a normal post-restart walk; longer means the
+   * program is busier than the page/transaction caps let one process keep up with.
+   */
+  catchupAlertAfterMs: number;
 
   /* ----------------------------------------------------------------- RH */
   rhLaunchpadAddress: string;
@@ -238,7 +252,10 @@ export function readIndexerConfig(env: ApiEnv, src: ConfigSource = process.env):
       Math.max(1, int(src, 'INDEXER_SOL_SIGNATURE_PAGE', 1_000)),
     ),
     solanaMaxTxPerPass: int(src, 'INDEXER_SOL_MAX_TX_PER_PASS', 200),
+    solanaMaxSignaturePages: int(src, 'INDEXER_SOL_MAX_SIGNATURE_PAGES', 100),
+    solanaPassBudgetMs: int(src, 'INDEXER_SOL_PASS_BUDGET_MS', 15_000),
     solanaTrackBlockhash: bool(src, 'INDEXER_SOL_TRACK_BLOCKHASH', false),
+    catchupAlertAfterMs: int(src, 'INDEXER_CATCHUP_ALERT_AFTER_MS', 10 * 60_000),
 
     rhLaunchpadAddress: str(src, 'RH_LAUNCHPAD_ADDRESS', env.rhLaunchpadAddress),
     rhRouterAddress: str(src, 'RH_ROUTER_ADDRESS', env.rhRouterAddress),
@@ -320,7 +337,15 @@ export function assertChainModeConfigured(config: IndexerConfig): void {
         'INDEXER_SOURCE=chain needs INDEXER_SOL_START_SLOT (the deployment slot); a fresh cursor must not walk Solana from genesis',
       );
     }
+    if (config.solanaMaxSignaturePages < 1)
+      throw new Error('INDEXER_SOL_MAX_SIGNATURE_PAGES must be at least 1');
+    if (config.solanaPassBudgetMs < 1)
+      throw new Error('INDEXER_SOL_PASS_BUDGET_MS must be positive');
+    if (config.solanaMaxTxPerPass < 1)
+      throw new Error('INDEXER_SOL_MAX_TX_PER_PASS must be at least 1');
   }
+  if (config.catchupAlertAfterMs < 0)
+    throw new Error('INDEXER_CATCHUP_ALERT_AFTER_MS must not be negative');
   for (const net of config.chainNets) {
     if (config.confirmations[net] < 0)
       throw new Error(`INDEXER_${net}_CONFIRMATIONS must not be negative`);

@@ -51,6 +51,11 @@ import {MainnetGuard} from "./MainnetGuard.sol";
 /// Optional env: `ATTEST_MAX_AGE` (300), `STOCK_FALLBACK` (default: the push
 /// oracle behind the live stock source), `MAX_BUY_NATIVE` / `PYTH_ADDRESS`
 /// (default: the current router's), `PAUSER`, `OBSERVATION_CARDINALITY` (64).
+/// Router pins come from `RouterWiring` by chain id. On the mainnets this
+/// script refuses to run while `StockBases.forChain()` is empty (v1 ships no
+/// stock bases there): `DeployMainnet` already deploys a `StockPriceSourceV2`
+/// as the router's sink, and a base is opted in through the timelock
+/// (`docs/deployment.md` §2.3), not by redeploying the router.
 contract UpgradeAttestedStockLaunch is Script {
     struct Params {
         address proxy;

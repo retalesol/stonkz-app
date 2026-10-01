@@ -10,6 +10,7 @@ import {
   type TokenFees,
   ago,
   cbLeft,
+  circulatingSupply,
   curve,
   effFee,
   inCashback,
@@ -666,6 +667,10 @@ function refreshDetail(c: SimCoin, delayMs = 0): void {
         if (TV.c !== c) return;
         DETAIL = d;
         detailKey = key;
+        // Carry the real figures on the coin for the rest of the app (the
+        // local fill print's nudge, the claim modal's volume line).
+        if (d.liqBase !== undefined && d.liqUsd !== undefined) c.liqUsd = d.liqUsd;
+        if (d.vol24Usd !== undefined) c.vol24Usd = d.vol24Usd;
         syncToken();
         drawTChart();
       })
@@ -1882,9 +1887,18 @@ export function syncToken(): void {
     if (liqn.textContent !== t) liqn.textContent = t;
   }
   const circWrap = $('#s-circ-wrap');
-  if (circWrap && detail && detail.circulating !== undefined) {
+  // Reserve-derived (what the curve sold), never the sim's 80% of supply.
+  const circulating = detail
+    ? circulatingSupply({
+        supply: c.supply ?? detail.supply,
+        circulating: detail.circulating,
+        curveTokens: detail.curveTokens,
+        lpReserve: detail.lpReserve,
+      })
+    : null;
+  if (circWrap && circulating !== null) {
     circWrap.hidden = false;
-    set('#s-circ', num(detail.circulating));
+    set('#s-circ', num(circulating));
   }
   set('#s-hold', num(c.hold));
   set('#s-age', ago(c.age));

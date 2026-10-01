@@ -37,7 +37,10 @@ addresses and start positions are set (`assertChainModeConfigured` in
     `INDEXER_MAX_BATCH_ATTEMPTS`.
 - **Pass** (`src/runner.ts`): per chain, independently: detect reorg →
   poll `(cursor, min(confirmedHead, cursor + batchSize)]` → ingest →
-  advance cursor. A throw on SOL does not skip RH's turn.
+  advance cursor. A throw on SOL does not skip RH's turn. A Solana pass
+  may cover less than it was asked for (signature paging is bounded per
+  pass); the cursor then moves only to what was fully walked and the
+  rest is the next pass's work — see §5a.
 - **Single-replica lock**: session-level `pg_try_advisory_lock` on a
   dedicated single-connection handle (`src/lock.ts`). A second replica
   exits 1. **This lock does not survive Neon's transaction pooler.** Point
@@ -95,6 +98,8 @@ indexer's `/health` both read `indexer_cursors`.
 | `failedAttempts` climbing on `/health`      | current batch is retrying toward a dead-letter |
 | `deadLetters` > 0                           | something was skipped; see `/dead-letters`     |
 | `reorgs` incrementing                       | a hash mismatch triggered rollback             |
+| `catchupBacklog` > 0 on `/health` (SOL)     | walking a signature gap; normal after downtime |
+| `alert: "solana-catchup-backlog:SOL"`       | that gap has persisted > 10 min (§5a)          |
 
 A fixture-mode deploy pointed at a live RPC will look "lagging" forever
 if the stub/RPC head keeps advancing past the fixture heads. That is
@@ -136,6 +141,80 @@ The other chain keeps draining.
 4. Do not "just" `UPDATE indexer_cursors SET position = …` past a
    poison range without a dead-letter row — you will lose the record
    of the gap.
+
+**What is _not_ a poison batch:** a Solana range that simply holds more
+signatures than one pass can walk. That used to surface as
+`SolanaRangeTooBusyError`, go through this failure path, and dead-letter
+the range after `INDEXER_MAX_BATCH_ATTEMPTS` — silently losing every fill
+in it after an outage on a busy program. It no longer can: the source
+reports partial progress instead of throwing (§5a), and the runner never
+counts a `partialProgress` error towards a dead letter even if one
+arrives from an old build (`PassResult.deferred`).
+
+### 5a. Solana catch-up after an outage
+
+`getSignaturesForAddress` only pages _down_ from the tip; ingest only runs
+_up_ from the cursor (a fill cannot be mapped before its launch, and the
+cursor must never skip a slot). `SolanaChainSource` reconciles the two
+with a walk that is bounded per pass and resumes across passes:
+
+1. **Locate** — page down from the tip with `until = <bookmark>`, keeping
+   one `before` cursor per page on an in-memory stack (a 1M-signature gap
+   is ~1,000 strings, not 1M rows). Stops at the bookmark, or when the
+   pass's page cap / time budget runs out — in which case the _next pass
+   continues from the same page_. These passes log nothing per pass and
+   move the cursor nowhere; that is expected.
+2. **Collect** — pop pages from the bookmark side (oldest first), fetch
+   up to `INDEXER_SOL_MAX_TX_PER_PASS` transactions, cut at a slot
+   boundary, advance the cursor + bookmark. A partly-ingested page is
+   re-fetched next pass with the new `until`, so it shrinks to its
+   remainder. A slot that straddles a page boundary is never committed
+   until the next page has been seen.
+
+Everything durable is still just `indexer_cursors.position` +
+`position_signature`. A restart discards the in-memory walk and
+re-locates from the tip with `until = bookmark`: one light RPC call per
+1,000 signatures, nothing re-ingested below the bookmark. The ordering
+guarantees are unchanged — oldest-first across pages and passes,
+decode-all-then-map inside a pass for launch-before-fill within a slot,
+`chain_events` unique for idempotency, `finalized` commitment throughout.
+
+| Knob                              | Default | Meaning                                                        |
+| --------------------------------- | ------- | -------------------------------------------------------------- |
+| `INDEXER_SOL_MAX_SIGNATURE_PAGES` | 100     | signature pages per pass (locate + collect); was a fixed 20    |
+| `INDEXER_SOL_PASS_BUDGET_MS`      | 15000   | wall-clock budget for one pass's paging; always ≥ 1 page       |
+| `INDEXER_SOL_MAX_TX_PER_PASS`     | 200     | transactions fetched per pass                                  |
+| `INDEXER_CATCHUP_ALERT_AFTER_MS`  | 600000  | backlog age before `solana-catchup-backlog:SOL` fires (10 min) |
+
+**What you will see during a catch-up:**
+
+- `/health` → `chains[SOL].catchupBacklog` (estimated signatures left; a
+  lower bound while still locating) and `catchupForSeconds`.
+- `/metrics` → `stonkz_indexer_solana_catchup_backlog{net="SOL"}` and
+  `stonkz_indexer_catchup_for_seconds{net="SOL"}`.
+- Log `"catch-up in progress; the cursor advances as pages are walked"`
+  (warn) **once a minute**, not once a pass, with `remaining`, `located`,
+  `passes`, `pages`, `forSeconds`; then `"catch-up complete"` (info).
+- `alert: "solana-catchup-backlog:SOL"` (critical, edge-triggered like
+  `chain-lag`, with a `RESOLVED:` line) once the backlog has persisted
+  past `INDEXER_CATCHUP_ALERT_AFTER_MS`. Lag (`chain-lag:SOL`) will be
+  alerting too — that is the same incident, not a second one.
+- `failedAttempts` stays 0 and `deadLetters` stays flat. If either moves
+  during a catch-up, that is a real failure (RPC, decode, DB), not the
+  backlog.
+
+**Sizing.** Throughput is bounded by `INDEXER_SOL_MAX_TX_PER_PASS` per
+pass (one `getTransaction` each) plus ~2 signature pages per pass. A
+backlog that _grows_ while the walk is located means the program is
+producing fills faster than one pass per `INDEXER_POLL_MS` can clear:
+raise `INDEXER_SOL_MAX_TX_PER_PASS` (and the RPC plan) before anything
+else. Raising `INDEXER_SOL_MAX_SIGNATURE_PAGES` only shortens the locate
+phase. Do not "help" by rewinding or editing the cursor: the walk is
+already oldest-first and idempotent, and a rewind discards it.
+
+**Backfill CLI** (§6) uses the same walk. A historical window far below
+the tip first has to locate down from the tip, so expect
+`still locating: … pages this pass` lines before the first ingest line.
 
 ---
 
@@ -220,26 +299,32 @@ Indexer listens on `INDEXER_HTTP_HOST`:`INDEXER_HTTP_PORT` (default
 | `"event rejected"`                        | error       | integrity skip + dead-lettered        |
 | `"indexer pass failed"`                   | error       | exception outside a chain drain       |
 | `alert: "chain-lag:*"`                    | error       | over budget (emitted by the API)      |
+| `"catch-up in progress; …"`               | warn        | SOL signature walk; once a minute     |
+| `"catch-up complete"`                     | info        | the walk reached the tip              |
+| `alert: "solana-catchup-backlog:SOL"`     | error       | backlog persisted > 10 min (§5a)      |
 
 Dashboard: `/health` `chains.*.behind`, `lagSeconds`, `reorgs`,
-`deadLetters`, `failedAttempts`, plus overall `mode` so a fixtures
-deploy cannot be mistaken for chain.
+`deadLetters`, `failedAttempts`, `catchupBacklog`, plus overall `mode`
+so a fixtures deploy cannot be mistaken for chain.
 
 ---
 
 ## 10. Env that chain mode actually requires
 
-| Var                           | Why                                     |
-| ----------------------------- | --------------------------------------- |
-| `INDEXER_SOURCE=chain`        | otherwise you are in fixtures           |
-| `SOLANA_RPC_URL`              | polling                                 |
-| `SOLANA_LAUNCHPAD_PROGRAM_ID` | address filter                          |
-| `INDEXER_SOL_START_SLOT`      | fresh cursor must not walk from genesis |
-| `RH_RPC_URL`                  | `getLogs`                               |
-| `RH_LAUNCHPAD_ADDRESS`        | must not be the zero address            |
-| `INDEXER_RH_START_BLOCK`      | same genesis guard                      |
-| `RH_ROUTER_ADDRESS`           | optional; decoded if set                |
-| `DATABASE_URL`                | **direct Neon host, not the pooler**    |
-| `REDIS_URL`                   | same Redis as the API                   |
+| Var                               | Why                                                 |
+| --------------------------------- | --------------------------------------------------- |
+| `INDEXER_SOURCE=chain`            | otherwise you are in fixtures                       |
+| `SOLANA_RPC_URL`                  | polling                                             |
+| `SOLANA_LAUNCHPAD_PROGRAM_ID`     | address filter                                      |
+| `INDEXER_SOL_START_SLOT`          | fresh cursor must not walk from genesis             |
+| `INDEXER_SOL_MAX_SIGNATURE_PAGES` | optional, default 100; catch-up page cap (§5a)      |
+| `INDEXER_SOL_PASS_BUDGET_MS`      | optional, default 15000; catch-up time budget (§5a) |
+| `INDEXER_CATCHUP_ALERT_AFTER_MS`  | optional, default 600000; backlog alert age (§5a)   |
+| `RH_RPC_URL`                      | `getLogs`                                           |
+| `RH_LAUNCHPAD_ADDRESS`            | must not be the zero address                        |
+| `INDEXER_RH_START_BLOCK`          | same genesis guard                                  |
+| `RH_ROUTER_ADDRESS`               | optional; decoded if set                            |
+| `DATABASE_URL`                    | **direct Neon host, not the pooler**                |
+| `REDIS_URL`                       | same Redis as the API                               |
 
 Fixtures mode needs none of the program addresses.

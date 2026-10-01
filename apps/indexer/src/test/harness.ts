@@ -7,6 +7,7 @@ import { MemoryRedis } from '@stonkz/api/redis/memory';
 import type { UserEvent } from '@stonkz/api/redis/channels';
 import { createTestDb, type TestDb } from '@stonkz/api/test/harness';
 import type { Net } from '@stonkz/shared';
+import type { CatchupMonitor } from '../catchup.js';
 import { ReplayCursors } from '../cursors.js';
 import { DeadLetters } from '../deadletter.js';
 import { Ingestor } from '../ingest.js';
@@ -60,6 +61,8 @@ export interface RigOptions {
   maxBatchAttempts?: number;
   reorgDepth?: Record<Net, number>;
   batchSize?: number;
+  /** Observes each pass's catch-up backlog, as the worker wires in chain mode. */
+  catchup?: CatchupMonitor;
 }
 
 export async function createIndexerRig(
@@ -144,6 +147,7 @@ export async function createIndexerRig(
     ...(options.reorgDepth === undefined ? {} : { reorgDepth: options.reorgDepth }),
     ...(options.rollback ? { rollback } : {}),
     ...(options.deadLetters ? { deadLetters } : {}),
+    ...(options.catchup ? { catchup: options.catchup } : {}),
   });
 
   // The lag monitor reads heads off the RPCs, so point them at the fixtures.

@@ -12,11 +12,7 @@ import {
 import { splitFee } from '@stonkz/shared';
 import { assertEventIntegrity, type TradeEvent } from '../events.js';
 import { TokenRegistry, UnknownMintError } from './registry.js';
-import {
-  SolanaChainSource,
-  SolanaRangeTooBusyError,
-  boundToSlotBoundary,
-} from './solana-source.js';
+import { SolanaChainSource, boundToSlotBoundary } from './solana-source.js';
 import {
   CREATOR,
   DOGGO_MINT,
@@ -517,9 +513,31 @@ describe('SolanaChainSource — signature paging and the cursor window', () => {
     expect(boundToSlotBoundary(infos, 10, 99)).toEqual({ batch: infos, coveredTo: 99 });
   });
 
-  it('raises rather than silently dropping the older end of an over-busy range', async () => {
-    const { source } = makeSource(busy(100), { finalizedSlot: 1_109, pageSize: 5, maxPages: 3 });
-    await expect(source.pollRange(1_009, 1_109)).rejects.toThrow(SolanaRangeTooBusyError);
+  it('makes bounded partial progress on an over-busy range instead of raising', async () => {
+    // 100 signatures in pages of 5 with only 3 pages per pass: the walk down
+    // from the tip cannot reach the cursor in one pass. It used to throw
+    // `SolanaRangeTooBusyError` here, which the runner dead-lettered after five
+    // attempts. Now the pass reports where it is and the next one continues.
+    const { source, rpc } = makeSource(busy(100), {
+      finalizedSlot: 1_109,
+      pageSize: 5,
+      maxPages: 3,
+    });
+    const first = await source.pollRange(1_009, 1_109);
+    expect(first.events).toEqual([]);
+    expect(first.coveredTo).toBe(1_009);
+    expect(first.bookmark).toBeNull();
+    expect(first.backlog).toMatchObject({ partial: true, located: false, pages: 3 });
+    expect(first.backlog?.remaining).toBe(15);
+    expect(rpc.calls.filter((c) => c.method === 'getSignaturesForAddress')).toHaveLength(3);
+
+    // The walk resumes from the oldest page seen, not from the tip again.
+    const second = await source.pollRange(1_009, 1_109);
+    const pages = rpc.calls.filter((c) => c.method === 'getSignaturesForAddress');
+    expect(pages).toHaveLength(6);
+    expect((pages[3]?.params as { before?: string }).before).toBe('sig0085');
+    expect(second.coveredTo).toBe(1_009);
+    expect(second.backlog?.remaining).toBe(30);
   });
 
   it('spends no RPC calls at all on a zero-width range', async () => {

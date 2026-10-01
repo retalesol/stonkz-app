@@ -1,4 +1,5 @@
 import { ALL_NETS, type Net } from '@stonkz/shared';
+import type { FetchLike } from '../chain/types.js';
 import type { Logger } from './logger.js';
 
 export type AlertSeverity = 'warn' | 'critical';
@@ -215,5 +216,115 @@ export function loggingAlertHook(logger: Logger): AlertHook {
     const fields = { alert: alert.key, ...alert.fields };
     if (alert.severity === 'critical') logger.error(alert.message, fields);
     else logger.warn(alert.message, fields);
+  };
+}
+
+/** Every hook in turn; one throwing never starves the next. */
+export function combineAlertHooks(...hooks: readonly AlertHook[]): AlertHook {
+  return (alert) => {
+    for (const hook of hooks) {
+      try {
+        hook(alert);
+      } catch {
+        // A hook is best-effort; the alert already went to the others.
+      }
+    }
+  };
+}
+
+const SEVERITY_RANK: Record<AlertSeverity, number> = { warn: 1, critical: 2 };
+
+export interface WebhookAlertHookOptions {
+  /** `ALERT_WEBHOOK_URL`: any JSON endpoint; Slack / Discord incoming webhooks read `text`. */
+  url: string;
+  /** Alerts below this are not posted (default `warn`, i.e. everything). */
+  minSeverity?: AlertSeverity;
+  /** One POST per alert key (+ message, so a RESOLVED line still lands) per this long (default 10 min). */
+  dedupeMs?: number;
+  /** Abort a slow webhook after this long (default 5 s). */
+  timeoutMs?: number;
+  /** Prefixes `text`, so one channel can take several services. */
+  service?: string;
+  fetchImpl?: FetchLike;
+  now?: () => number;
+  logger?: Logger;
+}
+
+/** The JSON body a webhook receives. `text` is the Slack / Discord field; the rest is for anything structured. */
+export function alertPayload(
+  alert: Alert,
+  service: string,
+  atMs: number,
+): {
+  text: string;
+  service: string;
+  key: string;
+  severity: AlertSeverity;
+  message: string;
+  fields: Record<string, unknown>;
+  at: string;
+} {
+  const fields = Object.entries(alert.fields)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(' ');
+  return {
+    text: `[${alert.severity.toUpperCase()}] ${service}: ${alert.message}${fields ? ` (${fields})` : ''}`,
+    service,
+    key: alert.key,
+    severity: alert.severity,
+    message: alert.message,
+    fields: alert.fields,
+    at: new Date(atMs).toISOString(),
+  };
+}
+
+/**
+ * Posts alerts to `ALERT_WEBHOOK_URL`. Fire-and-forget: a webhook outage is
+ * a log line, never a failed request or a blocked indexer tick. Deduplicated
+ * per alert key + message so a flapping chain-lag alert cannot flood a
+ * channel: at most one firing and one RESOLVED line per 10 minutes each.
+ */
+export function webhookAlertHook(opts: WebhookAlertHookOptions): AlertHook {
+  const minRank = SEVERITY_RANK[opts.minSeverity ?? 'warn'];
+  const dedupeMs = opts.dedupeMs ?? 10 * 60_000;
+  const timeoutMs = opts.timeoutMs ?? 5_000;
+  const service = opts.service ?? 'stonkz-api';
+  const fetchImpl: FetchLike = opts.fetchImpl ?? ((u, i) => fetch(u, i));
+  const now = opts.now ?? Date.now;
+  const lastSent = new Map<string, number>();
+
+  return (alert) => {
+    if (SEVERITY_RANK[alert.severity] < minRank) return;
+    const at = now();
+    const dedupeKey = `${alert.key}\u0000${alert.message}`;
+    const prev = lastSent.get(dedupeKey);
+    if (prev !== undefined && at - prev < dedupeMs) return;
+    lastSent.set(dedupeKey, at);
+    // Forget keys that are past their window so a long-lived process does not grow this map.
+    for (const [k, t] of lastSent) if (at - t >= dedupeMs) lastSent.delete(k);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    void fetchImpl(opts.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(alertPayload(alert, service, at)),
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          opts.logger?.warn('alert webhook refused the alert', {
+            alert: alert.key,
+            status: res.status,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        opts.logger?.warn('alert webhook unreachable', {
+          alert: alert.key,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      })
+      .finally(() => clearTimeout(timer));
   };
 }

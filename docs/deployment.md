@@ -1,37 +1,51 @@
-# Deployment runbook (Solana + Robinhood Chain)
+# Deployment runbook (Solana + Robinhood Chain + Base)
 
-Deploying the programs and telling the API about them. This is Phase D of the
-post-build forward plan.
+Deploying the programs and telling the API about them.
 
-**Nothing in this repo has ever been deployed.** There is no recorded program
-ID or contract address for either chain beyond the placeholder in
-`Anchor.toml`. Until the steps below are executed, `docs/real-vs-simulated.md`
-§3 stays MISSING and the RH atomic trade path stays inactive.
+**Where things stand.** The EVM stack is live on the testnets — RH 46630
+([`programs/evm/deployments/46630.json`](../programs/evm/deployments/46630.json))
+and Base Sepolia 84532 ([`84532.json`](../programs/evm/deployments/84532.json))
+— and the Solana program on devnet
+([`programs/solana/deployments/devnet.json`](../programs/solana/deployments/devnet.json)).
+**No mainnet has been deployed.** The EVM mainnet path is one script,
+[`script/DeployMainnet.s.sol`](../programs/evm/script/DeployMainnet.s.sol)
+(§2.1), which deploys on RH 4663 and Base 8453 exactly the stack the testnets
+were rolled forward to — Pyth-priced launches, Uniswap V3 graduation into a
+`FeeLocker`, `StockPriceSourceV2` (empty), `ReferralVault` — and ends with every
+admin power on a `TimelockController`.
 
-Two things this runbook takes seriously:
+Three things this runbook takes seriously:
 
-1. **The deployer key holds no lasting privilege.** Both deploy scripts set the
-   admin/authorities to keys you supply, not to whoever signed the deployment.
-   Steps that need the admin key are printed for that signer to execute rather
-   than attempted by the deployer.
+1. **The deployer key holds no lasting privilege.** On testnets the deploy
+   scripts set the admin/authorities to keys you supply. On mainnet the
+   deployer is admin only for the length of one broadcast: `DeployMainnet`
+   hands every admin role to the timelock and renounces its own before it
+   returns.
 2. **No privileged value has a default.** Every authority is a required env
    var. A missing one aborts before anything is sent.
+3. **Nothing chain-specific comes from the environment on mainnet.** Every
+   third-party address is pinned in `src/config/RobinhoodChain.sol` /
+   `src/config/Base.sol`, resolved by `block.chainid`, and checked for code
+   before the first transaction.
 
 ---
 
 ## 0. Key custody, before anything else
 
-Five distinct roles. Do not collapse them, and do not put any of them in the
-API process's environment.
+Distinct roles. Do not collapse them, and do not put any of them in the API
+process's environment (the two message-signing keys below are the exception:
+they hold no funds and can move none).
 
-| Role                           | Purpose                                                                   | Must be                                          |
-| ------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------ |
-| Deployer                       | Signs the deployment transactions only                                    | Hot is acceptable; holds nothing afterwards      |
-| Admin                          | Pause switches, oracle config, migrator wiring. **Cannot move money.**    | Multisig or cold key                             |
-| Protocol withdraw authority    | Withdraws the 20% protocol revenue                                        | Multisig or cold key                             |
-| Ops withdraw authority         | Withdraws the 10% `$STONKZ` ops vault                                     | Multisig or cold key, **distinct from protocol** |
-| Migration authority            | Runs graduation migration (Solana: pays pool rent; EVM: triggers migrate) | Warm operational key, funded                     |
-| Oracle authority (Solana only) | Pushes base-mint USD prices                                               | Warm operational key, funded                     |
+| Role                             | Purpose                                                                                                                                              | Must be                                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Deployer                         | Signs the deployment transactions only                                                                                                               | Hot is acceptable; holds nothing afterwards (mainnet: enforced by the script)   |
+| Admin                            | Upgrades, pause/unpause, oracle config, migrator wiring, authority rotation. **Cannot move money.**                                                  | Mainnet: a `TimelockController` (>= 24 h) proposed to by the team Safe          |
+| Pauser (EVM)                     | `pause(...)` on the launchpad, `pause()` on the `ReferralVault`, `pauseAttestations()`. Can only stop; never unpause                                 | Hot ops key or 1-of-N Safe, **not** behind the timelock, distinct from the Safe |
+| Protocol withdraw authority      | Withdraws the 15% protocol treasury (also funds the `ReferralVault`)                                                                                 | Multisig or cold key                                                            |
+| Ops withdraw authority           | Withdraws the 10% `$STONKZ` buyback vault and the 6% RWA crate fund                                                                                  | Multisig or cold key, **distinct from protocol**                                |
+| Migration authority              | Runs graduation migration (Solana: pays pool rent; EVM: `migrateLiquidity`)                                                                          | Warm operational key, funded                                                    |
+| Oracle authority                 | Solana: pushes base-mint USD prices. EVM mainnet: may push to the fallback-only `PushPriceSource` (default: nobody)                                  | Warm operational key (Solana); unset on EVM unless needed                       |
+| Referral signer / stock attester | Sign referral vouchers (`REFERRAL_SIGNER_KEY_EVM`) and, if stock bases ever ship, price attestations. Message signing only; bounded by on-chain caps | API environment; rotated by the admin (`setSigner` / `setAttester`)             |
 
 Both deploy scripts **refuse** a deployment where the protocol and ops
 authorities are the same key, or where the admin equals either withdraw
@@ -255,7 +269,10 @@ Graduation is two transactions, on purpose:
    `graduateWithPriceUpdate` is deployed and set as `<NET>_ROUTER_ADDRESS`
    (the routers recorded in `deployments/*.json` on 2026-09-29 predate it).
    `oracleGraduationPaused` (admin / pauser) removes the oracle trigger only.
-2. **`migrateLiquidity(token)` — `migrationAuthority` only.** Sends the raise
+2. **`migrateLiquidity(token)` — `migrationAuthority` only.** (The v2 flow
+   below is what coins graduated before 2026-09-30 got; every chain now has
+   the v3 `FeeLocker` migrator of §2.0.2 installed, and mainnet deploys with
+   it from the first block.) Sends the raise
    (`realBase`) and the 20% escrow (`lpReserve`) to `UniswapV2Migrator`, which
    creates or adopts the V2 pair, swaps a pre-seeded pair back to the curve's
    closing price (`PoolCorrected`), deposits, and mints every LP token to
@@ -326,60 +343,134 @@ graduated by the v2 migrator keep their burned LP and show no claim button.
 Record `FeeLocker` and `UniswapV3Migrator` in `deployments/<chainId>.json`.
 Fork rehearsal: `test/fork/V3GraduationFork.t.sol` (env-gated, either chain).
 
-### 2.1 Mainnet deploy
+### 2.1 Mainnet deploy — RH 4663 and Base 8453 (`DeployMainnet`)
+
+One script, one dry-runnable broadcast, both chains; every pin resolved from
+the chain id. It refuses Arc (deferred) and the testnets, refuses to start
+without the governance env, checks that every pinned dependency holds code and
+that the V3 factory has the 1% tier, and ends governed:
+
+| Step | Contract                                 | Notes                                                                                                                                        |
+| ---- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `PushPriceSource` (UUPS proxy)           | Fallback only, never the live source; `STONKZ_ORACLE_AUTHORITY` may push (default nobody)                                                    |
+| 2    | `ChainlinkPriceSource`                   | ETH/USD for WETH (+ USDG/USD on RH), bound 90 000 s; `PythPriceSource`'s fallback                                                            |
+| 3    | `PythPriceSource`                        | ETH/USD → WETH at `PYTH_MAX_AGE` (120 s), stables fixed at $1.00, fallback = Chainlink. **The launchpad's live source**                      |
+| 4    | `StonkzLaunchpad` impl + ERC1967 proxy   | Initialised with protocol/ops authorities, the Pyth source, the migration authority; `maxOracleStaleness` 90 000                             |
+| 5    | `StockPriceSourceV2`                     | quote = Pyth source, fallback = push, launchpad = proxy; **no base configured** (v1); `STOCK_PRICE_ATTESTER` optional                        |
+| 6    | `StonkzRouter` + trusting implementation | UR, WETH, SwapRouter02 pins; `MAX_BUY_NATIVE` (0 = uncapped, warned); Pyth; attestation sink = StockV2; `upgradeToAndCall`                   |
+| 7    | `FeeLocker` + `UniswapV3Migrator`        | Chain's V3 factory, `GRADUATION_POOL_FEE` 10000 (tick spacing 200)                                                                           |
+| 8    | `TimelockController` + atomic handover   | `GovernanceLib.handover`: authorities, `setMigrator`, `setPauser`; timelock accepts admin of launchpad + 4 price sources; deployer renounces |
+| 9    | `ReferralVault`                          | `admin = timelock`, `REFERRAL_SIGNER`, WETH, `REFERRAL_MAX_PER_DAY`                                                                          |
 
 ```bash
 cd programs/evm
-export STONKZ_ADMIN=0x...
-export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x...
-export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...
-export STONKZ_MIGRATION_AUTHORITY=0x...
+# Governance (MainnetGuard) — required on every mainnet chain id:
+export PROPOSERS=0x<team Safe>          # comma-separated; also cancellers
+export EXECUTORS=$PROPOSERS             # optional; 0x0 = anyone
+export MIN_DELAY=86400                  # >= 24 h
+export PAUSER=0x<hot pauser key or 1-of-N Safe>
+export NEW_OPS_WITHDRAW_AUTHORITY=0x<cold>      # buyback + RWA vaults
+export NEW_MIGRATION_AUTHORITY=0x<warm, funded>
+# Launchpad / vault:
+export STONKZ_PROTOCOL_WITHDRAW_AUTHORITY=0x<cold, distinct from ops>
+export REFERRAL_SIGNER=0x<address of REFERRAL_SIGNER_KEY_EVM>
+export REFERRAL_MAX_PER_DAY=1000000000000000000   # wei of WETH / rolling day (blast radius of a leaked signer)
+# Optional: STONKZ_ORACLE_AUTHORITY, STOCK_PRICE_ATTESTER, MAX_BUY_NATIVE (wei; 0 = uncapped),
+#           PYTH_MAX_AGE (120), ETH_MIN_PRICE_1E6 (100e6), ETH_MAX_PRICE_1E6 (100000e6)
 
-# Dry run (no --broadcast)
-forge script script/Deploy.s.sol:Deploy --rpc-url "$RH_RPC_URL" -vvv
+# Robinhood Chain 4663 — dry run, then broadcast. Sign with a hardware wallet
+# (or `--account <keystore> --sender`, or export PRIVATE_KEY): that signer is
+# the temporary admin and must be a FRESH key, not the testnet deployer.
+EXPECT_CHAIN_ID=4663 forge script script/DeployMainnet.s.sol:DeployMainnet \
+  --rpc-url "$RH_RPC_URL" --ledger --sender 0x<deployer> -vvv
+EXPECT_CHAIN_ID=4663 forge script script/DeployMainnet.s.sol:DeployMainnet \
+  --rpc-url "$RH_RPC_URL" --ledger --sender 0x<deployer> --broadcast --verify -vvv
 
-# Execute
-forge script script/Deploy.s.sol:Deploy --rpc-url "$RH_RPC_URL" --broadcast --verify -vvv
+# Base 8453 — the same command against a Base RPC (the Safe, pauser and
+# authorities are per chain; export the Base set first).
+EXPECT_CHAIN_ID=8453 forge script script/DeployMainnet.s.sol:DeployMainnet \
+  --rpc-url "$BASE_RPC_URL" --ledger --sender 0x<deployer> -vvv          # then --broadcast --verify
 ```
 
-The script deploys, in this order (forced by immutables):
-`ChainlinkPriceSource` → `StonkzLaunchpad` → `UniswapV2Migrator` →
-`StonkzRouter`.
+The dry run prints the full `deployments/<chainId>.json` snippet, the
+`apps/api` / indexer env lines, and the Safe/verify checklist (§2.2). A run
+with `MAX_BUY_NATIVE=0` prints a loud warning: the router is immutable, so a
+per-buy cap for a soft launch must be chosen **before** the broadcast.
 
-Before deploying anything it asserts:
+Rehearsal: the same code path runs against a fork of each chain in
+[`test/fork/MainnetDeployFork.t.sol`](../programs/evm/test/fork/MainnetDeployFork.t.sol)
+(`MAINNET_FORK_RPC_RH` / `MAINNET_FORK_RPC_BASE`), followed by the whole user
+journey on what it deployed — launch through the router with a Pyth update,
+buy, sell, stake, graduate, V3-migrate into the real factory, `claimFees`,
+a referral claim, pause by the pauser and timelock-only unpause.
 
-- The chain ID is 4663 or 46630, so RH-pinned addresses aren't used on a chain
-  where they hold no code.
-- The Universal Router, Uniswap v2 factory, WETH9, and Chainlink ETH/USD
-  addresses from `src/config/RobinhoodChain.sol` **actually have code** on the
-  chain you pointed at. A typo or wrong-fork RPC fails here instead of on a
-  user's first trade.
+### 2.2 After the broadcast (Safe + ops, nothing for an admin key)
 
-### 2.2 Admin steps (admin key)
+There are no admin steps: the broadcast ended with the timelock as admin of
+everything. What remains is verification and configuration:
 
-The script prints these with concrete arguments. They are not executed by the
-deployer because the deployer is not the admin.
+1. `forge verify-contract` every printed address (or `--verify` above);
+   confirm the proxy's ERC1967 implementation slot equals the printed
+   implementation.
+2. On the chain, not the log: `launchpad.admin() == timelock`,
+   `pendingAdmin() == 0`, `pauser() == PAUSER`, `migrator() ==
+UniswapV3Migrator`, `migrationAuthority()`, `protocolWithdrawAuthority()`,
+   `opsWithdrawAuthority()`, `priceSource() == PythPriceSource`,
+   `maxOracleStaleness() == 90000`, `trustedRouter() == router`. Every price
+   source and the `ReferralVault`: `admin() == timelock`. On the timelock:
+   `getMinDelay() == MIN_DELAY`, the Safe has `PROPOSER_ROLE` /
+   `CANCELLER_ROLE` / `EXECUTOR_ROLE`, the deployer has none.
+3. Write `programs/evm/deployments/<chainId>.json` from the printed snippet
+   (add `rpc`, `explorer`, `deployedAt`, the deployment block) and run
+   `node scripts/emit-chains.mjs` — that is what puts the chain in the `main`
+   block of `apps/web/public/chains.json`.
+4. Fund the referral vault from the protocol authority:
+   `withdrawTreasury(0, WETH, amount, vault)`.
+5. API env (§3): the printed `<NET>_LAUNCHPAD_ADDRESS`, `<NET>_ROUTER_ADDRESS`,
+   `REFERRAL_VAULT_ADDRESS_<NET>`, plus `PYTH_HERMES_URL` / `PYTH_HERMES_API_KEY`
+   — **a launch without a Hermes update is refused** (`stale oracle`).
+6. Rehearse the emergency path once: from the pauser key `pause(true,…)`,
+   then the Safe schedules `setPause(false,…)` on the timelock and executes it
+   after `MIN_DELAY`.
 
-1. `ChainlinkPriceSource.setFeed(WETH9, ETH/USD, maxAge, minPrice1e6, maxPrice1e6)`
-2. `ChainlinkPriceSource.setFeed(USDG, USDG/USD, …)` — for any USD-denominated base
-3. `StonkzLaunchpad.setMigrator(migrator, migrationAuthority)`
-4. `StonkzLaunchpad.setMaxOracleStaleness(90000)`
+Every later change — a new router/implementation, a price-source switch, a
+stock base, a signer rotation — is deployed by the existing scripts
+(`UpgradeStockLaunch`, `SwitchPriceSource`, `DeployV3Migrator`,
+`DeployReferralVault`, …), which on a mainnet chain id require the governance
+env, check that the launchpad is already under the timelock, and **print the
+batch for the Safe instead of calling the proxy**
+([`governance-handover.md`](governance-handover.md)).
 
-**On step 4, read this before typing a number.** Robinhood Chain's Chainlink
-feeds have an **86400-second (24h) heartbeat**, not a minute-scale one. A
-mainnet-Ethereum instinct (say 90 seconds) makes oracle graduation permanently
-unreachable. `RobinhoodChain.ORACLE_MAX_AGE_SECS` is heartbeat + 1h grace and
-is the value to use. This exact bug was already caught once during the build.
+### 2.3 Stock-token bases are not in v1 — opting one in later
 
-Until step 3 lands, graduation cannot migrate. Until steps 1-2 land,
-`createToken` refuses that base asset.
+`StockBases.sol` has deliberately empty branches for 4663 and 8453, so
+`StockPriceSourceV2` ships with no base and a stock token has no price
+(`createToken` refuses it in preflight). Listing one later is a legal decision
+first ([`launch-checklist.md`](launch-checklist.md)) and then a timelock
+batch, not a redeploy:
+
+1. Pin the token and its stock/WETH V3 pool in `StockBases.sol` for the chain;
+   create and seed the pool (`SeedStockPool`) and let `twapSecs` pass.
+2. Schedule through the Safe, all value 0:
+   `StockPriceSourceV2.setConfig(token, params)` (and `setAttester` /
+   `setStableQuote` as needed); on the first base also
+   `PythPriceSource.setFallbackSource(StockPriceSourceV2)` so the launchpad
+   reaches it (that replaces the Chainlink fallback in the chain — set
+   `StockPriceSourceV2.setFallbackSource(ChainlinkPriceSource)` in the same
+   batch if the Chainlink leg should stay reachable).
+3. API: `STOCK_PRICE_ATTESTER_KEY` behind the configured attester, and the
+   `BASE_MINT_OVERRIDES_<NET>` entries for the tokens.
 
 ---
 
 ## 2b. Coinbase Base and Circle Arc
 
-Both reuse the Robinhood EVM stack (`DeployPad`, `StonkzLaunchpad` UUPS,
-`StonkzRouter`, `UniswapV2Migrator` on a Stonkz-owned V2 factory).
+Both reuse the Robinhood EVM stack.
+
+**Base mainnet (8453)** — `script/DeployMainnet.s.sol` (§2.1), pins in
+`src/config/Base.sol` (WETH predeploy, native USDC, Uniswap V3 factory /
+SwapRouter02 / QuoterV2 / Universal Router / Permit2, Pyth, Chainlink ETH/USD —
+all read on chain 2026-10-01). Same env shape as RH.
 
 **Base Sepolia (84532)** — `script/DeployBaseSepolia.s.sol`, pins in
 `src/config/BaseSepolia.sol`, record in `deployments/84532.json`. Same env
@@ -416,14 +507,29 @@ forge script script/DeployArc.s.sol:DeployArc --rpc-url $ARC_RPC_URL --broadcast
 
 ## 3. Configure the API and indexer
 
-Both deploy scripts print these lines. Set them in the API's environment:
+The deploy scripts print these lines. Set them in the API's environment:
 
 ```
 SOLANA_LAUNCHPAD_PROGRAM_ID=<solana program id>
+RH_CHAIN_ID=4663                      # mainnet; 46630 on the testnet
 RH_LAUNCHPAD_ADDRESS=0x<StonkzLaunchpad>
 RH_ROUTER_ADDRESS=0x<StonkzRouter>
 RH_V3_FEE_TIER_OVERRIDES=<see below>
+REFERRAL_VAULT_ADDRESS_RH=0x<ReferralVault>
+BASE_CHAIN_ID=8453                    # and the BASE_* equivalents of the above
+EVM_ALLOWED_CHAIN_IDS=4663,8453
+PYTH_HERMES_URL=... PYTH_HERMES_API_KEY=...   # launches carry a Hermes update
 ```
+
+Defaults follow the chain id: with `RH_CHAIN_ID=4663` / `BASE_CHAIN_ID=8453`
+the base-mint tables (`router/base-mints.ts`: WETH + USDG on RH, WETH + USDC
+on Base — the same pins as `src/config/*.sol`), the public RPC and explorer,
+the V3 factory and the referral asset all resolve to the mainnet values, and
+no stock tokens are listed. A chain id with no pinned table refuses to boot
+unless `BASE_MINT_OVERRIDES_<NET>` supplies at least `WETH:<address>`.
+`*_V3_QUOTER_ADDRESS` has no default on any chain: the pool-hop client speaks
+the flat `V3ExactInputQuoter` ABI, not Uniswap's QuoterV2, so either deploy
+that quoter or leave the hop off.
 
 `apps/api/src/env.ts` refuses to boot in production with
 `RH_LAUNCHPAD_ADDRESS` unset (unless `STONKZ_STAGING=1`) and always refuses a
@@ -461,7 +567,7 @@ Do all of these against the deployment, not against a local test.
 - [ ] `Global` exists with the intended admin/authorities (read the account, don't trust the script's log).
 - [ ] `dex_program` and `dex_config` (Meteora DLMM + PresetParameter2) are set and match §1.3.
 - [ ] Protocol and ops vault PDAs are distinct addresses.
-- [ ] Launch a throwaway token, buy, sell. Confirm the 20/10/10/60 split lands in the four expected places (protocol, game, burn, creator bucket).
+- [ ] Launch a throwaway token, buy, sell. Confirm the 15/69/10/6 split lands in the four expected places (protocol, creator bucket incl. stakers, buyback, RWA crate fund).
 - [ ] Force a graduation. On the explorer, confirm the Meteora DLMM pool exists and the position (`["position", lb_pair, escrow, lower_bin_id, 1]`) is owned by the coin's `meteora_escrow` PDA with no operator; the escrow ATAs and the escrow itself hold nothing afterwards. This is the claim that liquidity is out of every wallet's reach; verify it, don't assume it.
 - [ ] Confirm the migration authority never held withdrawable liquidity (check the escrow ATA's history).
 
@@ -476,11 +582,14 @@ Load the web app at ~390px width (or open inside Phantom / Jupiter browser):
 
 **Robinhood Chain**
 
-- [ ] Fork test passes against the live chain: `RH_RPC_URL=<rpc> forge test --match-test Fork` (asserts the pinned Universal Router and Permit2 hold code on 4663).
-- [ ] `StonkzLaunchpad.migrator` and `migrationAuthority` are set.
-- [ ] `maxOracleStaleness` is heartbeat-scale (90000), not minute-scale.
+- [ ] Fork rehearsal passed against the live chain before the broadcast: `MAINNET_FORK_RPC_RH=<rpc> forge test --match-path test/fork/MainnetDeployFork.t.sol` (and `MAINNET_FORK_RPC_BASE` for Base).
+- [ ] `launchpad.admin()` is the `TimelockController`, `pauser()` is the pauser key, the deployer holds no timelock role; every price source and the `ReferralVault` have `admin() == timelock`.
+- [ ] `StonkzLaunchpad.migrator` is the `UniswapV3Migrator` (1% tier) and `migrationAuthority` is set.
+- [ ] `priceSource()` is the `PythPriceSource`, `maxOracleStaleness` is the 90000 clamp, `StonkzRouter.pyth()` is `0x8250f4aF…1487a`.
+- [ ] Launch a throwaway token through the router **with a Hermes update** and confirm it settled in one transaction; confirm a launch without one is refused `stale oracle`.
 - [ ] Buy and sell through `StonkzRouter` and confirm the API returned `atomic: true` and it settled in **one** transaction.
-- [ ] Graduate a throwaway token; confirm LP landed at `0x…dEaD` on the explorer.
+- [ ] Graduate the throwaway token; confirm the pool on the explorer, `FeeLocker.lockOf(token)` names it, and `claimFees(token)` credits the ledgers.
+- [ ] Claim a referral voucher against the funded vault; confirm the pauser can stop claims and cannot restart them.
 - [ ] Confirm a trade against an unpinned base asset falls back rather than routing through an arbitrary pool.
 
 **Both**
@@ -493,8 +602,13 @@ Load the web app at ~390px width (or open inside Phantom / Jupiter browser):
 
 ## 5. What is still blocked after this runbook
 
-Deploying does not make the product live. Still outstanding:
+Deploying does not make the product live. Still outstanding — see
+[`mainnet-readiness.md`](mainnet-readiness.md) and
+[`launch-checklist.md`](launch-checklist.md):
 
-- **Real wallets** (Phase B) — nothing can be signed by a real user until then.
-- **Real indexer ingestion** (Phase C) — the board still shows fixture data even against deployed programs.
-- **External audit** (Phase H) — internal review only; see `docs/security-review-findings.md`.
+- **External audit** — internal review only; see `docs/security-review-findings.md`
+  and `docs/audit-package.md`.
+- **Keys and infra**: the Safe(s), pauser keys, cold withdraw authorities,
+  paid RPCs, a Hermes key — none of which this runbook can provision.
+- **Solana mainnet governance** (Squads + time lock, pauser) is a separate
+  track from the EVM handover described here.

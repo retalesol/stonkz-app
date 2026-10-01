@@ -7,6 +7,8 @@
   "upgradedAt": "2026-09-30",
   "note": "v2 fee split (69 creator bucket / 15 platform / 10 $STONKZ buyback / 6 RWA crate fund); vault seeds unchanged. Mint PDA seeds are creator+salt; duplicate tickers allowed. Program ID unchanged.",
   "upgradeSlot": 505697751,
+  "programSha256": "9d58f238b4e9b1e220888d56834cbf0b67a169958b636d9e84217ba90da80a7d",
+  "programSha256Note": "sha256 of programs/solana/target/deploy/launchpad.so from the 2026-09-30 local anchor build (anchor-cli 0.32.1, 830,136 B). Not yet confirmed against the on-chain ProgramData at slot 505697751; refresh with `node scripts/sync-idl.mjs --hash` on the exact build you deploy.",
   "notes": [
     "2026-09-29: create_token writes immutable Metaplex metadata (update authority = curve PDA); 17-account create. Upgraded at slot 505315826.",
     "2026-09-30: upgraded at slot 505697751 (Meteora migration fixes, claim_dex_fees, pauser, referral vault/claims); ProgramData extended to 859,656 B. Referral vault (wSOL) 4gtgiR1buzGWBvWf1w3zBYGEFCMvoi9Us4rf7dfeyGz1, signer rwp1sFwu9gvCHWdeiyVGoXivJXuqDtFTgGn6yhsr3rP."

@@ -10,8 +10,6 @@ import {IStockAttestationSink} from "../src/oracle/IStockAttestationSink.sol";
 import {IPyth} from "../src/oracle/IPyth.sol";
 import {UniswapV2Migrator} from "../src/UniswapV2Migrator.sol";
 import {ChainlinkPriceSource, AggregatorV3Interface} from "../src/oracle/ChainlinkPriceSource.sol";
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {GovernanceLib} from "./GovernanceLib.sol";
 import {MainnetGuard} from "./MainnetGuard.sol";
 import {IPriceSource} from "../src/oracle/IPriceSource.sol";
 import {IUniversalRouter, IWETH9, ISwapRouter02} from "../src/StonkzRouter.sol";
@@ -41,12 +39,11 @@ import {DeployPad} from "./DeployPad.sol";
 /// Dry-run first by omitting `--broadcast`. The script prints the exact
 /// `apps/api` env lines to copy at the end.
 ///
-/// **Mainnet (4663)** takes a different path (`_deployMainnet`): it requires
-/// the governance env (`MainnetGuard`: `PROPOSERS`, `MIN_DELAY` >= 24h,
-/// `PAUSER`, `NEW_OPS_WITHDRAW_AUTHORITY`, `NEW_MIGRATION_AUTHORITY`, plus
-/// `STONKZ_PROTOCOL_WITHDRAW_AUTHORITY`), does all the admin wiring itself
-/// and ends with every admin power on a TimelockController. The testnet
-/// path below (46630) is unchanged.
+/// **Mainnet (4663 / 8453) is `script/DeployMainnet.s.sol`**, not this
+/// script: it deploys the stack the testnets were rolled forward to (Pyth
+/// pricing, V3 `FeeLocker` graduation, `StockPriceSourceV2`, `ReferralVault`)
+/// and ends with every admin power on a TimelockController. This script
+/// refuses a mainnet chain id after the governance-env check.
 contract Deploy is Script {
     /// @dev Sanity band for the ETH/USD answer, in 1e6 USD. An answer outside
     /// it is treated as no answer at all, which stops graduations rather than
@@ -66,11 +63,14 @@ contract Deploy is Script {
         // deploy contracts wired to addresses that hold no code there.
         require(RobinhoodChain.isRobinhoodChain(), "Deploy: not Robinhood Chain (expected 4663/46630)");
         // Mainnet must end under the multisig + timelock with a pauser: the
-        // governance env is checked before anything else is read.
+        // governance env is checked before anything else is read — and the
+        // deployment itself lives in `DeployMainnet.s.sol`, which deploys the
+        // Pyth + V3 FeeLocker + StockV2 + ReferralVault stack the testnets run.
+        // This script's stack (Chainlink source, V2 migrator) is the pre-Pyth
+        // one and must not land on 4663.
         if (MainnetGuard.isMainnet()) {
-            MainnetGuard.Governance memory g = MainnetGuard.requireOnMainnet();
-            deployMainnet(g, vm.envAddress("STONKZ_PROTOCOL_WITHDRAW_AUTHORITY"));
-            return;
+            MainnetGuard.requireOnMainnet();
+            revert("Deploy: mainnet deploys through script/DeployMainnet.s.sol:DeployMainnet");
         }
 
         address admin = vm.envAddress("STONKZ_ADMIN");
@@ -145,111 +145,9 @@ contract Deploy is Script {
 
         vm.stopBroadcast();
 
-        _report(address(priceSource), address(launchpad), address(migrator), address(router), migrationAuthority);
-    }
-
-    /// @dev Mainnet (4663): the deployer is admin only for the length of this
-    /// broadcast. It wires everything the testnet flow leaves for the admin
-    /// (feeds, migrator, trusted router), then hands every admin power to a
-    /// fresh TimelockController driven by `PROPOSERS` (`GovernanceLib`,
-    /// atomic mode) and sets `PAUSER`. When the broadcast lands no EOA is
-    /// admin of anything. Sign with a single key (`--ledger`, `--private-key`
-    /// or `--account` + `--sender`): that signer is `msg.sender` here.
-    function deployMainnet(MainnetGuard.Governance memory g, address protocolWithdrawAuthority)
-        public
-        returns (StonkzLaunchpad launchpad, TimelockController timelock)
-    {
-        require(MainnetGuard.isMainnet(), "Deploy: deployMainnet is for chain 4663");
-        MainnetGuard.validate(g);
-        address deployer = msg.sender;
-        require(
-            deployer != 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38,
-            "Deploy: pass the signer (--ledger/--private-key/--sender); it is the temporary admin"
+        _report(
+            address(priceSource), address(launchpad), address(migrator), address(router), migrationAuthority
         );
-        require(protocolWithdrawAuthority != address(0), "Deploy: zero protocol authority");
-        require(
-            protocolWithdrawAuthority != g.opsAuthority,
-            "Deploy: protocol and ops withdraw authorities must differ"
-        );
-        _requireCode(RobinhoodChain.UNIVERSAL_ROUTER, "UniversalRouter");
-        _requireCode(RobinhoodChain.UNISWAP_V2_FACTORY, "UniswapV2Factory");
-        _requireCode(RobinhoodChain.WETH9, "WETH9");
-        _requireCode(RobinhoodChain.CHAINLINK_ETH_USD, "Chainlink ETH/USD");
-        _requireCode(RobinhoodChain.CHAINLINK_USDG_USD, "Chainlink USDG/USD");
-
-        vm.startBroadcast(deployer);
-        ChainlinkPriceSource priceSource = new ChainlinkPriceSource(deployer);
-        priceSource.setFeed(
-            RobinhoodChain.WETH9,
-            AggregatorV3Interface(RobinhoodChain.CHAINLINK_ETH_USD),
-            RobinhoodChain.ORACLE_MAX_AGE_SECS,
-            ETH_MIN_USD_1E6,
-            ETH_MAX_USD_1E6
-        );
-        priceSource.setFeed(
-            RobinhoodChain.USDG,
-            AggregatorV3Interface(RobinhoodChain.CHAINLINK_USDG_USD),
-            RobinhoodChain.ORACLE_MAX_AGE_SECS,
-            USDG_MIN_USD_1E6,
-            USDG_MAX_USD_1E6
-        );
-        launchpad = DeployPad.launchpad(
-            deployer,
-            protocolWithdrawAuthority,
-            g.opsAuthority,
-            IPriceSource(address(priceSource)),
-            address(0)
-        );
-        UniswapV2Migrator migrator =
-            new UniswapV2Migrator(IUniswapV2Factory(RobinhoodChain.UNISWAP_V2_FACTORY), address(launchpad));
-        launchpad.setMigrator(IGraduationMigrator(address(migrator)), g.migrationAuthority);
-        launchpad.setMaxOracleStaleness(RobinhoodChain.ORACLE_MAX_AGE_SECS);
-        StonkzRouter router = new StonkzRouter(
-            IUniversalRouter(RobinhoodChain.UNIVERSAL_ROUTER),
-            launchpad,
-            IWETH9(RobinhoodChain.WETH9),
-            ISwapRouter02(RobinhoodChain.UNISWAP_V3_SWAP_ROUTER02),
-            0,
-            IPyth(address(0)),
-            IStockAttestationSink(address(0))
-        );
-        // The implementation that trusts this router for atomic launches.
-        launchpad.upgradeToAndCall(address(new StonkzLaunchpad(address(router))), "");
-
-        GovernanceLib.Config memory c = _governance(g, address(launchpad), address(priceSource));
-        c.protocolAuthority = protocolWithdrawAuthority;
-        c.migrator = address(migrator);
-        GovernanceLib.preflight(c, deployer);
-        timelock = GovernanceLib.handover(c, deployer);
-        vm.stopBroadcast();
-
-        GovernanceLib.verify(c, deployer, timelock);
-        require(launchpad.trustedRouter() == address(router), "Deploy: router not trusted");
-        console2.log("=== Deployed (chain %s), governed ===", block.chainid);
-        console2.log("ChainlinkPriceSource :", address(priceSource));
-        console2.log("StonkzLaunchpad      :", address(launchpad));
-        console2.log("UniswapV2Migrator    :", address(migrator));
-        console2.log("StonkzRouter         :", address(router));
-        GovernanceLib.report(c, timelock);
-        console2.log("RH_LAUNCHPAD_ADDRESS=", address(launchpad));
-        console2.log("RH_ROUTER_ADDRESS=", address(router));
-    }
-
-    function _governance(MainnetGuard.Governance memory g, address launchpad, address priceSource)
-        internal
-        pure
-        returns (GovernanceLib.Config memory c)
-    {
-        c.launchpad = launchpad;
-        c.priceSources = new address[](1);
-        c.priceSources[0] = priceSource;
-        c.proposers = g.proposers;
-        c.executors = g.executors;
-        c.minDelay = g.minDelay;
-        c.opsAuthority = g.opsAuthority;
-        c.migrationAuthority = g.migrationAuthority;
-        c.pauser = g.pauser;
-        c.atomic = true;
     }
 
     function _requireCode(address a, string memory what) internal view {
@@ -279,7 +177,9 @@ contract Deploy is Script {
 
         console2.log("");
         console2.log("=== Admin must execute (admin key, not deployer) ===");
-        console2.log("1) ChainlinkPriceSource.setFeed(WETH9, ETH/USD, %s, ...)", RobinhoodChain.ORACLE_MAX_AGE_SECS);
+        console2.log(
+            "1) ChainlinkPriceSource.setFeed(WETH9, ETH/USD, %s, ...)", RobinhoodChain.ORACLE_MAX_AGE_SECS
+        );
         console2.log("   baseToken :", RobinhoodChain.WETH9);
         console2.log("   aggregator:", RobinhoodChain.CHAINLINK_ETH_USD);
         console2.log("   minPrice1e6 / maxPrice1e6:", ETH_MIN_USD_1E6, ETH_MAX_USD_1E6);
