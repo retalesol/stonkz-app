@@ -325,7 +325,7 @@ export function adminChainRoutes(): Hono<AdminEnv> {
    * API applies them (`deps.params`, 60-s cache) next to the raw chain reads
    * the Parameters view edits: the packed word / `trustedRouter` on EVM plus
    * the router's `maxBuyNative` / `pyth` / `attestationSink`; the `params`
-   * PDA on Solana. `effective.set` says whether anything was ever set.
+   * PDA on Solana. `effective.set`: a non-default word (EVM) / the PDA exists (Solana).
    */
   app.get('/admin/chain/params/:net', requireAdmin('viewer'), async (c) => {
     const deps = c.get('deps');

@@ -47,6 +47,7 @@ export interface LiveCurveParams extends CurveParams {
   /** `chain` when the record was read from the launchpad; `default` for every fallback (revert, RPC down, not deployed). */
   source: ParamsSource;
   /** Whether the chain holds an explicit record (EVM: non-zero word; Solana: the PDA exists). */
+  /** EVM: the word in force differs from the defaults. Solana: the `params` PDA exists. */
   set: boolean;
   /** Whether the values equal {@link DEFAULT_CURVE_PARAMS} (ignoring `maxBuyNative`). */
   matchesDefaults: boolean;
@@ -252,7 +253,10 @@ export class CurveParamsReader {
       ...value,
       net,
       source: 'chain',
-      set: word !== 0n,
+      // `paramsWord()` answers DEFAULT_PARAMS for an empty slot, so the view
+      // cannot tell "never set" from "set to the defaults"; on EVM `set`
+      // means the word in force differs from the defaults.
+      set: !matchesDefaultParams(value),
       matchesDefaults: matchesDefaultParams(value),
       readAt,
       error: null,

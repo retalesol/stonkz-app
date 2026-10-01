@@ -142,7 +142,7 @@ function effectiveList(v: ParamsView): Html {
     <dt>status</dt>
     <dd>
       ${e.source === 'chain' ? html`<span class="tag on">read from chain</span>` : html`<span class="tag warn">defaults (fallback)</span>`}
-      ${e.set ? html`<span class="tag info">set on chain</span>` : html`<span class="tag">never set · contract defaults</span>`}
+      ${e.set ? html`<span class="tag info">custom · set on chain</span>` : html`<span class="tag">contract defaults</span>`}
       ${e.matchesDefaults ? html`<span class="tag">= defaults</span>` : html`<span class="tag warn">differs from defaults</span>`}
     </dd>
     ${
