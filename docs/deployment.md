@@ -632,7 +632,30 @@ Open risk, by the operator's decision: the timelock's only proposer/executor is
 an EOA, not a Safe. When a Safe exists, rotate it through the timelock itself
 (`grantRole(PROPOSER_ROLE/EXECUTOR_ROLE/CANCELLER_ROLE, safe)` then
 `revokeRole(..., 0x2e15…)`), scheduled and executed by `0x2e15…` after the 24 h
-delay. Base 8453 is not deployed yet (deployer unfunded there).
+delay. Base 8453 followed the same day (below).
+
+### Base 8453 — live (2026-10-04)
+
+Same `DeployMainnet` plan and governance set as RH. Forge sent nonces 36–51,
+then stalled on Base's one-in-flight-transaction rule for EIP-7702-delegated
+accounts (the deployer carries a MetaMask delegation there); nonces 52–67 were
+sent one at a time with `cast` from the saved plan. Verified on chain: proxy impl
+`0xeE66…2936`, admin = TimelockController `0x7eab…737C` (minDelay 86400, single
+proposer `0x2e15…99BA`, deployer holds no role), same pauser / authorities / caps
+as RH. Record: `programs/evm/deployments/8453.json`; `chains.json` `main.BASE`.
+
+| Contract                        | Address                                      |
+| ------------------------------- | -------------------------------------------- |
+| StonkzLaunchpad (proxy)         | `0x733da9a860e97A451443697ca5D1AA76831de280` |
+| StonkzRouter                    | `0x2A282e0B33AabeA118502f154bF93695f6464030` |
+| TimelockController              | `0x7eab3F59a16B1203111862188C3aa8fdE2E0737C` |
+| PythPriceSource (live source)   | `0x937a1EC81F361c9051d0BF34BdEB83705D22cFD7` |
+| ChainlinkPriceSource (fallback) | `0xd2eAa691d497e0798C348c5390fAD759C9A248A0` |
+| PushPriceSource (proxy)         | `0x33043C25879D0Dc43dF79De33d0CA4e33a4d7112` |
+| StockPriceSourceV2 (empty)      | `0xCAE6779D9d7dD8f93c9E5657a4e08c10d238117f` |
+| FeeLocker                       | `0x4cB49124D7BFD94Eb5f965e89244c4661f95f8f0` |
+| UniswapV3Migrator               | `0x2588E500B1e5fCF18253F44b6f2607BF2B14161C` |
+| ReferralVault                   | `0x4B311600B4c92493E32C1711F39D81d3846496ad` |
 
 ## 3. Configure the API and indexer
 

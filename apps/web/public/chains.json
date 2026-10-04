@@ -88,6 +88,27 @@
         "WETH": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
         "USDG": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
       }
+    },
+    "BASE": {
+      "kind": "EVM",
+      "chainId": 8453,
+      "network": "base-mainnet",
+      "rpc": "https://mainnet.base.org",
+      "explorer": "https://basescan.org",
+      "deployedAt": "2026-10-04",
+      "launchpad": "0x733da9a860e97A451443697ca5D1AA76831de280",
+      "router": "0x2A282e0B33AabeA118502f154bF93695f6464030",
+      "migrator": "0x2588E500B1e5fCF18253F44b6f2607BF2B14161C",
+      "feeLocker": "0x4cB49124D7BFD94Eb5f965e89244c4661f95f8f0",
+      "priceSource": "0x937a1EC81F361c9051d0BF34BdEB83705D22cFD7",
+      "stockPriceSource": "0xCAE6779D9d7dD8f93c9E5657a4e08c10d238117f",
+      "referralVault": "0x4B311600B4c92493E32C1711F39D81d3846496ad",
+      "timelock": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+      "v2Factory": null,
+      "tokens": {
+        "WETH": "0x4200000000000000000000000000000000000006",
+        "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      }
     }
   }
 }

@@ -401,3 +401,5 @@ Squads can add a time lock to its vault transactions. Use one on mainnet, like t
 ## Live state (2026-10-04)
 
 RH 4663: TimelockController `0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3`, minDelay 86400, proposer = executor = canceller = `0x2e154B50a1aa7608b1D2ed2793E897518F5599BA` (an EOA at deploy time; see deployment.md §2.4 for the Safe rotation path). Pauser `0x7Eb9512246C618cCE1f33207aB223bCdfA0fCD92`.
+
+Base 8453: TimelockController `0x7eab3F59a16B1203111862188C3aa8fdE2E0737C`, minDelay 86400, same proposer/executor/canceller `0x2e15…99BA` and pauser `0x7Eb9…CD92`.

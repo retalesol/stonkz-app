@@ -1,0 +1,82 @@
+{
+  "chainId": 8453,
+  "network": "base-mainnet",
+  "rpc": "https://mainnet.base.org",
+  "explorer": "https://basescan.org",
+  "deployedAt": "2026-10-04",
+  "deployer": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
+  "deployBlock": 52163105,
+  "lastBlock": 52163342,
+  "script": "DeployMainnet.s.sol (atomic timelock handover); nonces 36-51 by forge, 52-67 resent one-by-one with cast after Base's one-in-flight rule for EIP-7702-delegated accounts stalled forge",
+  "admin": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+  "governance": {
+    "TimelockController": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+    "minDelay": 86400,
+    "proposers": [
+      "0x2e154B50a1aa7608b1D2ed2793E897518F5599BA"
+    ],
+    "executors": [
+      "0x2e154B50a1aa7608b1D2ed2793E897518F5599BA"
+    ],
+    "note": "Proposer/executor 0x2e15\u202699BA was an EOA (no code on 8453) at deploy time, by the operator's decision; rotate to a Safe through the timelock when one exists."
+  },
+  "authorities": {
+    "pauser": "0x7Eb9512246C618cCE1f33207aB223bCdfA0fCD92",
+    "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
+    "opsWithdraw": "0x9f52F6190c9a7d642431B3FEc6B516E3f2e28825",
+    "migration": "0x12175FA1C4611b0c4C74a9fd796988D2eB6B0514",
+    "referralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894",
+    "stockAttester": null
+  },
+  "contracts": {
+    "StonkzLaunchpad": "0x733da9a860e97A451443697ca5D1AA76831de280",
+    "StonkzRouter": "0x2A282e0B33AabeA118502f154bF93695f6464030",
+    "PythPriceSource": "0x937a1EC81F361c9051d0BF34BdEB83705D22cFD7",
+    "ChainlinkPriceSource": "0xd2eAa691d497e0798C348c5390fAD759C9A248A0",
+    "PushPriceSource": "0x33043C25879D0Dc43dF79De33d0CA4e33a4d7112",
+    "StockPriceSource": "0xCAE6779D9d7dD8f93c9E5657a4e08c10d238117f",
+    "FeeLocker": "0x4cB49124D7BFD94Eb5f965e89244c4661f95f8f0",
+    "UniswapV3Migrator": "0x2588E500B1e5fCF18253F44b6f2607BF2B14161C",
+    "ReferralVault": "0x4B311600B4c92493E32C1711F39D81d3846496ad",
+    "TimelockController": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+    "Pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a",
+    "UniswapV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+    "UniswapV3QuoterV2": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"
+  },
+  "implementation": {
+    "StonkzLaunchpad": "0xeE667100Cc4afD86d7aeB69Fb52Bee33A5102936",
+    "PushPriceSource": "0x3AffB210E611b6528b86a4C54a7b162FbD9391b5",
+    "initialImplNoRouter": "0x7436EFBf5bbB7B842506185220F457F2Fc03bfeF",
+    "trustedRouter": "0x2A282e0B33AabeA118502f154bF93695f6464030",
+    "paramsWord": "0 (defaults)"
+  },
+  "routerDeployBlock": 52163105,
+  "router": {
+    "maxBuyNative": "5000000000000000000",
+    "pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a",
+    "attestationSink": "0xCAE6779D9d7dD8f93c9E5657a4e08c10d238117f"
+  },
+  "referral": {
+    "maxPerDay": "500000000000000000",
+    "asset": "WETH"
+  },
+  "tokens": {
+    "WETH": "0x4200000000000000000000000000000000000006",
+    "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  },
+  "graduationPoolFee": 10000,
+  "deployTxs": {
+    "resumedWithCast": {
+      "UniswapV3Migrator": "0x09a99fd7885282561e19456e431861141c51e3ff4cf11e1a8c23dab7e4a97790",
+      "TimelockController": "0x9ce3484f6691e5435b8e1941a083bdac39221e1c4b10a62a7493991f2239bfbe",
+      "scheduleBatch": "0x957597ea8ab11078bf826ac2877128862a5c9911248198de711dc7f0971788e1",
+      "executeBatch": "0x92b887905628cf6e229ac556e50df06cbd913eb40ce9cf6b24b3afee6881f4fb",
+      "ReferralVault": "0x7cc2332a58f24be0992115eb09249a565a6c3ee5495eb474b60629bbdbdcfe17"
+    }
+  },
+  "notes": [
+    "2026-10-04: DeployMainnet on Base; deployer nonces 36-67 (32 txs); verified afterwards: proxy impl 0xeE66\u20262936, admin = timelock (DEFAULT_ADMIN of itself only), 0x1FA9 holds no role, every source/vault admin = timelock, params = defaults, router cap 5 ETH, referral cap 0.5 ETH/day.",
+    "Stock bases are not listed (StockPriceSourceV2 empty, attester unset).",
+    "Operational note: the deployer EOA carries an EIP-7702 delegation on Base; op-geth allows one in-flight tx per delegated account, so batch broadcasts from it must be sequential (cast, or forge --slow after clearing forge's stale resume state)."
+  ]
+}
