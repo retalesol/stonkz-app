@@ -100,6 +100,7 @@ export function dialog<T>(
       scrim.hidden = true;
       render(box, html``);
       closeCurrent = null;
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
       scrim.removeEventListener('click', onScrim);
       resolve(value);
     };

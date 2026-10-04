@@ -91,6 +91,27 @@ export default tseslint.config(
     rules: { 'stonkz/no-raw-innerhtml': 'off' },
   },
   {
+    // Module-level code in the web app (drafts, caches, registries) runs at
+    // import time; a `const` it reaches for that is declared further down the
+    // file is in its temporal dead zone and the whole app fails to boot
+    // (modals/launch.ts, 2026-10-01). Function declarations hoist; variables
+    // and classes do not.
+    files: ['apps/web/src/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-use-before-define': [
+        'error',
+        {
+          functions: false,
+          classes: true,
+          variables: true,
+          enums: true,
+          typedefs: false,
+          ignoreTypeReferences: true,
+        },
+      ],
+    },
+  },
+  {
     files: ['packages/shared/src/**/*.ts'],
     rules: {
       // packages/shared is pure: no DOM, no timers, no I/O.

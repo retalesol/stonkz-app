@@ -85,22 +85,32 @@ interface Draft {
 let NEW: Draft = newDefaults();
 let cropper: SquareCropper | null = null;
 
-/** The connected net's live launchpad parameters, as the stepper's copy and limits read them. */
-const split = (): ReturnType<typeof feeSplitOf> => feeSplitOf(currentParams());
-const feeBounds = (): { min: number; max: number } => feeBoundsPct(currentParams());
+/** The connected net's live launchpad parameters, as the stepper's copy and limits read them.
+ *  Function declarations on purpose: `NEW` above is built at module load and
+ *  calls these, so they must be hoisted (a `const` arrow here is in its
+ *  temporal dead zone at that point and the whole app fails to boot). */
+function split(): ReturnType<typeof feeSplitOf> {
+  return feeSplitOf(currentParams());
+}
+function feeBounds(): { min: number; max: number } {
+  return feeBoundsPct(currentParams());
+}
 /** Supplies the stepper offers on this net: the fixed four, capped by the chain's `maxSupply`. */
-const offeredSupplies = (): readonly (readonly [number, string])[] =>
-  SUPPLIES.filter((s) => s[0] <= currentParams().maxSupply);
-const clampFee = (fee: number): number => {
+function offeredSupplies(): readonly (readonly [number, string])[] {
+  return SUPPLIES.filter((s) => s[0] <= currentParams().maxSupply);
+}
+function clampFee(fee: number): number {
   const { min, max } = feeBounds();
   return Math.min(max, Math.max(min, fee));
-};
+}
 /** "5 MINUTES" / "90 SECONDS" for the cashback window. */
-const cbWindowLabel = (): string => {
+function cbWindowLabel(): string {
   const secs = currentParams().cbWindowSecs;
   return secs % 60 === 0 ? `${secs / 60} MINUTE${secs === 60 ? '' : 'S'}` : `${secs} SECONDS`;
-};
-const cbStartLabel = (): string => cbStartFeePct(currentParams()).toFixed(0) + '%';
+}
+function cbStartLabel(): string {
+  return cbStartFeePct(currentParams()).toFixed(0) + '%';
+}
 let cropBusy = false;
 
 /** A launch is in flight: the stepper is read-only and LAUNCH cannot fire twice. */

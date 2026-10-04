@@ -175,6 +175,7 @@ export function waitForWalletChoice(
   if (hit) return Promise.resolve(hit);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
       off();
       resolve(found() ?? null);
     }, timeoutMs);

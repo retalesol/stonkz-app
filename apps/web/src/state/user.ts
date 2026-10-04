@@ -246,6 +246,7 @@ export interface RewardsHydration {
 
 /** Replace the local ledger with the server's numbers (live mode only). */
 export function hydrateRewards(snap: RewardsHydration): void {
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
   hydrated = true;
   const before = rankOf(USER.xp).i;
   const levelBefore = USER.spLevel?.level ?? 0;
@@ -324,6 +325,7 @@ export function hydrateRewards(snap: RewardsHydration): void {
 export function resetLiveRewards(): void {
   if (!isLiveMode()) return;
   USER = emptyUser();
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
   hydrated = false;
   saveUser();
   emit('rank');

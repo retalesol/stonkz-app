@@ -277,6 +277,7 @@ async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path);
   if (!res.ok) {
     const { code, detail } = await readErrorBody(res);
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
     throw new LiveApiError(code, detail || `GET ${path} -> ${res.status}`, res.status);
   }
   return (await res.json()) as T;
@@ -800,6 +801,7 @@ async function reconcileCoin(c: SimCoin): Promise<void> {
     if (ledger.hasPending()) scheduleReconcile(c);
     return;
   }
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
   if (subscribed.has('token:' + c.sym)) {
     await hydrateToken(c).catch(() => undefined);
     ledger.clear();
@@ -1121,6 +1123,7 @@ function connectWs(): void {
   // 1.5s → 30s with jitter so a down API is not hammered by every open tab.
   const drop = (): void => {
     socket = null;
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
     wsAuthOk = false;
     if (!streaming || reconnectTimer !== 0) return;
     const base = Math.min(30_000, 1500 * 2 ** Math.min(reconnectAttempt++, 5));
@@ -2502,7 +2505,9 @@ function applyRewardsSnap(snap: LiveRewardsSnapshot): void {
     ...(snap.items ? { items: snap.items } : {}),
     ...(snap.nextCommit !== undefined ? { nextCrateCommit: snap.nextCommit } : {}),
   });
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
   LEVEL_LADDER = snap.spLevel?.levels ?? null;
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define -- referenced inside a function that runs after module init
   CLAIMS = snap.claims ?? null;
 }
 
