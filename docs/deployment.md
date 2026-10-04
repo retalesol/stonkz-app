@@ -676,13 +676,12 @@ Deploying: `railway up --service stonkz-backend-mainnet --environment mainnet`
 put the dev link back (the repo's `.vercel/project.json` is the dev project).
 Always pass `--environment` to Railway commands: the CLI link flips.
 
-Domains (operator, in the dashboards): Vercel → `stonkz-mainnet` → add
-`ston.kz` and `www.ston.kz` (A `76.76.21.21` / CNAME `cname.vercel-dns.com`);
-Railway → `stonkz-backend-mainnet` → custom domain `api.ston.kz` (CNAME it
-gives). Then set `VITE_API_URL=https://api.ston.kz`, `VITE_WS_URL=wss://api.ston.kz`
-on the Vercel project and redeploy; the API's `CORS_ORIGINS` already lists
-`https://ston.kz`, `https://www.ston.kz` and the vercel.app URL. The OG rewrites
-in `vercel.json` already target `https://api.ston.kz`.
+Domains — live since 2026-10-04: `https://ston.kz` (308 → `https://www.ston.kz`, Vercel
+project `stonkz-mainnet`), `https://api.ston.kz` (Railway custom domain on
+`stonkz-backend-mainnet`; `JWT_ISSUER=https://api.ston.kz`). The web build points
+`VITE_API_URL` / `VITE_WS_URL` at `api.ston.kz`; `CORS_ORIGINS` lists `ston.kz`,
+`www.ston.kz` and the vercel.app URL; the OG rewrites in `vercel.json` target
+`api.ston.kz`.
 
 Known gaps: Railway health-check paths / restart policy are not set on the
 mainnet services (the CLI's config editor needs an interactive confirm; set
