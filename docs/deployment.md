@@ -657,6 +657,39 @@ as RH. Record: `programs/evm/deployments/8453.json`; `chains.json` `main.BASE`.
 | UniswapV3Migrator               | `0x2588E500B1e5fCF18253F44b6f2607BF2B14161C` |
 | ReferralVault                   | `0x4B311600B4c92493E32C1711F39D81d3846496ad` |
 
+## 2.5 Mainnet API / web environment — live (2026-10-04)
+
+Separate from the testnet stack (`production` environment on Railway,
+dev.ston.kz on Vercel), which is untouched.
+
+| Piece    | Where                                                                                                            | Notes                                                                                                                                                                                                                                                                                                       |
+| -------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API      | Railway env `mainnet`, service `stonkz-backend-mainnet`, `https://stonkz-backend-mainnet-mainnet.up.railway.app` | `deploy/Dockerfile.api`; `NODE_ENV=production`, no `STONKZ_STAGING`; `SOLANA_ENABLED=0` until the Solana program is on mainnet-beta; `EVM_ALLOWED_CHAIN_IDS=4663,8453`; fresh `JWT_SECRET` / `CRATE_HMAC_SECRET` / `ADMIN_JWT_SECRET`; referral signer key unchanged (vaults were deployed with `0x104D…`). |
+| Indexer  | Railway env `mainnet`, service `stonkz-indexer-mainnet`                                                          | `INDEXER_CHAIN_NETS=RH,BASE`, start blocks RH 79921902 / Base 52163105, router lists = the mainnet routers only.                                                                                                                                                                                            |
+| Postgres | Railway env `mainnet`, service `Postgres` (referenced as `${{Postgres.DATABASE_URL}}`)                           | 28 migrations applied on the API's first boot via the one-time `DB_MIGRATE_ON_BOOT=1` (now `0`). Later migrations: set it to `1`, deploy once, set back — or run `pnpm migrate` through `railway ssh` once an SSH key is registered.                                                                        |
+| Redis    | Railway env `mainnet`, service `Redis-XPle` (`${{Redis-XPle.REDIS_URL}}`)                                        |                                                                                                                                                                                                                                                                                                             |
+| Web      | Vercel project `stonkz-mainnet`, `https://stonkz-mainnet.vercel.app`                                             | `VITE_ENV=main` (reads `chains.json` `main.*`), `VITE_API_URL` / `VITE_WS_URL` → the Railway domain above, chain ids 4663 / 8453, public RPC/explorer URLs, launchpad addresses. `VITE_WALLETCONNECT_PROJECT_ID` not set yet (injected wallets work; WalletConnect relay off until it is).                  |
+
+Deploying: `railway up --service stonkz-backend-mainnet --environment mainnet`
+(same for the indexer) from the repo root; `vercel link --project stonkz-mainnet
+--yes && vercel --prod --yes`, then `vercel link --project stonkz-app --yes` to
+put the dev link back (the repo's `.vercel/project.json` is the dev project).
+Always pass `--environment` to Railway commands: the CLI link flips.
+
+Domains (operator, in the dashboards): Vercel → `stonkz-mainnet` → add
+`ston.kz` and `www.ston.kz` (A `76.76.21.21` / CNAME `cname.vercel-dns.com`);
+Railway → `stonkz-backend-mainnet` → custom domain `api.ston.kz` (CNAME it
+gives). Then set `VITE_API_URL=https://api.ston.kz`, `VITE_WS_URL=wss://api.ston.kz`
+on the Vercel project and redeploy; the API's `CORS_ORIGINS` already lists
+`https://ston.kz`, `https://www.ston.kz` and the vercel.app URL. The OG rewrites
+in `vercel.json` already target `https://api.ston.kz`.
+
+Known gaps: Railway health-check paths / restart policy are not set on the
+mainnet services (the CLI's config editor needs an interactive confirm; set
+them in Settings → Deploy per `docs/cloud-deploy.md`); the dev web's OG
+rewrites also point at `api.ston.kz`, so testnet share previews will come from
+the mainnet API once that domain exists.
+
 ## 3. Configure the API and indexer
 
 The deploy scripts print these lines. Set them in the API's environment:
