@@ -604,6 +604,36 @@ export STONKZ_OPS_WITHDRAW_AUTHORITY=0x...
 forge script script/DeployArc.s.sol:DeployArc --rpc-url $ARC_RPC_URL --broadcast -vvv
 ```
 
+## 2.4 Mainnet RH 4663 — live (2026-10-04)
+
+`DeployMainnet` broadcast from `0x1FA9…Bdca`, 33 txs, blocks 79921902–79921906,
+0.00054 ETH gas. Record: `programs/evm/deployments/4663.json`; `chains.json`
+carries it under `main.RH`. Verified on chain right after: proxy impl
+`0x4cB4…f8f0`, `admin` = TimelockController `0xE1f5…A7d3` (minDelay 86400,
+proposer/executor/canceller `0x2e15…99BA`, deployer holds no role), pauser
+`0x7Eb9…CD92`, protocol withdraw `0xFf88…4879`, ops withdraw `0x9f52…8825`,
+migration `0x1217…0514`, `paramsWord` = defaults, router cap 5 ETH, referral
+cap 0.5 ETH/day (signer `0x104D…`).
+
+| Contract                        | Address                                      |
+| ------------------------------- | -------------------------------------------- |
+| StonkzLaunchpad (proxy)         | `0x922003b5600E334D1B23483Fd06C73fBECf8B102` |
+| StonkzRouter                    | `0x64fd37034F271aB8c9C316D9339302241d8Be714` |
+| TimelockController              | `0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3` |
+| PythPriceSource (live source)   | `0x263dAf1D30A177DE10B0525653DAAbAad268104C` |
+| ChainlinkPriceSource (fallback) | `0xa85715A651294256eD7F373Af01023e7Ec8e7873` |
+| PushPriceSource (proxy)         | `0xd2eAa691d497e0798C348c5390fAD759C9A248A0` |
+| StockPriceSourceV2 (empty)      | `0x2A282e0B33AabeA118502f154bF93695f6464030` |
+| FeeLocker                       | `0x7eab3F59a16B1203111862188C3aa8fdE2E0737C` |
+| UniswapV3Migrator               | `0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45` |
+| ReferralVault                   | `0xE7FB7987b84Fd019bD50772feC1fF2f107213249` |
+
+Open risk, by the operator's decision: the timelock's only proposer/executor is
+an EOA, not a Safe. When a Safe exists, rotate it through the timelock itself
+(`grantRole(PROPOSER_ROLE/EXECUTOR_ROLE/CANCELLER_ROLE, safe)` then
+`revokeRole(..., 0x2e15…)`), scheduled and executed by `0x2e15…` after the 24 h
+delay. Base 8453 is not deployed yet (deployer unfunded there).
+
 ## 3. Configure the API and indexer
 
 The deploy scripts print these lines. Set them in the API's environment:

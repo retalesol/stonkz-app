@@ -1,0 +1,111 @@
+{
+  "chainId": 4663,
+  "network": "robinhood-mainnet",
+  "rpc": "https://rpc.mainnet.chain.robinhood.com",
+  "explorer": "https://explorer.chain.robinhood.com",
+  "deployedAt": "2026-10-04",
+  "deployer": "0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca",
+  "deployBlock": 79921902,
+  "lastBlock": 79921906,
+  "script": "DeployMainnet.s.sol (atomic timelock handover)",
+  "admin": "0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3",
+  "governance": {
+    "TimelockController": "0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3",
+    "minDelay": 86400,
+    "proposers": [
+      "0x2e154B50a1aa7608b1D2ed2793E897518F5599BA"
+    ],
+    "executors": [
+      "0x2e154B50a1aa7608b1D2ed2793E897518F5599BA"
+    ],
+    "note": "Proposer/executor 0x2e15\u202699BA was an EOA (no code on 4663) at deploy time, by the operator's decision; replace with a Safe via the timelock's own grantRole/revokeRole when one exists."
+  },
+  "authorities": {
+    "pauser": "0x7Eb9512246C618cCE1f33207aB223bCdfA0fCD92",
+    "protocolWithdraw": "0xFf888986b1e7Bf1ea2740825eeCB7fF98b484879",
+    "opsWithdraw": "0x9f52F6190c9a7d642431B3FEc6B516E3f2e28825",
+    "migration": "0x12175FA1C4611b0c4C74a9fd796988D2eB6B0514",
+    "referralSigner": "0x104D6744d31940d7Aa2463962eA0B3CAD9cd9894",
+    "stockAttester": null
+  },
+  "contracts": {
+    "StonkzLaunchpad": "0x922003b5600E334D1B23483Fd06C73fBECf8B102",
+    "StonkzRouter": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
+    "PythPriceSource": "0x263dAf1D30A177DE10B0525653DAAbAad268104C",
+    "ChainlinkPriceSource": "0xa85715A651294256eD7F373Af01023e7Ec8e7873",
+    "PushPriceSource": "0xd2eAa691d497e0798C348c5390fAD759C9A248A0",
+    "StockPriceSource": "0x2A282e0B33AabeA118502f154bF93695f6464030",
+    "FeeLocker": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+    "UniswapV3Migrator": "0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45",
+    "ReferralVault": "0xE7FB7987b84Fd019bD50772feC1fF2f107213249",
+    "TimelockController": "0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3",
+    "Pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a",
+    "UniswapV3Factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+    "UniswapV3QuoterV2": "0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7"
+  },
+  "implementation": {
+    "StonkzLaunchpad": "0x4cB49124D7BFD94Eb5f965e89244c4661f95f8f0",
+    "PushPriceSource": "0x33043C25879D0Dc43dF79De33d0CA4e33a4d7112",
+    "initialImplNoRouter": "0xCAE6779D9d7dD8f93c9E5657a4e08c10d238117f",
+    "trustedRouter": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
+    "paramsWord": "0 (defaults)"
+  },
+  "routerDeployBlock": 79921902,
+  "router": {
+    "maxBuyNative": "5000000000000000000",
+    "pyth": "0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a",
+    "attestationSink": "0x2A282e0B33AabeA118502f154bF93695f6464030"
+  },
+  "referral": {
+    "maxPerDay": "500000000000000000",
+    "asset": "WETH"
+  },
+  "tokens": {
+    "WETH": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "USDG": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+  },
+  "graduationPoolFee": 10000,
+  "deployTxs": {
+    "PushPriceSource": [
+      "0xea707207754246c687f47b4a6be0a6922eb8e8db4cfe4ccf39806931ea6d2c83"
+    ],
+    "ERC1967Proxy": [
+      "0x1e8fd516927f050f2778cf625646d0b9b355fc5b65d0eca03863028d99d08643",
+      "0x3dac29e75ddaf0235be695d9a2afb263ac8f4b8ef1499783a6b74dc03fd4e107"
+    ],
+    "ChainlinkPriceSource": [
+      "0xc7f0b9df7d6bd680bd4f2e557d7e2adc1482e65d097fd470a06a5c8bb78f84cf"
+    ],
+    "PythPriceSource": [
+      "0xbdc7dffc2dc23232c8e7859d4dc5040a4147811c457e5377db13c0580027c2f0"
+    ],
+    "StonkzLaunchpad": [
+      "0x6c6d8b90647e8ad35d141cfc708244513ec31f05992904194725bcba57ba7acc",
+      "0x7e8636a33b3d8bd20eca56d801e5e47e5a3a42e16865ed990db17f582aa0df17"
+    ],
+    "StockPriceSourceV2": [
+      "0x208e542b58119951a13fcba7e90d8ca9bf6cb77c0fda1cbe483bdc91f64ece20"
+    ],
+    "StonkzRouter": [
+      "0x34da7efcff543b79feb2b5e11b88cd7a1b8cdaac58d7d3d3ff7ff90fea4218b5"
+    ],
+    "FeeLocker": [
+      "0xdfb95bacbcee355b63526b68b75ad1307248814df38d464084c50932ad4d1088"
+    ],
+    "UniswapV3Migrator": [
+      "0xc686569ceab917627b72d11a5978d64a14e2ded8ca35173f74972238f98ebf64"
+    ],
+    "TimelockController": [
+      "0xdf87f6be8394dc825fc21f41314513dedc09c1d6fe9a850a05d766c0750365b6"
+    ],
+    "ReferralVault": [
+      "0x8d540db012d3c8b2d80a9fc5edf3b5028758ada16bbca699817d5bde11a129c0"
+    ]
+  },
+  "gasPaidEth": "0.0005428837819",
+  "notes": [
+    "2026-10-04: DeployMainnet broadcast from 0x1FA9\u2026Bdca; 33 txs, blocks 79921902\u201379921906; the deployer holds no role afterwards (verified: timelock has DEFAULT_ADMIN of itself only; 0x1FA9 has no timelock role; launchpad/sources/vault admin = timelock).",
+    "Stock bases are not listed (StockPriceSourceV2 empty, attester unset); opt in later through the timelock.",
+    "RH mainnet Pyth ETH/USD is refreshed only by our own in-tx Hermes updates; use the router's *WithPriceUpdate entry points."
+  ]
+}

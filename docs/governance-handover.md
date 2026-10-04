@@ -397,3 +397,7 @@ It then appoints the pauser, or prints the `set_pauser` instruction for the vaul
 6. Verify: `Global.admin` equals the vault, `pending_admin` is the default, the upgrade authority is the vault (`solana program show`), and the pauser PDA holds `<PAUSER>`.
 
 Squads can add a time lock to its vault transactions. Use one on mainnet, like the 24 h floor on EVM.
+
+## Live state (2026-10-04)
+
+RH 4663: TimelockController `0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3`, minDelay 86400, proposer = executor = canceller = `0x2e154B50a1aa7608b1D2ed2793E897518F5599BA` (an EOA at deploy time; see deployment.md §2.4 for the Safe rotation path). Pauser `0x7Eb9512246C618cCE1f33207aB223bCdfA0fCD92`.

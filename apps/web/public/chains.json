@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-01",
+  "generatedAt": "2026-10-04",
   "dev": {
     "RH": {
       "kind": "EVM",
@@ -64,8 +64,30 @@
       "cluster": "devnet",
       "programId": "FF1f3V47FtApwWWMHX462Gm7NVqNpUJ7K4yqKrYGSMbg",
       "upgradeAuthority": "EJ9qpuQosjwv8N1Rab7SK4zvVpEbvEBbCdum9KseADLn",
-      "deployedAt": "2026-09-30"
+      "deployedAt": "2026-10-01"
     }
   },
-  "main": {}
+  "main": {
+    "RH": {
+      "kind": "EVM",
+      "chainId": 4663,
+      "network": "robinhood-mainnet",
+      "rpc": "https://rpc.mainnet.chain.robinhood.com",
+      "explorer": "https://explorer.chain.robinhood.com",
+      "deployedAt": "2026-10-04",
+      "launchpad": "0x922003b5600E334D1B23483Fd06C73fBECf8B102",
+      "router": "0x64fd37034F271aB8c9C316D9339302241d8Be714",
+      "migrator": "0xF9f092c73FAce76AaC6D59834e6869b5fD2D6f45",
+      "feeLocker": "0x7eab3F59a16B1203111862188C3aa8fdE2E0737C",
+      "priceSource": "0x263dAf1D30A177DE10B0525653DAAbAad268104C",
+      "stockPriceSource": "0x2A282e0B33AabeA118502f154bF93695f6464030",
+      "referralVault": "0xE7FB7987b84Fd019bD50772feC1fF2f107213249",
+      "timelock": "0xE1f51dC53379ba4a964bceE191Cf2c3eed5AA7d3",
+      "v2Factory": null,
+      "tokens": {
+        "WETH": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+        "USDG": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"
+      }
+    }
+  }
 }
