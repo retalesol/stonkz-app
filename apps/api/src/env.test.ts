@@ -215,6 +215,43 @@ describe('readEnv production provider gates', () => {
     );
   });
 
+  it('skips the Solana RPC and Jupiter gates when SOLANA_ENABLED=0 (never called there)', () => {
+    const { SOLANA_RPC_URL: _s, JUPITER_API_BASE_URL: _j, JUPITER_API_KEY: _k, ...noSol } = paid;
+    // Public Solana RPC + keyless Jupiter lite-api: refused with Solana on…
+    expect(() => readEnv(noSol)).toThrow(/SOLANA_RPC_URL/);
+    expect(() =>
+      readEnv({
+        ...paid,
+        JUPITER_API_BASE_URL: 'https://lite-api.jup.ag/swap/v1',
+        JUPITER_API_KEY: '',
+      }),
+    ).toThrow(/JUPITER_API_KEY/);
+    expect(() =>
+      readEnv({ ...paid, SOLANA_PRIVATE_RPC_URL: 'https://api.mainnet-beta.solana.com' }),
+    ).toThrow(/SOLANA_PRIVATE_RPC_URL/);
+    // …and all three accepted with it off.
+    const env = readEnv({
+      ...noSol,
+      SOLANA_ENABLED: '0',
+      SOLANA_PRIVATE_RPC_URL: 'https://api.mainnet-beta.solana.com',
+    });
+    expect(env.solanaEnabled).toBe(false);
+    expect(env.solanaRpcUrl).toBe('https://api.devnet.solana.com');
+    expect(env.jupiterApiKey).toBeUndefined();
+    expect(() =>
+      readEnv({
+        ...paid,
+        SOLANA_ENABLED: '0',
+        JUPITER_API_BASE_URL: 'https://lite-api.jup.ag/swap/v1',
+        JUPITER_API_KEY: '',
+      }),
+    ).not.toThrow();
+    // The Base gate is unaffected by the switch.
+    expect(() =>
+      readEnv({ ...noSol, SOLANA_ENABLED: '0', BASE_RPC_URL: 'https://mainnet.base.org' }),
+    ).toThrow(/BASE_RPC_URL/);
+  });
+
   it('publicProviderInUse is null for private endpoints and tolerant of unparsable URLs', () => {
     expect(
       publicProviderInUse({
@@ -225,5 +262,41 @@ describe('readEnv production provider gates', () => {
         jupiterApiKey: undefined,
       }),
     ).toBeNull();
+  });
+});
+
+describe('readEnv SOLANA_ENABLED', () => {
+  it('defaults on, and reads the usual spellings of off', () => {
+    expect(readEnv({ NODE_ENV: 'test' }).solanaEnabled).toBe(true);
+    expect(readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: '' }).solanaEnabled).toBe(true);
+    expect(readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: '1' }).solanaEnabled).toBe(true);
+    expect(readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: 'true' }).solanaEnabled).toBe(true);
+    expect(readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: '0' }).solanaEnabled).toBe(false);
+    expect(readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: 'false' }).solanaEnabled).toBe(false);
+    expect(readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: ' FALSE ' }).solanaEnabled).toBe(false);
+  });
+
+  it('refuses a value that is neither on nor off', () => {
+    expect(() => readEnv({ NODE_ENV: 'test', SOLANA_ENABLED: 'maybe' })).toThrow(/SOLANA_ENABLED/);
+  });
+
+  it('publicProviderInUse ignores the Solana / Jupiter hosts when disabled', () => {
+    const solPublic = {
+      baseRpcUrl: 'https://base.example-provider.invalid/v1/key',
+      solanaRpcUrl: 'https://api.mainnet-beta.solana.com',
+      solanaPrivateRpcUrl: 'https://api.devnet.solana.com',
+      jupiterApiBaseUrl: 'https://lite-api.jup.ag/swap/v1',
+      jupiterApiKey: undefined,
+    };
+    expect(publicProviderInUse(solPublic)).toMatch(/SOLANA_RPC_URL/);
+    expect(publicProviderInUse({ ...solPublic, solanaEnabled: true })).toMatch(/SOLANA_RPC_URL/);
+    expect(publicProviderInUse({ ...solPublic, solanaEnabled: false })).toBeNull();
+    expect(
+      publicProviderInUse({
+        ...solPublic,
+        solanaEnabled: false,
+        baseRpcUrl: 'https://mainnet.base.org',
+      }),
+    ).toMatch(/BASE_RPC_URL/);
   });
 });

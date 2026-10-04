@@ -18,6 +18,7 @@ import { toAtoms } from '../router/units.js';
 import { ZERO_EVM_ADDRESS } from '../env.js';
 import { evmLaunchpadAddress } from '../chain/evm-net.js';
 import { resolveTokenRow } from './token-resolve.js';
+import { requireNetDeployed } from './health.js';
 import {
   emptyPosition,
   invalidateStakePool,
@@ -101,6 +102,8 @@ export function stakeRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
 
     const body = (await c.req.json().catch(() => ({}))) as {
       sym?: unknown;
@@ -212,6 +215,8 @@ export function stakeRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
 
     const body = (await c.req.json().catch(() => ({}))) as {
       sym?: unknown;
@@ -316,6 +321,8 @@ export function stakeRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
 
     const body = (await c.req.json().catch(() => ({}))) as { sym?: unknown; mint?: unknown };
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';

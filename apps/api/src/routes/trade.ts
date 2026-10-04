@@ -56,6 +56,7 @@ import {
 } from '../router/evm-router.js';
 import type { TokenRow } from './serialise.js';
 import { resolveTokenRow } from './token-resolve.js';
+import { requireNetDeployed } from './health.js';
 import { confirmTradeFills } from './trade-provisional.js';
 
 function asEthCaller(rpc: unknown): EthCaller | undefined {
@@ -217,6 +218,8 @@ export function tradeRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
 
     const body = (await c.req.json().catch(() => ({}))) as TradePrepareBody;
     const sym = typeof body.sym === 'string' ? body.sym.toUpperCase() : '';
@@ -652,6 +655,8 @@ export function tradeRoutes(): Hono<AppEnv> {
     if (user.net !== 'SOL') {
       return c.json({ error: 'bad_request', detail: 'broadcast is Solana-only' }, 400);
     }
+    const solGate = requireNetDeployed(c, deps.env, user.net);
+    if (solGate) return solGate;
     const body = (await c.req.json().catch(() => ({}))) as {
       transaction?: unknown;
       mev?: unknown;
@@ -712,6 +717,8 @@ export function tradeRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
     const body = (await c.req.json().catch(() => ({}))) as {
       sym?: unknown;
       signature?: unknown;

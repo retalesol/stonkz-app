@@ -64,6 +64,7 @@ import {
   type SolanaBaseOracle,
 } from '../router/launch-preflight.js';
 import { findLaunchCooldown } from './token-resolve.js';
+import { requireNetDeployed } from './health.js';
 import {
   prepareEvmLaunch,
   stockPricerFor,
@@ -272,6 +273,8 @@ export function launchRoutes(): Hono<AppEnv> {
       const user = c.get('user');
       if (!user) return c.json({ error: 'unauthorized' }, 401);
       const { net, wallet } = user;
+      const gate = requireNetDeployed(c, deps.env, net);
+      if (gate) return gate;
       const unit = nativeUnit(net);
 
       // A net with no launchpad pinned in this environment (Arc today) is
@@ -1048,6 +1051,8 @@ export function launchRoutes(): Hono<AppEnv> {
       const user = c.get('user');
       if (!user) return c.json({ error: 'unauthorized' }, 401);
       const { net, wallet } = user;
+      const gate = requireNetDeployed(c, deps.env, net);
+      if (gate) return gate;
 
       const body = (await c.req.json().catch(() => ({}))) as {
         intentId?: unknown;

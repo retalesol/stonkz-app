@@ -32,6 +32,7 @@ import {
 import { asSolanaAccountDataSource } from '../router/launch-preflight.js';
 import { asSolanaBlockhashSource } from '../router/solana-tx.js';
 import { resolveTokenRow } from './token-resolve.js';
+import { requireNetDeployed } from './health.js';
 import { serialiseToken, type TokenRow } from './serialise.js';
 
 /** The same duck-typed adapters `routes/trade.ts` keeps private. */
@@ -80,6 +81,8 @@ export function graduateRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
 
     const sym = c.req.param('sym').toUpperCase();
     const body = (await c.req.json().catch(() => ({}))) as { mint?: unknown };

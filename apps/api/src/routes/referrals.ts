@@ -25,6 +25,7 @@ import {
   referralPdas,
 } from '../router/solana-referral.js';
 import { asSolanaBlockhashSource } from '../router/solana-tx.js';
+import { requireNetDeployed } from './health.js';
 import type { SolanaTransactionLogs } from '../chain/types.js';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -215,6 +216,8 @@ export function referralRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
     const cfg = referralClaimConfig(deps, net);
     if (!cfg) return c.json({ error: 'not_configured' }, 409);
     const body = (await c.req.json().catch(() => ({}))) as { asset?: unknown };
@@ -344,6 +347,8 @@ export function referralRoutes(): Hono<AppEnv> {
     const user = c.get('user');
     if (!user) return c.json({ error: 'unauthorized' }, 401);
     const { net, wallet } = user;
+    const gate = requireNetDeployed(c, deps.env, net);
+    if (gate) return gate;
     const cfg = referralClaimConfig(deps, net);
     if (!cfg) return c.json({ error: 'not_configured' }, 409);
     const body = (await c.req.json().catch(() => ({}))) as { signature?: unknown };

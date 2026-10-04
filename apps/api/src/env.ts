@@ -58,6 +58,18 @@ export interface ApiEnv {
    */
   trustedProxyDepth: number;
 
+  /**
+   * `SOLANA_ENABLED`: whether this environment has the Solana launchpad at
+   * all. Default on (`1`); `0` / `false` turns it off — a mainnet stack
+   * where only the EVM chains are deployed. Off, `/health` and
+   * `/platform/status` report SOL as "not deployed on this environment"
+   * without probing the Solana RPC, every Solana write path (launch, trade,
+   * graduate, stake, fee / referral claims, admin chain ops) answers 422,
+   * and the production boot stops requiring a paid Solana RPC / Jupiter
+   * key. Read-only token / market routes keep working (they simply have no
+   * SOL rows). Flip it back to `1` once the program ships on mainnet-beta.
+   */
+  solanaEnabled: boolean;
   solanaRpcUrl: string;
   /**
    * `JITO_BLOCK_ENGINE_URL`: Jito block-engine origin (e.g.
@@ -433,6 +445,14 @@ function intMap(src: EnvSource, key: string): Record<string, number> {
   return out;
 }
 
+/** `1` / `true` / `yes` / `on` → true; `0` / `false` / `no` / `off` → false; anything else fails the boot. */
+function flag(src: EnvSource, key: string, fallback: boolean): boolean {
+  const raw = str(src, key, fallback ? '1' : '0').toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  throw new Error(`env ${key} must be 1|0|true|false, got ${JSON.stringify(src[key])}`);
+}
+
 function oneOf<T extends string>(
   src: EnvSource,
   key: string,
@@ -483,6 +503,7 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
 
     trustedProxyDepth: int(src, 'TRUSTED_PROXY_DEPTH', 1),
 
+    solanaEnabled: flag(src, 'SOLANA_ENABLED', true),
     // Public devnet is the local-dev default only. Deployed stacks set the
     // project's QuickNode endpoint (docs/deployment.md "RPC endpoints");
     // production refuses this host below.
@@ -784,7 +805,9 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
       // back to: Base's and Solana's public RPCs are rate-limited, and
       // Jupiter's lite-api is the keyless tier. The user has paid providers;
       // this only makes forgetting to point at one a boot error, not a
-      // production outage at the first burst of traffic.
+      // production outage at the first burst of traffic. (With
+      // `SOLANA_ENABLED=0` the Solana / Jupiter endpoints are never called,
+      // so they are not checked.)
       const publicProvider = publicProviderInUse(env);
       if (publicProvider) throw new Error(publicProvider);
     }
@@ -820,12 +843,15 @@ export function publicProviderInUse(
   env: Pick<
     ApiEnv,
     'baseRpcUrl' | 'solanaRpcUrl' | 'solanaPrivateRpcUrl' | 'jupiterApiBaseUrl' | 'jupiterApiKey'
-  >,
+  > &
+    Partial<Pick<ApiEnv, 'solanaEnabled'>>,
 ): string | null {
   const baseHost = hostOf(env.baseRpcUrl);
   if (baseHost !== null && PUBLIC_BASE_RPC_HOSTS.has(baseHost)) {
     return `BASE_RPC_URL must be a provider endpoint in production; ${baseHost} is the public, rate-limited RPC`;
   }
+  // A Solana-less environment (`SOLANA_ENABLED=0`) never calls these.
+  if (env.solanaEnabled === false) return null;
   const solHost = hostOf(env.solanaRpcUrl);
   if (solHost !== null && PUBLIC_SOLANA_RPC_HOST.test(solHost)) {
     return `SOLANA_RPC_URL must be a provider endpoint in production; ${solHost} is the public, rate-limited RPC`;

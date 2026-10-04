@@ -8,11 +8,14 @@ import {
   CurveParamsReader,
   LAUNCHPAD_PARAMS_ABI,
   ROUTER_CONFIG_ABI,
+  curveParamsTargets,
   decodeParamsWord,
   matchesDefaultParams,
   toCurveParams,
   type ParamsTarget,
 } from './params.js';
+import { readEnv } from '../env.js';
+import { createFakeRpcs } from './fake.js';
 
 const LAUNCHPAD = '0xe308287C9A85E2B53F1027a1c589B5e3969928e8';
 const ROUTER = '0x1FA9D4Ad76D53FbF1274d10ACBA12463ae90Bdca';
@@ -296,5 +299,33 @@ describe('CurveParamsReader — Solana', () => {
       target: () => ({ kind: 'sol', reader: null, programId: programId.toBase58() }),
     }).get('SOL');
     expect(none.error).toBe('RPC cannot read accounts');
+  });
+});
+
+describe('curveParamsTargets', () => {
+  const rpcs = createFakeRpcs();
+  const base = { NODE_ENV: 'test', BASE_LAUNCHPAD_ADDRESS: LAUNCHPAD };
+
+  it('resolves SOL to the program by default and to "not deployed" when SOLANA_ENABLED=0', async () => {
+    const on = curveParamsTargets(readEnv(base), rpcs);
+    expect(on('SOL')).toMatchObject({ kind: 'sol' });
+    expect(on('BASE')).toMatchObject({ kind: 'evm', launchpad: LAUNCHPAD });
+    // RH has no launchpad in this env either way.
+    expect(on('RH')).toBeNull();
+
+    const off = curveParamsTargets(readEnv({ ...base, SOLANA_ENABLED: '0' }), rpcs);
+    expect(off('SOL')).toBeNull();
+    expect(off('BASE')).toMatchObject({ kind: 'evm', launchpad: LAUNCHPAD });
+    expect(off('RH')).toBeNull();
+
+    const r = new CurveParamsReader({ target: off });
+    const sol = await r.get('SOL');
+    expect(sol).toMatchObject({
+      net: 'SOL',
+      source: 'default',
+      set: false,
+      error: 'not deployed on this environment',
+    });
+    expect(toCurveParams(sol)).toEqual(DEFAULT_CURVE_PARAMS);
   });
 });

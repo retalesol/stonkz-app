@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { sql } from 'drizzle-orm';
 import { ALL_NETS, isEvmNet, type Net } from '@stonkz/shared';
 import { ZERO_EVM_ADDRESS, type ApiEnv } from '../env.js';
@@ -41,10 +41,32 @@ export interface HealthReport {
  * An EVM net with no launchpad configured is not part of this environment
  * (Arc before its deploy, RH on a Base-only stack). Its RPC is not probed and
  * it cannot drag `/health` to 503; the picker shows it as "not deployed".
- * Solana is always probed: the API refuses to boot without its program id.
+ * Solana follows `SOLANA_ENABLED` (`env.solanaEnabled`): on by default, off
+ * on a stack where only the EVM chains are live.
  */
 export function isNetDeployed(env: ApiEnv, net: Net): boolean {
-  return !isEvmNet(net) || evmLaunchpadAddress(env, net) !== ZERO_EVM_ADDRESS;
+  if (!isEvmNet(net)) return env.solanaEnabled;
+  return evmLaunchpadAddress(env, net) !== ZERO_EVM_ADDRESS;
+}
+
+/**
+ * The one refusal every Solana write path (prepare / broadcast / confirm)
+ * gives on a `SOLANA_ENABLED=0` stack: `422 {error: 'SOL is not deployed on
+ * this environment'}`. Returns the response to send, or `null` when the
+ * handler may go on.
+ *
+ * Deliberately a no-op for the EVM nets: each EVM route already refuses an
+ * unpinned launchpad / router with its own code the web reads
+ * (`launchpad_not_configured`, `rh_router_required`, `programs_not_deployed`),
+ * and those paths are exercised with partial deployments; this helper only
+ * adds the Solana switch in front of them, it does not replace them.
+ *
+ * Usage, right after the net is known and before anything touches a DB row
+ * or an RPC: `const gate = requireNetDeployed(c, deps.env, net); if (gate) return gate;`
+ */
+export function requireNetDeployed(c: Context, env: ApiEnv, net: Net): Response | null {
+  if (isEvmNet(net) || isNetDeployed(env, net)) return null;
+  return c.json({ error: `${net} is not deployed on this environment`, net }, 422);
 }
 
 async function timed<T>(

@@ -337,6 +337,10 @@ export function curveParamsTargets(env: ApiEnv, rpcs: ChainRpcs): (net: Net) => 
         router: !router || router.toLowerCase() === ZERO_EVM_ADDRESS ? null : router,
       };
     }
+    // `SOLANA_ENABLED=0`: no program here, so no read — defaults, flagged
+    // "not deployed on this environment", exactly like an EVM net with no
+    // launchpad address.
+    if (!env.solanaEnabled) return null;
     return { kind: 'sol', reader: solOf(rpcs.SOL), programId: env.solanaLaunchpadProgramId };
   };
 }
