@@ -504,6 +504,7 @@ export function readEnv(rawSrc: EnvSource = process.env): ApiEnv {
     trustedProxyDepth: int(src, 'TRUSTED_PROXY_DEPTH', 1),
 
     solanaEnabled: flag(src, 'SOLANA_ENABLED', true),
+    dbMigrateOnBoot: flag(src, 'DB_MIGRATE_ON_BOOT', false),
     // Public devnet is the local-dev default only. Deployed stacks set the
     // project's QuickNode endpoint (docs/deployment.md "RPC endpoints");
     // production refuses this host below.

@@ -300,3 +300,10 @@ describe('readEnv SOLANA_ENABLED', () => {
     ).toMatch(/BASE_RPC_URL/);
   });
 });
+
+describe('DB_MIGRATE_ON_BOOT', () => {
+  it('is off by default and on with 1', () => {
+    expect(readEnv({ NODE_ENV: 'test' }).dbMigrateOnBoot).toBe(false);
+    expect(readEnv({ NODE_ENV: 'test', DB_MIGRATE_ON_BOOT: '1' }).dbMigrateOnBoot).toBe(true);
+  });
+});

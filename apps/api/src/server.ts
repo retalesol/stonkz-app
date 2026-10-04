@@ -11,8 +11,13 @@ const env = readEnv();
 const { deps, close } = await buildDeps(env);
 
 // Local dev runs migrations on boot; in production this is a deploy step so two
-// instances starting at once cannot race the same DDL.
-if (env.nodeEnv !== 'production') {
+// instances starting at once cannot race the same DDL. `DB_MIGRATE_ON_BOOT=1`
+// is the explicit, single-replica exception for environments with no shell
+// into the database (first boot of a fresh environment): set it, deploy once,
+// unset it.
+if (env.nodeEnv !== 'production' || env.dbMigrateOnBoot) {
+  if (env.nodeEnv === 'production')
+    deps.logger.warn('DB_MIGRATE_ON_BOOT=1: migrating on boot in production');
   const { applied } = await runMigrations(deps.db);
   if (applied.length > 0) deps.logger.info('migrations applied', { applied });
 }
