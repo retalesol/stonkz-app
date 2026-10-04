@@ -69,6 +69,8 @@ export interface ApiEnv {
    * key. Read-only token / market routes keep working (they simply have no
    * SOL rows). Flip it back to `1` once the program ships on mainnet-beta.
    */
+  /** `DB_MIGRATE_ON_BOOT=1`: run migrations at start even in production (single replica, first boot of a fresh environment). Default off. */
+  dbMigrateOnBoot: boolean;
   solanaEnabled: boolean;
   solanaRpcUrl: string;
   /**
